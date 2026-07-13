@@ -13,6 +13,7 @@
     "@radix-ui/react-alert-dialog": "latest",
     "@radix-ui/react-dialog": "latest",
     "@radix-ui/react-select": "latest",
+    "@radix-ui/react-slot": "latest",
     "@radix-ui/react-tabs": "latest",
     "@hookform/resolvers": "latest",
     "@tanstack/react-query": "latest",
