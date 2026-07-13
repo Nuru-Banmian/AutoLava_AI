@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import contains_eager, selectinload
 
 from app.models.identity import Store, User
 from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
@@ -28,6 +28,22 @@ class LedgerService:
     async def _find_record(
         self, *, store_id: int, record_date: date, for_update: bool = False
     ) -> StoreDailyRecord | None:
+        if for_update:
+            result = await self.session.execute(
+                select(StoreDailyRecord)
+                .outerjoin(
+                    DailyIncomeItem,
+                    DailyIncomeItem.record_id == StoreDailyRecord.id,
+                )
+                .where(
+                    StoreDailyRecord.store_id == store_id,
+                    StoreDailyRecord.date == record_date,
+                )
+                .options(contains_eager(StoreDailyRecord.items))
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+            return result.unique().scalar_one_or_none()
         statement = (
             select(StoreDailyRecord)
             .where(
@@ -37,8 +53,6 @@ class LedgerService:
             .options(selectinload(StoreDailyRecord.items))
             .execution_options(populate_existing=True)
         )
-        if for_update:
-            statement = statement.with_for_update()
         return await self.session.scalar(statement)
 
     async def get(self, *, store: Store, record_date: date) -> StoreDailyRecord:

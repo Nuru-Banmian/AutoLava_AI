@@ -37,7 +37,11 @@ async def db_session() -> AsyncIterator[AsyncSession]:
         for table in reversed(Base.metadata.sorted_tables):
             await connection.execute(table.delete())
 
-        session = AsyncSession(bind=connection, expire_on_commit=False)
+        session = AsyncSession(
+            bind=connection,
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        )
         try:
             yield session
         finally:
