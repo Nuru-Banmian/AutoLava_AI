@@ -159,7 +159,7 @@ def _audit_payload(audit: AuditLog, username: str) -> dict:
     }
 
 
-@router.post("/{store_id}/rollback/{audit_id}", response_model=RollbackResult)
+@router.post("/{store_id}/history/{audit_id}/rollback", response_model=RollbackResult)
 async def rollback_record(
     store_id: int,
     audit_id: int,
@@ -229,7 +229,7 @@ async def record_history(
     return [_audit_payload(audit, username) for audit, username in rows]
 
 
-@router.get("/{store_id}", response_model=DatabasePage)
+@router.get("/{store_id}/records", response_model=DatabasePage)
 async def record_page(
     store_id: int,
     session: Session,

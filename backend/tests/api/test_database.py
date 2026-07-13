@@ -8,6 +8,7 @@ from openpyxl import load_workbook
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.routes.database import router as database_router
 from app.models.audit import AuditLog
 from app.models.identity import Store, StoreMember, User
 from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
@@ -28,6 +29,20 @@ class DatabaseContext:
     @property
     def id(self) -> int:
         return self.store.id
+
+
+def test_database_router_uses_canonical_record_and_rollback_paths() -> None:
+    route_contracts = {
+        (method, route.path) for route in database_router.routes for method in route.methods
+    }
+
+    assert ("GET", "/database/{store_id}/records") in route_contracts
+    assert (
+        "POST",
+        "/database/{store_id}/history/{audit_id}/rollback",
+    ) in route_contracts
+    assert ("GET", "/database/{store_id}") not in route_contracts
+    assert ("POST", "/database/{store_id}/rollback/{audit_id}") not in route_contracts
 
 
 @pytest.fixture
@@ -136,7 +151,8 @@ async def test_record_page_is_deterministic_and_sum_uses_all_filtered_rows(
     auth_client: AsyncClient, database_context: DatabaseContext
 ) -> None:
     response = await auth_client.get(
-        f"/api/database/{database_context.id}", params={"page": 1, "page_size": 2}
+        f"/api/database/{database_context.id}/records",
+        params={"page": 1, "page_size": 2},
     )
 
     assert response.status_code == 200
@@ -149,7 +165,8 @@ async def test_record_page_is_deterministic_and_sum_uses_all_filtered_rows(
     assert body["items"][0]["created_by_name"] == "database-editor"
 
     second_page = await auth_client.get(
-        f"/api/database/{database_context.id}", params={"page": 2, "page_size": 2}
+        f"/api/database/{database_context.id}/records",
+        params={"page": 2, "page_size": 2},
     )
     assert [item["date"] for item in second_page.json()["items"]] == ["2026-07-01"]
     assert [category["name"] for category in second_page.json()["categories"]] == [
@@ -176,7 +193,7 @@ async def test_record_filters_are_inclusive_and_feed_the_interval_sum(
     dates: list[str],
     expected_sum: str,
 ) -> None:
-    response = await auth_client.get(f"/api/database/{database_context.id}", params=params)
+    response = await auth_client.get(f"/api/database/{database_context.id}/records", params=params)
 
     assert response.status_code == 200
     assert [item["date"] for item in response.json()["items"]] == dates
@@ -187,7 +204,7 @@ async def test_invalid_filter_interval_is_rejected(
     auth_client: AsyncClient, database_context: DatabaseContext
 ) -> None:
     response = await auth_client.get(
-        f"/api/database/{database_context.id}",
+        f"/api/database/{database_context.id}/records",
         params={"start": "2026-07-03", "end": "2026-07-01"},
     )
 
@@ -204,7 +221,8 @@ async def test_activity_substring_treats_sql_wildcards_as_literal_text(
     await db_session.flush()
 
     response = await auth_client.get(
-        f"/api/database/{database_context.id}", params={"activity_query": "%"}
+        f"/api/database/{database_context.id}/records",
+        params={"activity_query": "%"},
     )
 
     assert response.status_code == 200
@@ -215,7 +233,7 @@ async def test_export_rows_and_dynamic_columns_match_active_filters(
     auth_client: AsyncClient, database_context: DatabaseContext
 ) -> None:
     params = {"start": "2026-07-01", "end": "2026-07-31", "status": "营业"}
-    page = await auth_client.get(f"/api/database/{database_context.id}", params=params)
+    page = await auth_client.get(f"/api/database/{database_context.id}/records", params=params)
     response = await auth_client.get(
         f"/api/database/{database_context.id}/export.xlsx", params=params
     )
@@ -404,7 +422,9 @@ async def test_rollback_route_restores_record_and_returns_canonical_snapshot(
     )
     assert audit is not None
 
-    response = await auth_client.post(f"/api/database/{database_context.id}/rollback/{audit.id}")
+    response = await auth_client.post(
+        f"/api/database/{database_context.id}/history/{audit.id}/rollback"
+    )
 
     assert response.status_code == 200
     assert response.json() == {"audit_id": audit.id, "record": expected}
@@ -434,8 +454,10 @@ async def test_rollback_route_checks_path_store_against_audit_store(
     db_session.add(audit)
     await db_session.flush()
 
-    mismatch = await auth_client.post(f"/api/database/{database_context.id}/rollback/{audit.id}")
-    inaccessible = await auth_client.post(f"/api/database/{other.id}/rollback/{audit.id}")
+    mismatch = await auth_client.post(
+        f"/api/database/{database_context.id}/history/{audit.id}/rollback"
+    )
+    inaccessible = await auth_client.post(f"/api/database/{other.id}/history/{audit.id}/rollback")
 
     assert mismatch.status_code == 404
     assert mismatch.json() == {"detail": "Audit entry not found"}
@@ -443,7 +465,7 @@ async def test_rollback_route_checks_path_store_against_audit_store(
     assert inaccessible.json() == {"detail": "Store not found"}
 
 
-@pytest.mark.parametrize("suffix", ["", "/history", "/export.xlsx"])
+@pytest.mark.parametrize("suffix", ["/records", "/history", "/export.xlsx"])
 async def test_database_routes_hide_unassigned_store(
     auth_client: AsyncClient, store_factory, suffix: str
 ) -> None:

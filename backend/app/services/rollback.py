@@ -171,6 +171,7 @@ class RollbackService:
                     AuditLog.record_id == audit.record_id,
                     AuditLog.description == f"Rollback audit {audit_id}",
                 )
+                .with_for_update()
                 .limit(1)
             )
             if already_rolled_back is not None:

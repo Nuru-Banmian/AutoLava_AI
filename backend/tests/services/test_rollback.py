@@ -7,14 +7,17 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi import HTTPException
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
-from app.core.database import engine
+from app.core.database import engine, get_session
+from app.core.security import create_access_token
+from app.main import create_app
 from app.models.audit import AuditLog
 from app.models.base import Base
-from app.models.identity import Store, User
+from app.models.identity import Store, StoreMember, User
 from app.models.ledger import IncomeCategory, StoreDailyRecord
 from app.services.audit import record_snapshot
 from app.services.ledger import LedgerService
@@ -455,6 +458,66 @@ async def test_concurrent_later_update_is_never_lost_inside_rollback_window() ->
                 Decimal("333.33"),
                 Decimal("0.00"),
             }
+    finally:
+        await _clear_disposable_database()
+        await engine.dispose()
+
+
+async def test_api_rollback_sees_marker_committed_after_its_dependency_snapshot() -> None:
+    await _clear_disposable_database()
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        user_id, store_id, _, _, audit_id, _ = await _committed_update_fixture()
+        async with maker() as setup_session:
+            setup_session.add(StoreMember(store_id=store_id, user_id=user_id))
+            await setup_session.commit()
+
+        async with maker() as request_session:
+            # This is the first plain dependency-style read and establishes the
+            # InnoDB REPEATABLE READ snapshot before either rollback marker exists.
+            assert await request_session.get(User, user_id) is not None
+
+            async with maker() as chain_session:
+                await RollbackService(chain_session).rollback(audit_id, actor_id=user_id)
+                first_rollback_id = await chain_session.scalar(
+                    select(AuditLog.id)
+                    .where(
+                        AuditLog.operation_type == "rollback",
+                        AuditLog.description == f"Rollback audit {audit_id}",
+                    )
+                    .order_by(AuditLog.id.desc())
+                )
+                assert first_rollback_id is not None
+                await RollbackService(chain_session).rollback(first_rollback_id, actor_id=user_id)
+
+            app = create_app()
+
+            async def override_session():
+                yield request_session
+
+            app.dependency_overrides[get_session] = override_session
+            token, _ = create_access_token(user_id, remember=False)
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://testserver"
+            ) as client:
+                client.cookies.set("access_token", token)
+                response = await client.post(
+                    f"/api/database/{store_id}/history/{audit_id}/rollback"
+                )
+
+        async with maker() as check_session:
+            marker_count = await check_session.scalar(
+                select(func.count())
+                .select_from(AuditLog)
+                .where(
+                    AuditLog.operation_type == "rollback",
+                    AuditLog.description == f"Rollback audit {audit_id}",
+                )
+            )
+
+        assert response.status_code == 409
+        assert response.json() == {"detail": "Audit entry already rolled back"}
+        assert marker_count == 1
     finally:
         await _clear_disposable_database()
         await engine.dispose()
