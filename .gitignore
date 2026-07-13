@@ -1,0 +1,16 @@
+.worktrees/
+.conda/
+.superpowers/
+.autolava-db.env
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+node_modules/
+dist/
+playwright-report/
+test-results/
