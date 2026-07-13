@@ -110,6 +110,56 @@ async def test_revenue_uses_only_included_categories(
     assert record.daily_revenue == Decimal("350.00")
 
 
+@pytest.mark.parametrize(
+    ("amount", "detail"),
+    [
+        ("0.005", "Income amounts must have at most two decimal places"),
+        ("10000000000.00", "Income amount exceeds NUMERIC(12,2) capacity"),
+    ],
+)
+async def test_service_rejects_amounts_outside_numeric_contract_without_writes(
+    ledger_service: LedgerService,
+    ledger_context: LedgerContext,
+    db_session: AsyncSession,
+    amount: str,
+    detail: str,
+) -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        await ledger_service.upsert(
+            store=ledger_context.store,
+            record_date=local_today(ledger_context),
+            payload=ledger_payload(ledger_context, cash=amount),
+            actor=ledger_context.user,
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == detail
+    assert await db_session.scalar(select(func.count()).select_from(StoreDailyRecord)) == 0
+    assert await db_session.scalar(select(func.count()).select_from(AuditLog)) == 0
+
+
+async def test_service_rejects_numeric_total_overflow_without_writes(
+    ledger_service: LedgerService,
+    ledger_context: LedgerContext,
+    db_session: AsyncSession,
+) -> None:
+    payload = ledger_payload(ledger_context, cash="5000000000.00")
+    payload["items"].append({"category_id": ledger_context.card.id, "amount": "5000000000.00"})
+
+    with pytest.raises(HTTPException) as exc_info:
+        await ledger_service.upsert(
+            store=ledger_context.store,
+            record_date=local_today(ledger_context),
+            payload=payload,
+            actor=ledger_context.user,
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == "Daily revenue exceeds NUMERIC(12,2) capacity"
+    assert await db_session.scalar(select(func.count()).select_from(StoreDailyRecord)) == 0
+    assert await db_session.scalar(select(func.count()).select_from(AuditLog)) == 0
+
+
 async def test_update_writes_complete_before_and_after_snapshots(
     ledger_service: LedgerService,
     ledger_context: LedgerContext,

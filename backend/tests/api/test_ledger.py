@@ -234,6 +234,33 @@ async def test_category_from_another_store_is_rejected(
     assert response.json() == {"detail": "Income category does not belong to this store"}
 
 
+@pytest.mark.parametrize(
+    ("amount", "error_type"),
+    [
+        ("0.005", "decimal_max_places"),
+        ("10000000000.00", "decimal_whole_digits"),
+    ],
+)
+async def test_api_schema_enforces_numeric_amount_contract(
+    auth_client: AsyncClient,
+    assigned_store: AssignedStore,
+    ledger_payload: dict,
+    db_session: AsyncSession,
+    amount: str,
+    error_type: str,
+) -> None:
+    ledger_payload["items"] = [{"category_id": assigned_store.cash.id, "amount": amount}]
+
+    response = await auth_client.put(
+        f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}",
+        json=ledger_payload,
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["type"] == error_type
+    assert await db_session.scalar(select(func.count()).select_from(StoreDailyRecord)) == 0
+
+
 async def test_delete_returns_204_and_writes_delete_audit(
     auth_client: AsyncClient,
     assigned_store: AssignedStore,

@@ -1,5 +1,5 @@
 from datetime import date, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -12,6 +12,9 @@ from sqlalchemy.orm import selectinload
 from app.models.identity import Store, User
 from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
 from app.services.audit import make_ledger_audit, record_snapshot
+
+_MONEY_QUANTUM = Decimal("0.01")
+_MONEY_MAX = Decimal("9999999999.99")
 
 
 class LedgerService:
@@ -78,10 +81,20 @@ class LedgerService:
     def _item_values(items: list[dict[str, Any]], *, rest_day: bool) -> list[tuple[int, Decimal]]:
         values: list[tuple[int, Decimal]] = []
         for item in items:
-            amount = Decimal(str(item["amount"]))
+            try:
+                amount = Decimal(str(item["amount"]))
+            except (InvalidOperation, TypeError, ValueError) as exc:
+                raise HTTPException(422, "Income amount must be a finite decimal") from exc
+            if not amount.is_finite():
+                raise HTTPException(422, "Income amount must be a finite decimal")
             if amount < 0:
                 raise HTTPException(422, "Income amounts must be non-negative")
-            values.append((item["category_id"], Decimal("0.00") if rest_day else amount))
+            if amount > _MONEY_MAX:
+                raise HTTPException(422, "Income amount exceeds NUMERIC(12,2) capacity")
+            canonical_amount = amount.quantize(_MONEY_QUANTUM)
+            if canonical_amount != amount:
+                raise HTTPException(422, "Income amounts must have at most two decimal places")
+            values.append((item["category_id"], Decimal("0.00") if rest_day else canonical_amount))
         return values
 
     async def upsert(
@@ -128,6 +141,12 @@ class LedgerService:
 
         rest_day = payload["is_open"] == "休息"
         item_values = self._item_values(items, rest_day=rest_day)
+        daily_revenue = Decimal("0.00")
+        for category_id, amount in item_values:
+            if categories[category_id].include_in_total:
+                daily_revenue += amount
+                if daily_revenue > _MONEY_MAX:
+                    raise HTTPException(422, "Daily revenue exceeds NUMERIC(12,2) capacity")
         before = None if record is None else record_snapshot(record)
 
         try:
@@ -167,18 +186,11 @@ class LedgerService:
                     DailyIncomeItem(category_id=category_id, amount=amount)
                     for category_id, amount in item_values
                 ]
-                record.daily_revenue = sum(
-                    (
-                        item.amount
-                        for item in record.items
-                        if categories[item.category_id].include_in_total
-                    ),
-                    start=Decimal("0.00"),
-                )
+                record.daily_revenue = daily_revenue
                 await self.session.flush()
                 await self.session.refresh(
                     record,
-                    attribute_names=["created_at", "updated_at", "items"],
+                    attribute_names=["daily_revenue", "created_at", "updated_at", "items"],
                 )
                 after = record_snapshot(record)
                 self.session.add(

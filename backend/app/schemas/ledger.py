@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 class IncomeItemBody(BaseModel):
     category_id: int
-    amount: Decimal = Field(ge=0)
+    amount: Decimal = Field(ge=0, max_digits=12, decimal_places=2)
 
 
 class LedgerBody(BaseModel):
