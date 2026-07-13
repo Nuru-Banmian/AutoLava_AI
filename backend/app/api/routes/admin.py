@@ -5,6 +5,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import Session, require_admin
 from app.core.security import hash_password
@@ -204,8 +205,12 @@ async def create_user(body: UserCreate, session: Session, actor: AdminUser) -> d
         password_hash=hash_password(body.password),
         role=body.role,
     )
-    session.add(user)
-    await session.flush()
+    try:
+        async with session.begin_nested():
+            session.add(user)
+            await session.flush()
+    except IntegrityError as exc:
+        raise HTTPException(409, "Username already exists") from exc
     add_admin_audit(
         session,
         actor_id=actor.id,

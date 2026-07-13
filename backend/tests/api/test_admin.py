@@ -132,6 +132,22 @@ async def test_admin_can_create_list_patch_and_audit_users(
     assert "hash" not in str([audit.after_json for audit in audits])
 
 
+async def test_duplicate_username_returns_409_and_keeps_transaction_usable(
+    admin_client,
+) -> None:
+    body = {"username": "duplicate", "password": "secret123", "role": "user"}
+    created = await admin_client.post("/api/admin/users", json=body)
+    assert created.status_code == 201
+
+    duplicate = await admin_client.post("/api/admin/users", json=body)
+    assert duplicate.status_code == 409
+    assert duplicate.json() == {"detail": "Username already exists"}
+
+    listed = await admin_client.get("/api/admin/users")
+    assert listed.status_code == 200
+    assert [user["username"] for user in listed.json()].count("duplicate") == 1
+
+
 async def test_admin_lists_user_stores_and_operation_history(
     admin_client, user_factory, store_factory, db_session: AsyncSession
 ) -> None:
