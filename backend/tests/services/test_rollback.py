@@ -1,7 +1,7 @@
 import asyncio
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -126,6 +126,7 @@ async def test_rollback_update_restores_exact_canonical_before_snapshot(
     assert rollback_audit.operator_user_id == rollback_context.user.id
     assert rollback_audit.operation_source == "manual"
     assert rollback_audit.description == f"Rollback audit {update_audit.id}"
+    assert rollback_audit.rollback_of_audit_id == update_audit.id
     assert rollback_audit.before_json == update_audit.after_json
     assert rollback_audit.after_json == expected
     assert rollback_audit.requires_approval is False
@@ -203,10 +204,7 @@ async def test_same_audit_cannot_be_rolled_back_twice(
         await db_session.scalar(
             select(func.count())
             .select_from(AuditLog)
-            .where(
-                AuditLog.operation_type == "rollback",
-                AuditLog.description == f"Rollback audit {audit_id}",
-            )
+            .where(AuditLog.rollback_of_audit_id == audit_id)
         )
         == 1
     )
@@ -249,10 +247,7 @@ async def test_rollback_refuses_to_overwrite_a_later_change_without_partial_writ
         await db_session.scalar(
             select(func.count())
             .select_from(AuditLog)
-            .where(
-                AuditLog.operation_type == "rollback",
-                AuditLog.description == f"Rollback audit {audit_id}",
-            )
+            .where(AuditLog.rollback_of_audit_id == audit_id)
         )
         == 0
     )
@@ -275,6 +270,105 @@ async def test_rollback_audit_can_be_reversed_as_a_chain_but_not_reused(
     with pytest.raises(HTTPException) as exc_info:
         await rollback_service.rollback(first_rollback.id, actor_id=rollback_context.user.id)
     assert exc_info.value.status_code == 409
+
+
+async def _make_equal_timestamp_update(
+    session: AsyncSession,
+    context: RollbackContext,
+    *,
+    current_is_after: bool,
+) -> tuple[StoreDailyRecord, AuditLog, dict, dict]:
+    cash_amount = "50.00" if current_is_after else "10.00"
+    record, _ = await LedgerService(session).upsert(
+        store=context.store,
+        record_date=local_today(context),
+        payload=payload(context, cash_amount, "20.00"),
+        actor=context.user,
+    )
+    fixed_updated_at = datetime(2020, 1, 2, 3, 4, 5)
+    record.updated_at = fixed_updated_at
+    await session.flush()
+    await session.refresh(record, attribute_names=["updated_at", "items"])
+
+    current = record_snapshot(record)
+    alternate = deepcopy(current)
+    alternate["daily_revenue"] = "30.00" if current_is_after else "70.00"
+    alternate["items"][0]["amount"] = "10.00" if current_is_after else "50.00"
+    before, after = (alternate, current) if current_is_after else (current, alternate)
+    update_audit = AuditLog(
+        operation_domain="ledger",
+        store_id=record.store_id,
+        record_id=record.id,
+        record_date=record.date,
+        operation_type="update",
+        operation_source="manual",
+        operator_user_id=context.user.id,
+        before_json=before,
+        after_json=after,
+        description="Equal-timestamp ledger update",
+        requires_approval=False,
+        approved=True,
+    )
+    session.add(update_audit)
+    await session.flush()
+    return record, update_audit, before, after
+
+
+async def test_rollback_explicitly_restores_equal_parent_updated_at(
+    rollback_service: RollbackService,
+    rollback_context: RollbackContext,
+    db_session: AsyncSession,
+) -> None:
+    _, update_audit, before, _ = await _make_equal_timestamp_update(
+        db_session,
+        rollback_context,
+        current_is_after=True,
+    )
+
+    restored = await rollback_service.rollback(
+        update_audit.id,
+        actor_id=rollback_context.user.id,
+    )
+
+    assert restored is not None
+    assert record_snapshot(restored) == before
+
+
+async def test_rollback_chain_explicitly_restores_equal_parent_updated_at(
+    rollback_service: RollbackService,
+    rollback_context: RollbackContext,
+    db_session: AsyncSession,
+) -> None:
+    record, update_audit, before, after = await _make_equal_timestamp_update(
+        db_session,
+        rollback_context,
+        current_is_after=False,
+    )
+    first_rollback = AuditLog(
+        operation_domain="ledger",
+        store_id=record.store_id,
+        record_id=record.id,
+        record_date=record.date,
+        operation_type="rollback",
+        operation_source="manual",
+        operator_user_id=rollback_context.user.id,
+        before_json=after,
+        after_json=before,
+        description=f"Rollback audit {update_audit.id}",
+        requires_approval=False,
+        approved=True,
+        rollback_of_audit_id=update_audit.id,
+    )
+    db_session.add(first_rollback)
+    await db_session.flush()
+
+    restored = await rollback_service.rollback(
+        first_rollback.id,
+        actor_id=rollback_context.user.id,
+    )
+
+    assert restored is not None
+    assert record_snapshot(restored) == after
 
 
 async def test_missing_or_non_ledger_audit_is_not_rollbackable(
@@ -388,10 +482,7 @@ async def test_concurrent_same_audit_rollback_serializes_to_one_success() -> Non
                 await session.scalar(
                     select(func.count())
                     .select_from(AuditLog)
-                    .where(
-                        AuditLog.operation_type == "rollback",
-                        AuditLog.description == f"Rollback audit {audit_id}",
-                    )
+                    .where(AuditLog.rollback_of_audit_id == audit_id)
                 )
                 == 1
             )
@@ -399,6 +490,94 @@ async def test_concurrent_same_audit_rollback_serializes_to_one_success() -> Non
             assert current is not None
             await session.refresh(current, attribute_names=["items"])
             assert record_snapshot(current) == expected
+    finally:
+        await _clear_disposable_database()
+        await engine.dispose()
+
+
+class _TwoPartyBarrier:
+    def __init__(self) -> None:
+        self.arrivals = 0
+        self.ready = asyncio.Event()
+
+    async def wait(self) -> None:
+        self.arrivals += 1
+        if self.arrivals == 2:
+            self.ready.set()
+        await asyncio.wait_for(self.ready.wait(), timeout=5)
+
+
+class _CoordinatedRollbackService(RollbackService):
+    def __init__(self, session: AsyncSession, barrier: _TwoPartyBarrier):
+        super().__init__(session)
+        self.barrier = barrier
+
+    async def _lock_audit(self, audit_id: int) -> AuditLog:
+        audit = await super()._lock_audit(audit_id)
+        await self.barrier.wait()
+        return audit
+
+
+async def test_different_audit_rollbacks_do_not_lock_each_others_target_rows() -> None:
+    await _clear_disposable_database()
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        user_id, store_id, cash_id, card_id, first_audit_id, _ = await _committed_update_fixture()
+        async with maker() as setup_session:
+            store = await setup_session.get(Store, store_id)
+            user = await setup_session.get(User, user_id)
+            cash = await setup_session.get(IncomeCategory, cash_id)
+            card = await setup_session.get(IncomeCategory, card_id)
+            assert store is not None and user is not None and cash is not None and card is not None
+            context = RollbackContext(user=user, store=store, cash=cash, card=card)
+            second_date = local_today(context) - timedelta(days=1)
+            await LedgerService(setup_session).upsert(
+                store=store,
+                record_date=second_date,
+                payload=payload(context, "80.00", "20.00"),
+                actor=user,
+            )
+            await LedgerService(setup_session).upsert(
+                store=store,
+                record_date=second_date,
+                payload=payload(context, "70.00", "10.00"),
+                actor=user,
+                overwrite=True,
+            )
+            second_audit_id = await setup_session.scalar(
+                select(AuditLog.id)
+                .where(
+                    AuditLog.operation_type == "update",
+                    AuditLog.record_date == second_date,
+                )
+                .order_by(AuditLog.id.desc())
+            )
+            assert second_audit_id is not None
+
+        barrier = _TwoPartyBarrier()
+
+        async def attempt(audit_id: int) -> StoreDailyRecord | None:
+            async with maker() as session:
+                return await _CoordinatedRollbackService(session, barrier).rollback(
+                    audit_id, actor_id=user_id
+                )
+
+        first_result, second_result = await asyncio.wait_for(
+            asyncio.gather(attempt(first_audit_id), attempt(second_audit_id)),
+            timeout=10,
+        )
+
+        assert first_result is not None
+        assert second_result is not None
+        async with maker() as check_session:
+            rollback_targets = set(
+                await check_session.scalars(
+                    select(AuditLog.rollback_of_audit_id).where(
+                        AuditLog.rollback_of_audit_id.in_([first_audit_id, second_audit_id])
+                    )
+                )
+            )
+        assert rollback_targets == {first_audit_id, second_audit_id}
     finally:
         await _clear_disposable_database()
         await engine.dispose()
@@ -481,10 +660,7 @@ async def test_api_rollback_sees_marker_committed_after_its_dependency_snapshot(
                 await RollbackService(chain_session).rollback(audit_id, actor_id=user_id)
                 first_rollback_id = await chain_session.scalar(
                     select(AuditLog.id)
-                    .where(
-                        AuditLog.operation_type == "rollback",
-                        AuditLog.description == f"Rollback audit {audit_id}",
-                    )
+                    .where(AuditLog.rollback_of_audit_id == audit_id)
                     .order_by(AuditLog.id.desc())
                 )
                 assert first_rollback_id is not None
@@ -509,10 +685,7 @@ async def test_api_rollback_sees_marker_committed_after_its_dependency_snapshot(
             marker_count = await check_session.scalar(
                 select(func.count())
                 .select_from(AuditLog)
-                .where(
-                    AuditLog.operation_type == "rollback",
-                    AuditLog.description == f"Rollback audit {audit_id}",
-                )
+                .where(AuditLog.rollback_of_audit_id == audit_id)
             )
 
         assert response.status_code == 409

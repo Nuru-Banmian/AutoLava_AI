@@ -28,3 +28,17 @@ def test_business_unique_constraints_exist() -> None:
     assert {c.name for c in Base.metadata.tables["store_daily_records"].constraints} >= {
         "uq_store_daily_records_store_date"
     }
+
+
+def test_rollback_target_is_a_nullable_unique_self_reference() -> None:
+    table = Base.metadata.tables["audit_log"]
+
+    assert table.c.rollback_of_audit_id.nullable is True
+    assert {constraint.name for constraint in table.constraints} >= {
+        "fk_audit_log_rollback_of_audit_id_audit_log",
+        "uq_audit_log_rollback_of_audit_id",
+    }
+    foreign_key = next(
+        key for key in table.foreign_keys if key.parent.name == "rollback_of_audit_id"
+    )
+    assert foreign_key.target_fullname == "audit_log.id"

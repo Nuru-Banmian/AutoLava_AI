@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import Boolean, Date, ForeignKey, JSON, String, Text, func
+from sqlalchemy import Boolean, Date, ForeignKey, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -9,6 +9,8 @@ from app.models.base import Base
 
 class AuditLog(Base):
     __tablename__ = "audit_log"
+    __table_args__ = (UniqueConstraint("rollback_of_audit_id"),)
+
     id: Mapped[int] = mapped_column(primary_key=True)
     operation_domain: Mapped[str] = mapped_column(String(30))
     store_id: Mapped[int | None] = mapped_column(ForeignKey("stores.id"))
@@ -22,4 +24,7 @@ class AuditLog(Base):
     description: Mapped[str] = mapped_column(Text)
     requires_approval: Mapped[bool] = mapped_column(Boolean, default=False)
     approved: Mapped[bool] = mapped_column(Boolean, default=True)
+    rollback_of_audit_id: Mapped[int | None] = mapped_column(
+        ForeignKey("audit_log.id", ondelete="CASCADE")
+    )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
