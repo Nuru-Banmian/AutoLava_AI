@@ -9,12 +9,15 @@ from app.schemas.auth import LoginBody
 from app.services.access import list_accessible_stores
 
 router = APIRouter(tags=["auth"])
+_DUMMY_PASSWORD_HASH = "$2b$12$IQOOUtkNRsdb1U4AxGQsf.mE9yqB1P7aZxsi4Y3eqQ6kGfJkWVZl2"
 
 
 @router.post("/auth/login")
 async def login(body: LoginBody, response: Response, session: Session) -> dict:
     user = await session.scalar(select(User).where(User.username == body.username))
-    if user is None or not user.is_active or not verify_password(body.password, user.password_hash):
+    password_hash = user.password_hash if user is not None else _DUMMY_PASSWORD_HASH
+    password_matches = verify_password(body.password, password_hash)
+    if user is None or not user.is_active or not password_matches:
         raise HTTPException(401, "Invalid credentials")
     token, max_age = create_access_token(user.id, body.remember)
     response.set_cookie(

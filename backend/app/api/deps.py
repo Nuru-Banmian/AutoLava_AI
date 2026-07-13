@@ -16,7 +16,7 @@ Session = Annotated[AsyncSession, Depends(get_session)]
 async def get_current_user(session: Session, access_token: str | None = Cookie(None)) -> User:
     try:
         user_id = decode_access_token(access_token or "")
-    except (InvalidTokenError, KeyError, TypeError, ValueError) as exc:
+    except InvalidTokenError as exc:
         raise HTTPException(401, "Authentication required") from exc
     user = await session.get(User, user_id)
     if user is None or not user.is_active:

@@ -26,4 +26,13 @@ def create_access_token(user_id: int, remember: bool) -> tuple[str, int]:
 
 def decode_access_token(token: str) -> int:
     secret = get_settings().jwt_secret.get_secret_value()
-    return int(jwt.decode(token, secret, algorithms=["HS256"])["sub"])
+    payload = jwt.decode(
+        token,
+        secret,
+        algorithms=["HS256"],
+        options={"require": ["sub", "exp"]},
+    )
+    try:
+        return int(payload["sub"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise jwt.InvalidTokenError("Invalid subject claim") from exc
