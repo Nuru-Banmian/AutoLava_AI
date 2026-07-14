@@ -1,13 +1,17 @@
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Response
+import asyncio
+
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse
 
 from app.api.deps import Session, StoreAccess, require_store_access
+from app.api.routes.dashboard import get_weather_service
 from app.schemas.ledger import LedgerBody
 from app.services.audit import record_snapshot
 from app.services.ledger import LedgerService
+from app.services.weather import WeatherService
 
 router = APIRouter(prefix="/ledger", tags=["ledger"])
 
@@ -50,14 +54,33 @@ async def put_record(
     store_id: int,
     record_date: date,
     body: LedgerBody,
+    request: Request,
     session: Session,
     overwrite: bool = False,
     access: StoreAccess = Depends(require_store_access),
 ) -> Response:
+    payload = body.model_dump(mode="json")
+    weather_service: WeatherService = get_weather_service(request)
+    try:
+        result = await asyncio.wait_for(
+            weather_service.get_daily(access.store, record_date), timeout=9
+        )
+    except Exception:
+        result = None
+    if result is not None:
+        payload.update(
+            {
+                "weather_auto": result.weather,
+                "weather_code": result.weather_code,
+                "temperature_max": result.temperature_max,
+                "temperature_min": result.temperature_min,
+                "precipitation": result.precipitation,
+            }
+        )
     record, created = await LedgerService(session).upsert(
         store=access.store,
         record_date=record_date,
-        payload=body.model_dump(mode="json"),
+        payload=payload,
         actor=access.user,
         overwrite=overwrite,
     )

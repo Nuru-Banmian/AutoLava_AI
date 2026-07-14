@@ -1,6 +1,7 @@
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
+import httpx
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
@@ -69,6 +70,41 @@ async def test_regular_user_cannot_create_user(auth_client) -> None:
         json={"username": "new-user", "password": "secret123", "role": "user"},
     )
     assert response.status_code == 403
+
+
+async def test_geocode_is_admin_only(auth_client) -> None:
+    denied = await auth_client.get("/api/admin/stores/geocode", params={"query": "Milano"})
+    assert denied.status_code == 403
+
+
+async def test_admin_geocode_is_normalized(admin_client, respx_mock) -> None:
+    respx_mock.get("https://geocoding-api.open-meteo.com/v1/search").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "name": "Milano",
+                        "latitude": 45.46,
+                        "longitude": 9.19,
+                        "country": "Italia",
+                        "timezone": "Europe/Rome",
+                    }
+                ]
+            },
+        )
+    )
+    response = await admin_client.get("/api/admin/stores/geocode", params={"query": "Milano"})
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "name": "Milano",
+            "latitude": 45.46,
+            "longitude": 9.19,
+            "country": "Italia",
+            "timezone": "Europe/Rome",
+        }
+    ]
 
 
 async def test_admin_can_create_list_patch_and_audit_users(

@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+import httpx
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import func, select
@@ -67,6 +68,66 @@ def ledger_payload(assigned_store: AssignedStore) -> dict:
 
 def today_for(assigned_store: AssignedStore) -> date:
     return datetime.now(ZoneInfo(assigned_store.store.timezone)).date()
+
+
+async def test_put_injects_trusted_weather_and_preserves_manual_weather(
+    auth_client: AsyncClient,
+    assigned_store: AssignedStore,
+    ledger_payload: dict,
+    respx_mock,
+) -> None:
+    record_date = today_for(assigned_store)
+    respx_mock.get("https://api.open-meteo.com/v1/forecast").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "daily": {
+                    "time": [record_date.isoformat()],
+                    "weather_code": [2],
+                    "temperature_2m_max": [27.5],
+                    "temperature_2m_min": [18.1],
+                    "precipitation_sum": [0.2],
+                }
+            },
+        )
+    )
+    forged = ledger_payload | {
+        "weather_auto": "伪造",
+        "weather_code": 999,
+        "temperature_max": 99,
+        "precipitation": 99,
+    }
+
+    created = await auth_client.put(
+        f"/api/ledger/{assigned_store.id}/{record_date.isoformat()}", json=forged
+    )
+    assert created.status_code == 201
+    record = await auth_client.get(
+        f"/api/ledger/{assigned_store.id}", params={"date": record_date.isoformat()}
+    )
+    assert record.json()["weather"] == "晴"
+    assert record.json()["weather_auto"] == "多云"
+    assert record.json()["weather_code"] == 2
+    assert record.json()["temperature_max"] == "27.50"
+    assert record.json()["precipitation"] == "0.20"
+
+
+async def test_put_still_saves_when_weather_lookup_fails(
+    auth_client: AsyncClient,
+    assigned_store: AssignedStore,
+    ledger_payload: dict,
+    respx_mock,
+) -> None:
+    record_date = today_for(assigned_store)
+    respx_mock.get("https://api.open-meteo.com/v1/forecast").mock(
+        side_effect=httpx.TimeoutException("slow")
+    )
+
+    response = await auth_client.put(
+        f"/api/ledger/{assigned_store.id}/{record_date.isoformat()}", json=ledger_payload
+    )
+
+    assert response.status_code == 201
 
 
 async def test_same_date_requires_overwrite_flag(

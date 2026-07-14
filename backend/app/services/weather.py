@@ -1,0 +1,119 @@
+from dataclasses import dataclass
+from datetime import date, datetime
+from typing import Any, Protocol
+from zoneinfo import ZoneInfo
+
+import httpx
+
+from app.models.identity import Store
+
+
+@dataclass(frozen=True)
+class WeatherResult:
+    weather: str
+    weather_code: int
+    temperature_max: float
+    temperature_min: float
+    precipitation: float
+
+
+def weather_label(code: int) -> str:
+    if code == 0:
+        return "晴"
+    if code in {1, 2, 3}:
+        return "多云"
+    if code in {45, 48}:
+        return "雾"
+    if code in {51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82}:
+        return "雨"
+    if code in {71, 73, 75, 77, 85, 86}:
+        return "雪"
+    if code in {95, 96, 99}:
+        return "雷雨"
+    return "未知"
+
+
+class WeatherProvider(Protocol):
+    async def get_daily(self, store: Store, target: date) -> WeatherResult | None: ...
+
+
+class OpenMeteoProvider:
+    def __init__(self, client: httpx.AsyncClient | None = None):
+        self.client = client
+
+    async def _get(self, url: str, **kwargs: Any) -> httpx.Response:
+        if self.client is not None:
+            return await self.client.get(url, **kwargs)
+        async with httpx.AsyncClient() as client:
+            return await client.get(url, **kwargs)
+
+    async def get_daily(self, store: Store, target: date) -> WeatherResult | None:
+        today = datetime.now(ZoneInfo(store.timezone)).date()
+        base = (
+            "https://api.open-meteo.com/v1/forecast"
+            if target >= today
+            else "https://archive-api.open-meteo.com/v1/archive"
+        )
+        params = {
+            "latitude": float(store.latitude),
+            "longitude": float(store.longitude),
+            "start_date": target.isoformat(),
+            "end_date": target.isoformat(),
+            "timezone": store.timezone,
+            "daily": ("weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum"),
+        }
+        try:
+            response = await self._get(base, params=params, timeout=8)
+            response.raise_for_status()
+            daily = response.json()["daily"]
+            code = int(daily["weather_code"][0])
+            return WeatherResult(
+                weather=weather_label(code),
+                weather_code=code,
+                temperature_max=float(daily["temperature_2m_max"][0]),
+                temperature_min=float(daily["temperature_2m_min"][0]),
+                precipitation=float(daily["precipitation_sum"][0]),
+            )
+        except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError):
+            return None
+
+    async def geocode(self, query: str) -> list[dict[str, str | float]]:
+        try:
+            response = await self._get(
+                "https://geocoding-api.open-meteo.com/v1/search",
+                params={"name": query.strip(), "count": 10, "language": "zh", "format": "json"},
+                timeout=8,
+            )
+            response.raise_for_status()
+            candidates = []
+            for item in response.json().get("results", []):
+                candidates.append(
+                    {
+                        "name": str(item["name"]),
+                        "latitude": float(item["latitude"]),
+                        "longitude": float(item["longitude"]),
+                        "country": str(item["country"]),
+                        "timezone": str(item["timezone"]),
+                    }
+                )
+            return candidates
+        except Exception:
+            return []
+
+
+class WeatherService:
+    def __init__(self, primary: WeatherProvider, fallback: WeatherProvider | None = None):
+        self.primary = primary
+        self.fallback = fallback
+
+    async def get_daily(self, store: Store, target: date) -> WeatherResult | None:
+        try:
+            result = await self.primary.get_daily(store, target)
+        except Exception:
+            result = None
+        if result is not None or self.fallback is None:
+            return result
+        try:
+            return await self.fallback.get_daily(store, target)
+        except Exception:
+            return None

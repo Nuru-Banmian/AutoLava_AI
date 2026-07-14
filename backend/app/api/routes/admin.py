@@ -3,7 +3,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
@@ -279,6 +279,13 @@ async def list_user_operations(user_id: int, session: Session) -> list[dict[str,
         )
     ).all()
     return [_audit_payload(operation) for operation in operations]
+
+
+@router.get("/stores/geocode")
+async def geocode_store(
+    request: Request, query: Annotated[str, Query(min_length=1)]
+) -> list[dict[str, str | float]]:
+    return await request.app.state.open_meteo_provider.geocode(query)
 
 
 @router.get("/stores")
