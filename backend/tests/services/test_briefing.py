@@ -23,6 +23,12 @@ class StubWeatherService:
         return self.results.get(target)
 
 
+@pytest.fixture(autouse=True)
+async def dispose_global_engine_after_test():
+    yield
+    await engine.dispose()
+
+
 @pytest.fixture
 async def store(store_factory) -> Store:
     return await store_factory(name="Briefing", timezone="Europe/Berlin")

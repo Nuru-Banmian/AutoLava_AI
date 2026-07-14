@@ -1,0 +1,41 @@
+# Phase 1 SDD Progress
+
+- Preflight: complete (Git 2.53.0, isolated worktree on `feature/phase-1-foundation`)
+- Environment: `D:\work\myself\AI-try\AutoLava-AI\.conda` (Python 3.12.13)
+- Baseline: clean repository; no project manifests or test suite existed before Task 1
+- Task 1: complete (commits b969544..8541a1f, review clean; task quality approved)
+- Task 2: complete (commits 8541a1f..011fd39, review clean; task quality approved)
+- Task 3: complete (commits 011fd39..c11d384, review clean; task quality approved)
+- Task 4: complete (commits c11d384..62b8480, review clean; task quality approved)
+- Task 5: complete (commits 62b8480..09e5300, review clean; task quality approved)
+- Task 6: complete (commits 09e5300..166e2ac, review clean; task quality approved)
+- Task 7: complete (commits f52ed3a..501ba81; independent review initially found 1 Critical and 3 Important, all fixed and re-review approved with no remaining Critical/Important)
+- Task 8: complete (commit 1876bed; independent review approved with no Critical/Important)
+- Task 9: complete (commits 18a46b4..a87da44; independent review initially found 6 Important, all fixed and re-review approved with no Critical/Important)
+- Task 10: complete (commits 92bcc5f..b622e2c; independent review initially found 1 Critical and 7 Important, then a >200-record category-catalog Important; all fixed and final re-review approved with no Critical/Important/Minor)
+- Minor findings: Task 1 UI primitives use `animate-in`/`animate-out` without an animation utility provider; defer to final whole-branch review.
+- Minor findings: Task 4 duplicate-username regression does not explicitly assert that the failed mutation creates no audit row; defer to final whole-branch review.
+- Minor findings: Task 5 recent ledger `days` has no upper bound and can overflow date arithmetic; defer to final whole-branch review.
+- Minor findings: Task 5 broadly translates any insert `IntegrityError` to overwrite confirmation instead of only the store/date uniqueness conflict; defer to final whole-branch review.
+- Minor findings: Task 6 schema regression does not explicitly assert `rollback_of_audit_id` foreign-key `ondelete == "CASCADE"`; defer to final whole-branch review.
+- Minor findings: Task 7 creates a fresh production `httpx.AsyncClient` per Open-Meteo request instead of reusing a lifespan-managed pool; defer to final whole-branch review.
+- Minor findings: Task 7 ledger weather enrichment runs before cheap future-date/overwrite preflight; defer to final whole-branch review.
+- Minor findings: Task 7 retains two older scheduler lifecycle tests with millisecond sleeps; event-driven concurrency regressions cover the high-risk paths.
+- Minor findings: Task 7 briefing updates use application `datetime.now()` while inserts use database `func.now()`; unify the time source later.
+- Minor findings: Task 8 charts has no maximum date-span limit and loads all matching ORM records/items; capacity hardening is deferred until supported range is defined.
+- Minor findings: Task 8 tests do not directly compare every non-composition group under explicit category filtering or cover mixed unknown/foreign category IDs; static review found implementation correct.
+- Minor findings: Task 9 navigation links expose `aria-current` but have no visual active style; defer to UI polish.
+- Minor findings: Task 9 per-store invalidation tests do not prewarm sibling keys, and responsive tests assert Tailwind classes rather than real viewport/overlap behavior.
+- Environment fix: added backend runtime dependency `cryptography` in `b1ca108` for MySQL `caching_sha2_password`; installed only in project `.conda`; scoped DB credential rotated after traceback exposure.
+- Final verification: 105 backend tests passed; frontend test/build passed; Ruff/Alembic/diff clean.
+- Git checkpoint: `feature/phase-1-foundation` pushed to `origin` at `f52ed3a`; local and remote heads match.
+- Task 7 verification: 139 backend tests passed; Ruff/Alembic/diff clean; no test path uses live Open-Meteo.
+- Git checkpoint: `feature/phase-1-foundation` pushed to `origin` at `501ba81`; local and remote heads match.
+- Task 8 verification: 151 backend tests passed; Ruff/Alembic/diff clean; independent review approved.
+- Git checkpoint: `feature/phase-1-foundation` pushed to `origin` at `1876bed`; local and remote heads match.
+- Task 9 verification: 27 frontend tests passed; production build and diff clean; independent re-review approved.
+- Git checkpoint: `feature/phase-1-foundation` pushed to `origin` at `a87da44`; local and remote heads match.
+- Task 10 verification: 58 frontend tests passed; responsive Playwright 3/3 passed; production build and diff clean; independent final re-review approved with no findings.
+- Git checkpoint: `feature/phase-1-foundation` pushed to `origin` at `b622e2c`; local and remote heads match.
+- Task 11: complete locally (release package, idempotent administrator bootstrap, host-MySQL two-service Compose, Nginx proxy, and CI release gate); no push performed.
+- Task 11 verification: 158 backend tests passed with 89% coverage; Ruff passed; 58 frontend tests and Playwright 3/3 passed; production build and static deployment contracts passed. Local Compose config/build skipped because Docker CLI is absent.

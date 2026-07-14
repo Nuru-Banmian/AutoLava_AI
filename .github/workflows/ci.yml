@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci-only-root-password
+          MYSQL_DATABASE: autolava_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pci-only-root-password"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      AUTOLAVA_DATABASE_URL: mysql+asyncmy://root:ci-only-root-password@127.0.0.1:3306/autolava_test
+      AUTOLAVA_JWT_SECRET: ci-only-jwt-secret-with-at-least-32-bytes
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - run: python -m pip install -e ".[dev]"
+      - run: alembic upgrade head
+      - run: ruff check .
+      - run: pytest --cov=app --cov-report=term-missing
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test
+
+  containers:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    env:
+      AUTOLAVA_DATABASE_URL: mysql+asyncmy://autolava:ci-placeholder@host.docker.internal:3306/autolava
+      AUTOLAVA_JWT_SECRET: ci-placeholder-jwt-secret-with-at-least-32-bytes
+      AUTOLAVA_BOOTSTRAP_USERNAME: ci-placeholder-admin
+      AUTOLAVA_BOOTSTRAP_PASSWORD: ci-placeholder-password
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose config
+      - run: docker compose build

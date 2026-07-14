@@ -1,0 +1,20 @@
+services:
+  autolava-api:
+    build: ./backend
+    restart: unless-stopped
+    environment:
+      AUTOLAVA_ENVIRONMENT: production
+      AUTOLAVA_DATABASE_URL: ${AUTOLAVA_DATABASE_URL}
+      AUTOLAVA_JWT_SECRET: ${AUTOLAVA_JWT_SECRET}
+      AUTOLAVA_COOKIE_SECURE: "true"
+      AUTOLAVA_BOOTSTRAP_USERNAME: ${AUTOLAVA_BOOTSTRAP_USERNAME}
+      AUTOLAVA_BOOTSTRAP_PASSWORD: ${AUTOLAVA_BOOTSTRAP_PASSWORD}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+  autolava-web:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - autolava-api
