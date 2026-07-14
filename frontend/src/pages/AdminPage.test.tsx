@@ -1,0 +1,186 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { http, HttpResponse } from "msw";
+import { setupServer } from "msw/node";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+
+import { AdminPage } from "@/pages/AdminPage";
+
+const server = setupServer();
+
+const emptyLists = [
+  http.get("/api/admin/users", () => HttpResponse.json([])),
+  http.get("/api/admin/stores", () => HttpResponse.json([])),
+  http.get("/api/admin/alerts", () => HttpResponse.json([])),
+  http.get("/api/admin/task-logs", () => HttpResponse.json([])),
+];
+
+beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
+
+function renderAdmin() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <AdminPage />
+    </QueryClientProvider>,
+  );
+}
+
+function activateTab(name: string) {
+  const tab = screen.getByRole("tab", { name });
+  fireEvent.mouseDown(tab, { button: 0, ctrlKey: false });
+  fireEvent.mouseUp(tab, { button: 0, ctrlKey: false });
+  fireEvent.click(tab);
+}
+
+describe("AdminPage", () => {
+  it("offers all six administration areas", async () => {
+    server.use(...emptyLists);
+    renderAdmin();
+
+    expect(await screen.findByRole("tab", { name: "用户" })).toBeInTheDocument();
+    for (const name of ["门店", "成员", "收入分类", "告警", "任务日志"]) {
+      expect(screen.getByRole("tab", { name })).toBeInTheDocument();
+    }
+  });
+
+  it("creates a user and refetches only the exact users list", async () => {
+    let userFetches = 0;
+    let storeFetches = 0;
+    let posted: unknown;
+    server.use(
+      http.get("/api/admin/users", () => {
+        userFetches += 1;
+        return HttpResponse.json([]);
+      }),
+      http.get("/api/admin/stores", () => {
+        storeFetches += 1;
+        return HttpResponse.json([]);
+      }),
+      http.get("/api/admin/alerts", () => HttpResponse.json([])),
+      http.get("/api/admin/task-logs", () => HttpResponse.json([])),
+      http.post("/api/admin/users", async ({ request }) => {
+        posted = await request.json();
+        return HttpResponse.json({ id: 3, username: "operator", role: "user", is_active: true }, { status: 201 });
+      }),
+    );
+    renderAdmin();
+    await waitFor(() => expect(userFetches).toBe(1));
+    await waitFor(() => expect(storeFetches).toBe(1));
+
+    fireEvent.change(screen.getByLabelText("新用户名"), { target: { value: "operator" } });
+    fireEvent.change(screen.getByLabelText("初始密码"), { target: { value: "password-123" } });
+    fireEvent.click(screen.getByRole("button", { name: "添加用户" }));
+
+    await waitFor(() => expect(userFetches).toBe(2));
+    expect(storeFetches).toBe(1);
+    expect(posted).toEqual({ username: "operator", password: "password-123", role: "user" });
+  });
+
+  it("shows an API authorization error", async () => {
+    server.use(
+      http.get("/api/admin/users", () => HttpResponse.json({ detail: "Admin access required" }, { status: 403 })),
+      ...emptyLists.slice(1),
+    );
+    renderAdmin();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Admin access required");
+  });
+
+  it("creates a store using the backend contract and refetches the exact store list", async () => {
+    let storeFetches = 0;
+    let posted: unknown;
+    server.use(
+      http.get("/api/admin/users", () => HttpResponse.json([])),
+      http.get("/api/admin/stores", () => {
+        storeFetches += 1;
+        return HttpResponse.json([]);
+      }),
+      http.get("/api/admin/alerts", () => HttpResponse.json([])),
+      http.get("/api/admin/task-logs", () => HttpResponse.json([])),
+      http.post("/api/admin/stores", async ({ request }) => {
+        posted = await request.json();
+        return HttpResponse.json({ id: 9, name: "Roma", address: "Via Uno", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true }, { status: 201 });
+      }),
+    );
+    renderAdmin();
+    await screen.findByRole("tab", { name: "门店" });
+    activateTab("门店");
+    fireEvent.change(await screen.findByLabelText("门店名称"), { target: { value: "Roma" } });
+    fireEvent.change(screen.getByLabelText("地址"), { target: { value: "Via Uno" } });
+    fireEvent.change(screen.getByLabelText("纬度"), { target: { value: "41.9" } });
+    fireEvent.change(screen.getByLabelText("经度"), { target: { value: "12.5" } });
+    fireEvent.click(screen.getByRole("button", { name: "添加门店" }));
+
+    await waitFor(() => expect(storeFetches).toBe(2));
+    expect(posted).toEqual({ name: "Roma", address: "Via Uno", latitude: 41.9, longitude: 12.5, timezone: "Europe/Rome" });
+  });
+
+  it("loads and replaces members for a selected store, then refetches that exact member list", async () => {
+    let memberFetches = 0;
+    let replaced: unknown;
+    server.use(
+      http.get("/api/admin/users", () => HttpResponse.json([
+        { id: 1, username: "admin", role: "admin", is_active: true },
+        { id: 2, username: "operator", role: "user", is_active: true },
+      ])),
+      http.get("/api/admin/stores", () => HttpResponse.json([
+        { id: 9, name: "Roma", address: "Via Uno", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true },
+      ])),
+      http.get("/api/admin/alerts", () => HttpResponse.json([])),
+      http.get("/api/admin/task-logs", () => HttpResponse.json([])),
+      http.get("/api/admin/stores/9/members", () => {
+        memberFetches += 1;
+        return HttpResponse.json([{ id: 1, username: "admin", role: "admin", is_active: true }]);
+      }),
+      http.put("/api/admin/stores/9/members", async ({ request }) => {
+        replaced = await request.json();
+        return HttpResponse.json({ store_id: 9, user_ids: [1, 2] });
+      }),
+    );
+    renderAdmin();
+    await screen.findByRole("tab", { name: "成员" });
+    activateTab("成员");
+    fireEvent.change(await screen.findByLabelText("成员门店"), { target: { value: "9" } });
+    await waitFor(() => expect(screen.getByLabelText("admin")).toBeChecked());
+    fireEvent.click(screen.getByLabelText("operator"));
+    fireEvent.click(screen.getByRole("button", { name: "保存成员" }));
+
+    await waitFor(() => expect(memberFetches).toBe(2));
+    expect(replaced).toEqual({ user_ids: [1, 2] });
+  });
+
+  it("loads and creates categories for a selected store, then refetches that exact category list", async () => {
+    let categoryFetches = 0;
+    let posted: unknown;
+    server.use(
+      http.get("/api/admin/users", () => HttpResponse.json([])),
+      http.get("/api/admin/stores", () => HttpResponse.json([
+        { id: 9, name: "Roma", address: "Via Uno", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true },
+      ])),
+      http.get("/api/admin/alerts", () => HttpResponse.json([])),
+      http.get("/api/admin/task-logs", () => HttpResponse.json([])),
+      http.get("/api/admin/income-categories", ({ request }) => {
+        expect(new URL(request.url).searchParams.get("store_id")).toBe("9");
+        categoryFetches += 1;
+        return HttpResponse.json([]);
+      }),
+      http.post("/api/admin/income-categories", async ({ request }) => {
+        posted = await request.json();
+        return HttpResponse.json({ id: 4, store_id: 9, name: "现金", include_in_total: true, is_active: true, sort_order: 2 }, { status: 201 });
+      }),
+    );
+    renderAdmin();
+    await screen.findByRole("tab", { name: "收入分类" });
+    activateTab("收入分类");
+    fireEvent.change(await screen.findByLabelText("分类门店"), { target: { value: "9" } });
+    fireEvent.change(await screen.findByLabelText("分类名称"), { target: { value: "现金" } });
+    fireEvent.change(screen.getByLabelText("排序"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "添加分类" }));
+
+    await waitFor(() => expect(categoryFetches).toBe(2));
+    expect(posted).toEqual({ store_id: 9, name: "现金", include_in_total: true, sort_order: 2 });
+  });
+});
