@@ -12,7 +12,10 @@ database accepts connections from Docker through `host.docker.internal`.
 1. Copy `.env.example` to `.env`.
 2. Replace every `change-me` value. Use a long random JWT secret and a strong bootstrap
    password; do not commit `.env`.
-3. Start the release:
+3. Terminate HTTPS in a production reverse proxy or load balancer before traffic reaches the
+   published web port. Production requires `AUTOLAVA_COOKIE_SECURE=true` so browsers send the
+   authentication cookie only over HTTPS.
+4. Start the release:
 
    ```sh
    docker compose up -d --build
@@ -20,6 +23,11 @@ database accepts connections from Docker through `host.docker.internal`.
 
 The API container applies Alembic migrations before starting. The web container serves the
 single-page application on port 80 and proxies `/api/` and `/health` to the API.
+
+For deliberate local HTTP evaluation only, set `AUTOLAVA_COOKIE_SECURE=false`. This weakens
+cookie transport security and must not be used for an internet-accessible or production
+deployment. Compose intentionally remains a two-container package and does not add a TLS or
+database container.
 
 ## First administrator
 

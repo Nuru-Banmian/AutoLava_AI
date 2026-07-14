@@ -19,7 +19,7 @@ def test_compose_contains_only_api_and_web_with_host_database_configuration() ->
         "AUTOLAVA_ENVIRONMENT": "production",
         "AUTOLAVA_DATABASE_URL": "${AUTOLAVA_DATABASE_URL}",
         "AUTOLAVA_JWT_SECRET": "${AUTOLAVA_JWT_SECRET}",
-        "AUTOLAVA_COOKIE_SECURE": "true",
+        "AUTOLAVA_COOKIE_SECURE": "${AUTOLAVA_COOKIE_SECURE:-true}",
         "AUTOLAVA_BOOTSTRAP_USERNAME": "${AUTOLAVA_BOOTSTRAP_USERNAME}",
         "AUTOLAVA_BOOTSTRAP_PASSWORD": "${AUTOLAVA_BOOTSTRAP_PASSWORD}",
     }
@@ -42,7 +42,10 @@ def test_images_and_nginx_define_the_release_boundaries() -> None:
 
 
 def test_ci_runs_backend_frontend_browser_and_container_release_gates() -> None:
-    ci = read(".github/workflows/ci.yml")
+    ci_text = read(".github/workflows/ci.yml")
+    workflow = yaml.safe_load(ci_text)
+    containers = workflow["jobs"]["containers"]
+    commands = [step["run"] for step in containers["steps"] if "run" in step]
 
     for contract in (
         "mysql:8.4",
@@ -56,7 +59,18 @@ def test_ci_runs_backend_frontend_browser_and_container_release_gates() -> None:
         "docker compose config",
         "docker compose build",
     ):
-        assert contract in ci
+        assert contract in ci_text
+    assert containers["services"]["mysql"]["image"] == "mysql:8.4"
+    assert "@host.docker.internal:3306/autolava" in containers["env"][
+        "AUTOLAVA_DATABASE_URL"
+    ]
+    assert any("docker compose up -d --build" in command for command in commands)
+    assert any("nginx -t" in command for command in commands)
+    assert any("curl --fail" in command and "/health" in command for command in commands)
+    cleanup = containers["steps"][-1]
+    assert cleanup["if"] == "always()"
+    assert "docker compose logs --no-color || true" in cleanup["run"]
+    assert "docker compose down" in cleanup["run"]
 
 
 def test_environment_example_and_readme_document_bootstrap_without_real_secrets() -> None:
@@ -66,10 +80,14 @@ def test_environment_example_and_readme_document_bootstrap_without_real_secrets(
     for key in (
         "AUTOLAVA_DATABASE_URL",
         "AUTOLAVA_JWT_SECRET",
+        "AUTOLAVA_COOKIE_SECURE",
         "AUTOLAVA_BOOTSTRAP_USERNAME",
         "AUTOLAVA_BOOTSTRAP_PASSWORD",
     ):
         assert f"{key}=" in environment
     assert "development-only-secret" not in environment
+    assert "AUTOLAVA_COOKIE_SECURE=true" in environment
     assert "python -m app.scripts.create_admin" in readme
     assert "docker compose up -d --build" in readme
+    assert "HTTPS" in readme
+    assert "AUTOLAVA_COOKIE_SECURE=false" in readme

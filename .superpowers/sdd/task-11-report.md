@@ -27,16 +27,20 @@
   on the second execution, and preservation of an existing disabled worker's hash, role, and
   active state.
 
-## Verification and diagnosed pre-existing test issue
+## Verification and diagnosed briefing concurrency issue
 
 - The first two full backend coverage runs each passed 157 tests and failed the existing
   concurrent briefing test. The failing test passed alone 3/3 but failed reliably after the
   preceding global-engine transaction test.
-- Root cause was pooled async MySQL connections crossing pytest function-scoped event loops in
-  the briefing module, whose direct global-engine tests bypassed the standard fixture cleanup.
-  A test-only autouse fixture now disposes that engine after each briefing test; the reproducing
-  two-test sequence passed 2/2 afterward. No briefing business code changed.
-- `python -m pytest --cov=app --cov-report=term-missing`: 158 passed, 89% total coverage, with
+- The initial pooled-connection/event-loop diagnosis was incomplete. During re-review, ordered
+  module reproduction showed the failure was timing-dependent even with engine disposal. Both
+  concurrent sessions establish a MySQL `REPEATABLE READ` snapshot before the upsert; the
+  duplicate updater's non-locking consistent read could therefore miss the newly inserted row.
+- The post-upsert lookup is now a `SELECT ... FOR UPDATE` current read. The prior engine-disposal
+  fixture was removed, the formerly failing ordered sequence passed twice, and the regression
+  now repeats the concurrent path three times while proving both callers return the same single
+  persisted card.
+- `python -m pytest --cov=app --cov-report=term-missing`: 174 passed, 89% total coverage, with
   one existing Starlette `httpx` deprecation warning.
 - `python -m ruff check .`: passed.
 - `npm test`: 10 files and 58 tests passed.
@@ -49,3 +53,24 @@
   performed.
 
 The final commit SHA is supplied in the handoff because a commit cannot contain its own object ID.
+
+## Re-review hardening
+
+- TDD concurrency RED: two coordinated real MySQL sessions returned one success and one unique
+  constraint `IntegrityError`. The bootstrap now uses validated MySQL `INSERT IGNORE` and its
+  affected-row count, so simultaneous attempts complete normally as one created/one existing.
+- Bootstrap credentials reuse the `UserCreate` 3..80 username and 8..128 password contract,
+  reject whitespace-only passwords, and emit field-specific errors without credential values.
+- Long passwords use a versioned `$autolava-bcrypt-sha256$v1$` format before bcrypt. Direct
+  regressions cover 128 ASCII characters, a Unicode password exceeding 72 UTF-8 bytes, wrong
+  passwords, the 255-character database field limit, and legacy raw bcrypt verification. A
+  128-character bootstrapped administrator also logs in successfully.
+- Compose exposes `AUTOLAVA_COOKIE_SECURE` with a secure `true` default. Deployment documentation
+  requires external HTTPS termination in production and labels `false` as local HTTP evaluation
+  only; the package remains exactly two containers.
+- The CI container job provisions MySQL on the runner, reaches it from the API container through
+  `host.docker.internal`, keeps explicit config/build gates, starts the release, validates Nginx,
+  retries proxied `/health`, and always captures logs and tears down the stack.
+- Re-review focused suite: 21 passed. Final gates: 174 backend tests with 89% coverage, Ruff clean,
+  58 frontend tests, production build, and Playwright 3/3. Local Docker execution remained
+  skipped because the Docker CLI is absent.

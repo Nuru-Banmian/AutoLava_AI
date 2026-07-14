@@ -132,6 +132,26 @@ def test_password_and_jwt_primitives() -> None:
     assert security.decode_access_token(remember_token) == 42
 
 
+@pytest.mark.parametrize("password", ["p" * 128, "界" * 30])
+def test_password_hashing_supports_long_ascii_and_unicode_passwords(password: str) -> None:
+    security = load_feature_module("app.core.security")
+
+    password_hash = security.hash_password(password)
+
+    assert password_hash.startswith("$autolava-bcrypt-sha256$v1$")
+    assert len(password_hash) <= 255
+    assert security.verify_password(password, password_hash)
+    assert not security.verify_password(f"{password}x", password_hash)
+
+
+def test_password_verification_keeps_accepting_legacy_raw_bcrypt_hashes() -> None:
+    security = load_feature_module("app.core.security")
+    legacy_hash = bcrypt.hashpw(b"legacy-password", bcrypt.gensalt()).decode()
+
+    assert security.verify_password("legacy-password", legacy_hash)
+    assert not security.verify_password("wrong-password", legacy_hash)
+
+
 def test_decode_requires_expiration_claim() -> None:
     security = load_feature_module("app.core.security")
     secret = get_settings().jwt_secret.get_secret_value()

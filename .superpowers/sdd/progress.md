@@ -39,3 +39,5 @@
 - Git checkpoint: `feature/phase-1-foundation` pushed to `origin` at `b622e2c`; local and remote heads match.
 - Task 11: complete locally (release package, idempotent administrator bootstrap, host-MySQL two-service Compose, Nginx proxy, and CI release gate); no push performed.
 - Task 11 verification: 158 backend tests passed with 89% coverage; Ruff passed; 58 frontend tests and Playwright 3/3 passed; production build and static deployment contracts passed. Local Compose config/build skipped because Docker CLI is absent.
+- Task 11 re-review: bootstrap concurrency, credential boundaries/long-password compatibility, secure-cookie deployment guidance, CI live container smoke tests, and briefing current-read concurrency were hardened; initial engine-disposal diagnosis was superseded and that fixture removed.
+- Task 11 re-review verification: 174 backend tests passed with 89% coverage; Ruff passed; 58 frontend tests, production build, Playwright 3/3, semantic YAML checks, and diff checks passed. Local Docker execution skipped because Docker CLI is absent; no push performed.

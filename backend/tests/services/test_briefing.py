@@ -23,12 +23,6 @@ class StubWeatherService:
         return self.results.get(target)
 
 
-@pytest.fixture(autouse=True)
-async def dispose_global_engine_after_test():
-    yield
-    await engine.dispose()
-
-
 @pytest.fixture
 async def store(store_factory) -> Store:
     return await store_factory(name="Briefing", timezone="Europe/Berlin")
@@ -161,7 +155,8 @@ async def test_regenerate_does_not_commit_callers_transaction() -> None:
         assert count == 0
 
 
-async def test_concurrent_first_regenerate_atomically_upserts_one_card() -> None:
+@pytest.mark.parametrize("repeat", range(3))
+async def test_concurrent_first_regenerate_atomically_upserts_one_card(repeat: int) -> None:
     store_id = await _committed_store()
     barrier = asyncio.Barrier(2)
 
@@ -170,14 +165,17 @@ async def test_concurrent_first_regenerate_atomically_upserts_one_card() -> None
             await barrier.wait()
             return WeatherResult("晴", 0, 30.0, 20.0, 0.0)
 
-    async def regenerate_and_commit() -> None:
+    async def regenerate_and_commit() -> list[DailyBriefing]:
         async with async_session_factory() as session:
-            await BriefingService(session, BarrierWeather()).regenerate(
+            cards = await BriefingService(session, BarrierWeather()).regenerate(
                 store_id, ["today"], local_date=date(2026, 7, 13)
             )
             await session.commit()
+            return cards
 
-    await asyncio.gather(regenerate_and_commit(), regenerate_and_commit())
+    results = await asyncio.gather(regenerate_and_commit(), regenerate_and_commit())
+    assert [len(cards) for cards in results] == [1, 1], repeat
+    assert results[0][0].id == results[1][0].id
 
     async with async_session_factory() as verify:
         cards = list(

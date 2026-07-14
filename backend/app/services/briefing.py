@@ -126,6 +126,7 @@ class BriefingService:
                     DailyBriefing.store_id == store_id,
                     DailyBriefing.card_type == card_type,
                 )
+                .with_for_update()
                 .execution_options(populate_existing=True)
             )
             assert card is not None

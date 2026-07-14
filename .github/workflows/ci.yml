@@ -59,12 +59,42 @@ jobs:
   containers:
     runs-on: ubuntu-latest
     needs: [backend, frontend]
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci-only-root-password
+          MYSQL_DATABASE: autolava
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pci-only-root-password"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
     env:
-      AUTOLAVA_DATABASE_URL: mysql+asyncmy://autolava:ci-placeholder@host.docker.internal:3306/autolava
+      AUTOLAVA_DATABASE_URL: mysql+asyncmy://root:ci-only-root-password@host.docker.internal:3306/autolava
       AUTOLAVA_JWT_SECRET: ci-placeholder-jwt-secret-with-at-least-32-bytes
+      AUTOLAVA_COOKIE_SECURE: "false"
       AUTOLAVA_BOOTSTRAP_USERNAME: ci-placeholder-admin
       AUTOLAVA_BOOTSTRAP_PASSWORD: ci-placeholder-password
     steps:
       - uses: actions/checkout@v4
       - run: docker compose config
       - run: docker compose build
+      - run: docker compose up -d --build
+      - run: docker compose exec -T autolava-web nginx -t
+      - name: Wait for proxied API health
+        run: |
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error http://127.0.0.1/health; then
+              exit 0
+            fi
+            sleep 2
+          done
+          exit 1
+      - name: Container diagnostics and cleanup
+        if: always()
+        run: |
+          docker compose logs --no-color || true
+          docker compose down --volumes --remove-orphans
