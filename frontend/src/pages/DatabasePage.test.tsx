@@ -2,12 +2,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { DatabasePage } from "@/pages/DatabasePage";
-import { StoreProvider } from "@/stores/StoreProvider";
+import { StoreProvider, useStore } from "@/stores/StoreProvider";
 
 const server = setupServer();
+function StoreControls() { const { select } = useStore(); return <><button onClick={() => select(1)}>choose1</button><button onClick={() => select(2)}>choose2</button></>; }
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
@@ -46,6 +47,7 @@ describe("DatabasePage", () => {
   });
 
   it("builds inclusive store-local quick ranges", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-07-14T10:00:00Z"));
     let last = new URL("http://x");
     renderPage([http.get("/api/database/1/records", ({ request }) => { last = new URL(request.url); return HttpResponse.json({ items: [], categories: [], sum_daily_revenue: "0", total: 0, page: 1, page_size: 50 }); })]);
     await screen.findByText("0 条 · 合计 €0.00"); fireEvent.click(screen.getByRole("button", { name: "本月" }));
@@ -53,6 +55,23 @@ describe("DatabasePage", () => {
     fireEvent.click(screen.getByRole("button", { name: "上月" })); await waitFor(() => expect(last.searchParams.get("start")).toBe("2026-06-01")); expect(last.searchParams.get("end")).toBe("2026-06-30");
     fireEvent.click(screen.getByRole("button", { name: "最近7天" })); await waitFor(() => expect(last.searchParams.get("start")).toBe("2026-07-08")); expect(last.searchParams.get("end")).toBe("2026-07-14");
     fireEvent.click(screen.getByRole("button", { name: "最近30天" })); await waitFor(() => expect(last.searchParams.get("start")).toBe("2026-06-15")); expect(last.searchParams.get("end")).toBe("2026-07-14");
+    vi.useRealTimers();
+  });
+
+  it("shows history errors separately and retries them", async () => {
+    let calls = 0; renderPage([http.get("/api/database/1/records", () => HttpResponse.json({ items: [], categories: [], sum_daily_revenue: "0", total: 0, page: 1, page_size: 50 })), http.get("/api/database/1/history", () => { calls += 1; return calls === 1 ? HttpResponse.json({ detail: "History unavailable" }, { status: 500 }) : HttpResponse.json([]); })]);
+    expect(await screen.findByRole("alert")).toHaveTextContent("History unavailable"); fireEvent.click(screen.getByRole("button", { name: "重试历史记录" })); await waitFor(() => expect(calls).toBe(2)); expect(screen.getByText("暂无修改历史")).toBeInTheDocument();
+  });
+
+  it("disables next page from total even when the current page is full", async () => {
+    const items = Array.from({ length: 50 }, (_, id) => ({ ...record, id: id + 1, date: `2026-06-${String((id % 28) + 1).padStart(2, "0")}` }));
+    renderPage([http.get("/api/database/1/records", () => HttpResponse.json({ items, categories: [], sum_daily_revenue: "500", total: 50, page: 1, page_size: 50 }))]);
+    expect(await screen.findByRole("button", { name: "下一页" })).toBeDisabled();
+  });
+
+  it("displays large decimal strings without Number precision conversion", async () => {
+    renderPage([http.get("/api/database/1/records", () => HttpResponse.json({ items: [{ ...record, daily_revenue: "9007199254740993.10" }], categories: [], sum_daily_revenue: "9007199254740993.10", total: 1, page: 1, page_size: 50 }))]);
+    expect(await screen.findByRole("cell", { name: "€9007199254740993.10" })).toBeInTheDocument(); expect(screen.getByText((_, element) => element?.textContent === "1 条 · 合计 €9007199254740993.10")).toBeInTheDocument();
   });
 
   it("requires confirmation for delete and rollback and edits with overwrite", async () => {
@@ -67,5 +86,15 @@ describe("DatabasePage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "编辑 2026-07-13" })); fireEvent.click(screen.getByRole("button", { name: "保存" })); await waitFor(() => expect(edited).toBe("true"));
     fireEvent.click(await screen.findByRole("button", { name: "删除 2026-07-13" })); expect(deleted).toBe(0); fireEvent.click(screen.getByRole("button", { name: "确认删除" })); await waitFor(() => expect(deleted).toBe(1));
     fireEvent.click(await screen.findByRole("button", { name: "回滚 #9" })); expect(rolled).toBe(0); fireEvent.click(screen.getByRole("button", { name: "确认回滚" })); await waitFor(() => expect(rolled).toBe(1));
+  });
+
+  it("binds delete to its original store and clears action dialogs on store changes", async () => {
+    let release!: () => void; const delayed = new Promise<void>((resolve) => { release = resolve; }); let deletedUrl = "";
+    server.use(http.get("/api/stores/accessible", () => HttpResponse.json([{ id: 1, name: "One", timezone: "Europe/Berlin" }, { id: 2, name: "Two", timezone: "Europe/Berlin" }])), http.get("/api/database/:store/records", () => HttpResponse.json({ items: [record], categories: [], sum_daily_revenue: "10", total: 1, page: 1, page_size: 50 })), http.get("/api/database/:store/history", () => HttpResponse.json([])), http.delete("/api/ledger/:store/:date", async ({ request }) => { deletedUrl = request.url; await delayed; return new HttpResponse(null, { status: 204 }); }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); render(<QueryClientProvider client={client}><StoreProvider><StoreControls /><DatabasePage /></StoreProvider></QueryClientProvider>);
+    fireEvent.click(await screen.findByRole("button", { name: "choose1" })); fireEvent.click(await screen.findByRole("button", { name: "删除 2026-07-13" })); expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("choose2")); await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument()); fireEvent.click(screen.getByRole("button", { name: "choose1" })); fireEvent.click(await screen.findByRole("button", { name: "删除 2026-07-13" }));
+    client.setQueryData(["dashboard", 1], true); client.setQueryData(["dashboard", 2], true); fireEvent.click(screen.getByRole("button", { name: "确认删除" })); fireEvent.click(screen.getByRole("button", { name: "choose2" })); release();
+    await waitFor(() => expect(deletedUrl).toContain("/api/ledger/1/2026-07-13")); await waitFor(() => expect(client.getQueryState(["dashboard", 1])?.isInvalidated).toBe(true)); expect(client.getQueryState(["dashboard", 2])?.isInvalidated).toBe(false);
   });
 });
