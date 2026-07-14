@@ -11,6 +11,7 @@ dependencies = [
   "apscheduler",
   "asyncmy",
   "bcrypt",
+  "cryptography",
   "fastapi",
   "httpx",
   "openpyxl",
