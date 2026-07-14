@@ -21,11 +21,11 @@ afterAll(() => server.close());
 
 function renderAdmin() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return render(
+  return { client, ...render(
     <QueryClientProvider client={client}>
       <AdminPage />
     </QueryClientProvider>,
-  );
+  ) };
 }
 
 function activateTab(name: string) {
@@ -222,5 +222,71 @@ describe("AdminPage", () => {
 
     await waitFor(() => expect(categoryFetches).toBe(2));
     expect(posted).toEqual({ store_id: 9, name: "现金", include_in_total: true, sort_order: 2 });
+  });
+
+  it("edits users and exposes their operation history", async () => {
+    let patch: unknown;
+    server.use(
+      http.get("/api/admin/users", () => HttpResponse.json([{ id: 2, username: "operator", role: "user", is_active: true }])),
+      http.get("/api/admin/stores", () => HttpResponse.json([])),
+      http.get("/api/admin/alerts", () => HttpResponse.json([])),
+      http.get("/api/admin/task-logs", () => HttpResponse.json([])),
+      http.patch("/api/admin/users/2", async ({ request }) => { patch = await request.json(); return HttpResponse.json({ id: 2, username: "operator", role: "user", is_active: false }); }),
+      http.get("/api/admin/users/2/operations", () => HttpResponse.json([{ id: 7, description: "Updated ledger", operation_type: "update", created_at: "2026-07-14T10:00:00" }])),
+    );
+    renderAdmin();
+    await screen.findByText("operator");
+    fireEvent.click(screen.getByRole("button", { name: "停用用户 operator" }));
+    await waitFor(() => expect(patch).toEqual({ is_active: false }));
+    fireEvent.change(screen.getByLabelText("新密码 operator"), { target: { value: "new-password" } });
+    fireEvent.click(screen.getByRole("button", { name: "修改密码 operator" }));
+    await waitFor(() => expect(patch).toEqual({ password: "new-password" }));
+    fireEvent.click(screen.getByRole("button", { name: "操作历史 operator" }));
+    expect(await screen.findByText("Updated ledger")).toBeInTheDocument();
+  });
+
+  it("edits stores and invalidates accessible stores", async () => {
+    let patch: unknown;
+    server.use(
+      http.get("/api/admin/users", () => HttpResponse.json([])),
+      http.get("/api/admin/stores", () => HttpResponse.json([{ id: 9, name: "Roma", address: "Via Uno", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true }])),
+      http.get("/api/admin/alerts", () => HttpResponse.json([])),
+      http.get("/api/admin/task-logs", () => HttpResponse.json([])),
+      http.patch("/api/admin/stores/9", async ({ request }) => { patch = await request.json(); return HttpResponse.json({ id: 9, name: "Milano", address: "Via Due", latitude: "45.4", longitude: "9.2", timezone: "Europe/Rome", is_active: true }); }),
+    );
+    const { client } = renderAdmin();
+    client.setQueryData(["stores"], [{ id: 9 }]);
+    activateTab("门店");
+    fireEvent.change(await screen.findByLabelText("门店名称 Roma"), { target: { value: "Milano" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存门店 Roma" }));
+    await waitFor(() => expect(patch).toMatchObject({ name: "Milano" }));
+    expect(client.getQueryState(["stores"])?.isInvalidated).toBe(true);
+  });
+
+  it("edits category behavior and invalidates only the affected store data", async () => {
+    let patch: unknown;
+    server.use(
+      http.get("/api/admin/users", () => HttpResponse.json([])),
+      http.get("/api/admin/stores", () => HttpResponse.json([{ id: 9, name: "Roma", address: "Via", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true }])),
+      http.get("/api/admin/alerts", () => HttpResponse.json([])),
+      http.get("/api/admin/task-logs", () => HttpResponse.json([])),
+      http.get("/api/admin/income-categories", () => HttpResponse.json([{ id: 4, store_id: 9, name: "现金", include_in_total: true, is_active: true, sort_order: 2 }])),
+      http.patch("/api/admin/income-categories/4", async ({ request }) => { patch = await request.json(); return HttpResponse.json({ id: 4, store_id: 9, name: "现金", include_in_total: false, is_active: true, sort_order: 1 }); }),
+    );
+    const { client } = renderAdmin();
+    client.setQueryData(["dashboard", 9], []); client.setQueryData(["dashboard", 10], []);
+    client.setQueryData(["charts", 9, ""], {}); client.setQueryData(["database", "records", 9, ""], {});
+    activateTab("收入分类");
+    await screen.findByRole("option", { name: "Roma" });
+    fireEvent.change(await screen.findByLabelText("分类门店"), { target: { value: "9" } });
+    await screen.findByLabelText("计入总收入 现金");
+    fireEvent.click(screen.getByLabelText("计入总收入 现金"));
+    fireEvent.change(screen.getByLabelText("排序 现金"), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存分类 现金" }));
+    await waitFor(() => expect(patch).toMatchObject({ include_in_total: false, sort_order: 1 }));
+    expect(client.getQueryState(["dashboard", 9])?.isInvalidated).toBe(true);
+    expect(client.getQueryState(["charts", 9, ""])?.isInvalidated).toBe(true);
+    expect(client.getQueryState(["database", "records", 9, ""])?.isInvalidated).toBe(true);
+    expect(client.getQueryState(["dashboard", 10])?.isInvalidated).toBe(false);
   });
 });

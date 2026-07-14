@@ -24,6 +24,7 @@ class AuditLog(Base):
     description: Mapped[str] = mapped_column(Text)
     requires_approval: Mapped[bool] = mapped_column(Boolean, default=False)
     approved: Mapped[bool] = mapped_column(Boolean, default=True)
+    rollbackable: Mapped[bool] = mapped_column(Boolean, default=True)
     rollback_of_audit_id: Mapped[int | None] = mapped_column(
         ForeignKey("audit_log.id", ondelete="CASCADE")
     )

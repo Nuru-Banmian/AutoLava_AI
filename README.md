@@ -23,6 +23,10 @@ database accepts connections from Docker through `host.docker.internal`.
 
 The API container applies Alembic migrations before starting. The web container serves the
 single-page application on port 80 and proxies `/api/` and `/health` to the API.
+The API is not published directly; the web container is the enforced trusted ingress and uses
+a bounded 10 MiB Nginx shared-memory zone to rate-limit `/api/auth/login` per client IP (five
+requests per minute with a burst of five). Keep the API container private behind this proxy.
+Production startup rejects missing, example, short JWT secrets and default database passwords.
 
 For deliberate local HTTP evaluation only, set `AUTOLAVA_COOKIE_SECURE=false`. This weakens
 cookie transport security and must not be used for an internet-accessible or production

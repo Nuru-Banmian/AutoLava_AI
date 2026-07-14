@@ -1,6 +1,10 @@
 from pathlib import Path
 
 import yaml
+import pytest
+from pydantic import ValidationError
+
+from app.core.config import Settings
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -17,8 +21,8 @@ def test_compose_contains_only_api_and_web_with_host_database_configuration() ->
     api = compose["services"]["autolava-api"]
     assert api["environment"] == {
         "AUTOLAVA_ENVIRONMENT": "production",
-        "AUTOLAVA_DATABASE_URL": "${AUTOLAVA_DATABASE_URL}",
-        "AUTOLAVA_JWT_SECRET": "${AUTOLAVA_JWT_SECRET}",
+        "AUTOLAVA_DATABASE_URL": "${AUTOLAVA_DATABASE_URL:?set a non-default production database URL}",
+        "AUTOLAVA_JWT_SECRET": "${AUTOLAVA_JWT_SECRET:?set a random production JWT secret}",
         "AUTOLAVA_COOKIE_SECURE": "${AUTOLAVA_COOKIE_SECURE:-true}",
         "AUTOLAVA_BOOTSTRAP_USERNAME": "${AUTOLAVA_BOOTSTRAP_USERNAME}",
         "AUTOLAVA_BOOTSTRAP_PASSWORD": "${AUTOLAVA_BOOTSTRAP_PASSWORD}",
@@ -91,3 +95,30 @@ def test_environment_example_and_readme_document_bootstrap_without_real_secrets(
     assert "docker compose up -d --build" in readme
     assert "HTTPS" in readme
     assert "AUTOLAVA_COOKIE_SECURE=false" in readme
+
+
+@pytest.mark.parametrize(
+    ("database_url", "jwt_secret"),
+    [
+        ("mysql+asyncmy://autolava:strong@db/autolava", ""),
+        ("mysql+asyncmy://autolava:strong@db/autolava", "development-only-secret"),
+        ("mysql+asyncmy://autolava:strong@db/autolava", "short-secret"),
+        ("mysql+asyncmy://autolava:autolava@db/autolava", "a" * 32),
+        ("mysql+asyncmy://autolava:change-me@db/autolava", "a" * 32),
+    ],
+)
+def test_production_settings_reject_weak_credentials(database_url: str, jwt_secret: str) -> None:
+    with pytest.raises(ValidationError):
+        Settings(environment="production", database_url=database_url, jwt_secret=jwt_secret)
+
+
+def test_development_defaults_remain_available() -> None:
+    settings = Settings(_env_file=None)
+    assert settings.environment == "development"
+
+
+def test_nginx_enforces_a_bounded_login_rate_limit() -> None:
+    nginx = read("frontend/nginx.conf")
+    assert "limit_req_zone $binary_remote_addr zone=login" in nginx
+    assert "location = /api/auth/login" in nginx
+    assert "limit_req zone=login" in nginx

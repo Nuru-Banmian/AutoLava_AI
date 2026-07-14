@@ -153,6 +153,59 @@ async def test_put_still_saves_when_weather_lookup_fails(
     assert response.status_code == 201
 
 
+async def test_create_update_and_delete_refresh_persisted_today_briefing(
+    auth_client: AsyncClient,
+    assigned_store: AssignedStore,
+    ledger_payload: dict,
+) -> None:
+    record_date = today_for(assigned_store)
+    path = f"/api/ledger/{assigned_store.id}/{record_date.isoformat()}"
+
+    created = await auth_client.put(path, json=ledger_payload)
+    assert created.status_code == 201
+    cards = (await auth_client.get(f"/api/dashboard/{assigned_store.id}")).json()
+    assert next(card for card in cards if card["card_type"] == "today")["content"] == (
+        "今天：天气暂时不可用；已记账，营业额 €200.00。"
+    )
+
+    updated = await auth_client.put(
+        path + "?overwrite=true",
+        json=ledger_payload | {"items": [
+            {"category_id": assigned_store.cash.id, "amount": "321.00"},
+            {"category_id": assigned_store.excluded.id, "amount": "80.00"},
+        ]},
+    )
+    assert updated.status_code == 200
+    cards = (await auth_client.get(f"/api/dashboard/{assigned_store.id}")).json()
+    assert "€321.00" in next(card for card in cards if card["card_type"] == "today")["content"]
+
+    deleted = await auth_client.delete(path)
+    assert deleted.status_code == 204
+    cards = (await auth_client.get(f"/api/dashboard/{assigned_store.id}")).json()
+    assert "还未记账" in next(card for card in cards if card["card_type"] == "today")["content"]
+
+
+async def test_briefing_refresh_failure_does_not_undo_committed_ledger(
+    auth_client: AsyncClient,
+    assigned_store: AssignedStore,
+    ledger_payload: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fail_refresh(*_args, **_kwargs):
+        raise RuntimeError("briefing storage unavailable")
+
+    monkeypatch.setattr("app.api.routes.ledger._refresh_briefing_after_commit", fail_refresh)
+    record_date = today_for(assigned_store)
+    response = await auth_client.put(
+        f"/api/ledger/{assigned_store.id}/{record_date.isoformat()}", json=ledger_payload
+    )
+    assert response.status_code == 201
+    stored = await auth_client.get(
+        f"/api/ledger/{assigned_store.id}/{record_date.isoformat()}"
+    )
+    assert stored.status_code == 200
+
+
 async def test_same_date_requires_overwrite_flag(
     auth_client: AsyncClient, assigned_store: AssignedStore, ledger_payload: dict
 ) -> None:

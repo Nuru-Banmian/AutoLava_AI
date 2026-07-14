@@ -70,8 +70,10 @@ class BriefingService:
             parts.append(f"活动：{record.activity.strip()}")
         return "；".join(parts) + "。"
 
-    async def _today(self, store: Store, local_date: date) -> str:
-        weather = await self._weather(store, local_date)
+    async def _today(
+        self, store: Store, local_date: date, weather_override: str | None = None
+    ) -> str:
+        weather = weather_override or await self._weather(store, local_date)
         record = await self._record(store.id, local_date)
         if record is None:
             status = "还未记账"
@@ -90,6 +92,7 @@ class BriefingService:
         card_types: list[str],
         *,
         local_date: date | None = None,
+        weather_overrides: dict[date, str] | None = None,
     ) -> list[DailyBriefing]:
         store = await self.session.get(Store, store_id)
         if store is None:
@@ -104,7 +107,9 @@ class BriefingService:
             if card_type == "yesterday":
                 content = await self._yesterday(store, local_date)
             elif card_type == "today":
-                content = await self._today(store, local_date)
+                content = await self._today(
+                    store, local_date, (weather_overrides or {}).get(local_date)
+                )
             elif card_type == "tomorrow":
                 content = await self._tomorrow(store, local_date)
             else:

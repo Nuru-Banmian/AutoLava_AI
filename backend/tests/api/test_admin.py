@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.audit import AuditLog
 from app.models.identity import StoreMember, StoreSetting
 from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
-from app.models.operations import ScheduledTaskLog, SystemAlert
+from app.models.operations import DailyBriefing, ScheduledTaskLog, SystemAlert
 
 
 @pytest.fixture
@@ -105,6 +105,33 @@ async def test_admin_geocode_is_normalized(admin_client, open_meteo_app, respx_m
             "timezone": "Europe/Rome",
         }
     ]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"name": " ", "address": "Via", "latitude": 45, "longitude": 9, "timezone": "Europe/Rome"},
+        {"name": "x" * 121, "address": "Via", "latitude": 45, "longitude": 9, "timezone": "Europe/Rome"},
+        {"name": "Roma", "address": " ", "latitude": 45, "longitude": 9, "timezone": "Europe/Rome"},
+        {"name": "Roma", "address": "x" * 256, "latitude": 45, "longitude": 9, "timezone": "Europe/Rome"},
+        {"name": "Roma", "address": "Via", "latitude": 91, "longitude": 9, "timezone": "Europe/Rome"},
+        {"name": "Roma", "address": "Via", "latitude": 45, "longitude": -181, "timezone": "Europe/Rome"},
+        {"name": "Roma", "address": "Via", "latitude": 45, "longitude": 9, "timezone": "Mars/Olympus"},
+    ],
+)
+async def test_store_create_rejects_invalid_boundary_values(admin_client, body) -> None:
+    assert (await admin_client.post("/api/admin/stores", json=body)).status_code == 422
+
+
+async def test_store_patch_and_category_boundaries_return_422(admin_client, store_factory) -> None:
+    store = await store_factory(name="Boundary")
+    assert (await admin_client.patch(f"/api/admin/stores/{store.id}", json={"timezone": "bad/zone"})).status_code == 422
+    assert (await admin_client.post("/api/admin/income-categories", json={
+        "store_id": store.id, "name": " ", "include_in_total": True, "sort_order": 0,
+    })).status_code == 422
+    assert (await admin_client.post("/api/admin/income-categories", json={
+        "store_id": store.id, "name": "x" * 101, "include_in_total": True, "sort_order": 0,
+    })).status_code == 422
 
 
 async def test_admin_can_create_list_patch_and_audit_users(
@@ -242,8 +269,9 @@ async def test_admin_lists_user_stores_and_operation_history(
         "before": {"value": 1},
         "after": {"value": 2},
         "description": "Changed a record",
-        "approved": True,
-        "created_at": operations.json()[0]["created_at"],
+            "approved": True,
+            "rollbackable": True,
+            "created_at": operations.json()[0]["created_at"],
     }
 
 
@@ -456,11 +484,22 @@ async def test_include_in_total_change_recomputes_and_audits_every_affected_reco
         )
     await db_session.flush()
 
+    db_session.add(
+        DailyBriefing(
+            store_id=store.id,
+            card_type="yesterday",
+            content="stale €35.00",
+        )
+    )
+    await db_session.flush()
+
     response = await admin_client.patch(
         f"/api/admin/income-categories/{included.id}",
         json={"include_in_total": False},
     )
     assert response.status_code == 200
+    dashboard = await admin_client.get(f"/api/dashboard/{store.id}")
+    assert dashboard.json()[0]["content"].startswith("昨天营业，营业额 €10.00")
     for record in records:
         await db_session.refresh(record)
         assert record.daily_revenue == Decimal("10.00")
@@ -481,11 +520,24 @@ async def test_include_in_total_change_recomputes_and_audits_every_affected_reco
     assert [audit.record_date for audit in ledger_audits] == [record.date for record in records]
     for audit in ledger_audits:
         assert audit.operation_type == "update"
+        assert audit.rollbackable is False
         assert audit.before_json["daily_revenue"] == "35.00"
         assert audit.after_json["daily_revenue"] == "10.00"
         assert audit.before_json["wash_count"] in (12, 13)
         assert audit.before_json["items"] == audit.after_json["items"]
         assert {item["amount"] for item in audit.before_json["items"]} == {"10.00", "25.00"}
+        assert {"created_at", "updated_at"} <= audit.before_json.keys()
+        assert {"created_at", "updated_at"} <= audit.before_json["items"][0].keys()
+
+    history = await admin_client.get(f"/api/database/{store.id}/history")
+    system_entries = [entry for entry in history.json() if entry["operation_source"] == "system"]
+    assert len(system_entries) == 2
+    assert all(entry["rollbackable"] is False for entry in system_entries)
+    denied = await admin_client.post(
+        f"/api/database/{store.id}/history/{system_entries[0]['id']}/rollback"
+    )
+    assert denied.status_code == 409
+    assert denied.json() == {"detail": "Audit entry is not rollbackable"}
 
 
 async def test_used_income_category_can_only_be_disabled(

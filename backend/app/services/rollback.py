@@ -31,6 +31,8 @@ class RollbackService:
         )
         if audit is None:
             raise HTTPException(404, "Audit entry not found")
+        if not audit.rollbackable:
+            raise HTTPException(409, "Audit entry is not rollbackable")
         return audit
 
     async def _lock_record(self, audit: AuditLog) -> StoreDailyRecord | None:

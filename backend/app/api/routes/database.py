@@ -155,6 +155,7 @@ def _audit_payload(audit: AuditLog, username: str) -> dict:
         "description": audit.description,
         "requires_approval": audit.requires_approval,
         "approved": audit.approved,
+        "rollbackable": audit.rollbackable,
         "created_at": audit.created_at,
     }
 
@@ -169,6 +170,8 @@ async def rollback_record(
     audit = await session.get(AuditLog, audit_id)
     if audit is None or audit.operation_domain != "ledger" or audit.store_id != store_id:
         raise HTTPException(404, "Audit entry not found")
+    if not audit.rollbackable:
+        raise HTTPException(409, "Audit entry is not rollbackable")
     restored = await RollbackService(session).rollback(audit_id, actor_id=access.user.id)
     return {
         "audit_id": audit_id,

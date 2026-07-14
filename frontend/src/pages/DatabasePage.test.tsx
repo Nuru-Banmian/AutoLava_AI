@@ -63,6 +63,15 @@ describe("DatabasePage", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("History unavailable"); fireEvent.click(screen.getByRole("button", { name: "重试历史记录" })); await waitFor(() => expect(calls).toBe(2)); expect(screen.getByText("暂无修改历史")).toBeInTheDocument();
   });
 
+  it("shows category recalculation history without an invalid rollback action", async () => {
+    renderPage([
+      http.get("/api/database/1/records", () => HttpResponse.json({ items: [], categories: [], sum_daily_revenue: "0", total: 0, page: 1, page_size: 50 })),
+      http.get("/api/database/1/history", () => HttpResponse.json([{ id: 12, record_id: 4, record_date: "2026-07-13", operation_type: "update", operation_source: "system", operator_user_id: 1, operator_username: "admin", before: record, after: record, description: "category recalculation", requires_approval: false, approved: true, rollbackable: false, created_at: "" }])),
+    ]);
+    expect(await screen.findByText("不可回滚")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "回滚 #12" })).not.toBeInTheDocument();
+  });
+
   it("disables next page from total even when the current page is full", async () => {
     const items = Array.from({ length: 50 }, (_, id) => ({ ...record, id: id + 1, date: `2026-06-${String((id % 28) + 1).padStart(2, "0")}` }));
     renderPage([http.get("/api/database/1/records", () => HttpResponse.json({ items, categories: [], sum_daily_revenue: "500", total: 50, page: 1, page_size: 50 }))]);

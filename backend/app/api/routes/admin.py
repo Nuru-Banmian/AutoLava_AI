@@ -1,7 +1,8 @@
 from collections.abc import Iterable
-from datetime import date
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated, Any
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import delete, select
@@ -22,7 +23,8 @@ from app.schemas.admin import (
     UserCreate,
     UserPatch,
 )
-from app.services.audit import add_admin_audit
+from app.services.audit import add_admin_audit, record_snapshot
+from app.services.briefing import BriefingService
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 AdminUser = Annotated[User, Depends(require_admin)]
@@ -75,37 +77,6 @@ def _category_payload(category: IncomeCategory) -> dict[str, Any]:
     }
 
 
-def _item_snapshot(item: DailyIncomeItem) -> dict[str, Any]:
-    return {
-        "id": item.id,
-        "category_id": item.category_id,
-        "amount": _decimal(item.amount),
-    }
-
-
-def _record_snapshot(record: StoreDailyRecord) -> dict[str, Any]:
-    return {
-        "id": record.id,
-        "store_id": record.store_id,
-        "date": record.date.isoformat(),
-        "daily_revenue": _decimal(record.daily_revenue),
-        "wash_count": record.wash_count,
-        "is_open": record.is_open,
-        "weather": record.weather,
-        "weather_auto": record.weather_auto,
-        "weather_code": record.weather_code,
-        "temperature_max": _decimal(record.temperature_max),
-        "temperature_min": _decimal(record.temperature_min),
-        "precipitation": _decimal(record.precipitation),
-        "activity": record.activity,
-        "weather_edited": record.weather_edited,
-        "scanned": record.scanned,
-        "created_by": record.created_by,
-        "updated_by": record.updated_by,
-        "items": [_item_snapshot(item) for item in sorted(record.items, key=lambda item: item.id)],
-    }
-
-
 def _audit_payload(audit: AuditLog) -> dict[str, Any]:
     return {
         "id": audit.id,
@@ -119,6 +90,7 @@ def _audit_payload(audit: AuditLog) -> dict[str, Any]:
         "after": audit.after_json,
         "description": audit.description,
         "approved": audit.approved,
+        "rollbackable": audit.rollbackable,
         "created_at": audit.created_at,
     }
 
@@ -172,6 +144,7 @@ def _add_ledger_recalculation_audit(
             description="Recomputed daily revenue after income category configuration change",
             requires_approval=False,
             approved=True,
+            rollbackable=False,
         )
     )
 
@@ -417,7 +390,11 @@ async def create_income_category(
 
 @router.patch("/income-categories/{category_id}")
 async def patch_income_category(
-    category_id: int, body: CategoryPatch, session: Session, actor: AdminUser
+    category_id: int,
+    body: CategoryPatch,
+    request: Request,
+    session: Session,
+    actor: AdminUser,
 ) -> dict[str, Any]:
     category = await session.get(IncomeCategory, category_id)
     if category is None:
@@ -438,7 +415,7 @@ async def patch_income_category(
                 .with_for_update()
             )
         )
-        before_records = {record.id: _record_snapshot(record) for record in records}
+        before_records = {record.id: record_snapshot(record) for record in records}
 
     for field, value in body.model_dump(exclude_none=True).items():
         setattr(category, field, value)
@@ -458,12 +435,15 @@ async def patch_income_category(
             totals[record_id] += amount
         for record in records:
             record.daily_revenue = totals[record.id]
+        await session.flush()
+        for record in records:
+            await session.refresh(record, attribute_names=["updated_at", "items"])
             _add_ledger_recalculation_audit(
                 session,
                 actor_id=actor.id,
                 record=record,
                 before=before_records[record.id],
-                after=_record_snapshot(record),
+                after=record_snapshot(record),
             )
 
     add_admin_audit(
@@ -477,6 +457,24 @@ async def patch_income_category(
         after=_category_payload(category),
     )
     await session.commit()
+    if records:
+        store = await session.get(Store, category.store_id)
+        if store is not None:
+            local_date = datetime.now(ZoneInfo(store.timezone)).date()
+            record_dates = {record.date for record in records}
+            card_types = []
+            if local_date - timedelta(days=1) in record_dates:
+                card_types.append("yesterday")
+            if local_date in record_dates:
+                card_types.append("today")
+            if card_types:
+                try:
+                    await BriefingService(
+                        session, request.app.state.weather_service
+                    ).regenerate(store.id, card_types, local_date=local_date)
+                    await session.commit()
+                except Exception:
+                    await session.rollback()
     return _category_payload(category)
 
 

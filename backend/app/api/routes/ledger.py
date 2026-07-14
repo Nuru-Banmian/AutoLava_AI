@@ -1,5 +1,6 @@
-from datetime import date
+from datetime import date, datetime, timedelta
 from typing import Annotated
+from zoneinfo import ZoneInfo
 
 import asyncio
 
@@ -10,10 +11,50 @@ from app.api.deps import Session, StoreAccess, require_store_access
 from app.api.routes.dashboard import get_weather_service
 from app.schemas.ledger import LedgerBody
 from app.services.audit import record_snapshot
+from app.services.briefing import BriefingService
 from app.services.ledger import LedgerService
 from app.services.weather import WeatherService
 
 router = APIRouter(prefix="/ledger", tags=["ledger"])
+
+
+async def _refresh_briefing_after_commit(
+    request: Request,
+    session: Session,
+    store,
+    record_date: date,
+    weather_overrides: dict[date, str] | None = None,
+) -> None:
+    local_date = datetime.now(ZoneInfo(store.timezone)).date()
+    card_type = (
+        "today"
+        if record_date == local_date
+        else "yesterday" if record_date == local_date - timedelta(days=1) else None
+    )
+    if card_type is None:
+        return
+    await BriefingService(session, get_weather_service(request)).regenerate(
+        store.id,
+        [card_type],
+        local_date=local_date,
+        weather_overrides=weather_overrides,
+    )
+    await session.commit()
+
+
+async def _safely_refresh_briefing(
+    request: Request,
+    session: Session,
+    store,
+    record_date: date,
+    weather_overrides: dict[date, str] | None = None,
+) -> None:
+    try:
+        await _refresh_briefing_after_commit(
+            request, session, store, record_date, weather_overrides
+        )
+    except Exception:
+        await session.rollback()
 
 
 @router.get("/{store_id}/recent")
@@ -84,6 +125,13 @@ async def put_record(
         actor=access.user,
         overwrite=overwrite,
     )
+    await _safely_refresh_briefing(
+        request,
+        session,
+        access.store,
+        record_date,
+        {record_date: result.weather if result is not None else "天气暂时不可用"},
+    )
     return JSONResponse(
         content={
             "id": record.id,
@@ -98,6 +146,7 @@ async def put_record(
 async def delete_record(
     store_id: int,
     record_date: date,
+    request: Request,
     session: Session,
     access: StoreAccess = Depends(require_store_access),
 ) -> Response:
@@ -106,4 +155,5 @@ async def delete_record(
         record_date=record_date,
         actor=access.user,
     )
+    await _safely_refresh_briefing(request, session, access.store, record_date)
     return Response(status_code=204)

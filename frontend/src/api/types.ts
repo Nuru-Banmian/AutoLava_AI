@@ -73,7 +73,7 @@ export interface RecordSnapshot {
   created_by_name?: string; updated_by_name?: string;
 }
 export interface DatabaseResponse { items: RecordSnapshot[]; categories: CategoryDescriptor[]; sum_daily_revenue: string; total: number; page: number; page_size: number }
-export interface AuditEntry { id: number; record_id: number | null; record_date: string | null; operation_type: string; operation_source: string; operator_user_id: number; operator_username: string; before: RecordSnapshot | null; after: RecordSnapshot | null; description: string; requires_approval: boolean; approved: boolean; created_at: string }
+export interface AuditEntry { id: number; record_id: number | null; record_date: string | null; operation_type: string; operation_source: string; operator_user_id: number; operator_username: string; before: RecordSnapshot | null; after: RecordSnapshot | null; description: string; requires_approval: boolean; approved: boolean; rollbackable: boolean; created_at: string }
 export interface BriefingCard { card_type: "yesterday" | "today" | "tomorrow"; content: string; generated_at: string }
 export interface WeatherResponse { weather: string | null; weather_code: number | null; temperature_max: number | null; temperature_min: number | null; precipitation: number | null }
 export interface ChartsResponse {
