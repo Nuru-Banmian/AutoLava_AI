@@ -1,12 +1,11 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy.orm import selectinload
 
 from app.models.identity import Store
 from app.models.ledger import StoreDailyRecord
@@ -30,7 +29,7 @@ class BackgroundRefreshScheduler:
         refresh: Callable[[], Awaitable[None]],
         *,
         interval_seconds: float = 3600,
-        timeout_seconds: float = 30,
+        timeout_seconds: float | None = None,
     ):
         self.refresh = refresh
         self.interval_seconds = interval_seconds
@@ -56,15 +55,69 @@ class BackgroundRefreshScheduler:
     async def _run(self) -> None:
         while True:
             try:
-                await asyncio.wait_for(self.refresh(), timeout=self.timeout_seconds)
+                if self.timeout_seconds is None:
+                    await self.refresh()
+                else:
+                    await asyncio.wait_for(self.refresh(), timeout=self.timeout_seconds)
             except Exception:
                 pass
             await asyncio.sleep(self.interval_seconds)
 
 
 def make_refresh_callback(
-    session_factory: async_sessionmaker[AsyncSession], weather_service: WeatherService
+    session_factory: async_sessionmaker[AsyncSession],
+    weather_service: WeatherService,
+    *,
+    store_concurrency: int = 4,
+    weather_timeout_seconds: float = 9,
 ) -> Callable[[], Awaitable[None]]:
+    class CachedWeatherService:
+        def __init__(self, results: dict[date, WeatherResult | None]):
+            self.results = results
+
+        async def get_daily(self, store: Store, target: date) -> WeatherResult | None:
+            return self.results.get(target)
+
+    async def refresh_store(store: Store) -> None:
+        today = datetime.now(ZoneInfo(store.timezone)).date()
+        weather_dates = [today - timedelta(days=1), today, today + timedelta(days=1)]
+
+        async def lookup(target: date) -> WeatherResult | None:
+            try:
+                return await asyncio.wait_for(
+                    weather_service.get_daily(store, target),
+                    timeout=weather_timeout_seconds,
+                )
+            except Exception:
+                return None
+
+        weather_values = await asyncio.gather(*(lookup(target) for target in weather_dates))
+        results = dict(zip(weather_dates, weather_values, strict=True))
+        cached_weather = CachedWeatherService(results)
+        async with session_factory() as session:
+            try:
+                records = list(
+                    await session.scalars(
+                        select(StoreDailyRecord)
+                        .where(
+                            StoreDailyRecord.store_id == store.id,
+                            StoreDailyRecord.date.in_(weather_dates[:2]),
+                        )
+                        .with_for_update()
+                    )
+                )
+                for record in records:
+                    result = results[record.date]
+                    if result is not None:
+                        apply_refreshed_weather(record, result)
+                await session.flush()
+                await BriefingService(session, cached_weather).regenerate(
+                    store.id, ["yesterday", "today", "tomorrow"], local_date=today
+                )
+                await session.commit()
+            except Exception:
+                await session.rollback()
+
     async def refresh_all() -> None:
         async with session_factory() as session:
             stores = list(
@@ -72,28 +125,12 @@ def make_refresh_callback(
                     select(Store).where(Store.is_active.is_(True)).order_by(Store.id)
                 )
             )
-            for store in stores:
-                try:
-                    today = datetime.now(ZoneInfo(store.timezone)).date()
-                    records = list(
-                        await session.scalars(
-                            select(StoreDailyRecord)
-                            .where(
-                                StoreDailyRecord.store_id == store.id,
-                                StoreDailyRecord.date.in_([today - timedelta(days=1), today]),
-                            )
-                            .options(selectinload(StoreDailyRecord.items))
-                        )
-                    )
-                    for record in records:
-                        result = await weather_service.get_daily(store, record.date)
-                        if result is not None:
-                            apply_refreshed_weather(record, result)
-                    await session.flush()
-                    await BriefingService(session, weather_service).regenerate(
-                        store.id, ["yesterday", "today", "tomorrow"], local_date=today
-                    )
-                except Exception:
-                    await session.rollback()
+        semaphore = asyncio.Semaphore(store_concurrency)
+
+        async def bounded_refresh(store: Store) -> None:
+            async with semaphore:
+                await refresh_store(store)
+
+        await asyncio.gather(*(bounded_refresh(store) for store in stores))
 
     return refresh_all

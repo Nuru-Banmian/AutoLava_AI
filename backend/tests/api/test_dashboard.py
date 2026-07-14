@@ -36,12 +36,9 @@ async def test_dashboard_returns_cached_cards(auth_client, db_session, store_fac
 
 
 async def test_manual_refresh_is_limited_per_user_and_store(
-    auth_client, db_session, store_factory, respx_mock
+    auth_client, db_session, store_factory
 ) -> None:
     store = await _assign_store(auth_client, db_session, store_factory)
-    respx_mock.get("https://api.open-meteo.com/v1/forecast").mock(
-        side_effect=httpx.TimeoutException("offline")
-    )
 
     first = await auth_client.post(f"/api/dashboard/{store.id}/refresh")
     second = await auth_client.post(f"/api/dashboard/{store.id}/refresh")
@@ -65,7 +62,7 @@ def test_refresh_limiter_is_per_user_store_and_per_app_instance() -> None:
 
 
 async def test_weather_endpoint_returns_null_fields_when_provider_fails(
-    auth_client, db_session, store_factory, respx_mock
+    auth_client, db_session, store_factory, open_meteo_app, respx_mock
 ) -> None:
     store = await _assign_store(auth_client, db_session, store_factory)
     respx_mock.get("https://api.open-meteo.com/v1/forecast").mock(
@@ -104,7 +101,7 @@ async def test_weather_endpoint_contains_unexpected_provider_failure(
 
 
 async def test_weather_endpoint_returns_normalized_success(
-    auth_client, db_session, store_factory, respx_mock
+    auth_client, db_session, store_factory, open_meteo_app, respx_mock
 ) -> None:
     store = await _assign_store(auth_client, db_session, store_factory)
     target = date.today() + timedelta(days=1)

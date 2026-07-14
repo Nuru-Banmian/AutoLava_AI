@@ -1,7 +1,8 @@
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select
+from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.identity import Store
@@ -108,20 +109,25 @@ class BriefingService:
                 content = await self._tomorrow(store, local_date)
             else:
                 continue
+            statement = mysql_insert(DailyBriefing).values(
+                store_id=store_id,
+                card_type=card_type,
+                content=content,
+            )
+            await self.session.execute(
+                statement.on_duplicate_key_update(
+                    content=statement.inserted.content,
+                    generated_at=datetime.now(),
+                )
+            )
             card = await self.session.scalar(
-                select(DailyBriefing).where(
+                select(DailyBriefing)
+                .where(
                     DailyBriefing.store_id == store_id,
                     DailyBriefing.card_type == card_type,
                 )
+                .execution_options(populate_existing=True)
             )
-            if card is None:
-                card = DailyBriefing(store_id=store_id, card_type=card_type, content=content)
-                self.session.add(card)
-            else:
-                card.content = content
-                card.generated_at = datetime.now(UTC)
+            assert card is not None
             cards.append(card)
-        await self.session.commit()
-        for card in cards:
-            await self.session.refresh(card)
         return cards

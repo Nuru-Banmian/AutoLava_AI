@@ -70,10 +70,32 @@ def today_for(assigned_store: AssignedStore) -> date:
     return datetime.now(ZoneInfo(assigned_store.store.timezone)).date()
 
 
+async def test_standard_put_does_not_attempt_external_weather_http(
+    auth_client: AsyncClient,
+    assigned_store: AssignedStore,
+    ledger_payload: dict,
+    weather_stub,
+    respx_mock,
+) -> None:
+    record_date = today_for(assigned_store)
+    external = respx_mock.get("https://api.open-meteo.com/v1/forecast").mock(
+        side_effect=AssertionError("ordinary ledger test attempted external weather")
+    )
+
+    response = await auth_client.put(
+        f"/api/ledger/{assigned_store.id}/{record_date.isoformat()}", json=ledger_payload
+    )
+
+    assert response.status_code == 201
+    assert external.called is False
+    assert weather_stub.daily_calls == [(assigned_store.id, record_date)]
+
+
 async def test_put_injects_trusted_weather_and_preserves_manual_weather(
     auth_client: AsyncClient,
     assigned_store: AssignedStore,
     ledger_payload: dict,
+    open_meteo_app,
     respx_mock,
 ) -> None:
     record_date = today_for(assigned_store)
@@ -116,6 +138,7 @@ async def test_put_still_saves_when_weather_lookup_fails(
     auth_client: AsyncClient,
     assigned_store: AssignedStore,
     ledger_payload: dict,
+    open_meteo_app,
     respx_mock,
 ) -> None:
     record_date = today_for(assigned_store)

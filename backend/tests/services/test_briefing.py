@@ -1,10 +1,13 @@
+import asyncio
 from datetime import date
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import async_session_factory, engine
+from app.models.base import Base
 from app.models.identity import Store, User
 from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
 from app.models.operations import DailyBriefing
@@ -113,3 +116,70 @@ async def test_today_and_tomorrow_copy_and_upsert(db_session: AsyncSession, stor
         await db_session.scalars(select(DailyBriefing).where(DailyBriefing.store_id == store.id))
     )
     assert len(rows) == 2
+
+
+async def _committed_store() -> int:
+    if engine.dialect.name != "mysql" or engine.url.database != "autolava_test":
+        pytest.fail("Concurrency test requires the dedicated autolava_test database")
+    async with engine.begin() as connection:
+        for table in reversed(Base.metadata.sorted_tables):
+            await connection.execute(table.delete())
+    async with async_session_factory() as setup:
+        store = Store(
+            name="Concurrent briefing",
+            address="Test",
+            latitude=Decimal("45.000000"),
+            longitude=Decimal("9.000000"),
+            timezone="Europe/Berlin",
+            is_active=True,
+        )
+        setup.add(store)
+        await setup.commit()
+        return store.id
+
+
+async def test_regenerate_does_not_commit_callers_transaction() -> None:
+    store_id = await _committed_store()
+    async with async_session_factory() as session:
+        await BriefingService(session, StubWeatherService()).regenerate(
+            store_id, ["yesterday"], local_date=date(2026, 7, 13)
+        )
+        await session.rollback()
+
+    async with async_session_factory() as verify:
+        count = await verify.scalar(
+            select(func.count())
+            .select_from(DailyBriefing)
+            .where(DailyBriefing.store_id == store_id)
+        )
+        assert count == 0
+
+
+async def test_concurrent_first_regenerate_atomically_upserts_one_card() -> None:
+    store_id = await _committed_store()
+    barrier = asyncio.Barrier(2)
+
+    class BarrierWeather:
+        async def get_daily(self, store, target):
+            await barrier.wait()
+            return WeatherResult("晴", 0, 30.0, 20.0, 0.0)
+
+    async def regenerate_and_commit() -> None:
+        async with async_session_factory() as session:
+            await BriefingService(session, BarrierWeather()).regenerate(
+                store_id, ["today"], local_date=date(2026, 7, 13)
+            )
+            await session.commit()
+
+    await asyncio.gather(regenerate_and_commit(), regenerate_and_commit())
+
+    async with async_session_factory() as verify:
+        cards = list(
+            await verify.scalars(
+                select(DailyBriefing).where(
+                    DailyBriefing.store_id == store_id,
+                    DailyBriefing.card_type == "today",
+                )
+            )
+        )
+        assert len(cards) == 1

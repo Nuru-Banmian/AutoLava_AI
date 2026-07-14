@@ -11,12 +11,27 @@ from app.core.database import engine, get_session
 from app.main import create_app
 from app.models.base import Base
 from app.models.identity import Store, User
+from app.services.weather import OpenMeteoProvider, WeatherService
 import app.models.audit  # noqa: F401
 import app.models.ledger  # noqa: F401
 import app.models.operations  # noqa: F401
 
 UserFactory = Callable[..., Awaitable[User]]
 StoreFactory = Callable[..., Awaitable[Store]]
+
+
+class NoNetworkWeather:
+    def __init__(self):
+        self.daily_calls: list[tuple[int, object]] = []
+        self.geocode_calls: list[str] = []
+
+    async def get_daily(self, store: Store, target):
+        self.daily_calls.append((store.id, target))
+        return None
+
+    async def geocode(self, query: str) -> list:
+        self.geocode_calls.append(query)
+        return []
 
 
 @pytest.fixture(autouse=True)
@@ -52,8 +67,17 @@ async def db_session() -> AsyncIterator[AsyncSession]:
 
 
 @pytest.fixture
-async def client(db_session: AsyncSession) -> AsyncIterator[AsyncClient]:
+def weather_stub() -> NoNetworkWeather:
+    return NoNetworkWeather()
+
+
+@pytest.fixture
+async def client(
+    db_session: AsyncSession, weather_stub: NoNetworkWeather
+) -> AsyncIterator[AsyncClient]:
     app = create_app()
+    app.state.weather_service = weather_stub
+    app.state.open_meteo_provider = weather_stub
 
     async def override_session() -> AsyncIterator[AsyncSession]:
         yield db_session
@@ -63,6 +87,15 @@ async def client(db_session: AsyncSession) -> AsyncIterator[AsyncClient]:
         transport=ASGITransport(app=app), base_url="http://testserver"
     ) as test_client:
         yield test_client
+
+
+@pytest.fixture
+def open_meteo_app(client: AsyncClient) -> OpenMeteoProvider:
+    provider = OpenMeteoProvider()
+    app = client._transport.app
+    app.state.open_meteo_provider = provider
+    app.state.weather_service = WeatherService(provider)
+    return provider
 
 
 @pytest.fixture

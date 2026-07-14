@@ -116,4 +116,5 @@ async def refresh_dashboard(
     cards = await BriefingService(session, weather).regenerate(
         access.store.id, ["yesterday", "today", "tomorrow"]
     )
+    await session.commit()
     return [_card_payload(card) for card in cards]

@@ -77,7 +77,7 @@ async def test_geocode_is_admin_only(auth_client) -> None:
     assert denied.status_code == 403
 
 
-async def test_admin_geocode_is_normalized(admin_client, respx_mock) -> None:
+async def test_admin_geocode_is_normalized(admin_client, open_meteo_app, respx_mock) -> None:
     respx_mock.get("https://geocoding-api.open-meteo.com/v1/search").mock(
         return_value=httpx.Response(
             200,
