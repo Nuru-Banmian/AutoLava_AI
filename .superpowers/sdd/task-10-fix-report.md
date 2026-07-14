@@ -48,3 +48,13 @@ Commands run from `frontend` unless stated otherwise:
 - `git diff --check` — exit 0.
 
 The final commit SHA is recorded in the completion handoff because a Git commit cannot embed its own final object SHA.
+
+## Re-review pagination fix
+
+- Re-reviewed implementation SHA: `d1b9b635ebbe8b3a63accc7408b00024914a9da7`.
+- Confirmed the database endpoint derives category descriptors from the paginated record query, so a single `page=1&page_size=200` request could omit inactive categories used only by later records.
+- The chart catalog loader now captures the selected store and date range, requests every 200-record page, forwards the query abort signal, merges descriptors by category ID, and completes before selection reconciliation or chart querying is enabled.
+- The database test suite restores real timers in `afterEach`, even when the quick-range test fails before its final assertion.
+- TDD RED: `npm test -- ChartsPage.test.tsx --run` failed 1 of 8 tests because the page-2 inactive category was absent.
+- Focused GREEN: `npm test -- ChartsPage.test.tsx DatabasePage.test.tsx user-api.test.ts --run` passed 3 files and 19 tests.
+- Final verification: `npm test` passed 10 files and 58 tests; responsive Playwright passed 3 tests; `npm run build` passed with the existing non-blocking large-chunk warning; `git diff --check` passed.

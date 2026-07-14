@@ -1,5 +1,6 @@
 import type { QueryClient } from "@tanstack/react-query";
-import type { AccessibleStore } from "@/api/types";
+import { api } from "@/api/client";
+import type { AccessibleStore, CategoryDescriptor, DatabaseResponse } from "@/api/types";
 
 export const categoryCatalogKey = (storeId: number, start: string, end = start) => ["categoryCatalog", storeId, start, end] as const;
 export const ledgerRecordKey = (storeId: number, date: string) => ["ledger", "record", storeId, date] as const;
@@ -7,6 +8,28 @@ export const recentKey = (storeId: number) => ["ledger", "recent", storeId, 7] a
 export const dashboardKey = (storeId: number) => ["dashboard", storeId] as const;
 export const chartsKey = (storeId: number, query: string) => ["charts", storeId, query] as const;
 export const databaseKey = (storeId: number, query: string) => ["database", "records", storeId, query] as const;
+
+export async function loadCategoryCatalog(storeId: number, start: string, end: string, signal?: AbortSignal): Promise<DatabaseResponse> {
+  const categories = new Map<number, CategoryDescriptor>();
+  let firstPage: DatabaseResponse | null = null;
+  let page = 1;
+  let total = 0;
+
+  do {
+    const query = new URLSearchParams({ start, end, page: String(page), page_size: "200" });
+    const response = await api<DatabaseResponse>(`/database/${storeId}/records?${query}`, { signal });
+    firstPage ??= response;
+    total = Math.max(total, response.total);
+    response.categories.forEach((category) => categories.set(category.id, category));
+    page += 1;
+  } while ((page - 1) * 200 < total);
+
+  return {
+    ...firstPage!,
+    categories: [...categories.values()].sort((left, right) => left.sort_order - right.sort_order || left.id - right.id),
+    total,
+  };
+}
 
 export function storeLocalToday(store: AccessibleStore, now = new Date()): string {
   const parts = new Intl.DateTimeFormat("en-CA", { timeZone: store.timezone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);

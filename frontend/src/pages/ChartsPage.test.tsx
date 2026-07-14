@@ -55,6 +55,31 @@ describe("ChartsPage", () => {
     expect(await screen.findByLabelText("历史现金（已停用）")).toBeChecked(); expect(catalogRequests.at(-1)?.searchParams.get("end")).toBe("2026-06-30");
   });
 
+  it("loads every record page before selecting historical categories", async () => {
+    const requestedPages: string[] = [];
+    server.use(
+      http.get("/api/stores/accessible", () => HttpResponse.json([{ id: 1, name: "Berlin", timezone: "Europe/Berlin" }])),
+      http.get("/api/database/1/records", ({ request }) => {
+        const page = new URL(request.url).searchParams.get("page") ?? "1";
+        requestedPages.push(page);
+        const categories = page === "1"
+          ? [{ id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }]
+          : [
+              { id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 },
+              { id: 9, name: "历史分类", include_in_total: true, is_active: false, sort_order: 9 },
+            ];
+        return HttpResponse.json({ items: [], categories, sum_daily_revenue: "0", total: 201, page: Number(page), page_size: 200 });
+      }),
+      http.get("/api/charts/1", () => HttpResponse.json({ kpis: { total_revenue: "0", record_days: 0, open_days: 0, primary_categories: [], total_wash_count: null, average_ticket: null }, daily: [], categories: [], monthly: [], weather: [], weekday: [] })),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><StoreProvider><ChartsPage /></StoreProvider></QueryClientProvider>);
+
+    expect(await screen.findByLabelText("历史分类（已停用）")).toBeChecked();
+    expect(screen.getAllByLabelText("现金")).toHaveLength(1);
+    expect(requestedPages).toEqual(["1", "2"]);
+  });
+
   it("shows catalog errors with retry instead of an empty selector", async () => {
     let calls = 0; server.use(http.get("/api/stores/accessible", () => HttpResponse.json([{ id: 1, name: "Berlin", timezone: "Europe/Berlin" }])), http.get("/api/database/1/records", () => { calls += 1; return calls === 1 ? HttpResponse.json({ detail: "Catalog unavailable" }, { status: 500 }) : HttpResponse.json({ items: [], categories: [{ id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }], sum_daily_revenue: "0", total: 0, page: 1, page_size: 1 }); }));
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } }); render(<QueryClientProvider client={client}><StoreProvider><ChartsPage /></StoreProvider></QueryClientProvider>);

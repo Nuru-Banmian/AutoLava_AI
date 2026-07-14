@@ -1,9 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { api } from "@/api/client";
-import type { ChartsResponse, DatabaseResponse } from "@/api/types";
+import type { ChartsResponse } from "@/api/types";
 import { ChartPanel } from "@/components/ChartPanel";
-import { categoryCatalogKey, chartNumber, chartsKey, money, storeLocalToday } from "@/lib/user-api";
+import { categoryCatalogKey, chartNumber, chartsKey, loadCategoryCatalog, money, storeLocalToday } from "@/lib/user-api";
 import { useStore } from "@/stores/StoreProvider";
 function monthRange(today: string) { return [`${today.slice(0, 7)}-01`, today] as const; }
 const weekdays = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"];
@@ -12,7 +12,7 @@ export function ChartsPage() {
   const [start, setStart] = useState<string>(defaults[0]); const [end, setEnd] = useState<string>(defaults[1]); const [selection, setSelection] = useState<{ scope: string; ids: number[] } | null>(null);
   useEffect(() => { const next = monthRange(today); setStart(next[0]); setEnd(next[1]); setSelection(null); }, [selected?.id, today]);
   const scope = `${selected?.id ?? "none"}|${start}|${end}`;
-  const catalog = useQuery({ queryKey: selected ? categoryCatalogKey(selected.id, start, end) : ["categoryCatalog", "none"], enabled: Boolean(selected && start && end), queryFn: () => api<DatabaseResponse>(`/database/${selected!.id}/records?start=${start}&end=${end}&page=1&page_size=200`) });
+  const catalog = useQuery({ queryKey: selected ? categoryCatalogKey(selected.id, start, end) : ["categoryCatalog", "none"], enabled: Boolean(selected && start && end), queryFn: ({ signal }) => loadCategoryCatalog(selected!.id, start, end, signal) });
   useEffect(() => { if (!catalog.data) return; const available = new Set(catalog.data.categories.map((category) => category.id)); const defaults = catalog.data.categories.filter((category) => category.include_in_total).map((category) => category.id); setSelection((old) => old?.scope === scope ? { scope, ids: old.ids.filter((id) => available.has(id)) } : { scope, ids: defaults }); }, [catalog.data, scope]);
   const selectedIds = selection?.scope === scope ? selection.ids : null;
   const params = useMemo(() => { const query = new URLSearchParams({ start, end }); selectedIds?.forEach((id) => query.append("category_id", String(id))); return query.toString(); }, [start, end, selectedIds]);

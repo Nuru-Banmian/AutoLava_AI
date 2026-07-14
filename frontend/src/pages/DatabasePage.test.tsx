@@ -10,7 +10,7 @@ import { StoreProvider, useStore } from "@/stores/StoreProvider";
 const server = setupServer();
 function StoreControls() { const { select } = useStore(); return <><button onClick={() => select(1)}>choose1</button><button onClick={() => select(2)}>choose2</button></>; }
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
-afterEach(() => server.resetHandlers());
+afterEach(() => { vi.useRealTimers(); server.resetHandlers(); });
 afterAll(() => server.close());
 
 describe("DatabasePage", () => {
