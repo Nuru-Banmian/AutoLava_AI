@@ -4,6 +4,7 @@ import { NavLink, Outlet } from "react-router-dom";
 import { ApiError } from "@/api/client";
 import { useAuth } from "@/auth/AuthProvider";
 import { Button } from "@/components/ui/button";
+import { StorePicker } from "@/components/StorePicker";
 import { useStore } from "@/stores/StoreProvider";
 
 const links = [
@@ -24,18 +25,14 @@ function NavItems({ mobile = false }: { mobile?: boolean }) {
 
 export function AppShell() {
   const { user, logout, isLoggingOut, logoutError } = useAuth();
-  const { stores, selected, select, isLoading, error: storeError, refetch: refetchStores } = useStore();
+  const { error: storeError, refetch: refetchStores } = useStore();
   return (
     <div className="min-h-screen bg-muted/20">
       <header className="border-b bg-background">
         <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-3">
           <strong>AutoLava AI</strong>
           <nav aria-label="主导航" className="hidden flex-1 items-center gap-1 md:flex"><NavItems /></nav>
-          <label className="ml-auto flex items-center gap-2 text-sm">门店
-            <select aria-label="门店" className="rounded-md border bg-background p-2" disabled={isLoading || Boolean(storeError) || stores.length === 0} value={selected?.id ?? ""} onChange={(event) => select(Number(event.target.value))}>
-              <option value="">请选择门店</option>{stores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
-            </select>
-          </label>
+          <div className="ml-auto"><StorePicker /></div>
           <span className="hidden text-sm lg:inline">{user?.username}</span>
           <Button aria-label="退出登录" disabled={isLoggingOut} onClick={() => { void logout().catch(() => undefined); }} size="icon" variant="ghost"><LogOut /></Button>
         </div>

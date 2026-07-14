@@ -4,6 +4,10 @@ import { AuthProvider, useAuth } from "@/auth/AuthProvider";
 import { AppShell } from "@/layouts/AppShell";
 import { AdminPage } from "@/pages/AdminPage";
 import { LoginPage } from "@/pages/LoginPage";
+import { HomePage } from "@/pages/HomePage";
+import { LedgerPage } from "@/pages/LedgerPage";
+import { DatabasePage } from "@/pages/DatabasePage";
+import { ChartsPage } from "@/pages/ChartsPage";
 import { StoreProvider } from "@/stores/StoreProvider";
 
 function AuthLoading() {
@@ -32,10 +36,10 @@ const routes: RouteObject[] = [{
   children: [
     { path: "/login", element: <LoginPage /> },
     { element: <ProtectedShell />, children: [
-      { index: true, element: <Placeholder title="仪表盘" /> },
-      { path: "ledger", element: <Placeholder title="每日台账" /> },
-      { path: "database", element: <Placeholder title="数据库" /> },
-      { path: "charts", element: <Placeholder title="图表" /> },
+      { index: true, element: <HomePage /> },
+      { path: "ledger", element: <LedgerPage /> },
+      { path: "database", element: <DatabasePage /> },
+      { path: "charts", element: <ChartsPage /> },
       { path: "workers", element: <Placeholder title="员工管理（Phase 2）" /> },
       { path: "admin", element: <AdminRoute /> },
     ] },

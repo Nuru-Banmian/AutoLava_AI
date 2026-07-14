@@ -59,3 +59,25 @@ export interface ScheduledTaskLog {
   finished_at: string | null;
   created_at: string;
 }
+
+export type LedgerStatus = "营业" | "休息" | "天气停业";
+export interface CategoryDescriptor { id: number; name: string; include_in_total: boolean; is_active: boolean; sort_order: number }
+export interface IncomeItemBody { category_id: number; amount: string }
+export interface LedgerBody { is_open: LedgerStatus; wash_count: number | null; weather: string | null; weather_edited: boolean; activity: string | null; items: IncomeItemBody[] }
+export interface RecordItem extends IncomeItemBody { id: number; created_at: string; updated_at: string }
+export interface RecordSnapshot {
+  id: number; store_id: number; date: string; daily_revenue: string; wash_count: number | null; is_open: LedgerStatus;
+  weather: string | null; weather_auto: string | null; weather_code: number | null; temperature_max: string | null;
+  temperature_min: string | null; precipitation: string | null; activity: string | null; weather_edited: boolean; scanned: boolean;
+  created_by: number; updated_by: number; created_at: string; updated_at: string; items: RecordItem[];
+  created_by_name?: string; updated_by_name?: string;
+}
+export interface DatabaseResponse { items: RecordSnapshot[]; categories: CategoryDescriptor[]; sum_daily_revenue: string; total: number; page: number; page_size: number }
+export interface AuditEntry { id: number; record_id: number | null; record_date: string | null; operation_type: string; operation_source: string; operator_user_id: number; operator_username: string; before: RecordSnapshot | null; after: RecordSnapshot | null; description: string; requires_approval: boolean; approved: boolean; created_at: string }
+export interface BriefingCard { card_type: "yesterday" | "today" | "tomorrow"; content: string; generated_at: string }
+export interface WeatherResponse { weather: string | null; weather_code: number | null; temperature_max: number | null; temperature_min: number | null; precipitation: number | null }
+export interface ChartsResponse {
+  kpis: { total_revenue: string; record_days: number; open_days: number; primary_categories: { category_id: number; category_name: string; amount: string }[]; total_wash_count: number | null; average_ticket: string | null };
+  daily: { date: string; revenue: string }[]; categories: { category_id: number; category_name: string; amount: string }[];
+  monthly: { month: string; revenue: string }[]; weather: { weather: string; average_revenue: string }[]; weekday: { weekday: number; average_revenue: string }[];
+}
