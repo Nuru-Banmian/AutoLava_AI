@@ -152,6 +152,46 @@ describe("AdminPage", () => {
     expect(replaced).toEqual({ user_ids: [1, 2] });
   });
 
+  it("prevents replacing members when the current member list failed to load", async () => {
+    let puts = 0;
+    server.use(
+      http.get("/api/admin/users", () => HttpResponse.json([{ id: 1, username: "admin", role: "admin", is_active: true }])),
+      http.get("/api/admin/stores", () => HttpResponse.json([{ id: 9, name: "Roma", address: "Via Uno", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true }])),
+      http.get("/api/admin/alerts", () => HttpResponse.json([])),
+      http.get("/api/admin/task-logs", () => HttpResponse.json([])),
+      http.get("/api/admin/stores/9/members", () => HttpResponse.json({ detail: "Members unavailable" }, { status: 500 })),
+      http.put("/api/admin/stores/9/members", () => { puts += 1; return HttpResponse.json({ store_id: 9, user_ids: [] }); }),
+    );
+    renderAdmin();
+    await screen.findByRole("tab", { name: "成员" });
+    activateTab("成员");
+    fireEvent.change(await screen.findByLabelText("成员门店"), { target: { value: "9" } });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Members unavailable");
+    const save = screen.getByRole("button", { name: "保存成员" });
+    expect(save).toBeDisabled();
+    fireEvent.submit(save.closest("form")!);
+    expect(puts).toBe(0);
+  });
+
+  it("prevents replacing members when the user list failed to load", async () => {
+    let puts = 0;
+    server.use(
+      http.get("/api/admin/users", () => HttpResponse.json({ detail: "Users unavailable" }, { status: 500 })),
+      http.get("/api/admin/stores", () => HttpResponse.json([{ id: 9, name: "Roma", address: "Via Uno", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true }])),
+      http.get("/api/admin/alerts", () => HttpResponse.json([])),
+      http.get("/api/admin/task-logs", () => HttpResponse.json([])),
+      http.get("/api/admin/stores/9/members", () => HttpResponse.json([])),
+      http.put("/api/admin/stores/9/members", () => { puts += 1; return HttpResponse.json({ store_id: 9, user_ids: [] }); }),
+    );
+    renderAdmin();
+    await screen.findByRole("tab", { name: "成员" });
+    activateTab("成员");
+    fireEvent.change(await screen.findByLabelText("成员门店"), { target: { value: "9" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "保存成员" })).toBeDisabled());
+    fireEvent.submit(screen.getByRole("button", { name: "保存成员" }).closest("form")!);
+    expect(puts).toBe(0);
+  });
+
   it("loads and creates categories for a selected store, then refetches that exact category list", async () => {
     let categoryFetches = 0;
     let posted: unknown;

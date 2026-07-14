@@ -50,4 +50,38 @@ describe("api", () => {
       detail: "Gateway unavailable",
     });
   });
+
+  it("preserves a Headers instance and does not add content type to a bodyless request", async () => {
+    let authorization: string | null = null;
+    let contentType: string | null = null;
+    server.use(http.get("/api/headers", ({ request }) => {
+      authorization = request.headers.get("authorization");
+      contentType = request.headers.get("content-type");
+      return HttpResponse.json({ ok: true });
+    }));
+
+    await api("/headers", { headers: new Headers({ Authorization: "Bearer secret" }) });
+
+    expect(authorization).toBe("Bearer secret");
+    expect(contentType).toBeNull();
+  });
+
+  it("preserves tuple headers and an explicit content type for a request body", async () => {
+    let authorization: string | null = null;
+    let contentType: string | null = null;
+    server.use(http.post("/api/headers", ({ request }) => {
+      authorization = request.headers.get("authorization");
+      contentType = request.headers.get("content-type");
+      return HttpResponse.json({ ok: true });
+    }));
+    const headers: [string, string][] = [
+      ["Authorization", "Bearer tuple"],
+      ["Content-Type", "application/merge-patch+json"],
+    ];
+
+    await api("/headers", { method: "POST", headers, body: "{}" });
+
+    expect(authorization).toBe("Bearer tuple");
+    expect(contentType).toBe("application/merge-patch+json");
+  });
 });

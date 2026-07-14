@@ -67,6 +67,7 @@ export function AdminPage() {
   useEffect(() => {
     if (members.data) setMemberIds(members.data.map((user) => user.id));
   }, [members.data]);
+  const canSaveMembers = memberStoreId !== null && users.isSuccess && members.isSuccess;
 
   function submitUser(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -120,10 +121,10 @@ export function AdminPage() {
           <select id="member-store" className="h-9 w-full max-w-sm rounded-md border px-2" value={memberStoreId ?? ""} onChange={(event) => { setMemberStoreId(event.target.value ? Number(event.target.value) : null); setMemberIds([]); }}>
             <option value="">请选择门店</option>{stores.data?.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
           </select>
-          <ErrorMessage error={members.error} /><ErrorMessage error={replaceMembers.error} />
-          {memberStoreId !== null && <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); replaceMembers.mutate({ storeId: memberStoreId, userIds: memberIds }); }}>
+          <ErrorMessage error={users.error} /><ErrorMessage error={members.error} /><ErrorMessage error={replaceMembers.error} />
+          {memberStoreId !== null && <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); if (canSaveMembers) replaceMembers.mutate({ storeId: memberStoreId, userIds: memberIds }); }}>
             <fieldset className="space-y-2"><legend>门店成员</legend>{users.data?.map((user) => <label className="flex items-center gap-2" key={user.id}><input checked={memberIds.includes(user.id)} onChange={(event) => setMemberIds((current) => event.target.checked ? [...current, user.id].sort((a, b) => a - b) : current.filter((id) => id !== user.id))} type="checkbox" />{user.username}</label>)}</fieldset>
-            <Button disabled={members.isLoading || replaceMembers.isPending} type="submit">{replaceMembers.isPending ? "保存中…" : "保存成员"}</Button>
+            <Button disabled={!canSaveMembers || replaceMembers.isPending} type="submit">{replaceMembers.isPending ? "保存中…" : "保存成员"}</Button>
           </form>}
         </TabsContent>
         <TabsContent value="categories" className="space-y-4">

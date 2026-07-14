@@ -20,12 +20,18 @@ interface AuthContextValue {
   logout(): Promise<void>;
   isLoggingIn: boolean;
   isLoggingOut: boolean;
+  logoutError: Error | null;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: PropsWithChildren) {
   const queryClient = useQueryClient();
+  async function removeUserQueries() {
+    const userQuery = (query: { queryKey: readonly unknown[] }) => query.queryKey[0] !== "auth";
+    await queryClient.cancelQueries({ predicate: userQuery });
+    queryClient.removeQueries({ predicate: userQuery });
+  }
   const me = useQuery({
     queryKey: authQueryKey,
     queryFn: async () => {
@@ -39,13 +45,20 @@ export function AuthProvider({ children }: PropsWithChildren) {
     retry: false,
   });
   const loginMutation = useMutation({
+    onMutate: () => queryClient.cancelQueries({ queryKey: authQueryKey, exact: true }),
     mutationFn: (input: LoginInput) =>
       api<User>("/auth/login", { method: "POST", body: JSON.stringify(input) }),
-    onSuccess: (user) => queryClient.setQueryData(authQueryKey, user),
+    onSuccess: async (user) => {
+      await removeUserQueries();
+      queryClient.setQueryData(authQueryKey, user);
+    },
   });
   const logoutMutation = useMutation({
     mutationFn: () => api<void>("/auth/logout", { method: "POST" }),
-    onSuccess: () => queryClient.setQueryData(authQueryKey, null),
+    onSuccess: async () => {
+      await removeUserQueries();
+      queryClient.setQueryData(authQueryKey, null);
+    },
   });
 
   return (
@@ -58,6 +71,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
         logout: logoutMutation.mutateAsync,
         isLoggingIn: loginMutation.isPending,
         isLoggingOut: logoutMutation.isPending,
+        logoutError: logoutMutation.error,
       }}
     >
       {children}

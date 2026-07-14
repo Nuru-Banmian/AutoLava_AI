@@ -1,5 +1,5 @@
 import { type FormEvent, useState } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { Navigate } from "react-router-dom";
 
 import { ApiError } from "@/api/client";
 import { useAuth } from "@/auth/AuthProvider";
@@ -8,10 +8,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 
 export function LoginPage() {
-  const { user, login, isLoggingIn } = useAuth();
-  const navigate = useNavigate();
+  const { user, isLoading, login, isLoggingIn } = useAuth();
   const [error, setError] = useState("");
 
+  if (isLoading) return <main className="flex min-h-screen items-center justify-center" role="status">正在加载…</main>;
   if (user) return <Navigate to="/" replace />;
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -24,7 +24,6 @@ export function LoginPage() {
         password: String(data.get("password")),
         remember: data.get("remember") === "on",
       });
-      navigate("/", { replace: true });
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.detail : "登录失败，请稍后重试");
     }

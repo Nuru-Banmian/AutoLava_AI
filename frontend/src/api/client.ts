@@ -24,10 +24,12 @@ function errorDetail(body: unknown, fallback: string): string {
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const headers = new Headers(init.headers);
+  if (init.body != null && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   const response = await fetch(`/api${normalizedPath}`, {
     ...init,
     credentials: "include",
-    headers: { "Content-Type": "application/json", ...init.headers },
+    headers,
   });
 
   if (!response.ok) {

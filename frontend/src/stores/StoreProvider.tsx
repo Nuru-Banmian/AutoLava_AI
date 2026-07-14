@@ -11,12 +11,14 @@ interface StoreContextValue {
   selected: AccessibleStore | null;
   select(id: number): void;
   isLoading: boolean;
+  error: Error | null;
+  refetch(): Promise<unknown>;
 }
 
 const StoreContext = createContext<StoreContextValue | null>(null);
 
 export function StoreProvider({ children }: PropsWithChildren) {
-  const { data: stores = [], isLoading } = useQuery({
+  const { data: stores = [], isLoading, error, refetch } = useQuery({
     queryKey: accessibleStoresKey,
     queryFn: () => api<AccessibleStore[]>("/stores/accessible"),
   });
@@ -33,8 +35,10 @@ export function StoreProvider({ children }: PropsWithChildren) {
       selected: stores.find((store) => store.id === selectedId) ?? null,
       select: setSelectedId,
       isLoading,
+      error,
+      refetch,
     }),
-    [isLoading, selectedId, stores],
+    [error, isLoading, refetch, selectedId, stores],
   );
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }
