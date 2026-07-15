@@ -19,9 +19,11 @@ export function friendlyApiError(error: unknown, fallback: string): string {
   const mapped = friendlyMessages[error.detail];
   if (mapped) return mapped;
   if (/^[\x00-\x7f\s]+$/.test(error.detail)) {
+    if (error.status === 401) return "登录状态已失效，请重新登录";
     if (error.status === 403) return "你没有权限执行这个操作";
     if (error.status === 409) return "数据已经发生变化，请刷新后重试";
     if (error.status >= 500) return "服务器暂时不可用，请稍后重试";
+    return fallback;
   }
   return error.detail || fallback;
 }

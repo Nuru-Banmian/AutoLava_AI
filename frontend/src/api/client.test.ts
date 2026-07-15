@@ -10,11 +10,49 @@ beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
-it("localizes known technical messages", () => {
-  expect(friendlyApiError(new ApiError(401, "Invalid credentials"), "登录失败"))
-    .toBe("用户名或密码错误，请重新输入");
-  expect(friendlyApiError(new ApiError(403, "Inactive user"), "登录失败"))
-    .toBe("这个账号已停用，请联系管理员");
+describe("friendlyApiError", () => {
+  it.each([
+    [401, "Invalid credentials", "登录失败", "用户名或密码错误，请重新输入"],
+    [403, "Inactive user", "登录失败", "这个账号已停用，请联系管理员"],
+    [422, "Income configuration version does not match", "保存失败", "收入项目刚刚发生变化，页面已为你重新加载，请确认金额后再次保存"],
+  ])("localizes the exact technical message %s %s", (status, detail, fallback, expected) => {
+    expect(friendlyApiError(new ApiError(status, detail), fallback)).toBe(expected);
+  });
+
+  it.each([
+    [403, "Administrator access required", "操作失败", "你没有权限执行这个操作"],
+    [409, "Record changed; reload before saving", "保存失败", "数据已经发生变化，请刷新后重试"],
+    [503, "Gateway unavailable", "加载失败", "服务器暂时不可用，请稍后重试"],
+  ])("localizes generic ASCII status errors for %s", (status, detail, fallback, expected) => {
+    expect(friendlyApiError(new ApiError(status, detail), fallback)).toBe(expected);
+  });
+
+  it("localizes an unmapped ASCII 401 response", () => {
+    expect(friendlyApiError(new ApiError(401, "Authentication required"), "登录失败"))
+      .toBe("登录状态已失效，请重新登录");
+  });
+
+  it.each([
+    [404, "Store not found", "加载门店失败"],
+    [422, "Field required", "保存失败"],
+    [429, "Please wait five minutes before refreshing again", "刷新失败"],
+  ])("uses the contextual fallback for an unmapped ASCII %s response", (status, detail, fallback) => {
+    expect(friendlyApiError(new ApiError(status, detail), fallback)).toBe(fallback);
+  });
+
+  it("uses the contextual fallback for a network error", () => {
+    expect(friendlyApiError(new TypeError("Failed to fetch"), "网络连接失败，请稍后重试"))
+      .toBe("网络连接失败，请稍后重试");
+  });
+
+  it("uses the contextual fallback for an empty API detail", () => {
+    expect(friendlyApiError(new ApiError(400, ""), "请求失败")).toBe("请求失败");
+  });
+
+  it("preserves a useful Chinese API detail", () => {
+    expect(friendlyApiError(new ApiError(422, "金额不能为负数"), "保存失败"))
+      .toBe("金额不能为负数");
+  });
 });
 
 describe("api", () => {
