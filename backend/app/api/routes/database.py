@@ -11,7 +11,7 @@ from app.api.deps import Session, StoreAccess, require_store_access
 from app.models.audit import AuditLog
 from app.models.identity import User
 from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
-from app.schemas.database import DatabaseFilters, DatabasePage, RollbackResult
+from app.schemas.database import AuditPage, DatabaseFilters, DatabasePage, RollbackResult
 from app.services.audit import record_snapshot
 from app.services.export import build_ledger_workbook
 from app.services.rollback import RollbackService
@@ -222,24 +222,41 @@ async def export_records(
     )
 
 
-@router.get("/{store_id}/history")
+@router.get("/{store_id}/history", response_model=AuditPage)
 async def record_history(
     store_id: int,
     session: Session,
-    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+    record_id: int | None = None,
     access: StoreAccess = Depends(require_store_access),
-) -> list[dict]:
+) -> dict:
     del access
+    conditions = [
+        AuditLog.operation_domain == "ledger",
+        AuditLog.store_id == store_id,
+    ]
+    if record_id is not None:
+        conditions.append(AuditLog.record_id == record_id)
+    total = await session.scalar(
+        select(func.count()).select_from(AuditLog).where(*conditions)
+    )
     rows = (
         await session.execute(
             select(AuditLog, User.username)
             .join(User, User.id == AuditLog.operator_user_id)
-            .where(AuditLog.operation_domain == "ledger", AuditLog.store_id == store_id)
+            .where(*conditions)
             .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
-            .limit(limit)
+            .offset((page - 1) * page_size)
+            .limit(page_size)
         )
     ).all()
-    return [_audit_payload(audit, username) for audit, username in rows]
+    return {
+        "items": [_audit_payload(audit, username) for audit, username in rows],
+        "total": total or 0,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 @router.get("/{store_id}/records", response_model=DatabasePage)

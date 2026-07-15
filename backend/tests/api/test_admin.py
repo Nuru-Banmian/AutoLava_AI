@@ -551,7 +551,11 @@ async def test_include_in_total_change_recomputes_and_audits_every_affected_reco
         assert {"created_at", "updated_at"} <= audit.before_json["items"][0].keys()
 
     history = await admin_client.get(f"/api/database/{store.id}/history")
-    system_entries = [entry for entry in history.json() if entry["operation_source"] == "system"]
+    system_entries = [
+        entry
+        for entry in history.json()["items"]
+        if entry["operation_source"] == "system"
+    ]
     assert len(system_entries) == 2
     assert all(entry["rollbackable"] is False for entry in system_entries)
     denied = await admin_client.post(

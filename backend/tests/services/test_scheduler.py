@@ -16,7 +16,9 @@ from app.services.scheduler import (
     BackgroundRefreshScheduler,
     apply_refreshed_weather,
     make_refresh_callback,
+    make_retention_callback,
 )
+from app.services.retention import RetentionResult
 from app.services.weather import WeatherResult
 
 
@@ -62,13 +64,47 @@ async def test_background_refresh_survives_weather_failure() -> None:
 async def test_app_lifespan_starts_and_stops_background_refresh() -> None:
     app = create_app()
     scheduler = app.state.background_refresh_scheduler
+    retention_scheduler = app.state.background_retention_scheduler
     scheduler.refresh = AsyncMock()
+    retention_scheduler.refresh = AsyncMock()
 
     async with app.router.lifespan_context(app):
         await asyncio.sleep(0)
         assert scheduler.running is True
+        assert retention_scheduler.running is True
+        assert retention_scheduler.interval_seconds == 86400
 
     assert scheduler.running is False
+    assert retention_scheduler.running is False
+
+
+async def test_retention_callback_logs_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeSession:
+        def __init__(self):
+            self.added = []
+            self.commit = AsyncMock()
+            self.rollback = AsyncMock()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        def add(self, value):
+            self.added.append(value)
+
+    session = FakeSession()
+    prune = AsyncMock(return_value=RetentionResult(ledger_snapshots_pruned=2, config_versions_pruned=3))
+    monkeypatch.setattr("app.services.scheduler.RetentionService.prune", prune)
+
+    await make_retention_callback(lambda: session)()
+
+    assert prune.await_count == 1
+    assert session.commit.await_count == 1
+    assert session.added[0].task_type == "retention_cleanup"
+    assert session.added[0].status == "success"
+    assert "2 ledger snapshots" in session.added[0].message
 
 
 async def test_refresh_rechecks_weather_edited_after_network_wait() -> None:

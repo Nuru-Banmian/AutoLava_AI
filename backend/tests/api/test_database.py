@@ -383,10 +383,21 @@ async def test_history_is_ledger_only_store_isolated_and_newest_first(
     response = await auth_client.get(f"/api/database/{database_context.id}/history")
 
     assert response.status_code == 200
-    assert [entry["description"] for entry in response.json()] == ["second", "first"]
-    assert response.json()[0]["operator_username"] == "database-editor"
-    assert response.json()[0]["before"] == {"version": 1}
-    assert response.json()[0]["after"] == {"version": 2}
+    payload = response.json()
+    assert payload["total"] == 2
+    assert payload["page"] == 1
+    assert payload["page_size"] == 20
+    assert [entry["description"] for entry in payload["items"]] == ["second", "first"]
+    assert payload["items"][0]["operator_username"] == "database-editor"
+    assert payload["items"][0]["before"] == {"version": 1}
+    assert payload["items"][0]["after"] == {"version": 2}
+
+    second_page = await auth_client.get(
+        f"/api/database/{database_context.id}/history",
+        params={"page": 2, "page_size": 1, "record_id": first_record.id},
+    )
+    assert second_page.status_code == 200
+    assert [item["description"] for item in second_page.json()["items"]] == ["first"]
 
 
 async def test_rollback_route_restores_record_and_returns_canonical_snapshot(
