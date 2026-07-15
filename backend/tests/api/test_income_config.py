@@ -240,6 +240,11 @@ async def test_delete_unused_keeps_version_snapshot_and_restore_recreates_catego
     assert snapshot is not None
     assert snapshot.category_id is None
     assert snapshot.name == "Mistake"
+    current = await admin_client.get(
+        f"/api/admin/stores/{store_id}/income-config"
+    )
+    assert current.status_code == 200
+    assert current.json()["items"] == []
 
     restored = await admin_client.post(
         f"/api/admin/stores/{store_id}/income-config/versions/{source['version_id']}/restore"

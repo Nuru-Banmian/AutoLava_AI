@@ -2,7 +2,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -15,6 +15,7 @@ from app.schemas.database import DatabaseFilters, DatabasePage, RollbackResult
 from app.services.audit import record_snapshot
 from app.services.export import build_ledger_workbook
 from app.services.rollback import RollbackService
+from app.api.routes.ledger import _safely_refresh_briefing
 
 router = APIRouter(prefix="/database", tags=["database"])
 
@@ -165,6 +166,7 @@ async def rollback_record(
     store_id: int,
     audit_id: int,
     session: Session,
+    request: Request,
     access: StoreAccess = Depends(require_store_access),
 ) -> dict:
     audit = await session.get(AuditLog, audit_id)
@@ -172,7 +174,15 @@ async def rollback_record(
         raise HTTPException(404, "Audit entry not found")
     if not audit.rollbackable:
         raise HTTPException(409, "Audit entry is not rollbackable")
-    restored = await RollbackService(session).rollback(audit_id, actor_id=access.user.id)
+    service = RollbackService(session)
+    restored = await service.rollback(audit_id, actor_id=access.user.id)
+    if service.last_event is not None:
+        await _safely_refresh_briefing(
+            request,
+            session,
+            access.store,
+            service.last_event.record_date,
+        )
     return {
         "audit_id": audit_id,
         "record": None if restored is None else record_snapshot(restored),

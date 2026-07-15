@@ -322,5 +322,7 @@ class IncomeConfigService:
             before={"id": category.id, "name": category.name},
             after=None,
         )
+        store_id = category.store_id
         await self.session.delete(category)
         await self.session.flush()
+        await self.publish_categories(store_id, actor)

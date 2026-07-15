@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import AuditLog
 from app.models.identity import Store, StoreMember, User
+from app.models.income_config import IncomeConfigVersion, IncomeConfigVersionItem
 from app.models.ledger import IncomeCategory, StoreDailyRecord
 from app.models.operations import DailyBriefing
 
@@ -19,6 +20,7 @@ class AssignedStore:
     store: Store
     cash: IncomeCategory
     excluded: IncomeCategory
+    config: IncomeConfigVersion
 
     @property
     def id(self) -> int:
@@ -48,7 +50,25 @@ async def assigned_store(
     )
     db_session.add_all([StoreMember(store_id=store.id, user_id=user.id), cash, excluded])
     await db_session.flush()
-    return AssignedStore(store=store, cash=cash, excluded=excluded)
+    config = IncomeConfigVersion(
+        store_id=store.id,
+        version=1,
+        enabled=True,
+        created_by=user.id,
+        items=[
+            IncomeConfigVersionItem(
+                category_id=category.id,
+                name=category.name,
+                include_in_total=category.include_in_total,
+                is_active=True,
+                sort_order=category.sort_order,
+            )
+            for category in (cash, excluded)
+        ],
+    )
+    db_session.add(config)
+    await db_session.flush()
+    return AssignedStore(store=store, cash=cash, excluded=excluded, config=config)
 
 
 @pytest.fixture
@@ -59,7 +79,7 @@ def ledger_payload(assigned_store: AssignedStore) -> dict:
         "weather": "晴",
         "weather_edited": True,
         "activity": None,
-        "daily_revenue": "999999.00",
+        "config_version_id": assigned_store.config.id,
         "items": [
             {"category_id": assigned_store.cash.id, "amount": "200.00"},
             {"category_id": assigned_store.excluded.id, "amount": "80.00"},
@@ -90,6 +110,60 @@ async def test_standard_put_does_not_attempt_external_weather_http(
     assert response.status_code == 201
     assert external.called is False
     assert weather_stub.daily_calls == [(assigned_store.id, record_date)]
+
+
+async def test_stale_expected_version_cannot_overwrite(
+    auth_client: AsyncClient, assigned_store: AssignedStore, ledger_payload: dict
+) -> None:
+    record_date = today_for(assigned_store)
+    path = f"/api/ledger/{assigned_store.id}/{record_date.isoformat()}"
+    created = await auth_client.put(path, json=ledger_payload)
+    assert created.status_code == 201
+    assert created.json()["row_version"] == 1
+
+    updated = await auth_client.put(
+        path + "?overwrite=true",
+        json=ledger_payload | {"expected_version": 1},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["row_version"] == 2
+
+    stale = await auth_client.put(
+        path + "?overwrite=true",
+        json=ledger_payload | {"expected_version": 1},
+    )
+    assert stale.status_code == 409
+    assert stale.json()["detail"] == "Record changed; reload before saving"
+
+
+async def test_stale_expected_version_cannot_delete(
+    auth_client: AsyncClient, assigned_store: AssignedStore, ledger_payload: dict
+) -> None:
+    record_date = today_for(assigned_store)
+    path = f"/api/ledger/{assigned_store.id}/{record_date.isoformat()}"
+    assert (await auth_client.put(path, json=ledger_payload)).status_code == 201
+
+    stale = await auth_client.delete(path, params={"expected_version": 2})
+    assert stale.status_code == 409
+    assert stale.json()["detail"] == "Record changed; reload before saving"
+    assert (await auth_client.get(path)).status_code == 200
+
+
+async def test_form_config_uses_current_config_then_record_snapshot(
+    auth_client: AsyncClient, assigned_store: AssignedStore, ledger_payload: dict
+) -> None:
+    record_date = today_for(assigned_store)
+    path = f"/api/ledger/{assigned_store.id}/{record_date.isoformat()}"
+    before = await auth_client.get(path + "/form-config")
+    assert before.status_code == 200
+    assert before.json()["version_id"] == assigned_store.config.id
+    assert [item["name"] for item in before.json()["items"]] == ["Cash", "Excluded"]
+
+    assert (await auth_client.put(path, json=ledger_payload)).status_code == 201
+    assigned_store.cash.name = "Renamed later"
+    after = await auth_client.get(path + "/form-config")
+    assert after.status_code == 200
+    assert [item["name"] for item in after.json()["items"]] == ["Cash", "Excluded"]
 
 
 async def test_put_injects_trusted_weather_and_preserves_manual_weather(
@@ -171,7 +245,7 @@ async def test_create_update_and_delete_refresh_persisted_today_briefing(
 
     updated = await auth_client.put(
         path + "?overwrite=true",
-        json=ledger_payload | {"items": [
+        json=ledger_payload | {"expected_version": 1, "items": [
             {"category_id": assigned_store.cash.id, "amount": "321.00"},
             {"category_id": assigned_store.excluded.id, "amount": "80.00"},
         ]},
@@ -180,7 +254,7 @@ async def test_create_update_and_delete_refresh_persisted_today_briefing(
     cards = (await auth_client.get(f"/api/dashboard/{assigned_store.id}")).json()
     assert "€321.00" in next(card for card in cards if card["card_type"] == "today")["content"]
 
-    deleted = await auth_client.delete(path)
+    deleted = await auth_client.delete(path, params={"expected_version": 2})
     assert deleted.status_code == 204
     cards = (await auth_client.get(f"/api/dashboard/{assigned_store.id}")).json()
     assert "还未记账" in next(card for card in cards if card["card_type"] == "today")["content"]
@@ -227,7 +301,8 @@ async def test_briefing_sql_then_failure_keeps_normal_put_response_and_commit(
     assert response.json() == {
         "id": response.json()["id"],
         "date": record_date.isoformat(),
-        "daily_revenue": "200.00",
+            "daily_revenue": "200.00",
+            "row_version": 1,
     }
     stored = await auth_client.get(
         f"/api/ledger/{store_id}/{record_date.isoformat()}"
@@ -244,7 +319,11 @@ async def test_same_date_requires_overwrite_flag(
     response = await auth_client.put(path, json=ledger_payload)
     assert response.status_code == 409
     assert response.json()["detail"] == "Record exists; confirm overwrite"
-    assert (await auth_client.put(path + "?overwrite=true", json=ledger_payload)).status_code == 200
+    assert (
+        await auth_client.put(
+            path + "?overwrite=true", json=ledger_payload | {"expected_version": 1}
+        )
+    ).status_code == 200
 
 
 async def test_put_recomputes_revenue_and_get_by_query_returns_full_record(
@@ -398,7 +477,9 @@ async def test_category_from_another_store_is_rejected(
     )
 
     assert response.status_code == 422
-    assert response.json() == {"detail": "Income category does not belong to this store"}
+    assert response.json() == {
+        "detail": "Every active income item must be provided exactly once"
+    }
 
 
 @pytest.mark.parametrize(
@@ -439,7 +520,7 @@ async def test_delete_returns_204_and_writes_delete_audit(
     created = await auth_client.put(path, json=ledger_payload)
     assert created.status_code == 201
 
-    deleted = await auth_client.delete(path)
+    deleted = await auth_client.delete(path, params={"expected_version": 1})
 
     assert deleted.status_code == 204
     assert deleted.content == b""

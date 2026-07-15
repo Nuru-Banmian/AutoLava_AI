@@ -10,6 +10,7 @@ from sqlalchemy.orm import contains_eager
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.audit import AuditLog
+from app.events.ledger import LedgerChanged
 from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
 from app.services.audit import record_snapshot
 
@@ -17,6 +18,7 @@ from app.services.audit import record_snapshot
 class RollbackService:
     def __init__(self, session: AsyncSession):
         self.session = session
+        self.last_event: LedgerChanged | None = None
 
     @staticmethod
     def _not_restorable() -> HTTPException:
@@ -144,6 +146,8 @@ class RollbackService:
         record.store_id = int(target["store_id"])
         record.date = date.fromisoformat(target["date"])
         record.daily_revenue = cls._decimal(target["daily_revenue"])
+        record.income_mode = target.get("income_mode", "legacy_total")
+        record.income_config_version_id = target.get("income_config_version_id")
         record.wash_count = target["wash_count"]
         record.is_open = target["is_open"]
         record.weather = target["weather"]
@@ -166,6 +170,9 @@ class RollbackService:
             DailyIncomeItem(
                 id=int(item["id"]),
                 category_id=int(item["category_id"]),
+                category_name=item.get("category_name", ""),
+                include_in_total=item.get("include_in_total", True),
+                sort_order=item.get("sort_order", 0),
                 amount=cls._decimal(item["amount"]),
                 created_at=datetime.fromisoformat(item["created_at"]),
                 updated_at=datetime.fromisoformat(item["updated_at"]),
@@ -178,6 +185,11 @@ class RollbackService:
         current: StoreDailyRecord | None,
         target: dict[str, Any],
     ) -> StoreDailyRecord:
+        next_row_version = (
+            int(target.get("row_version", 1)) + 1
+            if current is None
+            else current.row_version + 1
+        )
         if current is None:
             current = StoreDailyRecord(id=int(target["id"]))
             self._apply_record_snapshot(current, target)
@@ -189,6 +201,7 @@ class RollbackService:
             self._apply_record_snapshot(current, target)
             flag_modified(current, "updated_at")
             current.items = self._snapshot_items(target)
+        current.row_version = next_row_version
         await self.session.flush()
         await self.session.refresh(
             current,
@@ -220,12 +233,25 @@ class RollbackService:
                     restored = await self._restore_snapshot(current, target)
 
                 restored_snapshot = None if restored is None else record_snapshot(restored)
-                if restored_snapshot != target:
+                comparable_target = target
+                if restored_snapshot is not None:
+                    comparable_target = target | {
+                        "row_version": restored_snapshot["row_version"]
+                    }
+                if restored_snapshot != comparable_target:
                     raise self._not_restorable()
                 rollback_audit.before_json = current_snapshot
                 rollback_audit.after_json = restored_snapshot
                 await self.session.flush()
             await self.session.commit()
+            self.last_event = LedgerChanged(
+                store_id=audit.store_id,
+                record_id=audit.record_id,
+                record_date=audit.record_date,
+                operation="rolled_back",
+                actor_id=actor_id,
+                row_version=None if restored is None else restored.row_version,
+            )
             return restored
         except HTTPException:
             await self.session.rollback()

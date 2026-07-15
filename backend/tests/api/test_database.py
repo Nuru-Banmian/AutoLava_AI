@@ -395,8 +395,11 @@ async def test_rollback_route_restores_record_and_returns_canonical_snapshot(
     db_session: AsyncSession,
 ) -> None:
     record = database_context.records[0]
+    record.income_mode = "composed"
+    await db_session.flush()
     await db_session.refresh(record, attribute_names=["created_at", "updated_at", "items"])
     expected = record_snapshot(record)
+    expected["row_version"] = record.row_version + 2
     await LedgerService(db_session).upsert(
         store=database_context.store,
         record_date=record.date,
@@ -406,6 +409,8 @@ async def test_rollback_route_restores_record_and_returns_canonical_snapshot(
             "weather": "雨",
             "weather_edited": True,
             "activity": "changed",
+            "config_version_id": None,
+            "expected_version": record.row_version,
             "items": [
                 {"category_id": database_context.cash.id, "amount": "999.99"},
                 {"category_id": database_context.card.id, "amount": "1.00"},

@@ -90,6 +90,18 @@ async def get_record_by_path(
     return record_snapshot(record)
 
 
+@router.get("/{store_id}/{record_date}/form-config")
+async def get_form_config(
+    store_id: int,
+    record_date: date,
+    session: Session,
+    access: StoreAccess = Depends(require_store_access),
+) -> dict:
+    return await LedgerService(session).form_config(
+        store=access.store, record_date=record_date
+    )
+
+
 @router.put("/{store_id}/{record_date}")
 async def put_record(
     store_id: int,
@@ -118,23 +130,25 @@ async def put_record(
                 "precipitation": result.precipitation,
             }
         )
-    record, created = await LedgerService(session).upsert(
+    write = await LedgerService(session).upsert(
         store=access.store,
         record_date=record_date,
         payload=payload,
         actor=access.user,
         overwrite=overwrite,
     )
+    record, created = write
     response_content = {
         "id": record.id,
         "date": record.date.isoformat(),
         "daily_revenue": str(record.daily_revenue),
+        "row_version": record.row_version,
     }
     await _safely_refresh_briefing(
         request,
         session,
         access.store,
-        record_date,
+        write.event.record_date,
         {record_date: result.weather if result is not None else "天气暂时不可用"},
     )
     return JSONResponse(
@@ -149,12 +163,14 @@ async def delete_record(
     record_date: date,
     request: Request,
     session: Session,
+    expected_version: Annotated[int, Query(ge=1)],
     access: StoreAccess = Depends(require_store_access),
 ) -> Response:
-    await LedgerService(session).delete(
+    event = await LedgerService(session).delete(
         store=access.store,
         record_date=record_date,
         actor=access.user,
+        expected_version=expected_version,
     )
-    await _safely_refresh_briefing(request, session, access.store, record_date)
+    await _safely_refresh_briefing(request, session, access.store, event.record_date)
     return Response(status_code=204)
