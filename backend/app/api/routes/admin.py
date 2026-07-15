@@ -25,6 +25,7 @@ from app.schemas.admin import (
 )
 from app.services.audit import add_admin_audit, record_snapshot
 from app.services.briefing import BriefingService
+from app.services.income_config import IncomeConfigService
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 AdminUser = Annotated[User, Depends(require_admin)]
@@ -74,6 +75,7 @@ def _category_payload(category: IncomeCategory) -> dict[str, Any]:
         "include_in_total": category.include_in_total,
         "is_active": category.is_active,
         "sort_order": category.sort_order,
+        "archived_at": category.archived_at,
     }
 
 
@@ -384,6 +386,7 @@ async def create_income_category(
         before=None,
         after=_category_payload(category),
     )
+    await IncomeConfigService(session).publish_categories(category.store_id, actor)
     response_payload = _category_payload(category)
     await session.commit()
     return response_payload
@@ -457,6 +460,7 @@ async def patch_income_category(
         before=before_category,
         after=_category_payload(category),
     )
+    await IncomeConfigService(session).publish_categories(category.store_id, actor)
     response_payload = _category_payload(category)
     await session.commit()
     if records:
@@ -482,26 +486,7 @@ async def patch_income_category(
 
 @router.delete("/income-categories/{category_id}", status_code=204)
 async def delete_unused_category(category_id: int, session: Session, actor: AdminUser) -> None:
-    category = await session.get(IncomeCategory, category_id)
-    if category is None:
-        raise HTTPException(404, "Category not found")
-    used = await session.scalar(
-        select(DailyIncomeItem.id).where(DailyIncomeItem.category_id == category_id).limit(1)
-    )
-    if used is not None:
-        raise HTTPException(409, "Used categories must be disabled")
-    before = _category_payload(category)
-    add_admin_audit(
-        session,
-        actor_id=actor.id,
-        store_id=category.store_id,
-        record_id=category.id,
-        operation_type="delete",
-        description=f"Deleted income category {category.name}",
-        before=before,
-        after=None,
-    )
-    await session.delete(category)
+    await IncomeConfigService(session).delete_unused(category_id, actor)
     await session.commit()
 
 

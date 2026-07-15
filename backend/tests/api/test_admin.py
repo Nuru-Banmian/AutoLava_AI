@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import AuditLog
 from app.models.identity import StoreMember, StoreSetting
+from app.models.income_config import IncomeConfigVersion
 from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
 from app.models.operations import DailyBriefing, ScheduledTaskLog, SystemAlert
 
@@ -413,7 +414,17 @@ async def test_admin_can_create_list_and_patch_income_categories(
         "include_in_total": False,
         "is_active": False,
         "sort_order": 1,
+        "archived_at": None,
     }
+
+    versions = (
+        await db_session.scalars(
+            select(IncomeConfigVersion)
+            .where(IncomeConfigVersion.store_id == store.id)
+            .order_by(IncomeConfigVersion.version)
+        )
+    ).all()
+    assert [version.version for version in versions] == [1, 2, 3]
 
     audits = (
         await db_session.scalars(
