@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.audit import AuditLog
 from app.models.identity import Store, StoreMember, User
 from app.models.ledger import IncomeCategory, StoreDailyRecord
+from app.models.operations import DailyBriefing
 
 
 @dataclass
@@ -204,6 +205,35 @@ async def test_briefing_refresh_failure_does_not_undo_committed_ledger(
         f"/api/ledger/{assigned_store.id}/{record_date.isoformat()}"
     )
     assert stored.status_code == 200
+
+
+async def test_briefing_sql_then_failure_keeps_normal_put_response_and_commit(
+    auth_client: AsyncClient,
+    assigned_store: AssignedStore,
+    ledger_payload: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def sql_then_fail(service, *_args, **_kwargs):
+        await service.session.scalar(select(func.count()).select_from(DailyBriefing))
+        raise RuntimeError("briefing failed after SQL")
+
+    monkeypatch.setattr("app.services.briefing.BriefingService.regenerate", sql_then_fail)
+    record_date = today_for(assigned_store)
+    store_id = assigned_store.id
+    response = await auth_client.put(
+        f"/api/ledger/{store_id}/{record_date.isoformat()}", json=ledger_payload
+    )
+    assert response.status_code == 201
+    assert response.json() == {
+        "id": response.json()["id"],
+        "date": record_date.isoformat(),
+        "daily_revenue": "200.00",
+    }
+    stored = await auth_client.get(
+        f"/api/ledger/{store_id}/{record_date.isoformat()}"
+    )
+    assert stored.status_code == 200
+    assert stored.json()["daily_revenue"] == "200.00"
 
 
 async def test_same_date_requires_overwrite_flag(

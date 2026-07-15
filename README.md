@@ -12,8 +12,13 @@ database accepts connections from Docker through `host.docker.internal`.
 1. Copy `.env.example` to `.env`.
 2. Replace every `change-me` value. Use a long random JWT secret and a strong bootstrap
    password; do not commit `.env`.
-3. Terminate HTTPS in a production reverse proxy or load balancer before traffic reaches the
-   published web port. Production requires `AUTOLAVA_COOKIE_SECURE=true` so browsers send the
+3. Run the external HTTPS reverse proxy on the same host and forward to `127.0.0.1:80`.
+   Compose binds the web container only to that loopback address; direct internet exposure is
+   not the production topology. The TLS proxy must replace (not append an untrusted inbound)
+   `X-Forwarded-For` with the client address. Nginx accepts real-IP restoration only from
+   loopback and the Compose network's fixed `172.30.0.1` gateway, resolves the chain recursively,
+   and keys login limiting on the restored address. Do not broaden `set_real_ip_from` to public
+   networks. Production requires `AUTOLAVA_COOKIE_SECURE=true` so browsers send the
    authentication cookie only over HTTPS.
 4. Start the release:
 
@@ -23,7 +28,7 @@ database accepts connections from Docker through `host.docker.internal`.
 
 The API container applies Alembic migrations before starting. The web container serves the
 single-page application on port 80 and proxies `/api/` and `/health` to the API.
-The API is not published directly; the web container is the enforced trusted ingress and uses
+The API is not published directly; the loopback-bound web container is the enforced trusted ingress and uses
 a bounded 10 MiB Nginx shared-memory zone to rate-limit `/api/auth/login` per client IP (five
 requests per minute with a burst of five). Keep the API container private behind this proxy.
 Production startup rejects missing, example, short JWT secrets and default database passwords.

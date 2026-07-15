@@ -4,7 +4,7 @@ from decimal import Decimal
 import httpx
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import AuditLog
@@ -430,8 +430,18 @@ async def test_admin_can_create_list_and_patch_income_categories(
 
 
 async def test_include_in_total_change_recomputes_and_audits_every_affected_record(
-    admin_client, user_factory, store_factory, db_session: AsyncSession
+    admin_client,
+    user_factory,
+    store_factory,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 7, 14, 12, tzinfo=tz)
+
+    monkeypatch.setattr("app.api.routes.admin.datetime", FrozenDateTime)
     owner = await user_factory(username="record-owner", password="secret")
     store = await store_factory(name="Revenue")
     included = IncomeCategory(
@@ -551,6 +561,26 @@ async def test_used_income_category_can_only_be_disabled(
     )
     assert response.status_code == 200
     assert (await db_session.get(IncomeCategory, category_with_item.id)).is_active is False
+
+
+async def test_category_briefing_sql_failure_keeps_normal_patch_response(
+    admin_client,
+    category_with_item,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def sql_then_fail(service, *_args, **_kwargs):
+        await service.session.scalar(select(func.count()).select_from(DailyBriefing))
+        raise RuntimeError("briefing failed after SQL")
+
+    monkeypatch.setattr("app.services.briefing.BriefingService.regenerate", sql_then_fail)
+    category_id = category_with_item.id
+    response = await admin_client.patch(
+        f"/api/admin/income-categories/{category_id}",
+        json={"include_in_total": False},
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == category_id
+    assert response.json()["include_in_total"] is False
 
 
 async def test_unused_income_category_can_be_deleted_with_audit(

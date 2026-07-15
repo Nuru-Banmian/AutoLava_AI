@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { invalidateUserData } from "@/lib/user-api";
+import { accessibleStoresKey } from "@/stores/StoreProvider";
 
 export const adminKeys = {
   users: ["admin", "users"] as const,
@@ -61,7 +62,7 @@ export function AdminPage() {
       api<AdminStore>("/admin/stores", { method: "POST", body: JSON.stringify(input) }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: adminKeys.stores, exact: true });
-      await queryClient.invalidateQueries({ queryKey: ["stores"], exact: true });
+      await queryClient.invalidateQueries({ queryKey: accessibleStoresKey, exact: true });
     },
   });
   const patchUser = useMutation({
@@ -74,7 +75,7 @@ export function AdminPage() {
       api<AdminStore>(`/admin/stores/${storeId}`, { method: "PATCH", body: JSON.stringify(body) }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: adminKeys.stores, exact: true });
-      await queryClient.invalidateQueries({ queryKey: ["stores"], exact: true });
+      await queryClient.invalidateQueries({ queryKey: accessibleStoresKey, exact: true });
     },
   });
   const replaceMembers = useMutation({
@@ -84,7 +85,7 @@ export function AdminPage() {
       }),
     onSuccess: async (_data, input) => {
       await queryClient.invalidateQueries({ queryKey: adminKeys.members(input.storeId), exact: true });
-      await queryClient.invalidateQueries({ queryKey: ["stores"], exact: true });
+      await queryClient.invalidateQueries({ queryKey: accessibleStoresKey, exact: true });
     },
   });
   const createCategory = useMutation({
@@ -135,7 +136,7 @@ export function AdminPage() {
           <TabsTrigger value="users">用户</TabsTrigger><TabsTrigger value="stores">门店</TabsTrigger><TabsTrigger value="members">成员</TabsTrigger><TabsTrigger value="categories">收入分类</TabsTrigger><TabsTrigger value="alerts">告警</TabsTrigger><TabsTrigger value="tasks">任务日志</TabsTrigger>
         </TabsList>
         <TabsContent value="users" className="space-y-4">
-          <ErrorMessage error={users.error} /><ErrorMessage error={createUser.error} />
+          <ErrorMessage error={users.error} /><ErrorMessage error={createUser.error} /><ErrorMessage error={patchUser.error} />
           <form className="grid gap-3 rounded-lg border p-4 md:grid-cols-4" onSubmit={submitUser}>
             <div><label htmlFor="new-username">新用户名</label><Input id="new-username" name="username" minLength={3} required /></div>
             <div><label htmlFor="new-password">初始密码</label><Input id="new-password" name="password" minLength={8} required type="password" /></div>
@@ -145,18 +146,18 @@ export function AdminPage() {
           <ul className="divide-y rounded-lg border">{users.data?.map((user) => <li className="grid gap-2 p-3 md:grid-cols-[1fr_auto]" key={user.id}>
             <div><span>{user.username}</span><span className="ml-2 text-sm text-muted-foreground">{user.role} · {user.is_active ? "启用" : "停用"}</span></div>
             <div className="flex flex-wrap gap-2">
-              <Button aria-label={`${user.is_active ? "停用" : "启用"}用户 ${user.username}`} size="sm" variant="outline" onClick={() => patchUser.mutate({ userId: user.id, body: { is_active: !user.is_active } })}>{user.is_active ? "停用" : "启用"}</Button>
+              <Button aria-label={`${user.is_active ? "停用" : "启用"}用户 ${user.username}`} disabled={patchUser.isPending} size="sm" variant="outline" onClick={() => patchUser.mutate({ userId: user.id, body: { is_active: !user.is_active } })}>{user.is_active ? "停用" : "启用"}</Button>
               <Button aria-label={`操作历史 ${user.username}`} size="sm" variant="outline" onClick={() => setHistoryUserId(user.id)}>操作历史</Button>
             </div>
             <form className="flex gap-2 md:col-span-2" onSubmit={(event) => { event.preventDefault(); const form = event.currentTarget; const password = String(new FormData(form).get("password")); patchUser.mutate({ userId: user.id, body: { password } }, { onSuccess: () => form.reset() }); }}>
-              <label className="sr-only" htmlFor={`password-${user.id}`}>新密码 {user.username}</label><Input id={`password-${user.id}`} minLength={8} name="password" placeholder="新密码" required type="password" />
-              <Button aria-label={`修改密码 ${user.username}`} size="sm" type="submit">修改密码</Button>
+              <label className="sr-only" htmlFor={`password-${user.id}`}>新密码 {user.username}</label><Input disabled={patchUser.isPending} id={`password-${user.id}`} minLength={8} name="password" placeholder="新密码" required type="password" />
+              <Button aria-label={`修改密码 ${user.username}`} disabled={patchUser.isPending} size="sm" type="submit">修改密码</Button>
             </form>
           </li>)}</ul>
           {historyUserId !== null && <section className="rounded-lg border p-3"><div className="flex justify-between"><h2 className="font-medium">用户操作历史</h2><Button size="sm" variant="ghost" onClick={() => setHistoryUserId(null)}>关闭</Button></div><ErrorMessage error={operations.error} /><ul>{operations.data?.map((entry) => <li className="border-t py-2" key={entry.id}>{entry.description}</li>)}</ul></section>}
         </TabsContent>
         <TabsContent value="stores" className="space-y-4">
-          <ErrorMessage error={stores.error} /><ErrorMessage error={createStore.error} />
+          <ErrorMessage error={stores.error} /><ErrorMessage error={createStore.error} /><ErrorMessage error={patchStore.error} />
           <form className="grid gap-3 rounded-lg border p-4 md:grid-cols-3" onSubmit={submitStore}>
             <div><label htmlFor="store-name">门店名称</label><Input id="store-name" name="name" required /></div>
             <div><label htmlFor="store-address">地址</label><Input id="store-address" name="address" required /></div>
@@ -171,7 +172,7 @@ export function AdminPage() {
             <div><label htmlFor={`store-lat-${store.id}`}>纬度 {store.name}</label><Input defaultValue={store.latitude} id={`store-lat-${store.id}`} name="latitude" required type="number" step="any" /></div>
             <div><label htmlFor={`store-lon-${store.id}`}>经度 {store.name}</label><Input defaultValue={store.longitude} id={`store-lon-${store.id}`} name="longitude" required type="number" step="any" /></div>
             <div><label htmlFor={`store-tz-${store.id}`}>时区 {store.name}</label><Input defaultValue={store.timezone} id={`store-tz-${store.id}`} name="timezone" required /></div>
-            <div className="flex items-end gap-2"><Button aria-label={`保存门店 ${store.name}`} type="submit">保存</Button><Button aria-label={`${store.is_active ? "停用" : "启用"}门店 ${store.name}`} type="button" variant="outline" onClick={() => patchStore.mutate({ storeId: store.id, body: { is_active: !store.is_active } })}>{store.is_active ? "停用" : "启用"}</Button></div>
+            <div className="flex items-end gap-2"><Button aria-label={`保存门店 ${store.name}`} disabled={patchStore.isPending} type="submit">保存</Button><Button aria-label={`${store.is_active ? "停用" : "启用"}门店 ${store.name}`} disabled={patchStore.isPending} type="button" variant="outline" onClick={() => patchStore.mutate({ storeId: store.id, body: { is_active: !store.is_active } })}>{store.is_active ? "停用" : "启用"}</Button></div>
           </form></li>)}</ul>
         </TabsContent>
         <TabsContent value="members" className="space-y-4">
@@ -190,7 +191,7 @@ export function AdminPage() {
           <select id="category-store" className="h-9 w-full max-w-sm rounded-md border px-2" value={categoryStoreId ?? ""} onChange={(event) => setCategoryStoreId(event.target.value ? Number(event.target.value) : null)}>
             <option value="">请选择门店</option>{stores.data?.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
           </select>
-          <ErrorMessage error={categories.error} /><ErrorMessage error={createCategory.error} />
+          <ErrorMessage error={categories.error} /><ErrorMessage error={createCategory.error} /><ErrorMessage error={patchCategory.error} />
           {categoryStoreId !== null && <>
             <form className="grid gap-3 rounded-lg border p-4 md:grid-cols-4" onSubmit={(event) => {
               event.preventDefault(); const form = event.currentTarget; const data = new FormData(form);
@@ -205,7 +206,7 @@ export function AdminPage() {
               <div><label htmlFor={`category-name-${category.id}`}>分类名称 {category.name}</label><Input defaultValue={category.name} id={`category-name-${category.id}`} name="name" required /></div>
               <div><label htmlFor={`category-sort-${category.id}`}>排序 {category.name}</label><Input defaultValue={category.sort_order} id={`category-sort-${category.id}`} name="sort_order" type="number" /></div>
               <label className="flex items-center gap-2"><input aria-label={`计入总收入 ${category.name}`} defaultChecked={category.include_in_total} name="include_in_total" type="checkbox" />计入总收入</label>
-              <div className="flex items-end gap-2"><Button aria-label={`保存分类 ${category.name}`} type="submit">保存</Button><Button aria-label={`${category.is_active ? "停用" : "启用"}分类 ${category.name}`} type="button" variant="outline" onClick={() => patchCategory.mutate({ categoryId: category.id, storeId: category.store_id, body: { is_active: !category.is_active } })}>{category.is_active ? "停用" : "启用"}</Button></div>
+              <div className="flex items-end gap-2"><Button aria-label={`保存分类 ${category.name}`} disabled={patchCategory.isPending} type="submit">保存</Button><Button aria-label={`${category.is_active ? "停用" : "启用"}分类 ${category.name}`} disabled={patchCategory.isPending} type="button" variant="outline" onClick={() => patchCategory.mutate({ categoryId: category.id, storeId: category.store_id, body: { is_active: !category.is_active } })}>{category.is_active ? "停用" : "启用"}</Button></div>
             </form></li>)}</ul>
           </>}
         </TabsContent>

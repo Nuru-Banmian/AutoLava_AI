@@ -119,6 +119,17 @@ def test_development_defaults_remain_available() -> None:
 
 def test_nginx_enforces_a_bounded_login_rate_limit() -> None:
     nginx = read("frontend/nginx.conf")
+    compose = yaml.safe_load(read("compose.yaml"))
     assert "limit_req_zone $binary_remote_addr zone=login" in nginx
     assert "location = /api/auth/login" in nginx
     assert "limit_req zone=login" in nginx
+    assert compose["services"]["autolava-web"]["ports"] == ["127.0.0.1:80:80"]
+    assert "real_ip_header X-Forwarded-For;" in nginx
+    assert "real_ip_recursive on;" in nginx
+    assert "set_real_ip_from 127.0.0.1;" in nginx
+    network = compose["networks"]["default"]["ipam"]["config"][0]
+    assert network == {"subnet": "172.30.0.0/24", "gateway": "172.30.0.1"}
+    assert "set_real_ip_from 172.30.0.1;" in nginx
+    assert "set_real_ip_from 172.16.0.0/12;" not in nginx
+    assert "set_real_ip_from 0.0.0.0/0;" not in nginx
+    assert "127.0.0.1:80" in read("README.md")

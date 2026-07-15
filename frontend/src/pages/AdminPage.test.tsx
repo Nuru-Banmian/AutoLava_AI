@@ -5,6 +5,7 @@ import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { AdminPage } from "@/pages/AdminPage";
+import { accessibleStoresKey } from "@/stores/StoreProvider";
 
 const server = setupServer();
 
@@ -255,12 +256,59 @@ describe("AdminPage", () => {
       http.patch("/api/admin/stores/9", async ({ request }) => { patch = await request.json(); return HttpResponse.json({ id: 9, name: "Milano", address: "Via Due", latitude: "45.4", longitude: "9.2", timezone: "Europe/Rome", is_active: true }); }),
     );
     const { client } = renderAdmin();
-    client.setQueryData(["stores"], [{ id: 9 }]);
+    client.setQueryData(accessibleStoresKey, [{ id: 9 }]);
+    client.setQueryData(["dashboard", 10], { untouched: true });
     activateTab("门店");
     fireEvent.change(await screen.findByLabelText("门店名称 Roma"), { target: { value: "Milano" } });
     fireEvent.click(screen.getByRole("button", { name: "保存门店 Roma" }));
     await waitFor(() => expect(patch).toMatchObject({ name: "Milano" }));
-    expect(client.getQueryState(["stores"])?.isInvalidated).toBe(true);
+    expect(client.getQueryState(accessibleStoresKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(["dashboard", 10])?.isInvalidated).toBe(false);
+  });
+
+  it("invalidates the canonical accessible-store key after create and disable", async () => {
+    let active = true;
+    server.use(
+      http.get("/api/admin/users", () => HttpResponse.json([])),
+      http.get("/api/admin/stores", () => HttpResponse.json([{ id: 9, name: "Roma", address: "Via", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: active }])),
+      http.get("/api/admin/alerts", () => HttpResponse.json([])),
+      http.get("/api/admin/task-logs", () => HttpResponse.json([])),
+      http.post("/api/admin/stores", () => HttpResponse.json({ id: 10, name: "Milano", address: "Via Due", latitude: "45.4", longitude: "9.2", timezone: "Europe/Rome", is_active: true }, { status: 201 })),
+      http.patch("/api/admin/stores/9", () => { active = false; return HttpResponse.json({ id: 9, name: "Roma", address: "Via", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: false }); }),
+    );
+    const { client } = renderAdmin();
+    client.setQueryData(accessibleStoresKey, [{ id: 9 }]);
+    activateTab("门店");
+    await screen.findByRole("button", { name: "停用门店 Roma" });
+    fireEvent.change(screen.getByLabelText("门店名称"), { target: { value: "Milano" } });
+    fireEvent.change(screen.getByLabelText("地址"), { target: { value: "Via Due" } });
+    fireEvent.change(screen.getByLabelText("纬度"), { target: { value: "45.4" } });
+    fireEvent.change(screen.getByLabelText("经度"), { target: { value: "9.2" } });
+    fireEvent.click(screen.getByRole("button", { name: "添加门店" }));
+    await waitFor(() => expect(client.getQueryState(accessibleStoresKey)?.isInvalidated).toBe(true));
+    client.setQueryData(accessibleStoresKey, [{ id: 9 }]);
+    fireEvent.click(screen.getByRole("button", { name: "停用门店 Roma" }));
+    await waitFor(() => expect(active).toBe(false));
+    expect(client.getQueryState(accessibleStoresKey)?.isInvalidated).toBe(true);
+  });
+
+  it("shows edit errors and disables related actions while pending", async () => {
+    let reject!: () => void;
+    const delayed = new Promise<void>((resolve) => { reject = resolve; });
+    server.use(
+      http.get("/api/admin/users", () => HttpResponse.json([{ id: 2, username: "operator", role: "user", is_active: true }])),
+      http.get("/api/admin/stores", () => HttpResponse.json([])),
+      http.get("/api/admin/alerts", () => HttpResponse.json([])),
+      http.get("/api/admin/task-logs", () => HttpResponse.json([])),
+      http.patch("/api/admin/users/2", async () => { await delayed; return HttpResponse.json({ detail: "Edit rejected" }, { status: 409 }); }),
+    );
+    renderAdmin();
+    const toggle = await screen.findByRole("button", { name: "停用用户 operator" });
+    fireEvent.click(toggle);
+    await waitFor(() => expect(toggle).toBeDisabled());
+    expect(screen.getByRole("button", { name: "修改密码 operator" })).toBeDisabled();
+    reject();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Edit rejected");
   });
 
   it("edits category behavior and invalidates only the affected store data", async () => {

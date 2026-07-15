@@ -125,6 +125,11 @@ async def put_record(
         actor=access.user,
         overwrite=overwrite,
     )
+    response_content = {
+        "id": record.id,
+        "date": record.date.isoformat(),
+        "daily_revenue": str(record.daily_revenue),
+    }
     await _safely_refresh_briefing(
         request,
         session,
@@ -133,11 +138,7 @@ async def put_record(
         {record_date: result.weather if result is not None else "天气暂时不可用"},
     )
     return JSONResponse(
-        content={
-            "id": record.id,
-            "date": record.date.isoformat(),
-            "daily_revenue": str(record.daily_revenue),
-        },
+        content=response_content,
         status_code=201 if created else 200,
     )
 

@@ -384,8 +384,9 @@ async def create_income_category(
         before=None,
         after=_category_payload(category),
     )
+    response_payload = _category_payload(category)
     await session.commit()
-    return _category_payload(category)
+    return response_payload
 
 
 @router.patch("/income-categories/{category_id}")
@@ -456,6 +457,7 @@ async def patch_income_category(
         before=before_category,
         after=_category_payload(category),
     )
+    response_payload = _category_payload(category)
     await session.commit()
     if records:
         store = await session.get(Store, category.store_id)
@@ -475,7 +477,7 @@ async def patch_income_category(
                     await session.commit()
                 except Exception:
                     await session.rollback()
-    return _category_payload(category)
+    return response_payload
 
 
 @router.delete("/income-categories/{category_id}", status_code=204)
