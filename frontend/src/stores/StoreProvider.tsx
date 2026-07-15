@@ -43,7 +43,7 @@ interface StoreProviderProps extends PropsWithChildren {
 
 export function StoreProvider({ children, userId }: StoreProviderProps) {
   const { data: stores = [], isLoading, isSuccess, error, refetch } = useQuery({
-    queryKey: accessibleStoresKey,
+    queryKey: [...accessibleStoresKey, userId],
     queryFn: () => api<AccessibleStore[]>("/stores/accessible"),
   });
   const [selection, setSelection] = useState(() => ({ userId, storeId: readStoredSelection(userId) }));

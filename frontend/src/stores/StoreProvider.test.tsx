@@ -25,15 +25,18 @@ function Probe() {
   );
 }
 
-function renderProvider(userId: number) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+function providerTree(userId: number, client: QueryClient) {
+  return (
     <QueryClientProvider client={client}>
       <StoreProvider userId={userId}>
         <Probe />
       </StoreProvider>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+}
+
+function renderProvider(userId: number, client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
+  return render(providerTree(userId, client));
 }
 
 describe("StoreProvider selection persistence", () => {
@@ -77,6 +80,44 @@ describe("StoreProvider selection persistence", () => {
     renderProvider(2);
 
     expect(await screen.findByText("selected:Berlin")).toBeInTheDocument();
+  });
+
+  it("does not use cached stores while a new user's stores are loading", async () => {
+    let requests = 0;
+    let secondRequestStarted = false;
+    let resolveSecondRequest!: () => void;
+    const secondRequest = new Promise<void>((resolve) => { resolveSecondRequest = resolve; });
+    server.use(
+      http.get("/api/stores/accessible", async () => {
+        requests += 1;
+        if (requests === 1) {
+          return HttpResponse.json([
+            { id: 1, name: "Berlin", timezone: "Europe/Berlin" },
+            { id: 2, name: "Roma", timezone: "Europe/Rome" },
+          ]);
+        }
+        secondRequestStarted = true;
+        await secondRequest;
+        return HttpResponse.json([
+          { id: 3, name: "Madrid", timezone: "Europe/Madrid" },
+          { id: 2, name: "Roma", timezone: "Europe/Rome" },
+        ]);
+      }),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = renderProvider(1, client);
+    expect(await screen.findByText("selected:Berlin")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "select Roma" }));
+    expect(await screen.findByText("selected:Roma")).toBeInTheDocument();
+
+    view.rerender(providerTree(2, client));
+
+    await waitFor(() => expect(secondRequestStarted).toBe(true));
+    expect(screen.getByText("selected:未选择")).toBeInTheDocument();
+    expect(localStorage.getItem(STORE_SELECTION_KEY)).toBe(JSON.stringify({ userId: 1, storeId: 2 }));
+    resolveSecondRequest();
+    expect(await screen.findByText("selected:Madrid")).toBeInTheDocument();
+    expect(localStorage.getItem(STORE_SELECTION_KEY)).toBe(JSON.stringify({ userId: 2, storeId: 3 }));
   });
 
   it("replaces a revoked store with the first accessible store", async () => {
