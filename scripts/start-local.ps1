@@ -170,6 +170,59 @@ function Ensure-Dependencies {
     }
 }
 
+function Invoke-PythonCommand([string]$Label, [string[]]$Arguments) {
+    Write-Stage $Label
+    $process = Start-Process -FilePath $BackendPython -ArgumentList $Arguments `
+        -WorkingDirectory $BackendDir -NoNewWindow -Wait -PassThru
+    if ($process.ExitCode -ne 0) { Stop-WithMessage "$Label 失败，退出码 $($process.ExitCode)。" }
+}
+
+function Invoke-DatabaseSetup {
+    Invoke-PythonCommand "升级数据库结构" @("-m", "alembic", "upgrade", "head")
+    Invoke-PythonCommand "初始化本地管理员" @("-m", "app.scripts.create_admin")
+}
+
+function Start-Backend {
+    Write-Stage "启动 FastAPI：http://127.0.0.1:8000"
+    return Start-Process -FilePath $BackendPython `
+        -ArgumentList @("-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8000", "--workers", "1") `
+        -WorkingDirectory $BackendDir -NoNewWindow -PassThru
+}
+
+function Start-Frontend {
+    $node = (Get-Command node).Source
+    $vite = Join-Path $FrontendDir "node_modules\vite\bin\vite.js"
+    if (-not (Test-Path -LiteralPath $vite)) { Stop-WithMessage "Vite 未安装，请重新运行启动器。" }
+    Write-Stage "启动 Vite：http://127.0.0.1:5173"
+    return Start-Process -FilePath $node `
+        -ArgumentList @($vite, "--host", "127.0.0.1", "--port", "5173", "--strictPort") `
+        -WorkingDirectory $FrontendDir -NoNewWindow -PassThru
+}
+
+function Wait-Healthy([string]$Uri, [Diagnostics.Process]$Process, [int]$TimeoutSeconds = 45) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        $Process.Refresh()
+        if ($Process.HasExited) { Stop-WithMessage "子进程在健康检查前退出，退出码 $($Process.ExitCode)。" }
+        try {
+            $response = Invoke-WebRequest -Uri $Uri -UseBasicParsing -TimeoutSec 2
+            if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 300) { return }
+        } catch { Start-Sleep -Milliseconds 500 }
+    }
+    Stop-WithMessage "等待 $Uri 健康检查超时。"
+}
+
+function Stop-OwnedProcess([Diagnostics.Process]$Process) {
+    if ($null -eq $Process) { return }
+    try {
+        $Process.Refresh()
+        if (-not $Process.HasExited) {
+            Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+            $Process.WaitForExit(5000) | Out-Null
+        }
+    } catch { Write-Warning "清理子进程 $($Process.Id) 时出现问题。" }
+}
+
 if ($PSVersionTable.PSVersion.Major -ge 6 -and -not $IsWindows) {
     Stop-WithMessage "本启动器仅支持 Windows。"
 }
@@ -191,4 +244,32 @@ if (-not (Test-TcpPort $databaseHost $databasePort 1500)) {
     Stop-WithMessage "MySQL 无法连接，请确认 MySQL80 服务正在运行。"
 }
 Set-AutoLavaEnvironment $settings
-Ensure-Dependencies
+
+$backendProcess = $null
+$frontendProcess = $null
+try {
+    Ensure-Dependencies
+    Invoke-DatabaseSetup
+    $backendProcess = Start-Backend
+    Wait-Healthy "http://127.0.0.1:8000/health" $backendProcess
+    $frontendProcess = Start-Frontend
+    Wait-Healthy "http://127.0.0.1:5173/health" $frontendProcess
+    Write-Host "AutoLava AI 已就绪：http://127.0.0.1:5173" -ForegroundColor Green
+    if (-not $NoBrowser) { Start-Process "http://127.0.0.1:5173" | Out-Null }
+
+    while ($true) {
+        Start-Sleep -Seconds 1
+        $backendProcess.Refresh()
+        $frontendProcess.Refresh()
+        if ($backendProcess.HasExited) {
+            Stop-WithMessage "FastAPI 已退出，退出码 $($backendProcess.ExitCode)。"
+        }
+        if ($frontendProcess.HasExited) {
+            Stop-WithMessage "Vite 已退出，退出码 $($frontendProcess.ExitCode)。"
+        }
+    }
+} finally {
+    Write-Stage "正在关闭本地服务"
+    Stop-OwnedProcess $frontendProcess
+    Stop-OwnedProcess $backendProcess
+}

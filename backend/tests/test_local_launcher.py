@@ -52,3 +52,30 @@ def test_launcher_preflight_and_dependency_cache_are_repository_local() -> None:
 def test_launcher_windows_check_short_circuits_before_iswindows_on_powershell_51() -> None:
     launcher = read("scripts/start-local.ps1")
     assert "$PSVersionTable.PSVersion.Major -ge 6 -and -not $IsWindows" in launcher
+
+
+def test_launcher_migrates_bootstraps_and_waits_for_proxied_health() -> None:
+    launcher = read("scripts/start-local.ps1")
+    ordered = [
+        "Ensure-Dependencies",
+        "Invoke-DatabaseSetup",
+        "Start-Backend",
+        'Wait-Healthy "http://127.0.0.1:8000/health"',
+        "Start-Frontend",
+        'Wait-Healthy "http://127.0.0.1:5173/health"',
+    ]
+    positions = [launcher.rindex(fragment) for fragment in ordered]
+    assert positions == sorted(positions)
+    assert '"-m", "alembic", "upgrade", "head"' in launcher
+    assert '"-m", "app.scripts.create_admin"' in launcher
+
+
+def test_launcher_owns_and_cleans_up_only_its_child_processes() -> None:
+    launcher = read("scripts/start-local.ps1")
+    assert "try {" in launcher
+    assert "finally {" in launcher
+    assert "Stop-OwnedProcess $frontendProcess" in launcher
+    assert "Stop-OwnedProcess $backendProcess" in launcher
+    assert "Stop-Process -Id $Process.Id" in launcher
+    assert "taskkill" not in launcher.lower()
+    assert "Stop-Process -Name" not in launcher
