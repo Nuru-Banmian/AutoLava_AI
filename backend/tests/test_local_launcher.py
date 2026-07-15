@@ -79,3 +79,10 @@ def test_launcher_owns_and_cleans_up_only_its_child_processes() -> None:
     assert "Stop-Process -Id $Process.Id" in launcher
     assert "taskkill" not in launcher.lower()
     assert "Stop-Process -Name" not in launcher
+
+
+def test_launcher_passes_vite_entrypoint_relative_to_frontend_working_directory() -> None:
+    launcher = read("scripts/start-local.ps1")
+    assert '$viteArgument = "node_modules\\vite\\bin\\vite.js"' in launcher
+    assert "-ArgumentList @($viteArgument," in launcher
+    assert "-ArgumentList @($vite," not in launcher

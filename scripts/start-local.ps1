@@ -192,10 +192,11 @@ function Start-Backend {
 function Start-Frontend {
     $node = (Get-Command node).Source
     $vite = Join-Path $FrontendDir "node_modules\vite\bin\vite.js"
+    $viteArgument = "node_modules\vite\bin\vite.js"
     if (-not (Test-Path -LiteralPath $vite)) { Stop-WithMessage "Vite 未安装，请重新运行启动器。" }
     Write-Stage "启动 Vite：http://127.0.0.1:5173"
     return Start-Process -FilePath $node `
-        -ArgumentList @($vite, "--host", "127.0.0.1", "--port", "5173", "--strictPort") `
+        -ArgumentList @($viteArgument, "--host", "127.0.0.1", "--port", "5173", "--strictPort") `
         -WorkingDirectory $FrontendDir -NoNewWindow -PassThru
 }
 
