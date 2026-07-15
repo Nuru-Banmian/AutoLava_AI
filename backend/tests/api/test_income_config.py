@@ -6,6 +6,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.identity import StoreMember, User
 from app.models.income_config import IncomeConfigVersion, IncomeConfigVersionItem
 from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
 
@@ -19,6 +20,97 @@ async def admin_client(client, user_factory) -> AsyncClient:
     )
     assert response.status_code == 200
     return client
+
+
+async def test_assigned_user_reads_empty_and_published_current_config(
+    auth_client, store_factory, db_session: AsyncSession
+) -> None:
+    user = await db_session.scalar(select(User).where(User.username == "authenticated"))
+    store = await store_factory(name="User current config")
+    db_session.add(StoreMember(store_id=store.id, user_id=user.id))
+    await db_session.flush()
+
+    empty = await auth_client.get(f"/api/income-config/{store.id}/current")
+    assert empty.status_code == 200
+    assert empty.json() == {
+        "store_id": store.id,
+        "version_id": None,
+        "version": 0,
+        "enabled": False,
+        "formula": "总收入 = €0.00",
+        "created_at": None,
+        "items": [],
+    }
+
+    version = IncomeConfigVersion(
+        store_id=store.id,
+        version=1,
+        enabled=True,
+        created_by=user.id,
+        items=[
+            IncomeConfigVersionItem(
+                category_id=None,
+                name="现金",
+                include_in_total=True,
+                is_active=True,
+                sort_order=0,
+            )
+        ],
+    )
+    db_session.add(version)
+    await db_session.flush()
+
+    configured = await auth_client.get(f"/api/income-config/{store.id}/current")
+    assert configured.status_code == 200
+    payload = configured.json()
+    assert payload["store_id"] == store.id
+    assert payload["version_id"] == version.id
+    assert payload["version"] == 1
+    assert payload["enabled"] is True
+    assert payload["formula"] == "总收入 = 现金"
+    assert payload["items"] == [
+        {
+            "id": version.items[0].id,
+            "category_id": None,
+            "name": "现金",
+            "include_in_total": True,
+            "is_active": True,
+            "sort_order": 0,
+        }
+    ]
+
+
+async def test_admin_reads_current_config_for_existing_store(
+    admin_client, store_factory
+) -> None:
+    store = await store_factory(name="Admin current config")
+
+    response = await admin_client.get(f"/api/income-config/{store.id}/current")
+
+    assert response.status_code == 200
+    assert response.json()["store_id"] == store.id
+    assert response.json()["enabled"] is False
+
+
+async def test_current_config_hides_unassigned_and_missing_stores(
+    auth_client, store_factory
+) -> None:
+    unassigned = await store_factory(name="Hidden current config")
+
+    hidden = await auth_client.get(f"/api/income-config/{unassigned.id}/current")
+    missing = await auth_client.get("/api/income-config/999999/current")
+
+    assert hidden.status_code == missing.status_code == 404
+    assert hidden.json() == missing.json() == {"detail": "Store not found"}
+
+    versions = await auth_client.get(
+        f"/api/admin/stores/{unassigned.id}/income-config/versions"
+    )
+    update = await auth_client.put(
+        f"/api/admin/stores/{unassigned.id}/income-config",
+        json={"enabled": False, "items": []},
+    )
+    assert versions.status_code == update.status_code == 403
 
 
 async def test_publish_selects_exact_items_for_total(

@@ -7,7 +7,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { LedgerPage } from "@/pages/LedgerPage";
 import { StoreProvider, useStore } from "@/stores/StoreProvider";
 import { LedgerForm } from "@/components/LedgerForm";
-import { storeLocalToday } from "@/lib/user-api";
+import { incomeConfigKey, storeLocalToday } from "@/lib/user-api";
 
 const server = setupServer();
 function StoreControls() { const { select } = useStore(); return <><button onClick={() => select(1)}>choose1</button><button onClick={() => select(2)}>choose2</button></>; }
@@ -19,6 +19,11 @@ function renderLedger(extra: Parameters<typeof server.use> = []) {
   server.use(
     ...extra,
     http.get("/api/stores/accessible", () => HttpResponse.json([{ id: 1, name: "Berlin", timezone: "Europe/Berlin" }])),
+    http.get("/api/income-config/1/current", () => HttpResponse.json({ store_id: 1, version_id: 4, version: 4, enabled: true, formula: "现金 + 刷卡", items: [
+      { id: 11, category_id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 },
+      { id: 12, category_id: 2, name: "刷卡", include_in_total: true, is_active: true, sort_order: 2 },
+      { id: 13, category_id: 3, name: "暗钱", include_in_total: false, is_active: true, sort_order: 3 },
+    ] })),
     http.get("/api/database/1/records", () => HttpResponse.json({ items: [], categories: [
       { id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 },
       { id: 2, name: "刷卡", include_in_total: true, is_active: true, sort_order: 2 },
@@ -33,6 +38,20 @@ function renderLedger(extra: Parameters<typeof server.use> = []) {
 }
 
 describe("LedgerPage", () => {
+  it("loads the current income configuration for direct-total mode", async () => {
+    let requested = "";
+    renderLedger([
+      http.get("/api/income-config/1/current", ({ request }) => {
+        requested = new URL(request.url).pathname;
+        return HttpResponse.json({ store_id: 1, version_id: null, version: 0, enabled: false, formula: "", items: [] });
+      }),
+    ]);
+
+    expect(incomeConfigKey(1)).toEqual(["income-config", 1, "current"]);
+    expect(await screen.findByLabelText("当日营业额")).toBeEnabled();
+    expect(requested).toBe("/api/income-config/1/current");
+  });
+
   it("calculates included-category cents and asks before overwriting with the same payload", async () => {
     let firstBody: unknown;
     let overwriteBody: unknown;
@@ -58,7 +77,7 @@ describe("LedgerPage", () => {
 
   it("normalizes rest amounts and wash count while keeping activity notes", async () => {
     let body: any;
-    render(<LedgerForm categories={[{ id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }]} onSave={(value) => { body = value; }} />);
+    render(<LedgerForm config={{ store_id: 1, version_id: 4, version: 4, enabled: true, formula: "现金", items: [{ id: 11, category_id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }] }} categories={[{ id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }]} onSave={(value) => { body = value; }} />);
     fireEvent.change(screen.getByLabelText("现金"), { target: { value: "25" } });
     fireEvent.change(screen.getByLabelText("洗车数量"), { target: { value: "3" } });
     fireEvent.change(screen.getByLabelText("活动"), { target: { value: "设备检修" } });
@@ -69,7 +88,7 @@ describe("LedgerPage", () => {
   });
 
   it("keeps a manually edited weather value when delayed automatic weather arrives", () => {
-    const props = { categories: [{ id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }], onSave: () => undefined };
+    const props = { config: { store_id: 1, version_id: 4, version: 4, enabled: true, formula: "现金", items: [{ id: 11, category_id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }] }, categories: [{ id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }], onSave: () => undefined };
     const view = render(<LedgerForm {...props} />);
     fireEvent.change(screen.getByLabelText("天气"), { target: { value: "手动天气" } });
     view.rerender(<LedgerForm {...props} weather={{ weather: "自动天气", weather_code: 1, temperature_max: 20, temperature_min: 10, precipitation: 0 }} />);
@@ -78,7 +97,7 @@ describe("LedgerPage", () => {
 
   it("normalizes comma decimals and blocks invalid amounts with a visible error", () => {
     const saves: unknown[] = [];
-    render(<LedgerForm categories={[{ id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }]} onSave={(value) => saves.push(value)} />);
+    render(<LedgerForm config={{ store_id: 1, version_id: 4, version: 4, enabled: true, formula: "现金", items: [{ id: 11, category_id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }] }} categories={[{ id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }]} onSave={(value) => saves.push(value)} />);
     fireEvent.change(screen.getByLabelText("现金"), { target: { value: "12,3" } }); fireEvent.click(screen.getByRole("button", { name: "保存" }));
     expect((saves[0] as any).items[0].amount).toBe("12.30");
     fireEvent.change(screen.getByLabelText("现金"), { target: { value: "-1" } });
@@ -103,6 +122,7 @@ describe("LedgerPage", () => {
     let release!: () => void; const delayed = new Promise<void>((resolve) => { release = resolve; }); let overwriteUrl = "";
     server.use(
       http.get("/api/stores/accessible", () => HttpResponse.json([{ id: 1, name: "One", timezone: "Europe/Berlin" }, { id: 2, name: "Two", timezone: "Europe/Berlin" }])),
+      http.get("/api/income-config/:store/current", ({ params }) => HttpResponse.json({ store_id: Number(params.store), version_id: 4, version: 4, enabled: true, formula: "现金", items: [{ id: 11, category_id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }] })),
       http.get("/api/database/:store/records", () => HttpResponse.json({ items: [], categories: [{ id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }], sum_daily_revenue: "0", total: 0, page: 1, page_size: 1 })),
       http.get("/api/ledger/:store/recent", () => HttpResponse.json([])), http.get("/api/weather/:store/:date", () => HttpResponse.json({ weather: null })), http.get("/api/ledger/:store/:date", () => HttpResponse.json({ detail: "not found" }, { status: 404 })),
       http.put("/api/ledger/:store/:date", async ({ request }) => { if (!new URL(request.url).searchParams.has("overwrite")) return HttpResponse.json({ detail: "exists" }, { status: 409 }); overwriteUrl = request.url; await delayed; return HttpResponse.json({}); }),

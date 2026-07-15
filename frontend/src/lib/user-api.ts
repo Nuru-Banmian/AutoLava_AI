@@ -3,6 +3,7 @@ import { api } from "@/api/client";
 import type { AccessibleStore, CategoryDescriptor, DatabaseResponse } from "@/api/types";
 
 export const categoryCatalogKey = (storeId: number, start: string, end = start) => ["categoryCatalog", storeId, start, end] as const;
+export const incomeConfigKey = (storeId: number) => ["income-config", storeId, "current"] as const;
 export const ledgerRecordKey = (storeId: number, date: string) => ["ledger", "record", storeId, date] as const;
 export const recentKey = (storeId: number) => ["ledger", "recent", storeId, 7] as const;
 export const dashboardKey = (storeId: number) => ["dashboard", storeId] as const;
