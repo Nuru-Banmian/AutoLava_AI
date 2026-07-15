@@ -237,6 +237,75 @@ async def test_logout_clears_cookie_and_session(auth_client) -> None:
     assert (await auth_client.get("/api/auth/me")).status_code == 401
 
 
+async def test_user_changes_own_password(client, user_factory) -> None:
+    user = await user_factory(username="password-owner", password="OldPassword1")
+    other = await user_factory(username="other-user", password="OtherPassword1")
+    login = await client.post(
+        "/api/auth/login",
+        json={"username": user.username, "password": "OldPassword1", "remember": False},
+    )
+    assert login.status_code == 200
+
+    response = await client.post(
+        "/api/auth/password",
+        json={"current_password": "OldPassword1", "new_password": "NewPassword2"},
+    )
+
+    assert response.status_code == 204
+    assert (await client.get("/api/auth/me")).status_code == 200
+
+    old_login = await client.post(
+        "/api/auth/login",
+        json={"username": user.username, "password": "OldPassword1", "remember": False},
+    )
+    new_login = await client.post(
+        "/api/auth/login",
+        json={"username": user.username, "password": "NewPassword2", "remember": False},
+    )
+    other_login = await client.post(
+        "/api/auth/login",
+        json={"username": other.username, "password": "OtherPassword1", "remember": False},
+    )
+    assert old_login.status_code == 401
+    assert new_login.status_code == 200
+    assert other_login.status_code == 200
+
+
+async def test_password_change_rejects_wrong_current_password(client, user_factory) -> None:
+    user = await user_factory(username="password-owner", password="OldPassword1")
+    await client.post(
+        "/api/auth/login",
+        json={"username": user.username, "password": "OldPassword1", "remember": False},
+    )
+
+    response = await client.post(
+        "/api/auth/password",
+        json={"current_password": "WrongPassword1", "new_password": "NewPassword2"},
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "当前密码不正确"}
+    assert "WrongPassword1" not in response.text
+    assert "NewPassword2" not in response.text
+    old_login = await client.post(
+        "/api/auth/login",
+        json={"username": user.username, "password": "OldPassword1", "remember": False},
+    )
+    assert old_login.status_code == 200
+
+
+async def test_password_change_requires_authentication(client) -> None:
+    response = await client.post(
+        "/api/auth/password",
+        json={"current_password": "OldPassword1", "new_password": "NewPassword2"},
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Authentication required"}
+    assert "OldPassword1" not in response.text
+    assert "NewPassword2" not in response.text
+
+
 async def test_assigned_store_is_exposed(client, user_factory, store_factory, db_session) -> None:
     user = await user_factory(username="member", password="secret")
     assigned = await store_factory(name="Assigned")

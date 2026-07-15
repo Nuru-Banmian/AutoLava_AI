@@ -1,4 +1,4 @@
-import { createBrowserRouter, createMemoryRouter, Navigate, Outlet, type RouteObject } from "react-router-dom";
+import { createBrowserRouter, createMemoryRouter, Navigate, Outlet, useLocation, type RouteObject } from "react-router-dom";
 
 import { AuthProvider, useAuth } from "@/auth/AuthProvider";
 import { AppShell } from "@/layouts/AppShell";
@@ -9,6 +9,7 @@ import { LedgerPage } from "@/pages/LedgerPage";
 import { MorePage } from "@/pages/MorePage";
 import { DatabasePage } from "@/pages/DatabasePage";
 import { ChartsPage } from "@/pages/ChartsPage";
+import { AccountPasswordPage } from "@/pages/AccountPasswordPage";
 import { StoreProvider } from "@/stores/StoreProvider";
 
 function AuthLoading() {
@@ -28,6 +29,12 @@ function AdminRoute() {
   return user?.role === "admin" ? <AdminPage /> : <Navigate to="/" replace />;
 }
 
+function MoreRoute() {
+  const location = useLocation();
+  const status = (location.state as { status?: unknown } | null)?.status;
+  return <>{status === "密码已更新" && <p className="mb-4 text-sm text-primary" role="status">密码已更新</p>}<MorePage /></>;
+}
+
 function Placeholder({ title }: { title: string }) {
   return <section><h1 className="text-2xl font-semibold">{title}</h1><p className="text-muted-foreground">此页面将在后续任务中实现。</p></section>;
 }
@@ -41,8 +48,8 @@ const routes: RouteObject[] = [{
       { path: "ledger", element: <LedgerPage /> },
       { path: "database", element: <DatabasePage /> },
       { path: "charts", element: <ChartsPage /> },
-      { path: "more", element: <MorePage /> },
-      { path: "account/password", element: <Placeholder title="修改密码" /> },
+      { path: "more", element: <MoreRoute /> },
+      { path: "account/password", element: <AccountPasswordPage /> },
       { path: "workers", element: <Placeholder title="员工管理（Phase 2）" /> },
       { path: "admin", element: <AdminRoute /> },
     ] },

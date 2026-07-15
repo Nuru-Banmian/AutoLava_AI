@@ -3,9 +3,9 @@ from sqlalchemy import select
 
 from app.api.deps import CurrentUser, Session
 from app.core.config import get_settings
-from app.core.security import create_access_token, verify_password
+from app.core.security import create_access_token, hash_password, verify_password
 from app.models.identity import User
-from app.schemas.auth import LoginBody
+from app.schemas.auth import LoginBody, PasswordChange
 from app.services.access import list_accessible_stores
 
 router = APIRouter(tags=["auth"])
@@ -35,6 +35,14 @@ async def login(body: LoginBody, response: Response, session: Session) -> dict:
 @router.post("/auth/logout", status_code=204)
 async def logout(response: Response) -> None:
     response.delete_cookie("access_token", path="/")
+
+
+@router.post("/auth/password", status_code=204)
+async def change_password(body: PasswordChange, session: Session, user: CurrentUser) -> None:
+    if not verify_password(body.current_password, user.password_hash):
+        raise HTTPException(422, "当前密码不正确")
+    user.password_hash = hash_password(body.new_password)
+    await session.commit()
 
 
 @router.get("/auth/me")
