@@ -16,19 +16,27 @@ def read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
 
 
-def test_ci_lockfile_contains_linux_rolldown_binding() -> None:
+def test_ci_lockfile_contains_linux_native_bindings() -> None:
     package = json.loads(read("frontend/package.json"))
     lock = json.loads(read("frontend/package-lock.json"))
     packages = lock["packages"]
-    rolldown_version = packages["node_modules/rolldown"]["version"]
-    for binding in (
-        "@rolldown/binding-linux-x64-gnu",
-        "@rolldown/binding-linux-x64-musl",
-    ):
-        assert package["optionalDependencies"][binding] == rolldown_version
-        locked_binding = packages.get(f"node_modules/{binding}")
-        assert locked_binding is not None
-        assert locked_binding["version"] == rolldown_version
+    native_families = {
+        "rolldown": (
+            "@rolldown/binding-linux-x64-gnu",
+            "@rolldown/binding-linux-x64-musl",
+        ),
+        "lightningcss": (
+            "lightningcss-linux-x64-gnu",
+            "lightningcss-linux-x64-musl",
+        ),
+    }
+    for dependency, bindings in native_families.items():
+        dependency_version = packages[f"node_modules/{dependency}"]["version"]
+        for binding in bindings:
+            assert package["optionalDependencies"][binding] == dependency_version
+            locked_binding = packages.get(f"node_modules/{binding}")
+            assert locked_binding is not None
+            assert locked_binding["version"] == dependency_version
 
 
 def test_async_database_tests_share_one_event_loop() -> None:
