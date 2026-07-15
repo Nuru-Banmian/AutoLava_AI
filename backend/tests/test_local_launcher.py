@@ -86,3 +86,27 @@ def test_launcher_passes_vite_entrypoint_relative_to_frontend_working_directory(
     assert '$viteArgument = "node_modules\\vite\\bin\\vite.js"' in launcher
     assert "-ArgumentList @($viteArgument," in launcher
     assert "-ArgumentList @($vite," not in launcher
+
+
+def test_readme_documents_reusable_windows_launcher_without_secrets() -> None:
+    readme = read("README.md")
+    for fragment in (
+        r".\scripts\start-local.ps1",
+        "http://127.0.0.1:5173",
+        "Ctrl+C",
+        "Phase 2",
+        "Phase 3",
+        "Phase 4",
+        ".autolava-db.env",
+        ".env",
+    ):
+        assert fragment in readme
+
+
+def test_local_runtime_artifacts_are_ignored() -> None:
+    ignore = read(".gitignore").splitlines()
+    assert ".env" in ignore
+    assert ".autolava-db.env" in ignore
+    assert ".autolava-local/" in ignore
+    assert ".venv/" in ignore
+    assert "node_modules/" in ignore

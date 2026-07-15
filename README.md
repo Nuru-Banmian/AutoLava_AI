@@ -3,6 +3,28 @@
 AutoLava AI Phase 1 provides a FastAPI backend and React web application for multi-store
 car-wash ledger, database, chart, and administration workflows.
 
+## Windows local development
+
+The reusable local launcher supports the current Phase 1 application and remains the entry point
+for planned Phase 2 workforce, Phase 3 agent, and Phase 4 automation features. It reuses the local
+MySQL service, applies every migration through `alembic upgrade head`, refreshes dependencies when
+their manifests change, starts FastAPI and Vite, and opens `http://127.0.0.1:5173`.
+
+Keep the SQLAlchemy database URL in the ignored `.autolava-db.env`. The launcher creates or reuses
+the ignored root `.env` for the local JWT and administrator credentials. Later-phase model keys and
+other `AUTOLAVA_*` settings also belong in `.env`; the launcher passes them through without needing
+a code change. Never commit either environment file.
+
+Run from PowerShell:
+
+```powershell
+.\scripts\start-local.ps1
+```
+
+The first run installs missing dependencies and asks for administrator credentials only when they
+are absent. Later runs reuse the saved local values. Press `Ctrl+C` in the launcher window to stop
+both services. Use `-NoBrowser` when an automatic browser window is not wanted.
+
 ## Production deployment
 
 The release package runs exactly two containers: `autolava-api` and `autolava-web`. MySQL is
