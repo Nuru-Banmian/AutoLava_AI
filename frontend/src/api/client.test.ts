@@ -2,13 +2,20 @@ import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
-import { api } from "@/api/client";
+import { ApiError, api, friendlyApiError } from "@/api/client";
 
 const server = setupServer();
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
+
+it("localizes known technical messages", () => {
+  expect(friendlyApiError(new ApiError(401, "Invalid credentials"), "登录失败"))
+    .toBe("用户名或密码错误，请重新输入");
+  expect(friendlyApiError(new ApiError(403, "Inactive user"), "登录失败"))
+    .toBe("这个账号已停用，请联系管理员");
+});
 
 describe("api", () => {
   it("prefixes API paths, includes credentials, sends JSON, and handles 204", async () => {

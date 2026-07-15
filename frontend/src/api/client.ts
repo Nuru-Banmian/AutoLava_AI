@@ -8,6 +8,24 @@ export class ApiError extends Error {
   }
 }
 
+const friendlyMessages: Record<string, string> = {
+  "Invalid credentials": "用户名或密码错误，请重新输入",
+  "Inactive user": "这个账号已停用，请联系管理员",
+  "Income configuration version does not match": "收入项目刚刚发生变化，页面已为你重新加载，请确认金额后再次保存",
+};
+
+export function friendlyApiError(error: unknown, fallback: string): string {
+  if (!(error instanceof ApiError)) return fallback;
+  const mapped = friendlyMessages[error.detail];
+  if (mapped) return mapped;
+  if (/^[\x00-\x7f\s]+$/.test(error.detail)) {
+    if (error.status === 403) return "你没有权限执行这个操作";
+    if (error.status === 409) return "数据已经发生变化，请刷新后重试";
+    if (error.status >= 500) return "服务器暂时不可用，请稍后重试";
+  }
+  return error.detail || fallback;
+}
+
 function errorDetail(body: unknown, fallback: string): string {
   if (typeof body === "object" && body !== null && "detail" in body) {
     const detail = (body as { detail: unknown }).detail;
