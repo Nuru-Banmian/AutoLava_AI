@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { QueryClient } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
@@ -20,7 +20,10 @@ beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
-function renderApplication(path: string) {
+function renderApplication(path: string, options: { role?: "admin" | "user" } = {}) {
+  if (options.role) {
+    server.use(http.get("/api/auth/me", () => HttpResponse.json({ id: 1, username: options.role, role: options.role })));
+  }
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(<Application queryClient={queryClient} router={createAppRouter([path])} />);
 }
@@ -60,6 +63,39 @@ describe("App", () => {
   it("loads the shared application shell", async () => {
     renderApplication("/");
     expect(await screen.findByText("AutoLava AI")).toBeInTheDocument();
+  });
+
+  it("shows four mobile entries and hides management from regular users", async () => {
+    renderApplication("/more", { role: "user" });
+    const nav = await screen.findByRole("navigation", { name: "移动导航" });
+    expect(within(nav).getAllByRole("link")).toHaveLength(4);
+    expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["首页", "记账", "记录", "更多"]);
+    expect(nav).toHaveClass("grid-cols-4");
+    const more = screen.getByRole("navigation", { name: "更多功能" });
+    expect(within(more).getByRole("link", { name: "经营分析" })).toBeInTheDocument();
+    expect(within(more).getByRole("combobox", { name: "门店" })).toBeInTheDocument();
+    expect(within(more).getByRole("link", { name: "修改密码" })).toBeInTheDocument();
+    expect(screen.queryByText("管理中心")).not.toBeInTheDocument();
+    expect(screen.queryByText("系统状态")).not.toBeInTheDocument();
+  });
+
+  it("shows management and system status in More for administrators", async () => {
+    renderApplication("/more", { role: "admin" });
+    const more = await screen.findByRole("navigation", { name: "更多功能" });
+    expect(within(more).getByRole("link", { name: "管理中心" })).toHaveAttribute("href", "/admin");
+    expect(within(more).getByRole("link", { name: "系统状态" })).toHaveAttribute("href", "/admin?tab=status");
+  });
+
+  it("keeps the administrator desktop sidebar in the required order", async () => {
+    renderApplication("/", { role: "admin" });
+    const nav = await screen.findByRole("navigation", { name: "主导航" });
+    expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual([
+      "首页",
+      "每日记账",
+      "历史记录",
+      "经营分析",
+      "管理中心",
+    ]);
   });
 
   it("loads the approved blue theme tokens from index.css", () => {
@@ -103,5 +139,11 @@ describe("App", () => {
     server.use(http.get("/api/auth/me", () => HttpResponse.json({ detail: "Authentication required" }, { status: 401 })));
     render(<App />);
     expect(await screen.findByRole("heading", { name: "登录" })).toBeInTheDocument();
+  });
+
+  it("shows a Chinese message when authentication status cannot be loaded", async () => {
+    server.use(http.get("/api/auth/me", () => HttpResponse.json({ detail: "Internal Server Error" }, { status: 500 })));
+    renderApplication("/");
+    expect(await screen.findByRole("alert")).toHaveTextContent("登录状态加载失败，请重试");
   });
 });

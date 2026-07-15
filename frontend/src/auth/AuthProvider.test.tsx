@@ -167,7 +167,7 @@ describe("authenticated application shell", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "退出登录" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Logout unavailable");
+    expect(await screen.findByRole("alert")).toHaveTextContent("退出失败，请重试");
     expect(screen.getByRole("heading", { name: "仪表盘" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "退出登录" })).toBeEnabled();
   });
@@ -235,7 +235,7 @@ describe("authenticated application shell", () => {
     );
     renderTestRouter("/");
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Stores unavailable");
+    expect(await screen.findByRole("alert")).toHaveTextContent("门店加载失败，请重试");
     expect(screen.getByLabelText("门店")).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "重试门店" }));
     expect(await screen.findByRole("option", { name: "Recovered Store" })).toBeInTheDocument();
@@ -250,11 +250,11 @@ describe("authenticated application shell", () => {
     renderTestRouter("/admin");
 
     expect(await screen.findByRole("heading", { name: "仪表盘" })).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "管理" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "管理中心" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "系统管理" })).not.toBeInTheDocument();
   });
 
-  it("renders responsive navigation and a disabled Phase 2 workers item", async () => {
+  it("renders the role-aware desktop and mobile navigation", async () => {
     server.use(
       http.get("/api/auth/me", () => HttpResponse.json(admin)),
       http.get("/api/stores/accessible", () => HttpResponse.json([])),
@@ -263,9 +263,20 @@ describe("authenticated application shell", () => {
 
     const desktop = await screen.findByRole("navigation", { name: "主导航" });
     const mobile = screen.getByRole("navigation", { name: "移动导航" });
-    expect(desktop).toHaveClass("hidden", "md:flex");
+    expect(desktop.closest("aside")).toHaveClass("hidden", "md:flex");
     expect(mobile).toHaveClass("fixed", "md:hidden");
-    expect(within(desktop).getByText("员工管理")).toHaveAttribute("aria-disabled", "true");
-    expect(within(desktop).getByRole("link", { name: "管理" })).toBeInTheDocument();
+    expect(within(desktop).getAllByRole("link").map((link) => link.textContent)).toEqual([
+      "首页",
+      "每日记账",
+      "历史记录",
+      "经营分析",
+      "管理中心",
+    ]);
+    expect(within(mobile).getAllByRole("link").map((link) => link.textContent)).toEqual([
+      "首页",
+      "记账",
+      "记录",
+      "更多",
+    ]);
   });
 });

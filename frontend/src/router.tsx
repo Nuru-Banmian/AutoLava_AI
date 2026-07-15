@@ -6,6 +6,7 @@ import { AdminPage } from "@/pages/AdminPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { HomePage } from "@/pages/HomePage";
 import { LedgerPage } from "@/pages/LedgerPage";
+import { MorePage } from "@/pages/MorePage";
 import { DatabasePage } from "@/pages/DatabasePage";
 import { ChartsPage } from "@/pages/ChartsPage";
 import { StoreProvider } from "@/stores/StoreProvider";
@@ -17,7 +18,7 @@ function AuthLoading() {
 function ProtectedShell() {
   const { user, isLoading, error } = useAuth();
   if (isLoading) return <AuthLoading />;
-  if (error) return <main role="alert">{error.message}</main>;
+  if (error) return <main role="alert">登录状态加载失败，请重试</main>;
   if (!user) return <Navigate to="/login" replace />;
   return <StoreProvider userId={user.id}><AppShell /></StoreProvider>;
 }
@@ -40,6 +41,8 @@ const routes: RouteObject[] = [{
       { path: "ledger", element: <LedgerPage /> },
       { path: "database", element: <DatabasePage /> },
       { path: "charts", element: <ChartsPage /> },
+      { path: "more", element: <MorePage /> },
+      { path: "account/password", element: <Placeholder title="修改密码" /> },
       { path: "workers", element: <Placeholder title="员工管理（Phase 2）" /> },
       { path: "admin", element: <AdminRoute /> },
     ] },
