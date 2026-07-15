@@ -29,6 +29,10 @@ def test_ci_lockfile_contains_linux_native_bindings() -> None:
             "lightningcss-linux-x64-gnu",
             "lightningcss-linux-x64-musl",
         ),
+        "@tailwindcss/oxide": (
+            "@tailwindcss/oxide-linux-x64-gnu",
+            "@tailwindcss/oxide-linux-x64-musl",
+        ),
     }
     for dependency, bindings in native_families.items():
         dependency_version = packages[f"node_modules/{dependency}"]["version"]
