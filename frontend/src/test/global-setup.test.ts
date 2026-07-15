@@ -1,6 +1,7 @@
 // @vitest-environment node
 
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer, type ViteDevServer } from "vite";
 
@@ -23,7 +24,7 @@ afterEach(() => vi.clearAllMocks());
 
 describe("Playwright Vite lifecycle", () => {
   it("uses the frontend directory regardless of the caller working directory", async () => {
-    const expectedRoot = resolve(process.cwd());
+    const expectedRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
     mockServer();
 
     const teardown = await globalSetup();
