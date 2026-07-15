@@ -9,6 +9,8 @@
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-active: var(--primary-active);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
@@ -35,6 +37,8 @@
   --popover-foreground: oklch(0.24 0.03 255);
   --primary: oklch(0.55 0.19 255);
   --primary-foreground: oklch(0.99 0 0);
+  --primary-hover: oklch(0.48 0.17 255);
+  --primary-active: oklch(0.43 0.16 255);
   --secondary: oklch(0.95 0.018 250);
   --secondary-foreground: oklch(0.28 0.04 255);
   --muted: oklch(0.96 0.012 250);

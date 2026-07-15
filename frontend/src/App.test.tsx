@@ -2,9 +2,14 @@ import { render, screen } from "@testing-library/react";
 import { QueryClient } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { buttonVariants } from "./components/ui/button";
 import App, { Application } from "./App";
 import { createAppRouter } from "./router";
+
+const applicationStyles = readFileSync(resolve(process.cwd(), "src/index.css"), "utf8");
 
 const server = setupServer(
   http.get("/api/auth/me", () => HttpResponse.json({ id: 1, username: "admin", role: "admin" })),
@@ -20,11 +25,78 @@ function renderApplication(path: string) {
   return render(<Application queryClient={queryClient} router={createAppRouter([path])} />);
 }
 
+function themeTokens() {
+  const root = applicationStyles.match(/:root\s*\{([^}]*)\}/)?.[1];
+  if (!root) throw new Error("index.css is missing its :root theme block");
+  return Object.fromEntries(
+    [...root.matchAll(/--([\w-]+):\s*([^;]+);/g)].map(([, name, value]) => [name, value.trim()]),
+  );
+}
+
+function oklchRelativeLuminance(value: string) {
+  const match = value.match(/^oklch\(([\d.]+)\s+([\d.]+)\s+([\d.]+)\)$/);
+  if (!match) throw new Error(`Expected an opaque OKLCH color, received ${value}`);
+  const [, lightness, chroma, hue] = match.map(Number);
+  const hueRadians = hue * Math.PI / 180;
+  const a = chroma * Math.cos(hueRadians);
+  const b = chroma * Math.sin(hueRadians);
+  const l = lightness + 0.3963377774 * a + 0.2158037573 * b;
+  const m = lightness - 0.1055613458 * a - 0.0638541728 * b;
+  const s = lightness - 0.0894841775 * a - 1.291485548 * b;
+  const linearRed = 4.0767416621 * l ** 3 - 3.3077115913 * m ** 3 + 0.2309699292 * s ** 3;
+  const linearGreen = -1.2684380046 * l ** 3 + 2.6097574011 * m ** 3 - 0.3413193965 * s ** 3;
+  const linearBlue = -0.0041960863 * l ** 3 - 0.7034186147 * m ** 3 + 1.707614701 * s ** 3;
+  return 0.2126 * Math.min(1, Math.max(0, linearRed))
+    + 0.7152 * Math.min(1, Math.max(0, linearGreen))
+    + 0.0722 * Math.min(1, Math.max(0, linearBlue));
+}
+
+function contrastRatio(first: string, second: string) {
+  const luminances = [oklchRelativeLuminance(first), oklchRelativeLuminance(second)].sort((a, b) => b - a);
+  return (luminances[0] + 0.05) / (luminances[1] + 0.05);
+}
+
 describe("App", () => {
   it("loads the shared application shell", async () => {
     renderApplication("/");
     expect(await screen.findByText("AutoLava AI")).toBeInTheDocument();
-    expect(document.documentElement).toBeTruthy();
+  });
+
+  it("loads the approved blue theme tokens from index.css", () => {
+    expect(themeTokens()).toMatchObject({
+      radius: "0.875rem",
+      background: "oklch(0.985 0.006 250)",
+      foreground: "oklch(0.24 0.03 255)",
+      card: "oklch(1 0 0)",
+      "card-foreground": "oklch(0.24 0.03 255)",
+      popover: "oklch(1 0 0)",
+      "popover-foreground": "oklch(0.24 0.03 255)",
+      primary: "oklch(0.55 0.19 255)",
+      "primary-foreground": "oklch(0.99 0 0)",
+      "primary-hover": "oklch(0.48 0.17 255)",
+      "primary-active": "oklch(0.43 0.16 255)",
+      secondary: "oklch(0.95 0.018 250)",
+      "secondary-foreground": "oklch(0.28 0.04 255)",
+      muted: "oklch(0.96 0.012 250)",
+      "muted-foreground": "oklch(0.5 0.035 255)",
+      accent: "oklch(0.93 0.035 250)",
+      "accent-foreground": "oklch(0.3 0.08 255)",
+      destructive: "oklch(0.58 0.22 27)",
+      border: "oklch(0.9 0.018 250)",
+      input: "oklch(0.9 0.018 250)",
+      ring: "oklch(0.62 0.16 255)",
+    });
+  });
+
+  it("keeps primary button interaction states opaque and WCAG AA compliant", () => {
+    const tokens = themeTokens();
+    const classes = buttonVariants();
+
+    expect(classes).toContain("hover:bg-primary-hover");
+    expect(classes).toContain("active:bg-primary-active");
+    expect(classes).not.toContain("hover:bg-primary/90");
+    expect(contrastRatio(tokens["primary-hover"], tokens["primary-foreground"])).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(tokens["primary-active"], tokens["primary-foreground"])).toBeGreaterThanOrEqual(4.5);
   });
 
   it("renders the login page for an unauthenticated browser session", async () => {
