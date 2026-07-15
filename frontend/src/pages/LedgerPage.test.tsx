@@ -38,6 +38,20 @@ function renderLedger(extra: Parameters<typeof server.use> = []) {
 }
 
 describe("LedgerPage", () => {
+  it("opens the shared calendar and selects a recorded historical date", async () => {
+    renderLedger([
+      http.get("/api/ledger/1/recent", () => HttpResponse.json([{ id: 7, date: "2026-07-14" }])),
+    ]);
+
+    fireEvent.click(await screen.findByRole("button", { name: "选择台账日期：2026年7月15日" }));
+    expect(screen.getByText("补记历史记录")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "2026年7月14日，已有记录" }));
+
+    const trigger = await screen.findByRole("button", { name: "选择台账日期：2026年7月14日" });
+    fireEvent.click(trigger);
+    expect(screen.getByText("编辑已有记录")).toBeInTheDocument();
+  });
+
   it("loads the current income configuration for direct-total mode", async () => {
     let requested = "";
     renderLedger([
@@ -132,14 +146,18 @@ describe("LedgerPage", () => {
 
   it("uses the store timezone rather than browser UTC for today", () => {
     expect(storeLocalToday({ id: 1, name: "Honolulu", timezone: "Pacific/Honolulu" }, new Date("2026-07-14T01:00:00Z"))).toBe("2026-07-13");
+    expect(storeLocalToday({ id: 2, name: "Kiritimati", timezone: "Pacific/Kiritimati" }, new Date("2026-12-31T10:30:00Z"))).toBe("2027-01-01");
+    expect(storeLocalToday({ id: 3, name: "New York", timezone: "America/New_York" }, new Date("2026-03-08T04:30:00Z"))).toBe("2026-03-07");
+    expect(storeLocalToday({ id: 3, name: "New York", timezone: "America/New_York" }, new Date("2026-03-08T07:30:00Z"))).toBe("2026-03-08");
   });
 
   it("scopes the category catalog to a newly selected historical date", async () => {
     const requested: string[] = [];
     renderLedger();
-    const input = await screen.findByLabelText("日期");
     server.use(http.get("/api/database/1/records", ({ request }) => { requested.push(new URL(request.url).search); return HttpResponse.json({ items: [], categories: [], sum_daily_revenue: "0.00", total: 0, page: 1, page_size: 1 }); }));
-    fireEvent.change(input, { target: { value: "2026-06-01" } });
+    fireEvent.click(await screen.findByRole("button", { name: "选择台账日期：2026年7月15日" }));
+    fireEvent.click(screen.getByRole("button", { name: "上个月" }));
+    fireEvent.click(screen.getByRole("button", { name: "2026年6月1日" }));
     await waitFor(() => expect(requested.some((query) => query.includes("start=2026-06-01") && query.includes("end=2026-06-01"))).toBe(true));
   });
 
@@ -154,7 +172,7 @@ describe("LedgerPage", () => {
     );
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(<QueryClientProvider client={client}><StoreProvider><StoreControls /><LedgerPage /></StoreProvider></QueryClientProvider>);
-    fireEvent.click(await screen.findByRole("button", { name: "choose1" })); fireEvent.change(await screen.findByLabelText("日期"), { target: { value: "2026-07-13" } });
+    fireEvent.click(await screen.findByRole("button", { name: "choose1" })); fireEvent.click(await screen.findByRole("button", { name: "选择台账日期：2026年7月15日" })); fireEvent.click(screen.getByRole("button", { name: "2026年7月13日" }));
     fireEvent.change(await screen.findByLabelText("现金"), { target: { value: "1" } }); fireEvent.click(screen.getByRole("button", { name: "保存" })); await screen.findByRole("alertdialog");
     client.setQueryData(["dashboard", 1], true); client.setQueryData(["dashboard", 2], true); fireEvent.click(screen.getByRole("button", { name: "确认覆盖" })); fireEvent.click(screen.getByRole("button", { name: "choose2" })); release();
     await waitFor(() => expect(overwriteUrl).toContain("/api/ledger/1/2026-07-13?overwrite=true")); await waitFor(() => expect(client.getQueryState(["dashboard", 1])?.isInvalidated).toBe(true)); expect(client.getQueryState(["dashboard", 2])?.isInvalidated).toBe(false);
@@ -162,8 +180,9 @@ describe("LedgerPage", () => {
 
   it("clears overwrite confirmation when the selected date changes", async () => {
     server.use(http.put("/api/ledger/1/:date", () => HttpResponse.json({ detail: "exists" }, { status: 409 })));
-    renderLedger(); const date = await screen.findByLabelText("日期"); fireEvent.click(await screen.findByRole("button", { name: "保存" })); expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
-    fireEvent.change(date, { target: { value: "2026-07-13" } }); await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    renderLedger([http.get("/api/ledger/1/recent", () => HttpResponse.json([{ id: 8, date: "2026-07-13", is_open: "营业" }]))]);
+    fireEvent.click(await screen.findByRole("button", { name: "保存" })); expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /2026-07-13/, hidden: true })); await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
   });
 
   it("shows recent loading failures separately and retries them", async () => {
