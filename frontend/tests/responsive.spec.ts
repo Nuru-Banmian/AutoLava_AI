@@ -81,10 +81,23 @@ test("mobile More keeps maximum-length store content reachable above navigation"
   await expect(page.getByRole("link", { name: "系统状态" })).toHaveCount(0);
   await expectNoHorizontalScroll(page);
 
-  const lastAction = page.getByRole("button", { name: "退出登录" });
+  const main = page.getByRole("main");
+  const lastAction = main.getByRole("link").or(main.getByRole("button")).or(main.getByRole("combobox")).last();
   const bottomNavigation = page.getByRole("navigation", { name: "移动导航" });
-  await page.mouse.wheel(0, 1_000);
-  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  await expect(lastAction).toHaveAccessibleName("退出登录");
+  const readScrollPosition = () => page.evaluate(() => ({
+    maximum: document.documentElement.scrollHeight - window.innerHeight,
+    top: window.scrollY,
+  }));
+  expect((await readScrollPosition()).maximum).toBeGreaterThan(0);
+  await expect(async () => {
+    const position = await readScrollPosition();
+    const remaining = position.maximum - position.top;
+    if (remaining > 1) await page.mouse.wheel(0, remaining);
+    expect(Math.abs(remaining)).toBeLessThanOrEqual(1);
+  }).toPass({ intervals: [50], timeout: 2_000 });
+  const scrollPosition = await readScrollPosition();
+  expect(Math.abs(scrollPosition.maximum - scrollPosition.top)).toBeLessThanOrEqual(1);
   const [actionBox, navigationBox] = await Promise.all([lastAction.boundingBox(), bottomNavigation.boundingBox()]);
   expect(actionBox, "退出登录按钮应有真实浏览器布局框").not.toBeNull();
   expect(navigationBox, "移动底栏应有真实浏览器布局框").not.toBeNull();
