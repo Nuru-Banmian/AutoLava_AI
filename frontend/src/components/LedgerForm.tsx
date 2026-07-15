@@ -17,25 +17,21 @@ export function LedgerForm({ categories, config, record, weather, onSave, saving
     store_id: record?.store_id ?? 0,
     version_id: record?.income_config_version_id ?? null,
     version: 0,
-    enabled: Boolean(record && (record.income_config_version_id !== null || record.items.length > 0)),
+    enabled: record?.income_mode === "composed",
     formula: "",
+    created_at: null,
     items: categories.map((category) => ({ ...category, category_id: category.id })),
   }), [categories, config, record]);
-  const composed = record ? record.income_config_version_id !== null || record.items.length > 0 : resolvedConfig.enabled;
+  const composed = record ? record.income_mode === "composed" : resolvedConfig.enabled;
   const active = useMemo(() => {
-    const catalog = new Map(categories.map((category) => [category.id, category]));
     if (record && composed) {
-      return record.items.map((item) => {
-        const snapshot = item as typeof item & { category_name?: string; include_in_total?: boolean; sort_order?: number };
-        const fallback = catalog.get(item.category_id);
-        return {
-          id: item.category_id,
-          name: snapshot.category_name ?? fallback?.name ?? "历史收入项目",
-          include_in_total: snapshot.include_in_total ?? fallback?.include_in_total ?? true,
-          is_active: true,
-          sort_order: snapshot.sort_order ?? fallback?.sort_order ?? 0,
-        };
-      }).sort((left, right) => left.sort_order - right.sort_order || left.id - right.id);
+      return record.items.map((item) => ({
+        id: item.category_id,
+        name: item.category_name,
+        include_in_total: item.include_in_total,
+        is_active: true,
+        sort_order: item.sort_order,
+      })).sort((left, right) => left.sort_order - right.sort_order || left.id - right.id);
     }
     const configured = resolvedConfig.items
       .filter((item) => item.is_active && item.category_id !== null)

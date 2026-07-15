@@ -54,3 +54,31 @@ Backend tests loaded the ignored worktree database setting into the test process
 - Existing composed edits submit exactly their snapshot categories and preserve their snapshot version/row version.
 - The form remains reusable from the existing database edit entry through a record-derived compatibility configuration when no explicit current configuration is supplied.
 - Existing unrelated dirty files (`README.md`, `.superpowers/sdd/progress.md`, cleanup scripts/tests) were neither edited by U09 nor included in the planned commit.
+
+## Independent-review remediation
+
+The first U09 commit was not review-clean because it inferred an existing record's mode from a non-null `income_config_version_id`. Backend records created under a disabled configuration still retain that configuration id, while their authoritative mode is `income_mode: "legacy_total"`.
+
+The follow-up fixes are:
+
+- Added the exact `income_mode: "legacy_total" | "composed"` field to `RecordSnapshot` and made it the sole mode discriminator for existing records.
+- Added `category_name`, `include_in_total`, and `sort_order` to `RecordItem`; historical composed rendering now uses those typed snapshot fields with no unsafe cast.
+- Added `created_at: string | null` to `IncomeConfigResponse` and updated current-config fixtures to match the real response schema.
+- Added a backend create → fetch → overwrite regression proving a disabled configuration produces a `legacy_total` record with a non-null configuration version and remains editable with direct revenue.
+- Added LedgerForm and DatabasePage regressions proving that production shape displays and submits `daily_revenue` with empty `items`.
+- Added a dedicated current-config error branch using `friendlyApiError`; an English 500 detail is not exposed, and “重试收入配置” refetches only the failed config query. Already-successful catalog and record dependencies are not redundantly fetched.
+
+### Review-fix TDD evidence
+
+1. Authoritative-mode RED: LedgerForm and DatabasePage tests both failed because the non-null config version reopened a `legacy_total` record as an empty composed form. Switching existing-record mode selection to `record.income_mode` turned both green.
+2. Config-error RED: LedgerPage rendered `Internal Server Error` directly and had no retry action. A friendly Chinese error plus config-only refetch turned the test green.
+
+### Final review-fix verification
+
+- Backend ledger API focused suite: `28 passed`.
+- Backend full suite: `252 passed`, with one existing Starlette/httpx deprecation warning.
+- Ruff: `All checks passed!`.
+- Frontend focused suite (`LedgerForm`, `LedgerPage`, `DatabasePage`): `3 files, 25 tests passed`.
+- Frontend full suite: `15 files, 111 tests passed`.
+- Production build: passed; Vite emitted only its existing large-chunk advisory.
+- `git diff --check`: passed.

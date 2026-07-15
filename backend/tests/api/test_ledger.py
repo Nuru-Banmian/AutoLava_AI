@@ -118,6 +118,44 @@ async def test_composed_write_requires_and_accepts_current_config_version(
     assert response.json()["daily_revenue"] == "12.00"
 
 
+async def test_disabled_config_creates_fetches_and_edits_legacy_total_with_version(
+    auth_client: AsyncClient,
+    assigned_store: AssignedStore,
+    db_session: AsyncSession,
+) -> None:
+    assigned_store.config.enabled = False
+    await db_session.flush()
+    record_date = today_for(assigned_store)
+    path = f"/api/ledger/{assigned_store.id}/{record_date.isoformat()}"
+    payload = {
+        "is_open": "营业",
+        "daily_revenue": "125.50",
+        "config_version_id": None,
+        "wash_count": 4,
+        "weather": None,
+        "weather_edited": False,
+        "activity": None,
+        "items": [],
+    }
+
+    created = await auth_client.put(path, json=payload)
+    assert created.status_code == 201
+
+    fetched = await auth_client.get(path)
+    assert fetched.status_code == 200
+    assert fetched.json()["income_mode"] == "legacy_total"
+    assert fetched.json()["income_config_version_id"] == assigned_store.config.id
+    assert fetched.json()["daily_revenue"] == "125.50"
+    assert fetched.json()["items"] == []
+
+    edited = await auth_client.put(
+        path + "?overwrite=true",
+        json=payload | {"daily_revenue": "130.00", "expected_version": 1},
+    )
+    assert edited.status_code == 200
+    assert edited.json()["daily_revenue"] == "130.00"
+
+
 async def test_standard_put_does_not_attempt_external_weather_http(
     auth_client: AsyncClient,
     assigned_store: AssignedStore,

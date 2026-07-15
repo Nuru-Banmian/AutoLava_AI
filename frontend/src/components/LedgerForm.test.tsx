@@ -10,7 +10,7 @@ describe("LedgerForm", () => {
   }
 
   it("uses direct total when configuration is disabled", () => {
-    renderLedgerForm({ store_id: 2, enabled: false, version_id: 4, version: 4, formula: "", items: [] });
+    renderLedgerForm({ store_id: 2, enabled: false, version_id: 4, version: 4, formula: "", created_at: null, items: [] });
 
     expect(screen.getByLabelText("当日营业额")).toBeEnabled();
     expect(screen.queryByRole("group", { name: "收入项目" })).not.toBeInTheDocument();
@@ -26,6 +26,7 @@ describe("LedgerForm", () => {
           version_id: 4,
           version: 4,
           formula: "现金",
+          created_at: "2026-07-15T08:00:00",
           items: [
             { id: 10, category_id: 5, name: "现金", include_in_total: true, is_active: true, sort_order: 0 },
             { id: 11, category_id: 6, name: "停用项", include_in_total: true, is_active: false, sort_order: 1 },
@@ -62,7 +63,8 @@ describe("LedgerForm", () => {
       store_id: 2,
       date: "2026-07-14",
       daily_revenue: "98.76",
-      income_config_version_id: null,
+      income_mode: "legacy_total",
+      income_config_version_id: 4,
       row_version: 5,
       items: [],
       is_open: "营业",
@@ -80,11 +82,11 @@ describe("LedgerForm", () => {
       updated_by: 1,
       created_at: "2026-07-14T08:00:00",
       updated_at: "2026-07-14T08:00:00",
-    } satisfies RecordSnapshot;
+    } satisfies RecordSnapshot & { income_mode: "legacy_total" };
 
     render(
       <LedgerForm
-        config={{ store_id: 2, enabled: true, version_id: 4, version: 4, formula: "现金", items: [{ id: 10, category_id: 5, name: "现金", include_in_total: true, is_active: true, sort_order: 0 }] }}
+        config={{ store_id: 2, enabled: true, version_id: 4, version: 4, formula: "现金", created_at: "2026-07-15T08:00:00", items: [{ id: 10, category_id: 5, name: "现金", include_in_total: true, is_active: true, sort_order: 0 }] }}
         categories={[{ id: 5, name: "现金", include_in_total: true, is_active: true, sort_order: 0 }]}
         record={record}
         onSave={onSave}
@@ -112,6 +114,7 @@ describe("LedgerForm", () => {
       store_id: 2,
       date: "2026-07-15",
       daily_revenue: "12.00",
+      income_mode: "composed",
       wash_count: null,
       is_open: "营业",
       weather: null,
@@ -133,6 +136,9 @@ describe("LedgerForm", () => {
         {
           id: 21,
           category_id: 5,
+          category_name: "现金",
+          include_in_total: true,
+          sort_order: 0,
           amount: "12.00",
           created_at: "2026-07-15T08:00:00",
           updated_at: "2026-07-15T08:00:00",
@@ -148,6 +154,7 @@ describe("LedgerForm", () => {
           version_id: 7,
           version: 7,
           formula: "现金 + 新增项",
+          created_at: "2026-07-15T08:00:00",
           items: [
             { id: 31, category_id: 5, name: "现金", include_in_total: true, is_active: true, sort_order: 0 },
             { id: 32, category_id: 6, name: "新增项", include_in_total: true, is_active: true, sort_order: 1 },

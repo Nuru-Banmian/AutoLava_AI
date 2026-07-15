@@ -6,6 +6,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 
 import { DatabasePage } from "@/pages/DatabasePage";
 import { StoreProvider, useStore } from "@/stores/StoreProvider";
+import type { RecordSnapshot } from "@/api/types";
 
 const server = setupServer();
 function StoreControls() { const { select } = useStore(); return <><button onClick={() => select(1)}>choose1</button><button onClick={() => select(2)}>choose2</button></>; }
@@ -28,7 +29,7 @@ describe("DatabasePage", () => {
     expect(screen.getByRole("columnheader", { name: "历史分类" })).toBeInTheDocument();
   });
 
-  const record = { id: 4, store_id: 1, date: "2026-07-13", daily_revenue: "10.00", wash_count: 2, is_open: "营业", weather: "晴", weather_auto: "晴", weather_code: 1, temperature_max: "20.0", temperature_min: "10.0", precipitation: "0.0", activity: "夏日 活动", weather_edited: false, scanned: false, created_by: 1, updated_by: 1, created_at: "2026-07-13T00:00:00", updated_at: "2026-07-13T00:00:00", created_by_name: "u", updated_by_name: "u", items: [{ id: 1, category_id: 1, amount: "10.00", created_at: "", updated_at: "" }] } as any;
+  const record = { id: 4, store_id: 1, date: "2026-07-13", daily_revenue: "10.00", income_mode: "composed", income_config_version_id: 3, row_version: 1, wash_count: 2, is_open: "营业", weather: "晴", weather_auto: "晴", weather_code: 1, temperature_max: "20.0", temperature_min: "10.0", precipitation: "0.0", activity: "夏日 活动", weather_edited: false, scanned: false, created_by: 1, updated_by: 1, created_at: "2026-07-13T00:00:00", updated_at: "2026-07-13T00:00:00", created_by_name: "u", updated_by_name: "u", items: [{ id: 1, category_id: 1, category_name: "现金", include_in_total: true, sort_order: 1, amount: "10.00", created_at: "", updated_at: "" }] } satisfies RecordSnapshot;
   function renderPage(extra: Parameters<typeof server.use>) {
     server.use(http.get("/api/stores/accessible", () => HttpResponse.json([{ id: 1, name: "Berlin", timezone: "Europe/Berlin" }])), ...extra, http.get("/api/database/1/history", () => HttpResponse.json([])));
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -95,6 +96,26 @@ describe("DatabasePage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "编辑 2026-07-13" })); fireEvent.click(screen.getByRole("button", { name: "保存" })); await waitFor(() => expect(edited).toBe("true"));
     fireEvent.click(await screen.findByRole("button", { name: "删除 2026-07-13" })); expect(deleted).toBe(0); fireEvent.click(screen.getByRole("button", { name: "确认删除" })); await waitFor(() => expect(deleted).toBe(1));
     fireEvent.click(await screen.findByRole("button", { name: "回滚 #9" })); expect(rolled).toBe(0); fireEvent.click(screen.getByRole("button", { name: "确认回滚" })); await waitFor(() => expect(rolled).toBe(1));
+  });
+
+  it("edits a fetched legacy-total record that carries a configuration version", async () => {
+    let body: any;
+    const legacyRecord = {
+      ...record,
+      income_mode: "legacy_total",
+      income_config_version_id: 4,
+      row_version: 2,
+      items: [],
+    };
+    renderPage([
+      http.get("/api/database/1/records", () => HttpResponse.json({ items: [legacyRecord], categories: [{ id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }], sum_daily_revenue: "10", total: 1, page: 1, page_size: 50 })),
+      http.put("/api/ledger/1/2026-07-13", async ({ request }) => { body = await request.json(); return HttpResponse.json({}); }),
+    ]);
+
+    fireEvent.click(await screen.findByRole("button", { name: "编辑 2026-07-13" }));
+    expect(screen.getByLabelText("当日营业额")).toHaveValue("10.00");
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(body).toMatchObject({ daily_revenue: "10.00", items: [] }));
   });
 
   it("binds delete to its original store and clears action dialogs on store changes", async () => {

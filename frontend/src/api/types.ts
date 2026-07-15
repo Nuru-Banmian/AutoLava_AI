@@ -38,6 +38,7 @@ export interface IncomeConfigResponse {
   version: number;
   enabled: boolean;
   formula: string;
+  created_at: string | null;
   items: IncomeConfigItem[];
 }
 
@@ -79,6 +80,7 @@ export interface ScheduledTaskLog {
 }
 
 export type LedgerStatus = "营业" | "休息" | "天气停业";
+export type IncomeMode = "legacy_total" | "composed";
 export interface CategoryDescriptor { id: number; name: string; include_in_total: boolean; is_active: boolean; sort_order: number }
 export interface IncomeItemBody { category_id: number; amount: string }
 export interface LedgerBody {
@@ -92,10 +94,10 @@ export interface LedgerBody {
   activity: string | null;
   items: IncomeItemBody[];
 }
-export interface RecordItem extends IncomeItemBody { id: number; created_at: string; updated_at: string }
+export interface RecordItem extends IncomeItemBody { id: number; category_name: string; include_in_total: boolean; sort_order: number; created_at: string; updated_at: string }
 export interface RecordSnapshot {
   id: number; store_id: number; date: string; daily_revenue: string; wash_count: number | null; is_open: LedgerStatus;
-  income_config_version_id: number | null; row_version: number;
+  income_mode: IncomeMode; income_config_version_id: number | null; row_version: number;
   weather: string | null; weather_auto: string | null; weather_code: number | null; temperature_max: string | null;
   temperature_min: string | null; precipitation: string | null; activity: string | null; weather_edited: boolean; scanned: boolean;
   created_by: number; updated_by: number; created_at: string; updated_at: string; items: RecordItem[];
