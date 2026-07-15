@@ -363,7 +363,7 @@ function Ensure-Dependencies {
 At the main entry, assert Windows, `uv`, `node`, and `npm`; assert ports 8000/5173 are free; parse the database URL host/port without logging it; require successful MySQL TCP connection; initialize and set environment; then call `Ensure-Dependencies`. Use a regex that accepts the current SQLAlchemy URL:
 
 ```powershell
-if (-not $IsWindows -and $PSVersionTable.PSVersion.Major -ge 6) {
+if ($PSVersionTable.PSVersion.Major -ge 6 -and -not $IsWindows) {
     Stop-WithMessage "本启动器仅支持 Windows。"
 }
 Assert-Command "uv"
