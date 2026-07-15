@@ -85,19 +85,41 @@ function Initialize-LocalSettings([hashtable]$DatabaseValues) {
     if (-not $local.ContainsKey("AUTOLAVA_ENVIRONMENT")) {
         $local["AUTOLAVA_ENVIRONMENT"] = "development"; $changed = $true
     }
-    if (-not $local.ContainsKey("AUTOLAVA_JWT_SECRET")) {
+    if (-not $local.ContainsKey("AUTOLAVA_JWT_SECRET") -or
+        [string]::IsNullOrWhiteSpace([string]$local["AUTOLAVA_JWT_SECRET"])) {
         $local["AUTOLAVA_JWT_SECRET"] = New-JwtSecret; $changed = $true
     }
     if (-not $local.ContainsKey("AUTOLAVA_COOKIE_SECURE")) {
         $local["AUTOLAVA_COOKIE_SECURE"] = "false"; $changed = $true
     }
-    if (-not $local.ContainsKey("AUTOLAVA_BOOTSTRAP_USERNAME")) {
+    if (-not $local.ContainsKey("AUTOLAVA_BOOTSTRAP_USERNAME") -or
+        [string]::IsNullOrWhiteSpace([string]$local["AUTOLAVA_BOOTSTRAP_USERNAME"])) {
         $local["AUTOLAVA_BOOTSTRAP_USERNAME"] = Read-Host "本地管理员用户名"
         $changed = $true
     }
-    if (-not $local.ContainsKey("AUTOLAVA_BOOTSTRAP_PASSWORD")) {
+    if (-not $local.ContainsKey("AUTOLAVA_BOOTSTRAP_PASSWORD") -or
+        [string]::IsNullOrWhiteSpace([string]$local["AUTOLAVA_BOOTSTRAP_PASSWORD"])) {
         $local["AUTOLAVA_BOOTSTRAP_PASSWORD"] = Read-PlainSecret "本地管理员密码"
         $changed = $true
+    }
+
+    $jwtSecret = [string]$local["AUTOLAVA_JWT_SECRET"]
+    if ($jwtSecret.Trim().Length -lt 32) {
+        Stop-WithMessage "JWT 密钥长度不能少于 32 个字符。"
+    }
+    $username = ([string]$local["AUTOLAVA_BOOTSTRAP_USERNAME"]).Trim()
+    if ([string]::IsNullOrWhiteSpace($username) -or
+        $username.Length -lt 3 -or $username.Length -gt 80) {
+        Stop-WithMessage "管理员用户名长度必须为 3 到 80 个字符，且不能全为空白。"
+    }
+    if ([string]$local["AUTOLAVA_BOOTSTRAP_USERNAME"] -cne $username) {
+        $local["AUTOLAVA_BOOTSTRAP_USERNAME"] = $username
+        $changed = $true
+    }
+    $password = [string]$local["AUTOLAVA_BOOTSTRAP_PASSWORD"]
+    if ([string]::IsNullOrWhiteSpace($password) -or
+        $password.Length -lt 8 -or $password.Length -gt 128) {
+        Stop-WithMessage "管理员密码长度必须为 8 到 128 个字符，且不能全为空白。"
     }
     if ($changed) { Write-LocalEnv $local }
 
@@ -113,6 +135,21 @@ function Initialize-LocalSettings([hashtable]$DatabaseValues) {
 function Set-AutoLavaEnvironment([hashtable]$Values) {
     foreach ($item in $Values.GetEnumerator()) {
         [Environment]::SetEnvironmentVariable($item.Key, [string]$item.Value, "Process")
+    }
+}
+
+function Get-AutoLavaEnvironmentSnapshot([hashtable]$Values) {
+    $snapshot = @{}
+    foreach ($key in $Values.Keys) {
+        $snapshot[$key] = [Environment]::GetEnvironmentVariable($key, "Process")
+    }
+    return $snapshot
+}
+
+function Restore-AutoLavaEnvironment([hashtable]$Snapshot) {
+    foreach ($item in $Snapshot.GetEnumerator()) {
+        $value = if ($null -eq $item.Value) { $null } else { [string]$item.Value }
+        [Environment]::SetEnvironmentVariable($item.Key, $value, "Process")
     }
 }
 
@@ -189,6 +226,17 @@ function Start-Backend {
         -WorkingDirectory $BackendDir -NoNewWindow -PassThru
 }
 
+function Start-ConfiguredBackend([hashtable]$Values) {
+    $environmentSnapshot = Get-AutoLavaEnvironmentSnapshot $Values
+    try {
+        Set-AutoLavaEnvironment $Values
+        Invoke-DatabaseSetup
+        return Start-Backend
+    } finally {
+        Restore-AutoLavaEnvironment $environmentSnapshot
+    }
+}
+
 function Start-Frontend {
     $node = (Get-Command node).Source
     $vite = Join-Path $FrontendDir "node_modules\vite\bin\vite.js"
@@ -244,14 +292,11 @@ $databasePort = if ($Matches.port) { [int]$Matches.port } else { 3306 }
 if (-not (Test-TcpPort $databaseHost $databasePort 1500)) {
     Stop-WithMessage "MySQL 无法连接，请确认 MySQL80 服务正在运行。"
 }
-Set-AutoLavaEnvironment $settings
-
 $backendProcess = $null
 $frontendProcess = $null
 try {
     Ensure-Dependencies
-    Invoke-DatabaseSetup
-    $backendProcess = Start-Backend
+    $backendProcess = Start-ConfiguredBackend $settings
     Wait-Healthy "http://127.0.0.1:8000/health" $backendProcess
     $frontendProcess = Start-Frontend
     Wait-Healthy "http://127.0.0.1:5173/health" $frontendProcess
