@@ -1,3 +1,4 @@
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Annotated
 
@@ -9,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_session
 from app.core.security import decode_access_token
 from app.models.identity import Store, StoreMember, User
+from app.services.access import Capability, has_capability
 
 Session = Annotated[AsyncSession, Depends(get_session)]
 
@@ -31,6 +33,15 @@ async def require_admin(user: CurrentUser) -> User:
     if user.role != "admin":
         raise HTTPException(403, "Administrator access required")
     return user
+
+
+def require_capability(capability: Capability) -> Callable[[User], Awaitable[User]]:
+    async def dependency(user: CurrentUser) -> User:
+        if not has_capability(user, capability):
+            raise HTTPException(403, "Insufficient permissions")
+        return user
+
+    return dependency
 
 
 @dataclass(frozen=True)

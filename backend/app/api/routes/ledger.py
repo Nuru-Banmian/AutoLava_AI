@@ -7,7 +7,7 @@ import asyncio
 from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse
 
-from app.api.deps import Session, StoreAccess, require_store_access
+from app.api.deps import Session, StoreAccess, require_capability, require_store_access
 from app.api.routes.dashboard import get_weather_service
 from app.schemas.ledger import LedgerBody
 from app.services.audit import record_snapshot
@@ -57,7 +57,10 @@ async def _safely_refresh_briefing(
         await session.rollback()
 
 
-@router.get("/{store_id}/recent")
+@router.get(
+    "/{store_id}/recent",
+    dependencies=[Depends(require_capability("ledger.view"))],
+)
 async def recent_records(
     store_id: int,
     session: Session,
@@ -68,7 +71,10 @@ async def recent_records(
     return [record_snapshot(record) for record in records]
 
 
-@router.get("/{store_id}")
+@router.get(
+    "/{store_id}",
+    dependencies=[Depends(require_capability("ledger.view"))],
+)
 async def get_record_by_query(
     store_id: int,
     session: Session,
@@ -79,7 +85,10 @@ async def get_record_by_query(
     return record_snapshot(record)
 
 
-@router.get("/{store_id}/{record_date}")
+@router.get(
+    "/{store_id}/{record_date}",
+    dependencies=[Depends(require_capability("ledger.view"))],
+)
 async def get_record_by_path(
     store_id: int,
     record_date: date,
@@ -90,7 +99,10 @@ async def get_record_by_path(
     return record_snapshot(record)
 
 
-@router.get("/{store_id}/{record_date}/form-config")
+@router.get(
+    "/{store_id}/{record_date}/form-config",
+    dependencies=[Depends(require_capability("ledger.view"))],
+)
 async def get_form_config(
     store_id: int,
     record_date: date,
@@ -102,7 +114,13 @@ async def get_form_config(
     )
 
 
-@router.put("/{store_id}/{record_date}")
+@router.put(
+    "/{store_id}/{record_date}",
+    dependencies=[
+        Depends(require_capability("ledger.create")),
+        Depends(require_capability("ledger.edit")),
+    ],
+)
 async def put_record(
     store_id: int,
     record_date: date,
@@ -157,7 +175,11 @@ async def put_record(
     )
 
 
-@router.delete("/{store_id}/{record_date}", status_code=204)
+@router.delete(
+    "/{store_id}/{record_date}",
+    status_code=204,
+    dependencies=[Depends(require_capability("ledger.delete"))],
+)
 async def delete_record(
     store_id: int,
     record_date: date,

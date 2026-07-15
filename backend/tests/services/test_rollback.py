@@ -720,6 +720,9 @@ async def test_api_rollback_sees_marker_committed_after_its_dependency_snapshot(
     try:
         user_id, store_id, _, _, audit_id, _ = await _committed_update_fixture()
         async with maker() as setup_session:
+            user = await setup_session.get(User, user_id)
+            assert user is not None
+            user.role = "admin"
             setup_session.add(StoreMember(store_id=store_id, user_id=user_id))
             await setup_session.commit()
 

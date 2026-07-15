@@ -31,6 +31,14 @@ class DatabaseContext:
         return self.store.id
 
 
+async def grant_authenticated_admin(db_session: AsyncSession) -> User:
+    user = await db_session.scalar(select(User).where(User.username == "authenticated"))
+    assert user is not None
+    user.role = "admin"
+    await db_session.flush()
+    return user
+
+
 def test_database_router_uses_canonical_record_and_rollback_paths() -> None:
     route_contracts = {
         (method, route.path) for route in database_router.routes for method in route.methods
@@ -316,6 +324,7 @@ async def test_history_is_ledger_only_store_isolated_and_newest_first(
     db_session: AsyncSession,
     store_factory,
 ) -> None:
+    await grant_authenticated_admin(db_session)
     first_record = database_context.records[0]
     other_store = await store_factory(name="Other history store")
     db_session.add_all(
@@ -405,6 +414,7 @@ async def test_rollback_route_restores_record_and_returns_canonical_snapshot(
     database_context: DatabaseContext,
     db_session: AsyncSession,
 ) -> None:
+    await grant_authenticated_admin(db_session)
     record = database_context.records[0]
     record.income_mode = "composed"
     await db_session.flush()
@@ -452,6 +462,7 @@ async def test_rollback_route_checks_path_store_against_audit_store(
     db_session: AsyncSession,
     store_factory,
 ) -> None:
+    actor = await grant_authenticated_admin(db_session)
     other = await store_factory(name="Other rollback store")
     audit = AuditLog(
         operation_domain="ledger",
@@ -473,12 +484,14 @@ async def test_rollback_route_checks_path_store_against_audit_store(
     mismatch = await auth_client.post(
         f"/api/database/{database_context.id}/history/{audit.id}/rollback"
     )
+    actor.role = "user"
+    await db_session.flush()
     inaccessible = await auth_client.post(f"/api/database/{other.id}/history/{audit.id}/rollback")
 
     assert mismatch.status_code == 404
     assert mismatch.json() == {"detail": "Audit entry not found"}
-    assert inaccessible.status_code == 404
-    assert inaccessible.json() == {"detail": "Store not found"}
+    assert inaccessible.status_code == 403
+    assert inaccessible.json() == {"detail": "Insufficient permissions"}
 
 
 @pytest.mark.parametrize("suffix", ["/records", "/history", "/export.xlsx"])
@@ -489,5 +502,7 @@ async def test_database_routes_hide_unassigned_store(
 
     response = await auth_client.get(f"/api/database/{other.id}{suffix}")
 
-    assert response.status_code == 404
-    assert response.json() == {"detail": "Store not found"}
+    assert response.status_code == (403 if suffix == "/history" else 404)
+    assert response.json() == {
+        "detail": "Insufficient permissions" if suffix == "/history" else "Store not found"
+    }

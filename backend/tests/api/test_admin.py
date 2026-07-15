@@ -1,17 +1,24 @@
+import asyncio
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import httpx
 import pytest
+from fastapi import HTTPException
 from httpx import AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.routes.admin import patch_user
+from app.core.database import async_session_factory, engine
+from app.core.security import hash_password
+from app.models.base import Base
 from app.models.audit import AuditLog
-from app.models.identity import StoreMember, StoreSetting
+from app.models.identity import StoreMember, StoreSetting, User
 from app.models.income_config import IncomeConfigVersion
 from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
 from app.models.operations import DailyBriefing, ScheduledTaskLog, SystemAlert
+from app.schemas.admin import UserPatch
 
 
 @pytest.fixture
@@ -23,6 +30,21 @@ async def admin_client(client, user_factory) -> AsyncClient:
     )
     assert response.status_code == 200
     return client
+
+
+@pytest.fixture
+async def committed_database():
+    async def clear() -> None:
+        async with engine.begin() as connection:
+            for table in reversed(Base.metadata.sorted_tables):
+                await connection.execute(table.delete())
+
+    await clear()
+    try:
+        yield
+    finally:
+        await clear()
+        await engine.dispose()
 
 
 @pytest.fixture
@@ -194,6 +216,78 @@ async def test_admin_can_create_list_patch_and_audit_users(
     }
     assert "hash" not in str([audit.before_json for audit in audits])
     assert "hash" not in str([audit.after_json for audit in audits])
+
+
+async def test_admin_cannot_deactivate_current_account(
+    admin_client, db_session: AsyncSession
+) -> None:
+    administrator = await db_session.scalar(
+        select(User).where(User.username == "administrator")
+    )
+    assert administrator is not None
+
+    response = await admin_client.patch(
+        f"/api/admin/users/{administrator.id}", json={"is_active": False}
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": "You cannot deactivate your current account"
+    }
+    await db_session.refresh(administrator)
+    assert administrator.is_active is True
+
+
+async def test_concurrent_admin_deactivation_keeps_one_active_admin(
+    committed_database,
+) -> None:
+    async with async_session_factory() as setup_session:
+        first = User(
+            username="first-administrator",
+            password_hash=hash_password("secret"),
+            role="admin",
+            is_active=True,
+        )
+        second = User(
+            username="second-administrator",
+            password_hash=hash_password("secret"),
+            role="admin",
+            is_active=True,
+        )
+        setup_session.add_all([first, second])
+        await setup_session.commit()
+        first_id, second_id = first.id, second.id
+
+    async def deactivate(actor_id: int, target_id: int) -> int:
+        async with async_session_factory() as session:
+            actor = await session.get(User, actor_id)
+            assert actor is not None
+            try:
+                await patch_user(
+                    target_id,
+                    UserPatch(is_active=False),
+                    session,
+                    actor,
+                )
+            except HTTPException as exc:
+                await session.rollback()
+                return exc.status_code
+            return 200
+
+    statuses = await asyncio.gather(
+        deactivate(first_id, second_id),
+        deactivate(second_id, first_id),
+    )
+
+    async with async_session_factory() as verification_session:
+        active_admins = await verification_session.scalar(
+            select(func.count())
+            .select_from(User)
+            .where(User.role == "admin", User.is_active.is_(True))
+        )
+
+    assert sorted(statuses) == [200, 409]
+    assert active_admins == 1
 
 
 async def test_duplicate_username_returns_409_and_keeps_transaction_usable(

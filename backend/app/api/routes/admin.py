@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
-from app.api.deps import Session, require_admin
+from app.api.deps import Session, require_capability
 from app.core.security import hash_password
 from app.models.audit import AuditLog
 from app.models.identity import Store, StoreMember, StoreSetting, User
@@ -27,8 +27,12 @@ from app.services.audit import add_admin_audit, record_snapshot
 from app.services.briefing import BriefingService
 from app.services.income_config import IncomeConfigService
 
-router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
-AdminUser = Annotated[User, Depends(require_admin)]
+router = APIRouter(prefix="/admin", tags=["admin"])
+UsersManager = Annotated[User, Depends(require_capability("users.manage"))]
+StoresManager = Annotated[User, Depends(require_capability("stores.manage"))]
+IncomeConfigManager = Annotated[
+    User, Depends(require_capability("income_config.manage"))
+]
 
 
 def _decimal(value: Decimal | None) -> str | None:
@@ -167,14 +171,14 @@ async def _require_users(session: Session, user_ids: Iterable[int]) -> None:
         raise HTTPException(404, "User not found")
 
 
-@router.get("/users")
+@router.get("/users", dependencies=[Depends(require_capability("users.manage"))])
 async def list_users(session: Session) -> list[dict[str, Any]]:
     users = (await session.scalars(select(User).order_by(User.username, User.id))).all()
     return [_user_payload(user) for user in users]
 
 
 @router.post("/users", status_code=201)
-async def create_user(body: UserCreate, session: Session, actor: AdminUser) -> dict[str, Any]:
+async def create_user(body: UserCreate, session: Session, actor: UsersManager) -> dict[str, Any]:
     user = User(
         username=body.username,
         password_hash=hash_password(body.password),
@@ -202,11 +206,32 @@ async def create_user(body: UserCreate, session: Session, actor: AdminUser) -> d
 
 @router.patch("/users/{user_id}")
 async def patch_user(
-    user_id: int, body: UserPatch, session: Session, actor: AdminUser
+    user_id: int, body: UserPatch, session: Session, actor: UsersManager
 ) -> dict[str, Any]:
-    user = await session.get(User, user_id)
+    active_admins: list[User] = []
+    if body.is_active is False:
+        active_admins = list(
+            await session.scalars(
+                select(User)
+                .where(User.role == "admin", User.is_active.is_(True))
+                .order_by(User.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        )
+    user = await session.scalar(
+        select(User)
+        .where(User.id == user_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     if user is None:
         raise HTTPException(404, "User not found")
+    if body.is_active is False and user.is_active:
+        if user.id == actor.id:
+            raise HTTPException(409, "You cannot deactivate your current account")
+        if user.role == "admin" and len(active_admins) <= 1:
+            raise HTTPException(409, "At least one active administrator is required")
     password_changed = body.password is not None
     before = _user_snapshot(user, password_changed=password_changed)
     if body.password is not None:
@@ -227,7 +252,10 @@ async def patch_user(
     return _user_payload(user)
 
 
-@router.get("/users/{user_id}/stores")
+@router.get(
+    "/users/{user_id}/stores",
+    dependencies=[Depends(require_capability("users.manage"))],
+)
 async def list_user_stores(user_id: int, session: Session) -> list[dict[str, Any]]:
     if await session.get(User, user_id) is None:
         raise HTTPException(404, "User not found")
@@ -242,7 +270,10 @@ async def list_user_stores(user_id: int, session: Session) -> list[dict[str, Any
     return [_store_payload(store) for store in stores]
 
 
-@router.get("/users/{user_id}/operations")
+@router.get(
+    "/users/{user_id}/operations",
+    dependencies=[Depends(require_capability("audit.view"))],
+)
 async def list_user_operations(user_id: int, session: Session) -> list[dict[str, Any]]:
     if await session.get(User, user_id) is None:
         raise HTTPException(404, "User not found")
@@ -256,21 +287,26 @@ async def list_user_operations(user_id: int, session: Session) -> list[dict[str,
     return [_audit_payload(operation) for operation in operations]
 
 
-@router.get("/stores/geocode")
+@router.get(
+    "/stores/geocode",
+    dependencies=[Depends(require_capability("stores.manage"))],
+)
 async def geocode_store(
     request: Request, query: Annotated[str, Query(min_length=1)]
 ) -> list[dict[str, str | float]]:
     return await request.app.state.open_meteo_provider.geocode(query)
 
 
-@router.get("/stores")
+@router.get("/stores", dependencies=[Depends(require_capability("stores.manage"))])
 async def list_stores(session: Session) -> list[dict[str, Any]]:
     stores = (await session.scalars(select(Store).order_by(Store.name, Store.id))).all()
     return [_store_payload(store) for store in stores]
 
 
 @router.post("/stores", status_code=201)
-async def create_store(body: StoreCreate, session: Session, actor: AdminUser) -> dict[str, Any]:
+async def create_store(
+    body: StoreCreate, session: Session, actor: StoresManager
+) -> dict[str, Any]:
     store = Store(**body.model_dump())
     session.add(store)
     await session.flush()
@@ -291,7 +327,7 @@ async def create_store(body: StoreCreate, session: Session, actor: AdminUser) ->
 
 @router.patch("/stores/{store_id}")
 async def patch_store(
-    store_id: int, body: StorePatch, session: Session, actor: AdminUser
+    store_id: int, body: StorePatch, session: Session, actor: StoresManager
 ) -> dict[str, Any]:
     store = await _require_store(session, store_id)
     before = _store_payload(store)
@@ -311,7 +347,10 @@ async def patch_store(
     return _store_payload(store)
 
 
-@router.get("/stores/{store_id}/members")
+@router.get(
+    "/stores/{store_id}/members",
+    dependencies=[Depends(require_capability("stores.manage"))],
+)
 async def list_store_members(store_id: int, session: Session) -> list[dict[str, Any]]:
     await _require_store(session, store_id)
     users = (
@@ -327,7 +366,7 @@ async def list_store_members(store_id: int, session: Session) -> list[dict[str, 
 
 @router.put("/stores/{store_id}/members")
 async def replace_members(
-    store_id: int, body: MemberReplace, session: Session, actor: AdminUser
+    store_id: int, body: MemberReplace, session: Session, actor: StoresManager
 ) -> dict[str, Any]:
     await _require_store(session, store_id)
     user_ids = sorted(set(body.user_ids))
@@ -355,7 +394,10 @@ async def replace_members(
     return {"store_id": store_id, "user_ids": user_ids}
 
 
-@router.get("/income-categories")
+@router.get(
+    "/income-categories",
+    dependencies=[Depends(require_capability("income_config.manage"))],
+)
 async def list_income_categories(store_id: int, session: Session) -> list[dict[str, Any]]:
     await _require_store(session, store_id)
     categories = (
@@ -370,7 +412,7 @@ async def list_income_categories(store_id: int, session: Session) -> list[dict[s
 
 @router.post("/income-categories", status_code=201)
 async def create_income_category(
-    body: CategoryCreate, session: Session, actor: AdminUser
+    body: CategoryCreate, session: Session, actor: IncomeConfigManager
 ) -> dict[str, Any]:
     await _require_store(session, body.store_id)
     category = IncomeCategory(**body.model_dump())
@@ -398,7 +440,7 @@ async def patch_income_category(
     body: CategoryPatch,
     request: Request,
     session: Session,
-    actor: AdminUser,
+    actor: IncomeConfigManager,
 ) -> dict[str, Any]:
     category = await session.get(IncomeCategory, category_id)
     if category is None:
@@ -485,12 +527,14 @@ async def patch_income_category(
 
 
 @router.delete("/income-categories/{category_id}", status_code=204)
-async def delete_unused_category(category_id: int, session: Session, actor: AdminUser) -> None:
+async def delete_unused_category(
+    category_id: int, session: Session, actor: IncomeConfigManager
+) -> None:
     await IncomeConfigService(session).delete_unused(category_id, actor)
     await session.commit()
 
 
-@router.get("/alerts")
+@router.get("/alerts", dependencies=[Depends(require_capability("audit.view"))])
 async def list_alerts(session: Session) -> list[dict[str, Any]]:
     alerts = (
         await session.scalars(
@@ -500,7 +544,7 @@ async def list_alerts(session: Session) -> list[dict[str, Any]]:
     return [_alert_payload(alert) for alert in alerts]
 
 
-@router.get("/task-logs")
+@router.get("/task-logs", dependencies=[Depends(require_capability("audit.view"))])
 async def list_task_logs(session: Session) -> list[dict[str, Any]]:
     task_logs = (
         await session.scalars(

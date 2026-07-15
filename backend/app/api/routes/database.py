@@ -7,7 +7,8 @@ from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import Session, StoreAccess, require_store_access
+from app.api.deps import Session, StoreAccess, require_capability, require_store_access
+from app.api.routes.ledger import _safely_refresh_briefing
 from app.models.audit import AuditLog
 from app.models.identity import User
 from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
@@ -15,7 +16,6 @@ from app.schemas.database import AuditPage, DatabaseFilters, DatabasePage, Rollb
 from app.services.audit import record_snapshot
 from app.services.export import build_ledger_workbook
 from app.services.rollback import RollbackService
-from app.api.routes.ledger import _safely_refresh_briefing
 
 router = APIRouter(prefix="/database", tags=["database"])
 
@@ -161,7 +161,14 @@ def _audit_payload(audit: AuditLog, username: str) -> dict:
     }
 
 
-@router.post("/{store_id}/history/{audit_id}/rollback", response_model=RollbackResult)
+@router.post(
+    "/{store_id}/history/{audit_id}/rollback",
+    response_model=RollbackResult,
+    dependencies=[
+        Depends(require_capability("audit.view")),
+        Depends(require_capability("ledger.edit")),
+    ],
+)
 async def rollback_record(
     store_id: int,
     audit_id: int,
@@ -189,7 +196,10 @@ async def rollback_record(
     }
 
 
-@router.get("/{store_id}/export.xlsx")
+@router.get(
+    "/{store_id}/export.xlsx",
+    dependencies=[Depends(require_capability("analytics.view"))],
+)
 async def export_records(
     store_id: int,
     session: Session,
@@ -222,7 +232,11 @@ async def export_records(
     )
 
 
-@router.get("/{store_id}/history", response_model=AuditPage)
+@router.get(
+    "/{store_id}/history",
+    response_model=AuditPage,
+    dependencies=[Depends(require_capability("audit.view"))],
+)
 async def record_history(
     store_id: int,
     session: Session,
@@ -259,7 +273,11 @@ async def record_history(
     }
 
 
-@router.get("/{store_id}/records", response_model=DatabasePage)
+@router.get(
+    "/{store_id}/records",
+    response_model=DatabasePage,
+    dependencies=[Depends(require_capability("analytics.view"))],
+)
 async def record_page(
     store_id: int,
     session: Session,

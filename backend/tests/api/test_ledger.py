@@ -27,6 +27,14 @@ class AssignedStore:
         return self.store.id
 
 
+async def grant_authenticated_admin(db_session: AsyncSession) -> User:
+    user = await db_session.scalar(select(User).where(User.username == "authenticated"))
+    assert user is not None
+    user.role = "admin"
+    await db_session.flush()
+    return user
+
+
 @pytest.fixture
 async def assigned_store(
     auth_client: AsyncClient, db_session: AsyncSession, store_factory
@@ -137,8 +145,12 @@ async def test_stale_expected_version_cannot_overwrite(
 
 
 async def test_stale_expected_version_cannot_delete(
-    auth_client: AsyncClient, assigned_store: AssignedStore, ledger_payload: dict
+    auth_client: AsyncClient,
+    assigned_store: AssignedStore,
+    ledger_payload: dict,
+    db_session: AsyncSession,
 ) -> None:
+    await grant_authenticated_admin(db_session)
     record_date = today_for(assigned_store)
     path = f"/api/ledger/{assigned_store.id}/{record_date.isoformat()}"
     assert (await auth_client.put(path, json=ledger_payload)).status_code == 201
@@ -232,7 +244,9 @@ async def test_create_update_and_delete_refresh_persisted_today_briefing(
     auth_client: AsyncClient,
     assigned_store: AssignedStore,
     ledger_payload: dict,
+    db_session: AsyncSession,
 ) -> None:
+    await grant_authenticated_admin(db_session)
     record_date = today_for(assigned_store)
     path = f"/api/ledger/{assigned_store.id}/{record_date.isoformat()}"
 
@@ -515,6 +529,7 @@ async def test_delete_returns_204_and_writes_delete_audit(
     ledger_payload: dict,
     db_session: AsyncSession,
 ) -> None:
+    await grant_authenticated_admin(db_session)
     record_date = today_for(assigned_store)
     path = f"/api/ledger/{assigned_store.id}/{record_date.isoformat()}"
     created = await auth_client.put(path, json=ledger_payload)
@@ -589,8 +604,10 @@ async def test_unassigned_store_is_uniformly_invisible(
         method, path, params=params, json=payload if method == "put" else None
     )
 
-    assert response.status_code == 404
-    assert response.json() == {"detail": "Store not found"}
+    assert response.status_code == (403 if method == "delete" else 404)
+    assert response.json() == {
+        "detail": "Insufficient permissions" if method == "delete" else "Store not found"
+    }
 
 
 async def test_missing_and_inactive_stores_are_indistinguishable(
