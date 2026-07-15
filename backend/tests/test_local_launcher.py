@@ -93,6 +93,9 @@ def test_readme_documents_reusable_windows_launcher_without_secrets() -> None:
     for fragment in (
         r".\scripts\start-local.ps1",
         "http://127.0.0.1:5173",
+        "-NoBrowser",
+        "alembic upgrade head",
+        "manifests change",
         "Ctrl+C",
         "Phase 2",
         "Phase 3",
