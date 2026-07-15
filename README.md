@@ -25,6 +25,30 @@ The first run installs missing dependencies and asks for administrator credentia
 are absent. Later runs reuse the saved local values. Press `Ctrl+C` in the launcher window to stop
 both services. Use `-NoBrowser` when an automatic browser window is not wanted.
 
+Keep normal local data in a dedicated database such as `autolava_local`. The launcher rejects a
+database whose name ends in `_test`, because backend tests clear `autolava_test`. The
+`-AllowTestDatabase` switch exists only for explicit test/debug sessions and must not be used with
+real operating data.
+
+Create a credential-safe backup before migrations or data cleanup:
+
+```powershell
+.\scripts\backup-local-db.ps1
+```
+
+Backups are written under the ignored `.autolava-local\backups` directory. Restore a verified
+backup into the local runtime database with:
+
+```powershell
+.\scripts\restore-local-db.ps1 `
+  -BackupPath .\.autolava-local\backups\autolava_test-YYYYMMDD-HHMMSS.sql `
+  -TargetDatabase autolava_local
+```
+
+The restore command refuses test-database targets and non-empty targets unless `-Force` is supplied.
+After a successful restore it updates the ignored `.autolava-db.env` to the restored database name
+without printing credentials.
+
 ## Production deployment
 
 The release package runs exactly two containers: `autolava-api` and `autolava-web`. MySQL is

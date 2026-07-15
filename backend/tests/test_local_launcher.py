@@ -195,6 +195,33 @@ def test_launcher_passes_vite_entrypoint_relative_to_frontend_working_directory(
     assert "-ArgumentList @($vite," not in launcher
 
 
+def test_launcher_rejects_test_database_without_explicit_override() -> None:
+    launcher = read("scripts/start-local.ps1")
+    assert "[switch]$AllowTestDatabase" in launcher
+    assert "function Assert-RuntimeDatabaseUrl" in launcher
+    assert "数据库保留给自动化测试" in launcher
+    assert "Assert-RuntimeDatabaseUrl $databaseUrl $AllowTestDatabase" in launcher
+
+
+def test_database_backup_and_restore_scripts_are_secret_safe() -> None:
+    backup = read("scripts/backup-local-db.ps1")
+    restore = read("scripts/restore-local-db.ps1")
+    for script in (backup, restore):
+        assert "--defaults-extra-file" in script
+        assert "Remove-Item -LiteralPath $defaultsFile" in script
+        assert "finally" in script
+        assert "AUTOLAVA_DATABASE_URL" in script
+        assert "--password=" not in script
+    assert '.autolava-local\\backups' in backup
+    assert "mysqldump" in backup
+    assert '"--no-tablespaces"' in backup
+    assert "TargetDatabase" in restore
+    assert "endsWith(\"_test\"" in restore
+    assert "-Force" in restore
+    assert "function Set-RuntimeDatabaseUrl" in restore
+    assert "Set-RuntimeDatabaseUrl $DatabaseEnvFile $TargetDatabase" in restore
+
+
 def test_readme_documents_reusable_windows_launcher_without_secrets() -> None:
     readme = read("README.md")
     for fragment in (
@@ -209,6 +236,10 @@ def test_readme_documents_reusable_windows_launcher_without_secrets() -> None:
         "Phase 4",
         ".autolava-db.env",
         ".env",
+        "backup-local-db.ps1",
+        "restore-local-db.ps1",
+        "autolava_local",
+        "-AllowTestDatabase",
     ):
         assert fragment in readme
 

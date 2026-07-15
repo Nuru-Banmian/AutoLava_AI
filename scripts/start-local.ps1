@@ -1,5 +1,8 @@
 [CmdletBinding()]
-param([switch]$NoBrowser)
+param(
+    [switch]$NoBrowser,
+    [switch]$AllowTestDatabase
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -19,6 +22,21 @@ function Write-Stage([string]$Message) {
 
 function Stop-WithMessage([string]$Message) {
     throw "[AutoLava] $Message"
+}
+
+function Assert-RuntimeDatabaseUrl([string]$DatabaseUrl, [bool]$AllowTestDatabase) {
+    try {
+        $uri = [Uri]$DatabaseUrl
+        $databaseName = [Uri]::UnescapeDataString($uri.AbsolutePath.TrimStart('/'))
+    } catch {
+        Stop-WithMessage "无法解析 AUTOLAVA_DATABASE_URL 的数据库名称。"
+    }
+    if ([string]::IsNullOrWhiteSpace($databaseName)) {
+        Stop-WithMessage "AUTOLAVA_DATABASE_URL 必须包含数据库名称。"
+    }
+    if ($databaseName.EndsWith("_test", [StringComparison]::OrdinalIgnoreCase) -and -not $AllowTestDatabase) {
+        Stop-WithMessage "数据库保留给自动化测试：$databaseName。请改用本地运行数据库，或明确传入 -AllowTestDatabase。"
+    }
 }
 
 function Assert-Command([string]$Name) {
@@ -284,6 +302,7 @@ Assert-PortFree 5173
 $databaseValues = Get-EnvFileValues $DatabaseEnvFile
 $settings = Initialize-LocalSettings $databaseValues
 $databaseUrl = [string]$settings["AUTOLAVA_DATABASE_URL"]
+Assert-RuntimeDatabaseUrl $databaseUrl $AllowTestDatabase
 if ($databaseUrl -notmatch '@(?<host>\[[^\]]+\]|[^:/]+)(:(?<port>\d+))?/') {
     Stop-WithMessage "无法解析 AUTOLAVA_DATABASE_URL 的数据库主机。"
 }
