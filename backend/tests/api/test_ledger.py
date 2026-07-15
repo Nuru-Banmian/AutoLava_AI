@@ -99,6 +99,25 @@ def today_for(assigned_store: AssignedStore) -> date:
     return datetime.now(ZoneInfo(assigned_store.store.timezone)).date()
 
 
+async def test_composed_write_requires_and_accepts_current_config_version(
+    auth_client: AsyncClient,
+    assigned_store: AssignedStore,
+    ledger_payload: dict,
+) -> None:
+    ledger_payload["items"] = [
+        {"category_id": assigned_store.cash.id, "amount": "12.00"},
+        {"category_id": assigned_store.excluded.id, "amount": "0.00"},
+    ]
+
+    response = await auth_client.put(
+        f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}",
+        json=ledger_payload,
+    )
+
+    assert response.status_code == 201
+    assert response.json()["daily_revenue"] == "12.00"
+
+
 async def test_standard_put_does_not_attempt_external_weather_http(
     auth_client: AsyncClient,
     assigned_store: AssignedStore,
