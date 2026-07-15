@@ -5,9 +5,10 @@ import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { AdminPage } from "@/pages/AdminPage";
-import { accessibleStoresKey } from "@/stores/StoreProvider";
+import { accessibleStoresKeyFor } from "@/stores/StoreProvider";
 
 const server = setupServer();
+const scopedAccessibleStoresKey = accessibleStoresKeyFor(1);
 
 const emptyLists = [
   http.get("/api/admin/users", () => HttpResponse.json([])),
@@ -141,7 +142,8 @@ describe("AdminPage", () => {
         return HttpResponse.json({ store_id: 9, user_ids: [1, 2] });
       }),
     );
-    renderAdmin();
+    const { client } = renderAdmin();
+    client.setQueryData(scopedAccessibleStoresKey, [{ id: 9 }]);
     await screen.findByRole("tab", { name: "成员" });
     activateTab("成员");
     fireEvent.change(await screen.findByLabelText("成员门店"), { target: { value: "9" } });
@@ -151,6 +153,7 @@ describe("AdminPage", () => {
 
     await waitFor(() => expect(memberFetches).toBe(2));
     expect(replaced).toEqual({ user_ids: [1, 2] });
+    expect(client.getQueryState(scopedAccessibleStoresKey)?.isInvalidated).toBe(true);
   });
 
   it("prevents replacing members when the current member list failed to load", async () => {
@@ -256,13 +259,13 @@ describe("AdminPage", () => {
       http.patch("/api/admin/stores/9", async ({ request }) => { patch = await request.json(); return HttpResponse.json({ id: 9, name: "Milano", address: "Via Due", latitude: "45.4", longitude: "9.2", timezone: "Europe/Rome", is_active: true }); }),
     );
     const { client } = renderAdmin();
-    client.setQueryData(accessibleStoresKey, [{ id: 9 }]);
+    client.setQueryData(scopedAccessibleStoresKey, [{ id: 9 }]);
     client.setQueryData(["dashboard", 10], { untouched: true });
     activateTab("门店");
     fireEvent.change(await screen.findByLabelText("门店名称 Roma"), { target: { value: "Milano" } });
     fireEvent.click(screen.getByRole("button", { name: "保存门店 Roma" }));
     await waitFor(() => expect(patch).toMatchObject({ name: "Milano" }));
-    expect(client.getQueryState(accessibleStoresKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(scopedAccessibleStoresKey)?.isInvalidated).toBe(true);
     expect(client.getQueryState(["dashboard", 10])?.isInvalidated).toBe(false);
   });
 
@@ -277,7 +280,7 @@ describe("AdminPage", () => {
       http.patch("/api/admin/stores/9", () => { active = false; return HttpResponse.json({ id: 9, name: "Roma", address: "Via", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: false }); }),
     );
     const { client } = renderAdmin();
-    client.setQueryData(accessibleStoresKey, [{ id: 9 }]);
+    client.setQueryData(scopedAccessibleStoresKey, [{ id: 9 }]);
     activateTab("门店");
     await screen.findByRole("button", { name: "停用门店 Roma" });
     fireEvent.change(screen.getByLabelText("门店名称"), { target: { value: "Milano" } });
@@ -285,11 +288,11 @@ describe("AdminPage", () => {
     fireEvent.change(screen.getByLabelText("纬度"), { target: { value: "45.4" } });
     fireEvent.change(screen.getByLabelText("经度"), { target: { value: "9.2" } });
     fireEvent.click(screen.getByRole("button", { name: "添加门店" }));
-    await waitFor(() => expect(client.getQueryState(accessibleStoresKey)?.isInvalidated).toBe(true));
-    client.setQueryData(accessibleStoresKey, [{ id: 9 }]);
+    await waitFor(() => expect(client.getQueryState(scopedAccessibleStoresKey)?.isInvalidated).toBe(true));
+    client.setQueryData(scopedAccessibleStoresKey, [{ id: 9 }]);
     fireEvent.click(screen.getByRole("button", { name: "停用门店 Roma" }));
     await waitFor(() => expect(active).toBe(false));
-    expect(client.getQueryState(accessibleStoresKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(scopedAccessibleStoresKey)?.isInvalidated).toBe(true);
   });
 
   it("shows edit errors and disables related actions while pending", async () => {

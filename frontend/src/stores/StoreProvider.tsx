@@ -5,6 +5,7 @@ import { api } from "@/api/client";
 import type { AccessibleStore } from "@/api/types";
 
 export const accessibleStoresKey = ["stores", "accessible"] as const;
+export const accessibleStoresKeyFor = (userId: number | undefined) => [...accessibleStoresKey, userId] as const;
 export const STORE_SELECTION_KEY = "autolava:selected-store";
 
 interface StoredSelection {
@@ -43,7 +44,7 @@ interface StoreProviderProps extends PropsWithChildren {
 
 export function StoreProvider({ children, userId }: StoreProviderProps) {
   const { data: stores = [], isLoading, isSuccess, error, refetch } = useQuery({
-    queryKey: [...accessibleStoresKey, userId],
+    queryKey: accessibleStoresKeyFor(userId),
     queryFn: () => api<AccessibleStore[]>("/stores/accessible"),
   });
   const [selection, setSelection] = useState(() => ({ userId, storeId: readStoredSelection(userId) }));

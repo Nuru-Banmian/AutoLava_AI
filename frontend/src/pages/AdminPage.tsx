@@ -62,7 +62,7 @@ export function AdminPage() {
       api<AdminStore>("/admin/stores", { method: "POST", body: JSON.stringify(input) }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: adminKeys.stores, exact: true });
-      await queryClient.invalidateQueries({ queryKey: accessibleStoresKey, exact: true });
+      await queryClient.invalidateQueries({ queryKey: accessibleStoresKey });
     },
   });
   const patchUser = useMutation({
@@ -75,7 +75,7 @@ export function AdminPage() {
       api<AdminStore>(`/admin/stores/${storeId}`, { method: "PATCH", body: JSON.stringify(body) }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: adminKeys.stores, exact: true });
-      await queryClient.invalidateQueries({ queryKey: accessibleStoresKey, exact: true });
+      await queryClient.invalidateQueries({ queryKey: accessibleStoresKey });
     },
   });
   const replaceMembers = useMutation({
@@ -85,7 +85,7 @@ export function AdminPage() {
       }),
     onSuccess: async (_data, input) => {
       await queryClient.invalidateQueries({ queryKey: adminKeys.members(input.storeId), exact: true });
-      await queryClient.invalidateQueries({ queryKey: accessibleStoresKey, exact: true });
+      await queryClient.invalidateQueries({ queryKey: accessibleStoresKey });
     },
   });
   const createCategory = useMutation({
