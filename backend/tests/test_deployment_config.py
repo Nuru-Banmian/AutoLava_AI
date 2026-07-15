@@ -1,4 +1,6 @@
+import json
 from pathlib import Path
+import tomllib
 
 import yaml
 import pytest
@@ -12,6 +14,28 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
+
+
+def test_ci_lockfile_contains_linux_rolldown_binding() -> None:
+    package = json.loads(read("frontend/package.json"))
+    lock = json.loads(read("frontend/package-lock.json"))
+    packages = lock["packages"]
+    rolldown_version = packages["node_modules/rolldown"]["version"]
+    for binding in (
+        "@rolldown/binding-linux-x64-gnu",
+        "@rolldown/binding-linux-x64-musl",
+    ):
+        assert package["optionalDependencies"][binding] == rolldown_version
+        locked_binding = packages.get(f"node_modules/{binding}")
+        assert locked_binding is not None
+        assert locked_binding["version"] == rolldown_version
+
+
+def test_async_database_tests_share_one_event_loop() -> None:
+    config = tomllib.loads(read("backend/pyproject.toml"))["tool"]["pytest"]["ini_options"]
+
+    assert config["asyncio_default_fixture_loop_scope"] == "session"
+    assert config["asyncio_default_test_loop_scope"] == "session"
 
 
 def test_compose_contains_only_api_and_web_with_host_database_configuration() -> None:

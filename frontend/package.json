@@ -10,12 +10,12 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@hookform/resolvers": "latest",
     "@radix-ui/react-alert-dialog": "latest",
     "@radix-ui/react-dialog": "latest",
     "@radix-ui/react-select": "latest",
     "@radix-ui/react-slot": "latest",
     "@radix-ui/react-tabs": "latest",
-    "@hookform/resolvers": "latest",
     "@tanstack/react-query": "latest",
     "class-variance-authority": "latest",
     "clsx": "latest",
@@ -31,17 +31,21 @@
   },
   "devDependencies": {
     "@playwright/test": "latest",
+    "@tailwindcss/vite": "latest",
     "@testing-library/jest-dom": "latest",
     "@testing-library/react": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "@vitejs/plugin-react": "latest",
-    "@tailwindcss/vite": "latest",
     "jsdom": "latest",
     "msw": "latest",
-    "typescript": "latest",
     "tailwindcss": "latest",
+    "typescript": "latest",
     "vite": "latest",
     "vitest": "latest"
+  },
+  "optionalDependencies": {
+    "@rolldown/binding-linux-x64-gnu": "1.1.5",
+    "@rolldown/binding-linux-x64-musl": "1.1.5"
   }
 }
