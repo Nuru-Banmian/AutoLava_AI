@@ -5,6 +5,7 @@ import { api } from "@/api/client";
 import type { AccessibleStore } from "@/api/types";
 
 export const accessibleStoresKey = ["stores", "accessible"] as const;
+export const STORE_SELECTION_KEY = "autolava:selected-store";
 
 interface StoreContextValue {
   stores: AccessibleStore[];
@@ -18,16 +19,26 @@ interface StoreContextValue {
 const StoreContext = createContext<StoreContextValue | null>(null);
 
 export function StoreProvider({ children }: PropsWithChildren) {
-  const { data: stores = [], isLoading, error, refetch } = useQuery({
+  const { data: stores = [], isLoading, isSuccess, error, refetch } = useQuery({
     queryKey: accessibleStoresKey,
     queryFn: () => api<AccessibleStore[]>("/stores/accessible"),
   });
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedId, setSelectedId] = useState<number | null>(
+    () => Number(localStorage.getItem(STORE_SELECTION_KEY)) || null,
+  );
 
   useEffect(() => {
-    if (stores.length === 1 && selectedId === null) setSelectedId(stores[0].id);
-    else if (selectedId !== null && !stores.some((store) => store.id === selectedId)) setSelectedId(null);
-  }, [selectedId, stores]);
+    if (!isSuccess) return;
+    if (selectedId !== null && stores.some((store) => store.id === selectedId)) {
+      localStorage.setItem(STORE_SELECTION_KEY, String(selectedId));
+      return;
+    }
+
+    const fallback = stores[0]?.id ?? null;
+    setSelectedId(fallback);
+    if (fallback === null) localStorage.removeItem(STORE_SELECTION_KEY);
+    else localStorage.setItem(STORE_SELECTION_KEY, String(fallback));
+  }, [isSuccess, selectedId, stores]);
 
   const value = useMemo(
     () => ({
