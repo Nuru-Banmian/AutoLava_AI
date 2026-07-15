@@ -7,6 +7,25 @@ import type { AccessibleStore } from "@/api/types";
 export const accessibleStoresKey = ["stores", "accessible"] as const;
 export const STORE_SELECTION_KEY = "autolava:selected-store";
 
+interface StoredSelection {
+  userId: number;
+  storeId: number;
+}
+
+function readStoredSelection(userId: number | undefined): number | null {
+  if (userId === undefined) return null;
+  try {
+    const value = JSON.parse(localStorage.getItem(STORE_SELECTION_KEY) ?? "null") as Partial<StoredSelection> | null;
+    return value?.userId === userId && Number.isInteger(value.storeId) ? value.storeId ?? null : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredSelection(userId: number, storeId: number) {
+  localStorage.setItem(STORE_SELECTION_KEY, JSON.stringify({ userId, storeId } satisfies StoredSelection));
+}
+
 interface StoreContextValue {
   stores: AccessibleStore[];
   selected: AccessibleStore | null;
@@ -18,38 +37,47 @@ interface StoreContextValue {
 
 const StoreContext = createContext<StoreContextValue | null>(null);
 
-export function StoreProvider({ children }: PropsWithChildren) {
+interface StoreProviderProps extends PropsWithChildren {
+  userId?: number;
+}
+
+export function StoreProvider({ children, userId }: StoreProviderProps) {
   const { data: stores = [], isLoading, isSuccess, error, refetch } = useQuery({
     queryKey: accessibleStoresKey,
     queryFn: () => api<AccessibleStore[]>("/stores/accessible"),
   });
-  const [selectedId, setSelectedId] = useState<number | null>(
-    () => Number(localStorage.getItem(STORE_SELECTION_KEY)) || null,
-  );
+  const [selection, setSelection] = useState(() => ({ userId, storeId: readStoredSelection(userId) }));
+  const selectedId = selection.userId === userId ? selection.storeId : readStoredSelection(userId);
 
   useEffect(() => {
     if (!isSuccess) return;
     if (selectedId !== null && stores.some((store) => store.id === selectedId)) {
-      localStorage.setItem(STORE_SELECTION_KEY, String(selectedId));
+      if (userId !== undefined) writeStoredSelection(userId, selectedId);
+      if (selection.userId !== userId || selection.storeId !== selectedId) {
+        setSelection({ userId, storeId: selectedId });
+      }
       return;
     }
 
     const fallback = stores[0]?.id ?? null;
-    setSelectedId(fallback);
+    if (selection.userId !== userId || selection.storeId !== fallback) {
+      setSelection({ userId, storeId: fallback });
+    }
+    if (userId === undefined) return;
     if (fallback === null) localStorage.removeItem(STORE_SELECTION_KEY);
-    else localStorage.setItem(STORE_SELECTION_KEY, String(fallback));
-  }, [isSuccess, selectedId, stores]);
+    else writeStoredSelection(userId, fallback);
+  }, [isSuccess, selectedId, selection.storeId, selection.userId, stores, userId]);
 
   const value = useMemo(
     () => ({
       stores,
       selected: stores.find((store) => store.id === selectedId) ?? null,
-      select: setSelectedId,
+      select: (id: number) => setSelection({ userId, storeId: id }),
       isLoading,
       error,
       refetch,
     }),
-    [error, isLoading, refetch, selectedId, stores],
+    [error, isLoading, refetch, selectedId, stores, userId],
   );
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }

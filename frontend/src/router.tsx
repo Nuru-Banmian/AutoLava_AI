@@ -19,7 +19,7 @@ function ProtectedShell() {
   if (isLoading) return <AuthLoading />;
   if (error) return <main role="alert">{error.message}</main>;
   if (!user) return <Navigate to="/login" replace />;
-  return <StoreProvider><AppShell /></StoreProvider>;
+  return <StoreProvider userId={user.id}><AppShell /></StoreProvider>;
 }
 
 function AdminRoute() {

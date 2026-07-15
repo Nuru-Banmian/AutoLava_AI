@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -16,15 +16,20 @@ afterEach(() => {
 afterAll(() => server.close());
 
 function Probe() {
-  const { selected } = useStore();
-  return <span>{selected?.name ?? "未选择"}</span>;
+  const { selected, select } = useStore();
+  return (
+    <>
+      <span>selected:{selected?.name ?? "未选择"}</span>
+      <button onClick={() => select(2)}>select Roma</button>
+    </>
+  );
 }
 
-function renderProvider() {
+function renderProvider(userId: number) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <StoreProvider>
+      <StoreProvider userId={userId}>
         <Probe />
       </StoreProvider>
     </QueryClientProvider>,
@@ -32,8 +37,7 @@ function renderProvider() {
 }
 
 describe("StoreProvider selection persistence", () => {
-  it("restores a permitted store", async () => {
-    localStorage.setItem("autolava:selected-store", "2");
+  it("restores a permitted store for the same user", async () => {
     server.use(
       http.get("/api/stores/accessible", () =>
         HttpResponse.json([
@@ -43,13 +47,40 @@ describe("StoreProvider selection persistence", () => {
       ),
     );
 
-    renderProvider();
+    const firstSession = renderProvider(1);
+    expect(await screen.findByText("selected:Berlin")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "select Roma" }));
+    expect(await screen.findByText("selected:Roma")).toBeInTheDocument();
+    firstSession.unmount();
 
-    expect(await screen.findByText("Roma")).toBeInTheDocument();
+    renderProvider(1);
+
+    expect(await screen.findByText("selected:Roma")).toBeInTheDocument();
+  });
+
+  it("does not inherit a shared-store selection from another user", async () => {
+    server.use(
+      http.get("/api/stores/accessible", () =>
+        HttpResponse.json([
+          { id: 1, name: "Berlin", timezone: "Europe/Berlin" },
+          { id: 2, name: "Roma", timezone: "Europe/Rome" },
+        ]),
+      ),
+    );
+
+    const firstUser = renderProvider(1);
+    expect(await screen.findByText("selected:Berlin")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "select Roma" }));
+    expect(await screen.findByText("selected:Roma")).toBeInTheDocument();
+    firstUser.unmount();
+
+    renderProvider(2);
+
+    expect(await screen.findByText("selected:Berlin")).toBeInTheDocument();
   });
 
   it("replaces a revoked store with the first accessible store", async () => {
-    localStorage.setItem("autolava:selected-store", "99");
+    localStorage.setItem(STORE_SELECTION_KEY, JSON.stringify({ userId: 1, storeId: 99 }));
     server.use(
       http.get("/api/stores/accessible", () =>
         HttpResponse.json([
@@ -59,19 +90,35 @@ describe("StoreProvider selection persistence", () => {
       ),
     );
 
-    renderProvider();
+    renderProvider(1);
 
-    expect(await screen.findByText("Berlin")).toBeInTheDocument();
-    expect(localStorage.getItem("autolava:selected-store")).toBe("1");
+    expect(await screen.findByText("selected:Berlin")).toBeInTheDocument();
+    expect(localStorage.getItem(STORE_SELECTION_KEY)).toBe(JSON.stringify({ userId: 1, storeId: 1 }));
   });
 
   it("clears a saved store when no stores are accessible", async () => {
-    localStorage.setItem("autolava:selected-store", "2");
+    localStorage.setItem(STORE_SELECTION_KEY, JSON.stringify({ userId: 1, storeId: 2 }));
     server.use(http.get("/api/stores/accessible", () => HttpResponse.json([])));
 
-    renderProvider();
+    renderProvider(1);
 
-    expect(await screen.findByText("未选择")).toBeInTheDocument();
+    expect(await screen.findByText("selected:未选择")).toBeInTheDocument();
     await waitFor(() => expect(localStorage.getItem(STORE_SELECTION_KEY)).toBeNull());
+  });
+
+  it("ignores an unscoped legacy store id", async () => {
+    localStorage.setItem(STORE_SELECTION_KEY, "2");
+    server.use(
+      http.get("/api/stores/accessible", () =>
+        HttpResponse.json([
+          { id: 1, name: "Berlin", timezone: "Europe/Berlin" },
+          { id: 2, name: "Roma", timezone: "Europe/Rome" },
+        ]),
+      ),
+    );
+
+    renderProvider(1);
+
+    expect(await screen.findByText("selected:Berlin")).toBeInTheDocument();
   });
 });
