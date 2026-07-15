@@ -36,3 +36,12 @@ Base: `67f16ea1fdf3e1f230e6912b0291de2d806a6786`
 - `git diff --check`: PASS.
 - Self-review confirmed the login payload, loading state, authenticated redirect, and mobile navigation code were not changed.
 - Preserved unrelated dirty files: `README.md`, `.superpowers/sdd/progress.md`, both cleanup scripts, and both cleanup tests.
+
+## Independent-review follow-up
+
+- Replaced the brand gradient's light endpoint with the approved deep-blue `blue-950 → blue-800` contract. `text-blue-100` now measures 12.04:1 against the start and 7.15:1 against the lightest endpoint, exceeding WCAG AA's 4.5:1 requirement for the 12px and 14px copy.
+- Added a token-level regression test that locks the rendered Tailwind gradient/text classes and calculates WCAG contrast against both real hex endpoints.
+- Changed the decorative brand slogan from `h2` to a visually equivalent paragraph; “登录” remains the page's sole `h1`.
+- Added `@testing-library/user-event` 14.6.1 as an approved dev dependency because jsdom `fireEvent.keyDown` does not execute native button activation. The regression test now proves real Tab focus order, Enter/Space activation, and the dynamic `显示密码` / `隐藏密码` accessible name without adding redundant production keyboard handlers.
+- Added page-level contracts for username/password autocomplete and the disabled `正在登录…` button preventing duplicate login requests while the mutation is pending.
+- Follow-up verification: login/auth/API tests PASS 36/36; full frontend suite PASS 96/96; production build and `git diff --check` PASS. The build emits only the existing large-chunk advisory.
