@@ -32,8 +32,8 @@
 
 ## Verification
 
-- Focused: `npm test -- src/components/MonthCalendar.test.tsx src/pages/LedgerPage.test.tsx` — 16/16 passed.
-- Full frontend: `npm test` — 116/116 passed.
+- Focused: `npm test -- src/components/MonthCalendar.test.tsx src/pages/LedgerPage.test.tsx` — 21/21 passed after review remediation.
+- Full frontend: `npm test` — 121/121 passed after review remediation.
 - Build: `npm run build` — passed (`tsc -b` and Vite); existing bundle-size warning remains.
 - Browser: `npm run test:e2e` — 4/4 responsive Playwright tests passed, including the existing 320px document-width assertions.
 - `git diff --check` — passed.
@@ -42,3 +42,11 @@
 
 - No compact ledger form or full history-page work was added.
 - Existing dirty README, progress, cleanup scripts, and backend cleanup tests were preserved and excluded from this task's staging scope.
+
+## Review Remediation
+
+- Froze `Date` for every `LedgerPage` test with `vi.useFakeTimers({ toFake: ["Date"] })`, set the baseline instant explicitly, and restored real timers after every test. Calendar/picker component tests continue to receive `today` directly as their injected clock.
+- Added a rendered-page boundary case at `2031-01-01T01:30:00Z` proving Honolulu's store-local date is `2030-12-31` and January 1 is disabled, so the suite is structurally independent of the wall-clock date.
+- RED confirmed the grid had no owned rows, no roving tab stop, and no arrow navigation. GREEN now renders a header row plus week rows, exposes selected grid cells, maintains exactly one enabled date at `tabIndex=0`, and synchronizes the roving stop whenever a date receives focus.
+- Added real `userEvent` coverage for Arrow Left/Right/Up/Down, Home/End, a visible cross-month boundary, future-date focus blocking, and Enter/Space selection.
+- RED confirmed the plain picker button lacked `aria-haspopup`. `DateTrigger` now forwards its ref and injected props through Radix `DialogTrigger`/`SheetTrigger`, providing dynamic `aria-expanded`/`aria-controls` semantics on both layouts and restoring focus after Escape or selection.

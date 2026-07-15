@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LedgerPage } from "@/pages/LedgerPage";
 import { StoreProvider, useStore } from "@/stores/StoreProvider";
@@ -12,7 +12,14 @@ import { incomeConfigKey, storeLocalToday } from "@/lib/user-api";
 const server = setupServer();
 function StoreControls() { const { select } = useStore(); return <><button onClick={() => select(1)}>choose1</button><button onClick={() => select(2)}>choose2</button></>; }
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
-afterEach(() => server.resetHandlers());
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-07-15T10:00:00Z"));
+});
+afterEach(() => {
+  server.resetHandlers();
+  vi.useRealTimers();
+});
 afterAll(() => server.close());
 
 function renderLedger(extra: Parameters<typeof server.use> = []) {
@@ -149,6 +156,17 @@ describe("LedgerPage", () => {
     expect(storeLocalToday({ id: 2, name: "Kiritimati", timezone: "Pacific/Kiritimati" }, new Date("2026-12-31T10:30:00Z"))).toBe("2027-01-01");
     expect(storeLocalToday({ id: 3, name: "New York", timezone: "America/New_York" }, new Date("2026-03-08T04:30:00Z"))).toBe("2026-03-07");
     expect(storeLocalToday({ id: 3, name: "New York", timezone: "America/New_York" }, new Date("2026-03-08T07:30:00Z"))).toBe("2026-03-08");
+  });
+
+  it("renders today and future disabling from the store timezone at a UTC boundary", async () => {
+    vi.setSystemTime(new Date("2031-01-01T01:30:00Z"));
+    renderLedger([
+      http.get("/api/stores/accessible", () => HttpResponse.json([{ id: 1, name: "Honolulu", timezone: "Pacific/Honolulu" }])),
+    ]);
+
+    const trigger = await screen.findByRole("button", { name: "选择台账日期：2030年12月31日" });
+    fireEvent.click(trigger);
+    expect(screen.getByRole("button", { name: "2031年1月1日" })).toBeDisabled();
   });
 
   it("scopes the category catalog to a newly selected historical date", async () => {

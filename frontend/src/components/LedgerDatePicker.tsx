@@ -1,10 +1,10 @@
 import { addMonths, format, parseISO, subDays } from "date-fns";
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
-import { useEffect, useState } from "react";
+import { forwardRef, type ComponentPropsWithoutRef, useEffect, useState } from "react";
 
 import { MonthCalendar } from "@/components/MonthCalendar";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 
 export interface LedgerDatePickerProps {
   value: string;
@@ -29,11 +29,12 @@ function useDesktopPicker() {
   return matches;
 }
 
-function DateTrigger({ value, onClick }: { value: string; onClick(): void }) {
+const DateTrigger = forwardRef<HTMLButtonElement, ComponentPropsWithoutRef<"button"> & { value: string }>(function DateTrigger({ value, ...props }, ref) {
   return (
     <button
+      ref={ref}
       type="button"
-      onClick={onClick}
+      {...props}
       aria-label={`选择台账日期：${format(parseISO(value), "yyyy年M月d日")}`}
       className="inline-flex min-h-11 items-center gap-2 rounded-xl border bg-card px-3 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
     >
@@ -41,7 +42,7 @@ function DateTrigger({ value, onClick }: { value: string; onClick(): void }) {
       {format(parseISO(value), "yyyy年M月d日")}
     </button>
   );
-}
+});
 
 function PickerPanel({ value, today, recordedDates, month, setMonth, select }: LedgerDatePickerProps & { month: string; setMonth(month: string): void; select(date: string): void }) {
   const moveMonth = (amount: number) => setMonth(format(addMonths(parseISO(`${month}-01`), amount), "yyyy-MM"));
@@ -85,7 +86,7 @@ export function LedgerDatePicker({ value, today, recordedDates, onChange }: Ledg
   if (desktop) {
     return (
       <Dialog open={open} onOpenChange={setOpen}>
-        <DateTrigger value={value} onClick={() => setOpen(true)} />
+        <DialogTrigger asChild><DateTrigger value={value} /></DialogTrigger>
         <DialogContent className="left-auto right-6 top-24 w-[min(22rem,calc(100vw-2rem))] translate-x-0 translate-y-0 p-4">
           <DialogTitle className="sr-only">选择台账日期</DialogTitle>
           {panel}
@@ -96,7 +97,7 @@ export function LedgerDatePicker({ value, today, recordedDates, onChange }: Ledg
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
-      <DateTrigger value={value} onClick={() => setOpen(true)} />
+      <SheetTrigger asChild><DateTrigger value={value} /></SheetTrigger>
       <SheetContent side="bottom" className="max-h-[90vh] overflow-y-auto rounded-t-2xl p-4 pb-6">
         <SheetTitle className="sr-only">选择台账日期</SheetTitle>
         <div className="mx-auto w-full max-w-sm">{panel}</div>
