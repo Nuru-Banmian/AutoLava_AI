@@ -20,6 +20,7 @@ async function mockApi(page: Page, options: { authenticated?: boolean; role?: Ro
     if (path === "/api/auth/me") return authenticated ? json(user) : json({ detail: "Authentication required" }, 401);
     if (path === "/api/auth/login" && request.method() === "POST") { authenticated = true; return json(user); }
     if (path === "/api/stores/accessible") return json([{ id: 1, name: storeName, timezone: "Europe/Berlin" }]);
+    if (path === "/api/income-config/1/current") return json({ store_id: 1, version_id: 4, version: 4, enabled: true, formula: "收入分类1 + 收入分类2", created_at: "2026-07-15T08:00:00", items: categories.map((category, index) => ({ id: index + 10, category_id: category.id, ...category })) });
     if (path.includes("/api/database/1/records")) return json(emptyDb);
     if (path.includes("/api/database/1/history")) return json([]);
     if (path.includes("/api/ledger/1/recent")) return json([]);
@@ -112,6 +113,26 @@ test("database owns horizontal table scrolling on mobile", async ({ page }) => {
   const scroller = page.getByTestId("record-table-scroll");
   await expect(scroller).toBeVisible();
   expect(await scroller.evaluate((node) => node.scrollWidth > node.clientWidth)).toBe(true);
+  await expectNoHorizontalScroll(page);
+});
+
+test("compact ledger stays accessible without horizontal scrolling at 320px", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 700 });
+  await mockApi(page);
+  await page.goto("/ledger");
+
+  await expect(page.getByRole("group", { name: "收入项目" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "天气" })).toHaveAttribute("aria-expanded", "false");
+  const washActivity = page.getByRole("button", { name: "洗车数量 / 活动" });
+  await expect(washActivity).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByRole("button", { name: "保存今日记录" })).toBeVisible();
+  await expectNoHorizontalScroll(page);
+
+  await washActivity.click();
+  await page.getByLabel("活动").fill("夏日活动");
+  await washActivity.click();
+  await washActivity.click();
+  await expect(page.getByLabel("活动")).toHaveValue("夏日活动");
   await expectNoHorizontalScroll(page);
 });
 

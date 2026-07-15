@@ -3,6 +3,7 @@ import { createContext, type PropsWithChildren, useContext, useEffect, useMemo, 
 
 import { api } from "@/api/client";
 import type { AccessibleStore } from "@/api/types";
+import { UnsavedChangesProvider, useUnsavedChanges } from "@/navigation/UnsavedChanges";
 
 export const accessibleStoresKey = ["stores", "accessible"] as const;
 export const accessibleStoresKeyFor = (userId: number | undefined) => [...accessibleStoresKey, userId] as const;
@@ -42,7 +43,8 @@ interface StoreProviderProps extends PropsWithChildren {
   userId?: number;
 }
 
-export function StoreProvider({ children, userId }: StoreProviderProps) {
+function StoreStateProvider({ children, userId }: StoreProviderProps) {
+  const { requestTransition } = useUnsavedChanges();
   const { data: stores = [], isLoading, isSuccess, error, refetch } = useQuery({
     queryKey: accessibleStoresKeyFor(userId),
     queryFn: () => api<AccessibleStore[]>("/stores/accessible"),
@@ -73,14 +75,18 @@ export function StoreProvider({ children, userId }: StoreProviderProps) {
     () => ({
       stores,
       selected: stores.find((store) => store.id === selectedId) ?? null,
-      select: (id: number) => setSelection({ userId, storeId: id }),
+      select: (id: number) => requestTransition(() => setSelection({ userId, storeId: id })),
       isLoading,
       error,
       refetch,
     }),
-    [error, isLoading, refetch, selectedId, stores, userId],
+    [error, isLoading, refetch, requestTransition, selectedId, stores, userId],
   );
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
+}
+
+export function StoreProvider(props: StoreProviderProps) {
+  return <UnsavedChangesProvider><StoreStateProvider {...props} /></UnsavedChangesProvider>;
 }
 
 export function useStore() {

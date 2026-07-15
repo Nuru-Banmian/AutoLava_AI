@@ -7,6 +7,7 @@ import { StorePicker } from "@/components/StorePicker";
 import { Button } from "@/components/ui/button";
 import { navigationFor } from "@/navigation/modules";
 import { useStore } from "@/stores/StoreProvider";
+import { UnsavedRouteGuard } from "@/navigation/UnsavedChanges";
 
 type Icon = ComponentType<SVGProps<SVGSVGElement>>;
 
@@ -47,6 +48,7 @@ export function AppShell() {
 
   return (
     <div className="min-h-screen bg-muted/20 md:pl-64">
+      <UnsavedRouteGuard />
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col bg-primary p-4 text-primary-foreground md:flex">
         <nav aria-label="主导航" className="mt-16 grid gap-1"><Navigation surface="desktop" /></nav>
         <div className="mt-auto grid gap-3 border-t border-white/20 pt-4 [&_select]:bg-background [&_select]:text-foreground">
