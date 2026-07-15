@@ -39,9 +39,17 @@ async def logout(response: Response) -> None:
 
 @router.post("/auth/password", status_code=204)
 async def change_password(body: PasswordChange, session: Session, user: CurrentUser) -> None:
-    if not verify_password(body.current_password, user.password_hash):
+    locked_user = await session.scalar(
+        select(User)
+        .where(User.id == user.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if locked_user is None or not locked_user.is_active:
+        raise HTTPException(401, "Authentication required")
+    if not verify_password(body.current_password, locked_user.password_hash):
         raise HTTPException(422, "当前密码不正确")
-    user.password_hash = hash_password(body.new_password)
+    locked_user.password_hash = hash_password(body.new_password)
     await session.commit()
 
 

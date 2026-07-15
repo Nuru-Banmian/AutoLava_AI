@@ -1,13 +1,22 @@
+import asyncio
 from importlib import import_module
 
 import bcrypt
 import jwt
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.routes import auth as auth_routes
+from app.api.routes.admin import patch_user
 from app.core.config import get_settings
-from app.models.identity import StoreMember
+from app.core.database import async_session_factory, engine
+from app.core.security import hash_password, verify_password
+from app.models.base import Base
+from app.models.identity import StoreMember, User
+from app.schemas.admin import UserPatch
+from app.schemas.auth import PasswordChange
 
 
 def load_feature_module(name: str):
@@ -15,6 +24,24 @@ def load_feature_module(name: str):
         return import_module(name)
     except ModuleNotFoundError:
         pytest.fail(f"Required feature module {name} does not exist")
+
+
+@pytest.fixture
+async def committed_auth_database():
+    if engine.dialect.name != "mysql" or engine.url.database != "autolava_test":
+        raise RuntimeError("Password race tests require the dedicated MySQL autolava_test database")
+
+    async def clear() -> None:
+        async with engine.begin() as connection:
+            for table in reversed(Base.metadata.sorted_tables):
+                await connection.execute(table.delete())
+
+    await clear()
+    try:
+        yield
+    finally:
+        await clear()
+        await engine.dispose()
 
 
 async def test_login_sets_http_only_cookie(client, user_factory) -> None:
@@ -304,6 +331,138 @@ async def test_password_change_requires_authentication(client) -> None:
     assert response.json() == {"detail": "Authentication required"}
     assert "OldPassword1" not in response.text
     assert "NewPassword2" not in response.text
+
+
+async def test_concurrent_password_changes_accept_the_old_password_only_once(
+    committed_auth_database,
+) -> None:
+    async with async_session_factory() as setup_session:
+        user = User(
+            username="password-race-user",
+            password_hash=hash_password("OldPassword1"),
+            role="user",
+            is_active=True,
+            remember_token=None,
+        )
+        setup_session.add(user)
+        await setup_session.commit()
+        user_id = user.id
+
+    async with async_session_factory() as first_session, async_session_factory() as second_session:
+        first_user = await first_session.get(User, user_id)
+        second_user = await second_session.get(User, user_id)
+        assert first_user is not None and second_user is not None
+
+        async def attempt(
+            session: AsyncSession, stale_user: User, new_password: str
+        ) -> int:
+            try:
+                await auth_routes.change_password(
+                    PasswordChange(
+                        current_password="OldPassword1", new_password=new_password
+                    ),
+                    session,
+                    stale_user,
+                )
+            except HTTPException as exc:
+                await session.rollback()
+                return exc.status_code
+            return 204
+
+        statuses = await asyncio.gather(
+            attempt(first_session, first_user, "FirstPassword2"),
+            attempt(second_session, second_user, "SecondPassword3"),
+        )
+
+    async with async_session_factory() as verification_session:
+        stored_hash = await verification_session.scalar(
+            select(User.password_hash).where(User.id == user_id)
+        )
+
+    assert sorted(statuses) == [204, 422]
+    assert stored_hash is not None
+    assert sum(
+        verify_password(password, stored_hash)
+        for password in ("FirstPassword2", "SecondPassword3")
+    ) == 1
+
+
+async def test_admin_reset_cannot_be_overwritten_by_a_stale_self_service_request(
+    committed_auth_database,
+) -> None:
+    async with async_session_factory() as setup_session:
+        administrator = User(
+            username="password-race-admin",
+            password_hash=hash_password("AdminPassword1"),
+            role="admin",
+            is_active=True,
+            remember_token=None,
+        )
+        user = User(
+            username="password-reset-target",
+            password_hash=hash_password("OldPassword1"),
+            role="user",
+            is_active=True,
+            remember_token=None,
+        )
+        setup_session.add_all([administrator, user])
+        await setup_session.commit()
+        administrator_id, user_id = administrator.id, user.id
+
+    admin_has_flushed = asyncio.Event()
+    allow_admin_commit = asyncio.Event()
+
+    class PausingAdminSession(AsyncSession):
+        async def commit(self) -> None:
+            await self.flush()
+            admin_has_flushed.set()
+            await asyncio.wait_for(allow_admin_commit.wait(), timeout=5)
+            await super().commit()
+
+    admin_session_factory = async_sessionmaker(
+        engine, class_=PausingAdminSession, expire_on_commit=False
+    )
+    async with async_session_factory() as self_session, admin_session_factory() as admin_session:
+        stale_user = await self_session.get(User, user_id)
+        actor = await admin_session.get(User, administrator_id)
+        assert stale_user is not None and actor is not None
+
+        admin_reset = asyncio.create_task(
+            patch_user(
+                user_id,
+                UserPatch(password="AdministratorReset2"),
+                admin_session,
+                actor,
+            )
+        )
+        await asyncio.wait_for(admin_has_flushed.wait(), timeout=5)
+        stale_change = asyncio.create_task(
+            auth_routes.change_password(
+                PasswordChange(
+                    current_password="OldPassword1", new_password="StaleSelfChange3"
+                ),
+                self_session,
+                stale_user,
+            )
+        )
+        await asyncio.sleep(0)
+        allow_admin_commit.set()
+        await admin_reset
+
+        with pytest.raises(HTTPException) as error:
+            await stale_change
+        await self_session.rollback()
+
+    async with async_session_factory() as verification_session:
+        stored_hash = await verification_session.scalar(
+            select(User.password_hash).where(User.id == user_id)
+        )
+
+    assert error.value.status_code == 422
+    assert error.value.detail == "当前密码不正确"
+    assert stored_hash is not None
+    assert verify_password("AdministratorReset2", stored_hash)
+    assert not verify_password("StaleSelfChange3", stored_hash)
 
 
 async def test_assigned_store_is_exposed(client, user_factory, store_factory, db_session) -> None:
