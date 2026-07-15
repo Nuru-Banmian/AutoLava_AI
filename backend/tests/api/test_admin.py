@@ -568,12 +568,23 @@ async def test_category_briefing_sql_failure_keeps_normal_patch_response(
     category_with_item,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 7, 14, 12, tzinfo=tz)
+
+    calls = 0
+
     async def sql_then_fail(service, *_args, **_kwargs):
+        nonlocal calls
+        calls += 1
         await service.session.scalar(select(func.count()).select_from(DailyBriefing))
         raise RuntimeError("briefing failed after SQL")
 
+    monkeypatch.setattr("app.api.routes.admin.datetime", FrozenDateTime)
     monkeypatch.setattr("app.services.briefing.BriefingService.regenerate", sql_then_fail)
     category_id = category_with_item.id
+    store_id = category_with_item.store_id
     response = await admin_client.patch(
         f"/api/admin/income-categories/{category_id}",
         json={"include_in_total": False},
@@ -581,6 +592,14 @@ async def test_category_briefing_sql_failure_keeps_normal_patch_response(
     assert response.status_code == 200
     assert response.json()["id"] == category_id
     assert response.json()["include_in_total"] is False
+    assert calls == 1
+
+    persisted = await admin_client.get(
+        f"/api/admin/income-categories?store_id={store_id}"
+    )
+    assert persisted.status_code == 200
+    saved = next(item for item in persisted.json() if item["id"] == category_id)
+    assert saved["include_in_total"] is False
 
 
 async def test_unused_income_category_can_be_deleted_with_audit(
