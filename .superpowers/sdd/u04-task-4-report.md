@@ -43,3 +43,9 @@ Base: `3351e3bd6c5bbabf1668fcd75cb422efd023eccf`
 - `git diff --check`: PASS.
 - Backend authorization inspection confirms admin APIs still depend on `require_capability(...)`; this task made no backend authorization changes.
 - Preserved unrelated dirty files: `README.md`, `.superpowers/sdd/progress.md`, both cleanup scripts, and both cleanup tests.
+
+## Independent-review follow-up
+
+- Added a regression contract using a backend-valid 120-character store name.
+- The More card, `StorePicker` root, label, and native select now all permit flex/grid shrinkage; the select uses `min-w-0 max-w-full flex-1`, so its option intrinsic width cannot force the 320px page wider.
+- Per the complete implementation plan, this follow-up deliberately keeps the `/account/password` and `/admin?tab=status` links wired but does not implement their target features: self-service password functionality belongs to U06, browser/Playwright acceptance belongs to U07, and management-center system-status behavior belongs to its later planned task.

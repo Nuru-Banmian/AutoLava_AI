@@ -79,6 +79,22 @@ describe("App", () => {
     expect(screen.queryByText("系统状态")).not.toBeInTheDocument();
   });
 
+  it("lets a maximum-length store name shrink inside the More card", async () => {
+    const storeName = "超".repeat(120);
+    server.use(http.get("/api/stores/accessible", () => HttpResponse.json([
+      { id: 1, name: storeName, timezone: "Europe/Berlin" },
+    ])));
+    renderApplication("/more", { role: "user" });
+
+    const more = await screen.findByRole("navigation", { name: "更多功能" });
+    const select = within(more).getByRole("combobox", { name: "门店" });
+    expect(await within(select).findByRole("option", { name: storeName })).toBeInTheDocument();
+    expect(select).toHaveClass("min-w-0", "max-w-full", "flex-1");
+    expect(select.closest("label")).toHaveClass("min-w-0", "max-w-full");
+    expect(select.closest("label")?.parentElement).toHaveClass("min-w-0", "max-w-full");
+    expect(select.closest("label")?.parentElement?.parentElement).toHaveClass("min-w-0", "max-w-full");
+  });
+
   it("shows management and system status in More for administrators", async () => {
     renderApplication("/more", { role: "admin" });
     const more = await screen.findByRole("navigation", { name: "更多功能" });
