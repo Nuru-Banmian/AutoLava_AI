@@ -10,6 +10,7 @@ from app.core.config import get_settings
 from app.models.base import Base
 import app.models.audit  # noqa: F401
 import app.models.identity  # noqa: F401
+import app.models.income_config  # noqa: F401
 import app.models.ledger  # noqa: F401
 import app.models.operations  # noqa: F401
 

@@ -28,4 +28,5 @@ class AuditLog(Base):
     rollback_of_audit_id: Mapped[int | None] = mapped_column(
         ForeignKey("audit_log.id", ondelete="CASCADE")
     )
+    snapshot_expires_at: Mapped[datetime | None]
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())

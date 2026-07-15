@@ -197,7 +197,13 @@ class LedgerService:
                 if "scanned" in payload:
                     record.scanned = bool(payload["scanned"])
                 record.items = [
-                    DailyIncomeItem(category_id=category_id, amount=amount)
+                    DailyIncomeItem(
+                        category_id=category_id,
+                        category_name=categories[category_id].name,
+                        include_in_total=categories[category_id].include_in_total,
+                        sort_order=categories[category_id].sort_order,
+                        amount=amount,
+                    )
                     for category_id, amount in item_values
                 ]
                 record.daily_revenue = daily_revenue

@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Literal
 
 from sqlalchemy import (
     Boolean,
@@ -16,6 +17,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
 
+IncomeMode = Literal["legacy_total", "composed"]
+
 
 class IncomeCategory(Base):
     __tablename__ = "income_categories"
@@ -25,6 +28,7 @@ class IncomeCategory(Base):
     include_in_total: Mapped[bool] = mapped_column(Boolean, default=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     sort_order: Mapped[int] = mapped_column(default=0)
+    archived_at: Mapped[datetime | None]
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
 
@@ -35,6 +39,11 @@ class StoreDailyRecord(Base):
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"))
     date: Mapped[date] = mapped_column(Date)
     daily_revenue: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
+    income_mode: Mapped[str] = mapped_column(String(20), default="legacy_total")
+    income_config_version_id: Mapped[int | None] = mapped_column(
+        ForeignKey("income_config_versions.id", ondelete="SET NULL")
+    )
+    row_version: Mapped[int] = mapped_column(default=1)
     wash_count: Mapped[int | None]
     is_open: Mapped[str] = mapped_column(String(20))
     weather: Mapped[str | None] = mapped_column(String(50))
@@ -64,6 +73,11 @@ class DailyIncomeItem(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     record_id: Mapped[int] = mapped_column(ForeignKey("store_daily_records.id", ondelete="CASCADE"))
     category_id: Mapped[int] = mapped_column(ForeignKey("income_categories.id"))
+    # Defaults keep pre-snapshot fixtures and legacy audit payloads restorable.
+    # Normal ledger writes always replace these with the category snapshot.
+    category_name: Mapped[str] = mapped_column(String(100), default="")
+    include_in_total: Mapped[bool] = mapped_column(Boolean, default=True)
+    sort_order: Mapped[int] = mapped_column(default=0)
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())

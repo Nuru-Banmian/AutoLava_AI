@@ -108,6 +108,14 @@ async def test_revenue_uses_only_included_categories(
 
     assert created is True
     assert record.daily_revenue == Decimal("350.00")
+    assert [
+        (item.category_name, item.include_in_total, item.sort_order)
+        for item in record.items
+    ] == [
+        ("Cash", True, 0),
+        ("Card", True, 1),
+        ("Hidden", False, 2),
+    ]
 
 
 @pytest.mark.parametrize(
