@@ -383,7 +383,7 @@ describe("LedgerPage", () => {
         if (recordCalls === 1) return HttpResponse.json({ detail: "not found" }, { status: 404 });
         return recordCalls === 2 ? HttpResponse.json({ detail: "failed" }, { status: 500 }) : HttpResponse.json(recordSnapshot("10.00", null, "晴"));
       }),
-      http.put("/api/ledger/1/:date", () => HttpResponse.json(recordSnapshot("10.00"))),
+      http.put("/api/ledger/1/:date", () => HttpResponse.json({ id: 9, date: "2026-07-15", daily_revenue: "10.00", row_version: 2 })),
     ]);
     fireEvent.change(await screen.findByLabelText("现金"), { target: { value: "10" } });
     fireEvent.click(screen.getByRole("button", { name: "保存今日记录" }));

@@ -94,6 +94,7 @@ export interface LedgerBody {
   activity: string | null;
   items: IncomeItemBody[];
 }
+export interface LedgerSaveResponse { id: number; date: string; daily_revenue: string; row_version: number }
 export interface RecordItem extends IncomeItemBody { id: number; category_name: string; include_in_total: boolean; sort_order: number; created_at: string; updated_at: string }
 export interface RecordSnapshot {
   id: number; store_id: number; date: string; daily_revenue: string; wash_count: number | null; is_open: LedgerStatus;

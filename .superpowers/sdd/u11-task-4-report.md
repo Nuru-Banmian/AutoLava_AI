@@ -197,3 +197,49 @@ The first route/store test did not force the competing effect to run and passed 
 
 - Only `frontend/src/pages/LedgerPage.tsx`, `frontend/src/pages/LedgerPage.test.tsx`, and this U11
   report are included. Pre-existing README, progress, cleanup, and handoff changes remain excluded.
+
+## Partial save-response type repair — 2026-07-16
+
+### RED evidence
+
+- The creation regression's PUT fixture was corrected to the backend's real four-field response:
+  `id`, `date`, `daily_revenue`, and `row_version`.
+- Before production changes, the response was incorrectly cached as a complete `RecordSnapshot`.
+  `LedgerForm` then attempted to read the absent `record.items`, raised a `TypeError`, and unmounted
+  the composed-income form before the save-success status could remain visible.
+
+### GREEN implementation
+
+- Added the exact `LedgerSaveResponse` API type and changed the mutation to
+  `api<LedgerSaveResponse>` without a cast. The partial response is never written to the ledger-record
+  cache.
+- The existing page-level saved-submission revision now also controls recovery rendering. A matching
+  successful-save scope keeps the same keyed `LedgerForm` instance mounted when an initial 404 is
+  followed by a post-save 500, preserving its local composed-income values and clean submitted
+  baseline while presenting the Chinese `重试台账` path.
+- The recovery state is created only when the mutation variables still match `scopeRef`, and is
+  derived for rendering only when its `storeId` and `date` match the current page. Switching scope
+  changes the component key and cannot expose a delayed prior-scope success on the new page.
+- A successful retry remains the only source of a canonical `RecordSnapshot`; it supplies the
+  canonical weather, consumes the saved revision, and leaves the form clean. Existing-record saves,
+  pending edits, delayed weather, and route/store guards retain their prior behavior.
+
+### Verification commands and results
+
+- The corrected focused regression failed with the partial-response `TypeError`, then passed after
+  the page-level recovery implementation.
+- Four focused files — 42 passed; repeated three consecutive times at 42/42.
+- `npm test -- --run` — 17 files, 140 passed.
+- `npm run build` — passed; existing Vite large-chunk advisory only.
+- `npm run test:e2e` — 5 passed.
+- `.venv\\Scripts\\python.exe -m pytest tests/api/test_ledger.py -q` with the process-only
+  `autolava_test` URL — 29 passed.
+- `.venv\\Scripts\\python.exe -m pytest -q` with the process-only `autolava_test` URL — 253 passed;
+  existing Starlette/httpx deprecation warning only.
+- `.venv\\Scripts\\python.exe -m ruff check .` — all checks passed.
+- `git diff --check` — passed.
+
+### Scope
+
+- This follow-up changes only the ledger API type, ledger page, creation regression, and this U11
+  report. Pre-existing README, progress, cleanup, and handoff changes remain excluded.
