@@ -105,14 +105,14 @@ test("mobile More keeps maximum-length store content reachable above navigation"
   expect(actionBox!.y + actionBox!.height).toBeLessThanOrEqual(navigationBox!.y);
 });
 
-test("database owns horizontal table scrolling on mobile", async ({ page }) => {
+test("calendar-first history stays inside a 320px viewport", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 700 });
   await mockApi(page);
   await page.goto("/database");
 
-  const scroller = page.getByTestId("record-table-scroll");
-  await expect(scroller).toBeVisible();
-  expect(await scroller.evaluate((node) => node.scrollWidth > node.clientWidth)).toBe(true);
+  await expect(page.getByRole("grid", { name: /日历/ })).toBeVisible();
+  await expect(page.getByRole("searchbox")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "补记一天" })).toHaveCount(0);
   await expectNoHorizontalScroll(page);
 });
 
@@ -145,7 +145,9 @@ test("desktop sidebar preserves exact role navigation and chart controls", async
   await expect(desktopNavigation).toBeVisible();
   await expect(desktopNavigation.getByRole("link")).toHaveText(["首页", "每日记账", "历史记录", "经营分析", "管理中心"]);
   await expect(page.getByRole("navigation", { name: "移动导航" })).toBeHidden();
+  await expect(page.getByText("总营业额")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "营业额趋势" })).toBeVisible();
+  await page.getByRole("button", { name: "自定义日期" }).click();
   await expect(page.getByLabel("图表开始日期")).toBeVisible();
-  await expect(page.getByLabel("收入分类1")).toBeChecked();
-  await expect(page.getByText("每日营业额")).toBeVisible();
+  await expect(page.getByLabel("图表结束日期")).toBeVisible();
 });
