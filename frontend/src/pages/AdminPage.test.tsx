@@ -196,9 +196,9 @@ describe("AdminPage", () => {
     expect(puts).toBe(0);
   });
 
-  it("loads and creates categories for a selected store, then refetches that exact category list", async () => {
-    let categoryFetches = 0;
-    let posted: unknown;
+  it("loads the current income config and publishes a local draft once", async () => {
+    let published: unknown;
+    let publishCount = 0;
     server.use(
       http.get("/api/admin/users", () => HttpResponse.json([])),
       http.get("/api/admin/stores", () => HttpResponse.json([
@@ -206,25 +206,24 @@ describe("AdminPage", () => {
       ])),
       http.get("/api/admin/alerts", () => HttpResponse.json([])),
       http.get("/api/admin/task-logs", () => HttpResponse.json([])),
-      http.get("/api/admin/income-categories", ({ request }) => {
-        expect(new URL(request.url).searchParams.get("store_id")).toBe("9");
-        categoryFetches += 1;
-        return HttpResponse.json([]);
-      }),
-      http.post("/api/admin/income-categories", async ({ request }) => {
-        posted = await request.json();
-        return HttpResponse.json({ id: 4, store_id: 9, name: "现金", include_in_total: true, is_active: true, sort_order: 2 }, { status: 201 });
+      http.get("/api/income-config/9/current", () => HttpResponse.json({ store_id: 9, version_id: null, version: 0, enabled: false, formula: "总收入 = €0.00", created_at: null, items: [] })),
+      http.get("/api/admin/income-categories", () => HttpResponse.json([])),
+      http.put("/api/admin/stores/9/income-config", async ({ request }) => {
+        publishCount += 1;
+        published = await request.json();
+        return HttpResponse.json({ store_id: 9, version_id: 1, version: 1, enabled: true, formula: "总收入 = 现金", created_at: "2026-07-16T10:00:00", items: [{ id: 1, category_id: 4, name: "现金", include_in_total: true, is_active: true, sort_order: 0 }] });
       }),
     );
     renderAdmin();
     await screen.findByRole("option", { name: "Roma" });
-    fireEvent.change(await screen.findByLabelText("分类门店"), { target: { value: "9" } });
-    fireEvent.change(await screen.findByLabelText("分类名称"), { target: { value: "现金" } });
-    fireEvent.change(screen.getByLabelText("排序"), { target: { value: "2" } });
-    fireEvent.click(screen.getByRole("button", { name: "添加分类" }));
+    fireEvent.change(await screen.findByLabelText("收入项目门店"), { target: { value: "9" } });
+    fireEvent.change(await screen.findByLabelText("新收入项目名称"), { target: { value: "现金" } });
+    fireEvent.click(screen.getByRole("button", { name: "添加收入项目" }));
+    expect(publishCount).toBe(0);
+    fireEvent.click(screen.getByRole("button", { name: "保存并发布" }));
 
-    await waitFor(() => expect(categoryFetches).toBe(2));
-    expect(posted).toEqual({ store_id: 9, name: "现金", include_in_total: true, sort_order: 2 });
+    await waitFor(() => expect(publishCount).toBe(1));
+    expect(published).toEqual({ enabled: true, items: [{ category_id: null, name: "现金", include_in_total: true, is_active: true, sort_order: 0 }] });
   });
 
   it("edits users and exposes their operation history", async () => {
@@ -311,26 +310,26 @@ describe("AdminPage", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Edit rejected");
   });
 
-  it("edits category behavior and invalidates only the affected store data", async () => {
-    let patch: unknown;
+  it("publishes category behavior and invalidates only the affected store data", async () => {
+    let published: unknown;
     server.use(
       http.get("/api/admin/users", () => HttpResponse.json([])),
       http.get("/api/admin/stores", () => HttpResponse.json([{ id: 9, name: "Roma", address: "Via", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true }])),
       http.get("/api/admin/alerts", () => HttpResponse.json([])),
       http.get("/api/admin/task-logs", () => HttpResponse.json([])),
-      http.get("/api/admin/income-categories", () => HttpResponse.json([{ id: 4, store_id: 9, name: "现金", include_in_total: true, is_active: true, sort_order: 2 }])),
-      http.patch("/api/admin/income-categories/4", async ({ request }) => { patch = await request.json(); return HttpResponse.json({ id: 4, store_id: 9, name: "现金", include_in_total: false, is_active: true, sort_order: 1 }); }),
+      http.get("/api/income-config/9/current", () => HttpResponse.json({ store_id: 9, version_id: 1, version: 1, enabled: true, formula: "总收入 = 现金", created_at: "2026-07-16T10:00:00", items: [{ id: 1, category_id: 4, name: "现金", include_in_total: true, is_active: true, sort_order: 0 }] })),
+      http.get("/api/admin/income-categories", () => HttpResponse.json([{ id: 4, store_id: 9, name: "现金", include_in_total: true, is_active: true, sort_order: 0, archived_at: null }])),
+      http.put("/api/admin/stores/9/income-config", async ({ request }) => { published = await request.json(); return HttpResponse.json({ store_id: 9, version_id: 2, version: 2, enabled: true, formula: "总收入 = €0.00", created_at: "2026-07-16T10:05:00", items: [{ id: 2, category_id: 4, name: "现金", include_in_total: false, is_active: true, sort_order: 0 }] }); }),
     );
     const { client } = renderAdmin();
     client.setQueryData(["dashboard", 9], []); client.setQueryData(["dashboard", 10], []);
     client.setQueryData(["charts", 9, ""], {}); client.setQueryData(["database", "records", 9, ""], {});
     await screen.findByRole("option", { name: "Roma" });
-    fireEvent.change(await screen.findByLabelText("分类门店"), { target: { value: "9" } });
-    await screen.findByLabelText("计入总收入 现金");
-    fireEvent.click(screen.getByLabelText("计入总收入 现金"));
-    fireEvent.change(screen.getByLabelText("排序 现金"), { target: { value: "1" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存分类 现金" }));
-    await waitFor(() => expect(patch).toMatchObject({ include_in_total: false, sort_order: 1 }));
+    fireEvent.change(await screen.findByLabelText("收入项目门店"), { target: { value: "9" } });
+    await screen.findByLabelText("计入营业额 现金");
+    fireEvent.click(screen.getByLabelText("计入营业额 现金"));
+    fireEvent.click(screen.getByRole("button", { name: "保存并发布" }));
+    await waitFor(() => expect(published).toEqual({ enabled: true, items: [{ category_id: 4, name: "现金", include_in_total: false, is_active: true, sort_order: 0 }] }));
     expect(client.getQueryState(["dashboard", 9])?.isInvalidated).toBe(true);
     expect(client.getQueryState(["charts", 9, ""])?.isInvalidated).toBe(true);
     expect(client.getQueryState(["database", "records", 9, ""])?.isInvalidated).toBe(true);

@@ -311,7 +311,7 @@ class IncomeConfigService:
             select(DailyIncomeItem.id).where(DailyIncomeItem.category_id == category_id).limit(1)
         )
         if used is not None:
-            raise HTTPException(409, "Used categories must be archived")
+            raise HTTPException(409, "此收入项目已有历史记录，只能归档，不能永久删除")
         add_admin_audit(
             self.session,
             actor_id=actor.id,

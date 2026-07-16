@@ -247,9 +247,13 @@ async def test_used_category_can_be_archived_and_restored_but_not_deleted(
     )
     assert archived.status_code == 200
     assert archived.json()["archived_at"] is not None
-    assert (
-        await admin_client.delete(f"/api/admin/income-categories/{category.id}")
-    ).status_code == 409
+    rejected_delete = await admin_client.delete(
+        f"/api/admin/income-categories/{category.id}"
+    )
+    assert rejected_delete.status_code == 409
+    assert rejected_delete.json() == {
+        "detail": "此收入项目已有历史记录，只能归档，不能永久删除"
+    }
     restored = await admin_client.post(
         f"/api/admin/income-categories/{category.id}/restore"
     )
