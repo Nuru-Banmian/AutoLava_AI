@@ -12,7 +12,7 @@ export interface LedgerFormProps {
   onDirtyChange?(dirty: boolean): void;
   saving?: boolean;
   submitLabel?: string;
-  savedSubmission?: { revision: number; body: LedgerBody };
+  savedSubmission?: { revision: number; body: LedgerBody; canonicalReady?: boolean };
   recordRevision?: number;
 }
 
@@ -84,8 +84,10 @@ export function LedgerForm({ categories, config, record, weather, onSave, onDirt
   const currentSignature = semanticSignature({ status, wash, weatherValue, weatherEdited, activity, directTotal, amounts });
   const pendingSavedSubmission = savedSubmission?.revision === consumedSubmissionRevision ? undefined : savedSubmission;
   const effectiveBaselineSignature = pendingSavedSubmission ? submittedSignature(pendingSavedSubmission.body) : baselineSignature;
+  const canonicalSavedRecordReady = Boolean(pendingSavedSubmission?.canonicalReady && record);
   useEffect(() => {
-    if (incomingSignature === appliedIncomingSignature) return;
+    if (pendingSavedSubmission && !canonicalSavedRecordReady) return;
+    if (incomingSignature === appliedIncomingSignature && !canonicalSavedRecordReady) return;
     if (currentSignature !== effectiveBaselineSignature) return;
     setAppliedIncomingSignature(incomingSignature);
     setStatus(record?.is_open ?? "营业"); setWash(record?.wash_count == null ? "" : String(record.wash_count));
@@ -93,8 +95,8 @@ export function LedgerForm({ categories, config, record, weather, onSave, onDirt
     setDirectTotal(record?.daily_revenue ?? "0");
     setAmounts(loadedAmounts);
     setBaselineSignature(loadedSemanticSignature);
-    if (pendingSavedSubmission && record) setConsumedSubmissionRevision(pendingSavedSubmission.revision);
-  }, [appliedIncomingSignature, currentSignature, effectiveBaselineSignature, incomingSignature, loadedAmounts, loadedSemanticSignature, pendingSavedSubmission, record, weather?.weather]);
+    if (canonicalSavedRecordReady) setConsumedSubmissionRevision(pendingSavedSubmission!.revision);
+  }, [appliedIncomingSignature, canonicalSavedRecordReady, currentSignature, effectiveBaselineSignature, incomingSignature, loadedAmounts, loadedSemanticSignature, pendingSavedSubmission, record, weather?.weather]);
   useEffect(() => { onDirtyChange?.(currentSignature !== effectiveBaselineSignature); }, [currentSignature, effectiveBaselineSignature, onDirtyChange]);
   const includedCents = active.filter((category) => category.include_in_total).map((category) => amountToCents(amounts[category.id] ?? "0"));
   const total = includedCents.every((value): value is bigint => value !== null) ? includedCents.reduce<bigint>((sum, value) => sum + value, 0n) : null;

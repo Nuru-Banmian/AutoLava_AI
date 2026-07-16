@@ -127,3 +127,33 @@ The first route/store test did not force the competing effect to run and passed 
 
 - Commit: `fix: serialize unsaved ledger transitions` (this report is included in the commit; the resulting hash is returned in the task handoff).
 - No backend production files changed in this follow-up; backend tests were rerun to verify the existing 409 contract.
+
+## Final saved-revision ordering repair — 2026-07-16
+
+### RED evidence
+
+- The first delayed-weather test passed incorrectly because it asserted before the weather handler and query observer had flushed. After synchronizing on the handler return, it failed: the auxiliary weather snapshot could run before the post-save record refetch and leave `beforeunload` blocked.
+- A post-save record refetch returning 500 unmounted the form, losing the submitted clean baseline from the visible page.
+- After retaining stale record data on refetch failure, the extended retry test still failed because there was no non-blocking record retry control.
+
+### GREEN implementation
+
+- A saved submission now has an explicit canonical-requested/canonical-ready handshake. Auxiliary weather, catalog, and configuration updates cannot promote or consume the pending saved revision; only the corresponding successful post-save record snapshot can do so.
+- The form ignores auxiliary incoming snapshots while that saved revision awaits its canonical record, but still protects edits made after submission by requiring the current semantic signature to match the submitted baseline before absorption.
+- A failed post-save record refresh keeps the stale record and submitted clean baseline mounted, shows a non-blocking `重试台账` action, and allows a later successful record response to promote the canonical server snapshot.
+
+### Verification commands and results
+
+- Four focused files — 41 passed; repeated three consecutive times at 41/41.
+- `npm test -- --run` — 17 files, 139 passed.
+- `npm run build` — passed; existing Vite large-chunk advisory only.
+- `npm run test:e2e` — 5 passed.
+- `uv run pytest tests/api/test_ledger.py -q` with the process-only `autolava_test` URL — 29 passed.
+- `uv run pytest -q` with the process-only `autolava_test` URL — 253 passed; existing Starlette/httpx deprecation warning only.
+- `uv run ruff check .` — all checks passed.
+
+### Commit and concerns
+
+- Commit: `fix: bind saved baseline to record refresh` (this report is included in the commit; the resulting hash is returned in the task handoff).
+- The frontend build retains the existing large-chunk advisory, and the backend suite retains one upstream Starlette/httpx deprecation warning.
+- Pre-existing workspace changes and cleanup files were preserved and excluded from this commit.

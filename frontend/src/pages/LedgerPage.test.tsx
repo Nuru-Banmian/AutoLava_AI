@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -305,17 +305,38 @@ describe("LedgerPage", () => {
     });
   });
 
-  it("absorbs canonical automatic weather after save and remains clean", async () => {
-    let saved = false;
+  it("waits for the post-save record before absorbing delayed automatic weather", async () => {
+    let releaseWeather!: () => void;
+    const weatherDelayed = new Promise<void>((resolve) => { releaseWeather = resolve; });
+    let releaseRecord!: () => void;
+    const recordDelayed = new Promise<void>((resolve) => { releaseRecord = resolve; });
+    let recordCalls = 0;
+    let weatherReturned = false;
     renderLedger([
-      http.get("/api/weather/1/:date", () => HttpResponse.json({ weather: null })),
-      http.get("/api/ledger/1/:date", ({ params }) => params.date === "recent" ? HttpResponse.json([]) : saved ? HttpResponse.json(recordSnapshot("10.00", null, "晴")) : HttpResponse.json({ detail: "not found" }, { status: 404 })),
-      http.put("/api/ledger/1/:date", () => { saved = true; return HttpResponse.json(recordSnapshot("10.00", null, "晴")); }),
+      http.get("/api/weather/1/:date", async () => { await weatherDelayed; weatherReturned = true; return HttpResponse.json({ weather: "晴" }); }),
+      http.get("/api/ledger/1/:date", async ({ params }) => {
+        if (params.date === "recent") return HttpResponse.json([]);
+        recordCalls += 1;
+        if (recordCalls === 1) return HttpResponse.json({ detail: "not found" }, { status: 404 });
+        await recordDelayed;
+        return HttpResponse.json(recordSnapshot("10.00", null, "晴"));
+      }),
+      http.put("/api/ledger/1/:date", () => HttpResponse.json(recordSnapshot("10.00", null, "晴"))),
     ]);
     fireEvent.change(await screen.findByLabelText("现金"), { target: { value: "10" } });
     fireEvent.click(screen.getByRole("button", { name: "保存今日记录" }));
     expect(await screen.findByRole("status")).toHaveTextContent("保存成功");
     fireEvent.click(screen.getByRole("button", { name: "天气" }));
+    await waitFor(() => expect(recordCalls).toBe(2));
+
+    await act(async () => { releaseWeather(); });
+    await waitFor(() => expect(weatherReturned).toBe(true));
+    expect(screen.getByLabelText("天气")).toHaveValue("");
+    const intermediateEvent = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(intermediateEvent);
+    expect(intermediateEvent.defaultPrevented).toBe(false);
+
+    await act(async () => { releaseRecord(); });
     await waitFor(() => expect(screen.getByLabelText("天气")).toHaveValue("晴"));
 
     await waitFor(() => {
@@ -323,6 +344,34 @@ describe("LedgerPage", () => {
       window.dispatchEvent(event);
       expect(event.defaultPrevented).toBe(false);
     });
+  });
+
+  it("keeps the submitted baseline when the post-save record refetch fails", async () => {
+    let recordCalls = 0;
+    renderLedger([
+      http.get("/api/ledger/1/:date", ({ params }) => {
+        if (params.date === "recent") return HttpResponse.json([]);
+        recordCalls += 1;
+        if (recordCalls === 1) return HttpResponse.json(recordSnapshot("5.00"));
+        return recordCalls === 2 ? HttpResponse.json({ detail: "failed" }, { status: 500 }) : HttpResponse.json(recordSnapshot("10.00", null, "晴"));
+      }),
+      http.put("/api/ledger/1/:date", () => HttpResponse.json(recordSnapshot("10.00"))),
+    ]);
+    fireEvent.change(await screen.findByLabelText("现金"), { target: { value: "10" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("保存成功");
+    await waitFor(() => expect(recordCalls).toBe(2));
+
+    expect(screen.getByLabelText("现金")).toHaveValue("10");
+    await waitFor(() => {
+      const event = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "重试台账" }));
+    fireEvent.click(screen.getByRole("button", { name: "天气" }));
+    await waitFor(() => expect(screen.getByLabelText("天气")).toHaveValue("晴"));
   });
 
   it("keeps edits made while a save is pending after success and record refetch", async () => {
