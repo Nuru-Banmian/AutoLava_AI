@@ -2,11 +2,14 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DatabasePage } from "@/pages/DatabasePage";
+import { useAuth } from "@/auth/AuthProvider";
 import { StoreProvider, useStore } from "@/stores/StoreProvider";
 import type { RecordSnapshot } from "@/api/types";
+
+vi.mock("@/auth/AuthProvider", () => ({ useAuth: vi.fn() }));
 
 const server = setupServer();
 function StoreControls() { const { select } = useStore(); return <><button onClick={() => select(1)}>choose1</button><button onClick={() => select(2)}>choose2</button></>; }
@@ -15,6 +18,19 @@ afterEach(() => { vi.useRealTimers(); server.resetHandlers(); });
 afterAll(() => server.close());
 
 describe("DatabasePage", () => {
+  beforeEach(() => {
+    vi.mocked(useAuth).mockReturnValue({
+      user: { id: 1, username: "admin", role: "admin" },
+      isLoading: false,
+      error: null,
+      login: vi.fn(),
+      logout: vi.fn(),
+      isLoggingIn: false,
+      isLoggingOut: false,
+      logoutError: null,
+    });
+  });
+
   it("renders category columns returned by the filtered records response", async () => {
     server.use(
       http.get("/api/stores/accessible", () => HttpResponse.json([{ id: 1, name: "Berlin", timezone: "Europe/Berlin" }])),
@@ -96,6 +112,30 @@ describe("DatabasePage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "编辑 2026-07-13" })); fireEvent.click(screen.getByRole("button", { name: "保存" })); await waitFor(() => expect(edited).toBe("true"));
     fireEvent.click(await screen.findByRole("button", { name: "删除 2026-07-13" })); expect(deleted).toBe(0); fireEvent.click(screen.getByRole("button", { name: "确认删除" })); await waitFor(() => expect(deleted).toBe(1));
     fireEvent.click(await screen.findByRole("button", { name: "回滚 #9" })); expect(rolled).toBe(0); fireEvent.click(screen.getByRole("button", { name: "确认回滚" })); await waitFor(() => expect(rolled).toBe(1));
+  });
+
+  it("keeps edit available but hides delete and audit controls from regular users", async () => {
+    vi.mocked(useAuth).mockReturnValue({
+      user: { id: 2, username: "worker", role: "user" },
+      isLoading: false,
+      error: null,
+      login: vi.fn(),
+      logout: vi.fn(),
+      isLoggingIn: false,
+      isLoggingOut: false,
+      logoutError: null,
+    });
+    let historyRequests = 0;
+    renderPage([
+      http.get("/api/database/1/records", () => HttpResponse.json({ items: [record], categories: [], sum_daily_revenue: "10", total: 1, page: 1, page_size: 50 })),
+      http.get("/api/database/1/history", () => { historyRequests += 1; return HttpResponse.json([{ id: 9, rollbackable: true }]); }),
+    ]);
+
+    expect(await screen.findByRole("button", { name: "编辑 2026-07-13" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "删除 2026-07-13" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /回滚/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "修改历史" })).not.toBeInTheDocument();
+    expect(historyRequests).toBe(0);
   });
 
   it("edits a fetched legacy-total record that carries a configuration version", async () => {

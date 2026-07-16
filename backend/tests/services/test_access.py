@@ -46,6 +46,14 @@ def test_capability_check_is_independent_of_store_membership() -> None:
     assert has_capability(user, "ledger.delete") is False
 
 
+def test_regular_user_cannot_delete_or_view_audit_history() -> None:
+    user = make_user(role="user")
+
+    assert has_capability(user, "ledger.delete") is False
+    assert has_capability(user, "audit.view") is False
+    assert has_capability(user, "ledger.edit") is True
+
+
 def test_unknown_role_has_no_capabilities() -> None:
     assert has_capability(make_user(role="future-role"), "ledger.view") is False
 

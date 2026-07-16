@@ -494,6 +494,41 @@ async def test_rollback_route_checks_path_store_against_audit_store(
     assert inaccessible.json() == {"detail": "Insufficient permissions"}
 
 
+async def test_regular_user_cannot_delete_or_rollback(
+    auth_client: AsyncClient,
+    database_context: DatabaseContext,
+    db_session: AsyncSession,
+) -> None:
+    record = database_context.records[0]
+    audit = AuditLog(
+        operation_domain="ledger",
+        store_id=database_context.id,
+        record_id=record.id,
+        record_date=record.date,
+        operation_type="update",
+        operation_source="manual",
+        operator_user_id=database_context.user.id,
+        before_json={"version": 1},
+        after_json={"version": 2},
+        description="regular user must not roll this back",
+        requires_approval=False,
+        approved=True,
+    )
+    db_session.add(audit)
+    await db_session.flush()
+
+    deleted = await auth_client.delete(
+        f"/api/ledger/{database_context.id}/{record.date}",
+        params={"expected_version": record.row_version},
+    )
+    rolled_back = await auth_client.post(
+        f"/api/database/{database_context.id}/history/{audit.id}/rollback"
+    )
+
+    assert deleted.status_code == 403
+    assert rolled_back.status_code == 403
+
+
 @pytest.mark.parametrize("suffix", ["/records", "/history", "/export.xlsx"])
 async def test_database_routes_hide_unassigned_store(
     auth_client: AsyncClient, store_factory, suffix: str
