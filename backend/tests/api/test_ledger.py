@@ -108,14 +108,35 @@ async def test_composed_write_requires_and_accepts_current_config_version(
         {"category_id": assigned_store.cash.id, "amount": "12.00"},
         {"category_id": assigned_store.excluded.id, "amount": "0.00"},
     ]
+    path = f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}"
 
-    response = await auth_client.put(
-        f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}",
-        json=ledger_payload,
+    missing = await auth_client.put(path, json=ledger_payload | {"config_version_id": None})
+    wrong = await auth_client.put(
+        path, json=ledger_payload | {"config_version_id": assigned_store.config.id + 999}
     )
+
+    assert missing.status_code == 409
+    assert missing.json()["detail"] == "Income configuration version does not match"
+    assert wrong.status_code == 409
+    assert wrong.json()["detail"] == "Income configuration version does not match"
+
+    response = await auth_client.put(path, json=ledger_payload)
 
     assert response.status_code == 201
     assert response.json()["daily_revenue"] == "12.00"
+
+
+async def test_non_conflict_field_validation_remains_422(
+    auth_client: AsyncClient,
+    assigned_store: AssignedStore,
+    ledger_payload: dict,
+) -> None:
+    response = await auth_client.put(
+        f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}",
+        json=ledger_payload | {"wash_count": -1},
+    )
+
+    assert response.status_code == 422
 
 
 async def test_disabled_config_creates_fetches_and_edits_legacy_total_with_version(

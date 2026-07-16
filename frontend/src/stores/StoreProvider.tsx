@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { createContext, type PropsWithChildren, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, type PropsWithChildren, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "@/api/client";
 import type { AccessibleStore } from "@/api/types";
@@ -44,43 +44,57 @@ interface StoreProviderProps extends PropsWithChildren {
 }
 
 function StoreStateProvider({ children, userId }: StoreProviderProps) {
-  const { requestTransition } = useUnsavedChanges();
+  const { requestTransition, resetUnsavedChanges } = useUnsavedChanges();
   const { data: stores = [], isLoading, isSuccess, error, refetch } = useQuery({
     queryKey: accessibleStoresKeyFor(userId),
     queryFn: () => api<AccessibleStore[]>("/stores/accessible"),
   });
-  const [selection, setSelection] = useState(() => ({ userId, storeId: readStoredSelection(userId) }));
-  const selectedId = selection.userId === userId ? selection.storeId : readStoredSelection(userId);
+  const [selection, setSelection] = useState<{ userId: number | undefined; storeId: number | null; snapshot: AccessibleStore | null }>(() => ({ userId, storeId: readStoredSelection(userId), snapshot: null }));
+  const reconciliationRef = useRef<string | null>(null);
+  const sameUser = selection.userId === userId;
+  const selectedId = sameUser ? selection.storeId : null;
+  const liveSelected = sameUser ? stores.find((store) => store.id === selectedId) ?? null : null;
+  const selected = liveSelected ?? (sameUser ? selection.snapshot : null);
 
   useEffect(() => {
+    if (!sameUser) {
+      reconciliationRef.current = null;
+      resetUnsavedChanges();
+      setSelection({ userId, storeId: readStoredSelection(userId), snapshot: null });
+      return;
+    }
     if (!isSuccess) return;
-    if (selectedId !== null && stores.some((store) => store.id === selectedId)) {
-      if (userId !== undefined) writeStoredSelection(userId, selectedId);
-      if (selection.userId !== userId || selection.storeId !== selectedId) {
-        setSelection({ userId, storeId: selectedId });
+    if (liveSelected) {
+      reconciliationRef.current = null;
+      if (userId !== undefined) writeStoredSelection(userId, liveSelected.id);
+      if (selection.snapshot !== liveSelected) {
+        setSelection({ userId, storeId: selectedId, snapshot: liveSelected });
       }
       return;
     }
 
-    const fallback = stores[0]?.id ?? null;
-    if (selection.userId !== userId || selection.storeId !== fallback) {
-      setSelection({ userId, storeId: fallback });
-    }
-    if (userId === undefined) return;
-    if (fallback === null) localStorage.removeItem(STORE_SELECTION_KEY);
-    else writeStoredSelection(userId, fallback);
-  }, [isSuccess, selectedId, selection.storeId, selection.userId, stores, userId]);
+    const fallback = stores[0] ?? null;
+    const reconciliationKey = `${userId ?? "none"}:${selectedId ?? "none"}:${fallback?.id ?? "none"}:${stores.map((store) => store.id).join(",")}`;
+    if (reconciliationRef.current === reconciliationKey) return;
+    reconciliationRef.current = reconciliationKey;
+    requestTransition(() => {
+      setSelection({ userId, storeId: fallback?.id ?? null, snapshot: fallback });
+      if (userId === undefined) return;
+      if (fallback === null) localStorage.removeItem(STORE_SELECTION_KEY);
+      else writeStoredSelection(userId, fallback.id);
+    });
+  }, [isSuccess, liveSelected, requestTransition, resetUnsavedChanges, sameUser, selectedId, selection.snapshot, stores, userId]);
 
   const value = useMemo(
     () => ({
       stores,
-      selected: stores.find((store) => store.id === selectedId) ?? null,
-      select: (id: number) => requestTransition(() => setSelection({ userId, storeId: id })),
+      selected,
+      select: (id: number) => requestTransition(() => setSelection({ userId, storeId: id, snapshot: stores.find((store) => store.id === id) ?? null })),
       isLoading,
       error,
       refetch,
     }),
-    [error, isLoading, refetch, requestTransition, selectedId, stores, userId],
+    [error, isLoading, refetch, requestTransition, selected, stores, userId],
   );
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }

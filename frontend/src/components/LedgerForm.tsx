@@ -12,9 +12,15 @@ export interface LedgerFormProps {
   onDirtyChange?(dirty: boolean): void;
   saving?: boolean;
   submitLabel?: string;
+  savedSubmission?: { revision: number; body: LedgerBody };
 }
 
-export function LedgerForm({ categories, config, record, weather, onSave, onDirtyChange, saving = false, submitLabel = "保存" }: LedgerFormProps) {
+function semanticAmount(value: string) {
+  const result = canonicalAmount(value);
+  return "value" in result ? result.value : `invalid:${value}`;
+}
+
+export function LedgerForm({ categories, config, record, weather, onSave, onDirtyChange, saving = false, submitLabel = "保存", savedSubmission }: LedgerFormProps) {
   const resolvedConfig = useMemo(() => config ?? ({
     store_id: record?.store_id ?? 0,
     version_id: record?.income_config_version_id ?? null,
@@ -51,16 +57,45 @@ export function LedgerForm({ categories, config, record, weather, onSave, onDirt
   const [validationError, setValidationError] = useState("");
   const [weatherOpen, setWeatherOpen] = useState(false);
   const [washActivityOpen, setWashActivityOpen] = useState(false);
+  const incomingSignature = JSON.stringify({ record, loadedAmounts, automaticWeather: record ? null : weather?.weather ?? null });
+  const semanticSignature = (values: { status: LedgerStatus; wash: string; weatherValue: string; weatherEdited: boolean; activity: string; directTotal: string; amounts: Record<number, string> }) => JSON.stringify({
+    is_open: values.status,
+    daily_revenue: composed ? null : semanticAmount(values.directTotal),
+    wash_count: values.status === "休息" ? 0 : values.wash === "" ? null : Number(values.wash),
+    weather: values.weatherValue || null,
+    weather_edited: values.weatherEdited,
+    activity: values.activity.trim() || null,
+    items: composed ? active.map((category) => [category.id, semanticAmount(values.amounts[category.id] ?? "0")]) : [],
+  });
+  const submittedSignature = (body: LedgerBody) => JSON.stringify({
+    is_open: body.is_open,
+    daily_revenue: body.daily_revenue,
+    wash_count: body.wash_count,
+    weather: body.weather,
+    weather_edited: body.weather_edited,
+    activity: body.activity,
+    items: body.items.map((item) => [item.category_id, item.amount]),
+  });
+  const loadedSemanticSignature = semanticSignature({ status: record?.is_open ?? "营业", wash: record?.wash_count == null ? "" : String(record.wash_count), weatherValue: record?.weather ?? weather?.weather ?? "", weatherEdited: record?.weather_edited ?? false, activity: record?.activity ?? "", directTotal: record?.daily_revenue ?? "0", amounts: loadedAmounts });
+  const [baselineSignature, setBaselineSignature] = useState(loadedSemanticSignature);
+  const [appliedIncomingSignature, setAppliedIncomingSignature] = useState(incomingSignature);
+  const currentSignature = semanticSignature({ status, wash, weatherValue, weatherEdited, activity, directTotal, amounts });
+  const effectiveBaselineSignature = savedSubmission ? submittedSignature(savedSubmission.body) : baselineSignature;
   useEffect(() => {
+    if (incomingSignature === appliedIncomingSignature) return;
+    setAppliedIncomingSignature(incomingSignature);
+    if (currentSignature !== effectiveBaselineSignature) return;
     setStatus(record?.is_open ?? "营业"); setWash(record?.wash_count == null ? "" : String(record.wash_count));
-    setWeatherValue(record?.weather ?? ""); setWeatherEdited(record?.weather_edited ?? false); setActivity(record?.activity ?? "");
+    setWeatherValue(record?.weather ?? weather?.weather ?? ""); setWeatherEdited(record?.weather_edited ?? false); setActivity(record?.activity ?? "");
     setDirectTotal(record?.daily_revenue ?? "0");
     setAmounts(loadedAmounts);
-  }, [record?.id]);
-  useEffect(() => { if (!record && !weatherEdited && weather?.weather) setWeatherValue(weather.weather); }, [weather?.weather, record?.id, weatherEdited]);
-  const loadedSignature = JSON.stringify({ status: record?.is_open ?? "营业", wash: record?.wash_count == null ? "" : String(record.wash_count), weatherValue: record?.weather ?? weather?.weather ?? "", weatherEdited: record?.weather_edited ?? false, activity: record?.activity ?? "", directTotal: record?.daily_revenue ?? "0", amounts: active.map((category) => [category.id, loadedAmounts[category.id] ?? "0"]) });
-  const currentSignature = JSON.stringify({ status, wash, weatherValue, weatherEdited, activity, directTotal, amounts: active.map((category) => [category.id, amounts[category.id] ?? "0"]) });
-  useEffect(() => { onDirtyChange?.(currentSignature !== loadedSignature); }, [currentSignature, loadedSignature, onDirtyChange]);
+    setBaselineSignature(loadedSemanticSignature);
+  }, [appliedIncomingSignature, currentSignature, effectiveBaselineSignature, incomingSignature, loadedAmounts, loadedSemanticSignature, record, weather?.weather]);
+  useEffect(() => {
+    if (!savedSubmission) return;
+    setBaselineSignature(submittedSignature(savedSubmission.body));
+  }, [savedSubmission?.revision]);
+  useEffect(() => { onDirtyChange?.(currentSignature !== effectiveBaselineSignature); }, [currentSignature, effectiveBaselineSignature, onDirtyChange]);
   const includedCents = active.filter((category) => category.include_in_total).map((category) => amountToCents(amounts[category.id] ?? "0"));
   const total = includedCents.every((value): value is bigint => value !== null) ? includedCents.reduce<bigint>((sum, value) => sum + value, 0n) : null;
   function changeStatus(next: LedgerStatus) {

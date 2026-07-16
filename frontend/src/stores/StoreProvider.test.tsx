@@ -1,15 +1,17 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
-import { STORE_SELECTION_KEY, StoreProvider, useStore } from "@/stores/StoreProvider";
+import { accessibleStoresKeyFor, STORE_SELECTION_KEY, StoreProvider, useStore } from "@/stores/StoreProvider";
+import { useUnsavedChanges } from "@/navigation/UnsavedChanges";
 
 const server = setupServer();
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => {
+  cleanup();
   localStorage.clear();
   server.resetHandlers();
 });
@@ -17,9 +19,12 @@ afterAll(() => server.close());
 
 function Probe() {
   const { selected, select } = useStore();
+  const { markDirty } = useUnsavedChanges();
   return (
     <>
       <span>selected:{selected?.name ?? "未选择"}</span>
+      <input aria-label="账本输入" />
+      <button onClick={() => markDirty(true)}>mark dirty</button>
       <button onClick={() => select(2)}>select Roma</button>
     </>
   );
@@ -135,6 +140,58 @@ describe("StoreProvider selection persistence", () => {
 
     expect(await screen.findByText("selected:Berlin")).toBeInTheDocument();
     expect(localStorage.getItem(STORE_SELECTION_KEY)).toBe(JSON.stringify({ userId: 1, storeId: 1 }));
+  });
+
+  it("keeps the revoked store snapshot and input until reconciliation is confirmed", async () => {
+    server.use(http.get("/api/stores/accessible", () => HttpResponse.json([
+      { id: 1, name: "Berlin", timezone: "Europe/Berlin" },
+      { id: 2, name: "Roma", timezone: "Europe/Rome" },
+    ])));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderProvider(1, client);
+    expect(await screen.findByText("selected:Berlin")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("账本输入"), { target: { value: "未保存金额" } });
+    fireEvent.click(screen.getByRole("button", { name: "mark dirty" }));
+
+    client.setQueryData(accessibleStoresKeyFor(1), [
+      { id: 2, name: "Roma", timezone: "Europe/Rome" },
+    ]);
+    expect(await screen.findByRole("alertdialog", { name: "放弃未保存的修改？" })).toBeInTheDocument();
+    expect(screen.getByText("selected:Berlin")).toBeInTheDocument();
+    expect(screen.getByLabelText("账本输入")).toHaveValue("未保存金额");
+    fireEvent.click(screen.getByRole("button", { name: "继续编辑" }));
+    expect(screen.getByText("selected:Berlin")).toBeInTheDocument();
+
+    client.setQueryData(accessibleStoresKeyFor(1), [
+      { id: 2, name: "Roma", timezone: "Europe/Rome" },
+      { id: 3, name: "Madrid", timezone: "Europe/Madrid" },
+    ]);
+    fireEvent.click(await screen.findByRole("button", { name: "放弃修改" }));
+    expect(await screen.findByText("selected:Roma")).toBeInTheDocument();
+  });
+
+  it("clears dirty reconciliation immediately when the account changes", async () => {
+    server.use(http.get("/api/stores/accessible", () => HttpResponse.json([
+      { id: 1, name: "Berlin", timezone: "Europe/Berlin" },
+      { id: 2, name: "Roma", timezone: "Europe/Rome" },
+    ])));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = renderProvider(1, client);
+    expect(await screen.findByText("selected:Berlin")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "mark dirty" }));
+    client.setQueryData(accessibleStoresKeyFor(1), [
+      { id: 2, name: "Roma", timezone: "Europe/Rome" },
+    ]);
+    expect(await screen.findByRole("alertdialog", { name: "放弃未保存的修改？" })).toBeInTheDocument();
+
+    client.setQueryData(accessibleStoresKeyFor(2), [
+      { id: 3, name: "Madrid", timezone: "Europe/Madrid" },
+    ]);
+    view.rerender(providerTree(2, client));
+
+    expect(screen.queryByRole("alertdialog", { name: "放弃未保存的修改？" })).not.toBeInTheDocument();
+    expect(await screen.findByText("selected:Madrid")).toBeInTheDocument();
+    expect(screen.queryByText("selected:Berlin")).not.toBeInTheDocument();
   });
 
   it("clears a saved store when no stores are accessible", async () => {

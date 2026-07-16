@@ -254,10 +254,10 @@ class LedgerService:
                 config.id if record is None and config is not None else record.income_config_version_id
             )
             if payload.get("config_version_id") != bound_version_id:
-                raise HTTPException(422, "Income configuration version does not match")
+                raise HTTPException(409, "Income configuration version does not match")
             if record is None:
                 if config is None:
-                    raise HTTPException(422, "Income configuration version does not match")
+                    raise HTTPException(409, "Income configuration version does not match")
                 expected = [item for item in config.items if item.is_active]
                 snapshot_values = {
                     item.category_id: (item.name, item.include_in_total, item.sort_order)

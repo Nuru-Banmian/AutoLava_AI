@@ -12,6 +12,7 @@ interface UnsavedChangesValue {
   dirty: boolean;
   markDirty(dirty: boolean): void;
   requestTransition(proceed: () => void, cancel?: () => void): void;
+  resetUnsavedChanges(): void;
 }
 
 const UnsavedChangesContext = createContext<UnsavedChangesValue | null>(null);
@@ -34,6 +35,11 @@ export function UnsavedChangesProvider({ children }: PropsWithChildren) {
     }
     setPending({ proceed, cancel });
   }, [dirty]);
+  const resetUnsavedChanges = useCallback(() => {
+    pending?.cancel?.();
+    setPending(null);
+    setDirty(false);
+  }, [pending]);
   const cancel = () => {
     pending?.cancel?.();
     setPending(null);
@@ -45,7 +51,7 @@ export function UnsavedChangesProvider({ children }: PropsWithChildren) {
     proceed?.();
   };
 
-  return <UnsavedChangesContext.Provider value={{ dirty, markDirty: setDirty, requestTransition }}>
+  return <UnsavedChangesContext.Provider value={{ dirty, markDirty: setDirty, requestTransition, resetUnsavedChanges }}>
     {dirty && <BeforeUnloadGuard />}
     {children}
     <AlertDialog open={Boolean(pending)} onOpenChange={(open) => { if (!open) cancel(); }}>

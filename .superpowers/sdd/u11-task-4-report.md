@@ -50,3 +50,44 @@ The first backend attempt was intentionally rejected by the test fixture because
 ## Preserved workspace state
 
 Pre-existing changes to `.superpowers/sdd/progress.md`, `README.md`, and the untracked cleanup scripts/tests were not modified or staged by this task.
+
+## Review repair
+
+### Outcome
+
+- Changed configuration-version mismatches to HTTP 409 while preserving ordinary request validation as 422 and row-version conflicts as 409.
+- Routed same-user asynchronous store reconciliation through the shared unsaved-change guard, retained the revoked-store snapshot until confirmation, and cleared prior-account state immediately on account changes.
+- Added a canonical semantic form baseline and exact saved-submission revision. Amount spellings such as `12,3`/`12.30`, trimmed activity text, and submitted numeric values compare by payload meaning rather than display spelling.
+- Canonical refetches no longer re-arm dirty state; edits made after a save starts remain dirty and are not overwritten; a conflict refetch that changes 404 into an existing record does not replace dirty input. Clean forms still absorb server and late automatic-weather snapshots.
+- Made StoreProvider test teardown deterministic by unmounting providers before clearing local storage.
+
+### TDD evidence
+
+The unfinished LedgerPage tests were run before implementation and failed in exactly three expected ways:
+
+1. Configuration-conflict refetch replaced entered `123.45` with server `999.00`.
+2. A canonical existing-record save left `beforeunload` blocked.
+3. A newer `20` edit made during a pending save was replaced by refetched `10.00`.
+
+After the semantic-baseline implementation, the focused LedgerPage/LedgerForm suite passed 25/25. A final diff audit found that late automatic weather was not part of the incoming clean snapshot; a new focused test failed with an empty weather input, then passed after adding automatic weather to the incoming signature. The final focused count was 26/26.
+
+The StoreProvider file exposed a teardown-order flake twice under broader execution. The failing next test inherited `Roma` because local storage was cleared before the preceding provider was unmounted. After explicit cleanup-before-clear, the file passed three consecutive runs at 8/8 and the full frontend suite passed.
+
+### Verification commands and results
+
+- `npm test -- --run src/navigation/UnsavedChanges.test.tsx src/stores/StoreProvider.test.tsx src/pages/LedgerPage.test.tsx src/components/LedgerForm.test.tsx` — 4 files, 35 passed.
+- `npm test -- --run src/components/LedgerForm.test.tsx src/pages/LedgerPage.test.tsx` — 2 files, 26 passed after the final weather regression.
+- `npm test -- --run` — 17 files, 134 passed.
+- `npm run build` — passed (`tsc -b && vite build`).
+- `npm run test:e2e` — 5 passed, including the 320 px compact-ledger check.
+- `uv run pytest tests/api/test_ledger.py -q` with the process-only `autolava_test` URL — 29 passed.
+- `uv run pytest -q` with the process-only `autolava_test` URL — 253 passed.
+- `uv run ruff check .` — all checks passed.
+- `git diff --check` — passed.
+
+### Commit and concerns
+
+- Commit: `fix: recover conflict-safe ledger state` (this report is included in that repair commit; the resulting hash is returned in the task handoff).
+- The frontend build retains the existing large-chunk advisory.
+- The backend full suite retains one upstream Starlette/httpx deprecation warning.
+- The first backend attempts executed zero tests because the database environment was loaded from the wrong working directory; the successful commands above ran from `backend` and injected only the dedicated test database URL without printing it.

@@ -44,6 +44,15 @@ function renderLedger(extra: Parameters<typeof server.use> = []) {
   return render(<QueryClientProvider client={client}><StoreProvider><LedgerPage /></StoreProvider></QueryClientProvider>);
 }
 
+function recordSnapshot(amount: string, activity: string | null = null) {
+  return {
+    id: 9, store_id: 1, date: "2026-07-15", daily_revenue: amount, income_mode: "composed", income_config_version_id: 4, row_version: 2,
+    wash_count: null, is_open: "营业", weather: null, weather_auto: null, weather_code: null, temperature_max: null, temperature_min: null, precipitation: null,
+    activity, weather_edited: false, scanned: false, created_by: 1, updated_by: 1, created_at: "2026-07-15T08:00:00", updated_at: "2026-07-15T08:00:00",
+    items: [{ id: 21, category_id: 1, category_name: "现金", include_in_total: true, sort_order: 1, amount, created_at: "2026-07-15T08:00:00", updated_at: "2026-07-15T08:00:00" }],
+  };
+}
+
 describe("LedgerPage", () => {
   it("keeps income visible while weather and wash/activity start collapsed", async () => {
     renderLedger();
@@ -120,7 +129,7 @@ describe("LedgerPage", () => {
       http.get("/api/ledger/1/:date", ({ params }) => {
         if (params.date === "recent") return HttpResponse.json([]);
         recordCalls += 1;
-        return HttpResponse.json({ detail: "not found" }, { status: 404 });
+        return recordCalls === 1 ? HttpResponse.json({ detail: "not found" }, { status: 404 }) : HttpResponse.json(recordSnapshot("999.00"));
       }),
       http.put("/api/ledger/1/:date", () => HttpResponse.json({ detail: "Income configuration version does not match" }, { status: 409 })),
     ]);
@@ -133,6 +142,7 @@ describe("LedgerPage", () => {
     await waitFor(() => expect(configCalls).toBe(2));
     await waitFor(() => expect(recordCalls).toBe(2));
     expect(screen.getByLabelText("现金")).toHaveValue("123.45");
+    expect(screen.queryByRole("alertdialog", { name: "覆盖已有记录？" })).not.toBeInTheDocument();
   });
 
   it("calculates included-category cents and asks before overwriting with the same payload", async () => {
@@ -263,6 +273,50 @@ describe("LedgerPage", () => {
     expect(savedEvent.defaultPrevented).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: /2026-07-13/ }));
     expect(screen.queryByRole("alertdialog", { name: "放弃未保存的修改？" })).not.toBeInTheDocument();
+  });
+
+  it("stays clean after an existing record is saved and refetched canonically", async () => {
+    let saved = false;
+    renderLedger([
+      http.get("/api/ledger/1/:date", ({ params }) => params.date === "recent" ? HttpResponse.json([]) : HttpResponse.json(recordSnapshot(saved ? "12.30" : "12.00", saved ? "促销" : null))),
+      http.put("/api/ledger/1/:date", async ({ request }) => {
+        const body = await request.json() as any;
+        expect(body.items[0].amount).toBe("12.30");
+        expect(body.activity).toBe("促销");
+        saved = true;
+        return HttpResponse.json(recordSnapshot("12.30", "促销"));
+      }),
+    ]);
+    fireEvent.change(await screen.findByLabelText("现金"), { target: { value: "12,3" } });
+    fireEvent.click(screen.getByRole("button", { name: "洗车数量 / 活动" }));
+    fireEvent.change(screen.getByLabelText("活动"), { target: { value: " 促销 " } });
+    fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("保存成功");
+    await waitFor(() => expect(saved).toBe(true));
+
+    const event = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("keeps edits made while a save is pending after success and record refetch", async () => {
+    let release!: () => void;
+    const delayed = new Promise<void>((resolve) => { release = resolve; });
+    let saved = false;
+    renderLedger([
+      http.get("/api/ledger/1/:date", ({ params }) => params.date === "recent" ? HttpResponse.json([]) : saved ? HttpResponse.json(recordSnapshot("10.00")) : HttpResponse.json({ detail: "not found" }, { status: 404 })),
+      http.put("/api/ledger/1/:date", async () => { await delayed; saved = true; return HttpResponse.json(recordSnapshot("10.00")); }),
+    ]);
+    fireEvent.change(await screen.findByLabelText("现金"), { target: { value: "10" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存今日记录" }));
+    fireEvent.change(screen.getByLabelText("现金"), { target: { value: "20" } });
+    release();
+    expect(await screen.findByRole("status")).toHaveTextContent("保存成功");
+    await waitFor(() => expect(screen.getByLabelText("现金")).toHaveValue("20"));
+
+    const event = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
   });
 
   it("binds overwrite and invalidation to the original store and date across a store switch", async () => {

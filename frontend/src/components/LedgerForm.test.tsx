@@ -16,6 +16,16 @@ describe("LedgerForm", () => {
     expect(screen.queryByRole("group", { name: "收入项目" })).not.toBeInTheDocument();
   });
 
+  it("absorbs late automatic weather while the form is clean", () => {
+    const config = { store_id: 2, enabled: false, version_id: 4, version: 4, formula: "", created_at: null, items: [] } satisfies IncomeConfigResponse;
+    const view = render(<LedgerForm categories={[]} config={config} onSave={vi.fn()} />);
+
+    view.rerender(<LedgerForm categories={[]} config={config} weather={{ weather: "晴", weather_code: 1, temperature_max: 20, temperature_min: 10, precipitation: 0 }} onSave={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "天气" }));
+
+    expect(screen.getByLabelText("天气")).toHaveValue("晴");
+  });
+
   it("uses only active configured items in composed mode", () => {
     const onSave = vi.fn();
     render(
