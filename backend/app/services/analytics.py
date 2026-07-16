@@ -52,6 +52,7 @@ class AnalyticsService:
         selected = set(category_names)
 
         total = sum((record.daily_revenue for record in records), Decimal("0.00"))
+        open_days = sum(record.is_open == "营业" for record in records)
         category_totals: dict[int, Decimal] = defaultdict(lambda: Decimal("0.00"))
         monthly_totals: dict[str, Decimal] = defaultdict(lambda: Decimal("0.00"))
         weather_totals: dict[str, list[Decimal]] = defaultdict(list)
@@ -84,7 +85,8 @@ class AnalyticsService:
             "kpis": {
                 "total_revenue": _money(total),
                 "record_days": len(records),
-                "open_days": sum(record.is_open == "营业" for record in records),
+                "open_days": open_days,
+                "average_revenue": _money(total / open_days) if open_days else _money(Decimal()),
                 "primary_categories": primary_categories,
                 "total_wash_count": total_wash,
                 "average_ticket": (

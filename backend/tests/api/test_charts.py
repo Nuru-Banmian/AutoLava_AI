@@ -135,6 +135,7 @@ async def test_charts_returns_stable_empty_result(auth_client, db_session, store
             "total_revenue": "0.00",
             "record_days": 0,
             "open_days": 0,
+            "average_revenue": "0.00",
             "primary_categories": [],
             "total_wash_count": None,
             "average_ticket": None,

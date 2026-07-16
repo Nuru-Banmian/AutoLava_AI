@@ -120,7 +120,7 @@ export interface BriefingCard {
 }
 export interface WeatherResponse { weather: string | null; weather_code: number | null; temperature_max: number | null; temperature_min: number | null; precipitation: number | null }
 export interface ChartsResponse {
-  kpis: { total_revenue: string; record_days: number; open_days: number; primary_categories: { category_id: number; category_name: string; amount: string }[]; total_wash_count: number | null; average_ticket: string | null };
+  kpis: { total_revenue: string; record_days: number; open_days: number; average_revenue: string; primary_categories: { category_id: number; category_name: string; amount: string }[]; total_wash_count: number | null; average_ticket: string | null };
   daily: { date: string; revenue: string }[]; categories: { category_id: number; category_name: string; amount: string }[];
   monthly: { month: string; revenue: string }[]; weather: { weather: string; average_revenue: string }[]; weekday: { weekday: number; average_revenue: string }[];
 }

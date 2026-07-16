@@ -8,95 +8,113 @@ import { ChartsPage } from "@/pages/ChartsPage";
 import { StoreProvider } from "@/stores/StoreProvider";
 
 const server = setupServer();
+
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
+function response(categories = [
+  { category_id: 1, category_name: "现金", amount: "200.00" },
+  { category_id: 2, category_name: "刷卡", amount: "150.00" },
+]) {
+  return {
+    kpis: {
+      total_revenue: "350.00",
+      record_days: 2,
+      open_days: 1,
+      average_revenue: "350.00",
+      primary_categories: [],
+      total_wash_count: 5,
+      average_ticket: "70.00",
+    },
+    daily: [
+      { date: "2026-07-12", revenue: "150.00" },
+      { date: "2026-07-13", revenue: "200.00" },
+    ],
+    categories,
+    monthly: [{ month: "2026-07", revenue: "350.00" }],
+    weather: [{ weather: "晴", average_revenue: "350.00" }],
+    weekday: [{ weekday: 0, average_revenue: "350.00" }],
+  };
+}
+
+function renderPage(categories?: ReturnType<typeof response>["categories"]) {
+  server.use(
+    http.get("/api/stores/accessible", () =>
+      HttpResponse.json([{ id: 1, name: "Berlin", timezone: "Europe/Berlin" }]),
+    ),
+    http.get("/api/charts/1", () => HttpResponse.json(response(categories))),
+  );
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      <StoreProvider><ChartsPage /></StoreProvider>
+    </QueryClientProvider>,
+  );
+}
+
 describe("ChartsPage", () => {
-  it("hides wash metrics when the API returns null and shows primary details", async () => {
+  it("offers only approved ranges and focused revenue panels", async () => {
+    renderPage();
+
+    expect(await screen.findByRole("button", { name: "最近 7 天" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "本月" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "自定义日期" })).toBeInTheDocument();
+    expect(await screen.findByText("总营业额")).toBeInTheDocument();
+    expect(screen.getByText("营业天数")).toBeInTheDocument();
+    expect(screen.getByText("平均营业额")).toBeInTheDocument();
+    expect(screen.getByText("营业额趋势")).toBeInTheDocument();
+    expect(screen.getByText("收入构成")).toBeInTheDocument();
+
+    for (const removed of ["天气表现", "星期表现", "月度趋势", "洗车总数", "平均客单价", "主要收入分类"]) {
+      expect(screen.queryByText(removed)).not.toBeInTheDocument();
+    }
+  });
+
+  it("hides composition when only one category exists", async () => {
+    renderPage([{ category_id: 1, category_name: "现金", amount: "350.00" }]);
+
+    expect(await screen.findByText("营业额趋势")).toBeInTheDocument();
+    expect(screen.queryByText("收入构成")).not.toBeInTheDocument();
+  });
+
+  it("switches between preset and custom date ranges", async () => {
+    const urls: URL[] = [];
     server.use(
-      http.get("/api/stores/accessible", () => HttpResponse.json([{ id: 1, name: "Berlin", timezone: "Europe/Berlin" }])),
-      http.get("/api/database/1/records", () => HttpResponse.json({ items: [], categories: [{ id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }], sum_daily_revenue: "0.00", total: 0, page: 1, page_size: 1 })),
-      http.get("/api/charts/1", () => HttpResponse.json({ kpis: { total_revenue: "350.00", record_days: 2, open_days: 1, primary_categories: [{ category_id: 1, category_name: "现金", amount: "300.00" }], total_wash_count: null, average_ticket: null }, daily: [], categories: [], monthly: [], weather: [], weekday: [] })),
-    );
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(<QueryClientProvider client={client}><StoreProvider><ChartsPage /></StoreProvider></QueryClientProvider>);
-    expect(await screen.findByText("总收入")).toBeInTheDocument();
-    expect(screen.getByText("现金 €300.00")).toBeInTheDocument();
-    expect(screen.queryByText("平均客单价")).not.toBeInTheDocument();
-  });
-
-  it("sends repeated selected category parameters and renders empty panels safely", async () => {
-    let url = new URL("http://x");
-    server.use(
-      http.get("/api/stores/accessible", () => HttpResponse.json([{ id: 1, name: "Berlin", timezone: "Europe/Berlin" }])),
-      http.get("/api/database/1/records", () => HttpResponse.json({ items: [], categories: [{ id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }, { id: 2, name: "刷卡", include_in_total: false, is_active: true, sort_order: 2 }], sum_daily_revenue: "0", total: 0, page: 1, page_size: 1 })),
-      http.get("/api/charts/1", ({ request }) => { url = new URL(request.url); return HttpResponse.json({ kpis: { total_revenue: "0", record_days: 0, open_days: 0, primary_categories: [], total_wash_count: null, average_ticket: null }, daily: [], categories: [], monthly: [], weather: [], weekday: [] }); }),
-    );
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } }); render(<QueryClientProvider client={client}><StoreProvider><ChartsPage /></StoreProvider></QueryClientProvider>);
-    expect(await screen.findByText("总收入")).toBeInTheDocument(); expect(url.searchParams.getAll("category_id")).toEqual(["1"]);
-    fireEvent.click(screen.getByLabelText("刷卡")); await waitFor(() => expect(url.searchParams.getAll("category_id")).toEqual(["1", "2"]));
-    expect(screen.getAllByText("暂无数据").length).toBeGreaterThanOrEqual(5); expect(screen.queryByRole("button", { name: /全选/ })).not.toBeInTheDocument();
-  });
-
-  it("does not query backend defaults when no category is selected", async () => {
-    let calls = 0;
-    server.use(http.get("/api/stores/accessible", () => HttpResponse.json([{ id: 1, name: "Berlin", timezone: "Europe/Berlin" }])), http.get("/api/database/1/records", () => HttpResponse.json({ items: [], categories: [{ id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }], sum_daily_revenue: "0", total: 0, page: 1, page_size: 1 })), http.get("/api/charts/1", () => { calls += 1; return HttpResponse.json({ kpis: { total_revenue: "0", record_days: 0, open_days: 0, primary_categories: [], total_wash_count: null, average_ticket: null }, daily: [], categories: [], monthly: [], weather: [], weekday: [] }); }));
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } }); render(<QueryClientProvider client={client}><StoreProvider><ChartsPage /></StoreProvider></QueryClientProvider>);
-    await screen.findByText("总收入"); expect(calls).toBe(1); fireEvent.click(screen.getByLabelText("现金"));
-    expect(await screen.findByText("请至少选择一个收入分类。")).toBeInTheDocument(); await new Promise((resolve) => setTimeout(resolve, 20)); expect(calls).toBe(1);
-  });
-
-  it("scopes the catalog to the selected range and shows inactive historical categories", async () => {
-    const catalogRequests: URL[] = [];
-    server.use(http.get("/api/stores/accessible", () => HttpResponse.json([{ id: 1, name: "Berlin", timezone: "Europe/Berlin" }])), http.get("/api/database/1/records", ({ request }) => { const url = new URL(request.url); catalogRequests.push(url); const historical = url.searchParams.get("start") === "2026-06-01"; return HttpResponse.json({ items: [], categories: historical ? [{ id: 8, name: "历史现金", include_in_total: true, is_active: false, sort_order: 1 }] : [{ id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }], sum_daily_revenue: "0", total: 0, page: 1, page_size: 1 }); }), http.get("/api/charts/1", () => HttpResponse.json({ kpis: { total_revenue: "0", record_days: 0, open_days: 0, primary_categories: [], total_wash_count: null, average_ticket: null }, daily: [], categories: [], monthly: [], weather: [], weekday: [] })));
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } }); render(<QueryClientProvider client={client}><StoreProvider><ChartsPage /></StoreProvider></QueryClientProvider>);
-    await screen.findByLabelText("现金"); fireEvent.change(screen.getByLabelText("图表开始日期"), { target: { value: "2026-06-01" } }); fireEvent.change(screen.getByLabelText("图表结束日期"), { target: { value: "2026-06-30" } });
-    expect(await screen.findByLabelText("历史现金（已停用）")).toBeChecked(); expect(catalogRequests.at(-1)?.searchParams.get("end")).toBe("2026-06-30");
-  });
-
-  it("loads every record page before selecting historical categories", async () => {
-    const requestedPages: string[] = [];
-    server.use(
-      http.get("/api/stores/accessible", () => HttpResponse.json([{ id: 1, name: "Berlin", timezone: "Europe/Berlin" }])),
-      http.get("/api/database/1/records", ({ request }) => {
-        const page = new URL(request.url).searchParams.get("page") ?? "1";
-        requestedPages.push(page);
-        const categories = page === "1"
-          ? [{ id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }]
-          : [
-              { id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 },
-              { id: 9, name: "历史分类", include_in_total: true, is_active: false, sort_order: 9 },
-            ];
-        return HttpResponse.json({ items: [], categories, sum_daily_revenue: "0", total: 201, page: Number(page), page_size: 200 });
+      http.get("/api/stores/accessible", () =>
+        HttpResponse.json([{ id: 1, name: "Berlin", timezone: "Europe/Berlin" }]),
+      ),
+      http.get("/api/charts/1", ({ request }) => {
+        urls.push(new URL(request.url));
+        return HttpResponse.json(response());
       }),
-      http.get("/api/charts/1", () => HttpResponse.json({ kpis: { total_revenue: "0", record_days: 0, open_days: 0, primary_categories: [], total_wash_count: null, average_ticket: null }, daily: [], categories: [], monthly: [], weather: [], weekday: [] })),
     );
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}><StoreProvider><ChartsPage /></StoreProvider></QueryClientProvider>);
 
-    expect(await screen.findByLabelText("历史分类（已停用）")).toBeChecked();
-    expect(screen.getAllByLabelText("现金")).toHaveLength(1);
-    expect(requestedPages).toEqual(["1", "2"]);
+    await screen.findByText("总营业额");
+    fireEvent.click(screen.getByRole("button", { name: "最近 7 天" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "最近 7 天" })).toHaveAttribute("aria-pressed", "true"));
+    fireEvent.click(screen.getByRole("button", { name: "自定义日期" }));
+    fireEvent.change(screen.getByLabelText("图表开始日期"), { target: { value: "2026-06-01" } });
+    fireEvent.change(screen.getByLabelText("图表结束日期"), { target: { value: "2026-06-30" } });
+
+    await waitFor(() => expect(urls.some((url) =>
+      url.searchParams.get("start") === "2026-06-01" && url.searchParams.get("end") === "2026-06-30",
+    )).toBe(true));
   });
 
-  it("shows catalog errors with retry instead of an empty selector", async () => {
-    let calls = 0; server.use(http.get("/api/stores/accessible", () => HttpResponse.json([{ id: 1, name: "Berlin", timezone: "Europe/Berlin" }])), http.get("/api/database/1/records", () => { calls += 1; return calls === 1 ? HttpResponse.json({ detail: "Catalog unavailable" }, { status: 500 }) : HttpResponse.json({ items: [], categories: [{ id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }], sum_daily_revenue: "0", total: 0, page: 1, page_size: 1 }); }));
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } }); render(<QueryClientProvider client={client}><StoreProvider><ChartsPage /></StoreProvider></QueryClientProvider>);
-    expect(await screen.findByRole("alert")).toHaveTextContent("Catalog unavailable"); expect(screen.queryByText("请至少选择一个收入分类。")).not.toBeInTheDocument(); fireEvent.click(screen.getByRole("button", { name: "重试分类" })); expect(await screen.findByLabelText("现金")).toBeChecked();
-  });
+  it("keeps large decimal KPI strings exact", async () => {
+    const large = response();
+    large.kpis.total_revenue = "9007199254740993.10";
+    large.kpis.average_revenue = "9007199254740993.10";
+    server.use(
+      http.get("/api/stores/accessible", () => HttpResponse.json([{ id: 1, name: "Berlin", timezone: "Europe/Berlin" }])),
+      http.get("/api/charts/1", () => HttpResponse.json(large)),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><StoreProvider><ChartsPage /></StoreProvider></QueryClientProvider>);
 
-  it("does not issue a range query with stale category selections", async () => {
-    const chartUrls: URL[] = [];
-    server.use(http.get("/api/stores/accessible", () => HttpResponse.json([{ id: 1, name: "Berlin", timezone: "Europe/Berlin" }])), http.get("/api/database/1/records", ({ request }) => { const historical = new URL(request.url).searchParams.get("start") === "2026-06-01"; return HttpResponse.json({ items: [], categories: [{ id: historical ? 8 : 1, name: historical ? "历史" : "当前", include_in_total: true, is_active: true, sort_order: 1 }], sum_daily_revenue: "0", total: 0, page: 1, page_size: 1 }); }), http.get("/api/charts/1", ({ request }) => { chartUrls.push(new URL(request.url)); return HttpResponse.json({ kpis: { total_revenue: "0", record_days: 0, open_days: 0, primary_categories: [], total_wash_count: null, average_ticket: null }, daily: [], categories: [], monthly: [], weather: [], weekday: [] }); }));
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } }); render(<QueryClientProvider client={client}><StoreProvider><ChartsPage /></StoreProvider></QueryClientProvider>); await screen.findByLabelText("当前");
-    fireEvent.change(screen.getByLabelText("图表开始日期"), { target: { value: "2026-06-01" } }); fireEvent.change(screen.getByLabelText("图表结束日期"), { target: { value: "2026-06-30" } }); await screen.findByLabelText("历史");
-    await waitFor(() => expect(chartUrls.some((url) => url.searchParams.get("start") === "2026-06-01" && url.searchParams.getAll("category_id").join() === "8")).toBe(true)); expect(chartUrls.some((url) => url.searchParams.get("start") === "2026-06-01" && url.searchParams.has("category_id", "1"))).toBe(false);
-  });
-
-  it("keeps large KPI and primary decimal strings exact", async () => {
-    server.use(http.get("/api/stores/accessible", () => HttpResponse.json([{ id: 1, name: "Berlin", timezone: "Europe/Berlin" }])), http.get("/api/database/1/records", () => HttpResponse.json({ items: [], categories: [{ id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }], sum_daily_revenue: "0", total: 0, page: 1, page_size: 1 })), http.get("/api/charts/1", () => HttpResponse.json({ kpis: { total_revenue: "9007199254740993.10", record_days: 1, open_days: 1, primary_categories: [{ category_id: 1, category_name: "现金", amount: "9007199254740993.10" }], total_wash_count: null, average_ticket: null }, daily: [], categories: [], monthly: [], weather: [], weekday: [] })));
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } }); render(<QueryClientProvider client={client}><StoreProvider><ChartsPage /></StoreProvider></QueryClientProvider>);
-    expect((await screen.findAllByText(/€9007199254740993\.10/)).length).toBeGreaterThanOrEqual(2);
+    expect(await screen.findAllByText("€9007199254740993.10")).toHaveLength(2);
   });
 });

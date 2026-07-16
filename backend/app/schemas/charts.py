@@ -11,6 +11,7 @@ class ChartKpis(BaseModel):
     total_revenue: str
     record_days: int
     open_days: int
+    average_revenue: str
     primary_categories: list[PrimaryCategory]
     total_wash_count: int | None
     average_ticket: str | None

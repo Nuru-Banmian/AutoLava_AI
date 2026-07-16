@@ -1,28 +1,107 @@
 import { useQuery } from "@tanstack/react-query";
+import { format, parseISO, subDays } from "date-fns";
 import { useEffect, useMemo, useState } from "react";
+
 import { api } from "@/api/client";
 import type { ChartsResponse } from "@/api/types";
 import { ChartPanel } from "@/components/ChartPanel";
-import { categoryCatalogKey, chartNumber, chartsKey, loadCategoryCatalog, money, storeLocalToday } from "@/lib/user-api";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { chartNumber, chartsKey, money, storeLocalToday } from "@/lib/user-api";
 import { useStore } from "@/stores/StoreProvider";
-function monthRange(today: string) { return [`${today.slice(0, 7)}-01`, today] as const; }
-const weekdays = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"];
+
+type RangeMode = "week" | "month" | "custom";
+
+function monthRange(today: string) {
+  return [`${today.slice(0, 7)}-01`, today] as const;
+}
+
+function weekRange(today: string) {
+  return [format(subDays(parseISO(today), 6), "yyyy-MM-dd"), today] as const;
+}
+
 export function ChartsPage() {
-  const { selected } = useStore(); const today = selected ? storeLocalToday(selected) : ""; const defaults = monthRange(today);
-  const [start, setStart] = useState<string>(defaults[0]); const [end, setEnd] = useState<string>(defaults[1]); const [selection, setSelection] = useState<{ scope: string; ids: number[] } | null>(null);
-  useEffect(() => { const next = monthRange(today); setStart(next[0]); setEnd(next[1]); setSelection(null); }, [selected?.id, today]);
-  const scope = `${selected?.id ?? "none"}|${start}|${end}`;
-  const catalog = useQuery({ queryKey: selected ? categoryCatalogKey(selected.id, start, end) : ["categoryCatalog", "none"], enabled: Boolean(selected && start && end), queryFn: ({ signal }) => loadCategoryCatalog(selected!.id, start, end, signal) });
-  useEffect(() => { if (!catalog.data) return; const available = new Set(catalog.data.categories.map((category) => category.id)); const defaults = catalog.data.categories.filter((category) => category.include_in_total).map((category) => category.id); setSelection((old) => old?.scope === scope ? { scope, ids: old.ids.filter((id) => available.has(id)) } : { scope, ids: defaults }); }, [catalog.data, scope]);
-  const selectedIds = selection?.scope === scope ? selection.ids : null;
-  const params = useMemo(() => { const query = new URLSearchParams({ start, end }); selectedIds?.forEach((id) => query.append("category_id", String(id))); return query.toString(); }, [start, end, selectedIds]);
-  const charts = useQuery({ queryKey: selected ? chartsKey(selected.id, params) : ["charts", "none"], enabled: Boolean(selected && catalog.isSuccess && selectedIds?.length && start && end), queryFn: () => api<ChartsResponse>(`/charts/${selected!.id}?${params}`) });
-  if (!selected) return <section><h1 className="text-2xl font-semibold">图表</h1><p role="status">请先选择门店。</p></section>;
+  const { selected } = useStore();
+  const today = selected ? storeLocalToday(selected) : "";
+  const defaults = monthRange(today);
+  const [mode, setMode] = useState<RangeMode>("month");
+  const [start, setStart] = useState<string>(defaults[0]);
+  const [end, setEnd] = useState<string>(defaults[1]);
+
+  useEffect(() => {
+    const next = monthRange(today);
+    setMode("month");
+    setStart(next[0]);
+    setEnd(next[1]);
+  }, [selected?.id, today]);
+
+  const params = useMemo(() => new URLSearchParams({ start, end }).toString(), [start, end]);
+  const charts = useQuery({
+    queryKey: selected ? chartsKey(selected.id, params) : ["charts", "none"],
+    enabled: Boolean(selected && start && end),
+    queryFn: () => api<ChartsResponse>(`/charts/${selected!.id}?${params}`),
+  });
+
+  if (!selected) {
+    return <section><h1 className="text-2xl font-semibold">营业分析</h1><p role="status">请先选择门店。</p></section>;
+  }
+
+  function selectPreset(nextMode: Exclude<RangeMode, "custom">) {
+    const [nextStart, nextEnd] = nextMode === "week" ? weekRange(today) : monthRange(today);
+    setMode(nextMode);
+    setStart(nextStart);
+    setEnd(nextEnd);
+  }
+
   const data = charts.data;
-  return <section className="grid gap-4"><h1 className="text-2xl font-semibold">图表</h1><div className="flex flex-wrap gap-4"><label>开始日期<input aria-label="图表开始日期" type="date" value={start} onChange={(e) => setStart(e.target.value)} className="ml-2 rounded border p-2" /></label><label>结束日期<input aria-label="图表结束日期" type="date" value={end} onChange={(e) => setEnd(e.target.value)} className="ml-2 rounded border p-2" /></label></div>
-    {catalog.isLoading ? <p role="status">加载收入分类…</p> : catalog.error ? <div role="alert"><span>{catalog.error.message}</span><button className="ml-2 underline" onClick={() => void catalog.refetch()}>重试分类</button></div> : <fieldset className="flex flex-wrap gap-3"><legend className="font-medium">收入分类</legend>{catalog.data?.categories.map((category) => { const label = `${category.name}${category.is_active ? "" : "（已停用）"}`; return <label key={category.id} className="flex items-center gap-1"><input type="checkbox" aria-label={label} checked={selectedIds?.includes(category.id) ?? false} onChange={(e) => setSelection({ scope, ids: e.target.checked ? [...(selectedIds ?? []), category.id] : (selectedIds ?? []).filter((id) => id !== category.id) })} />{label}</label>; })}</fieldset>}
-    {catalog.isSuccess && selectedIds?.length === 0 && <p role="status">请至少选择一个收入分类。</p>}
-    {charts.isLoading ? <p role="status">加载图表…</p> : charts.error ? <p role="alert">{charts.error.message}</p> : data && <><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><div className="rounded border p-4"><h2>总收入</h2><strong>{money(data.kpis.total_revenue)}</strong></div><div className="rounded border p-4"><h2>记录天数</h2><strong>{data.kpis.record_days}</strong></div><div className="rounded border p-4"><h2>营业天数</h2><strong>{data.kpis.open_days}</strong></div>{data.kpis.total_wash_count !== null && <div className="rounded border p-4"><h2>洗车总数</h2><strong>{data.kpis.total_wash_count}</strong></div>}{data.kpis.average_ticket !== null && <div className="rounded border p-4"><h2>平均客单价</h2><strong>{money(data.kpis.average_ticket)}</strong></div>}</div>
-      <div className="grid gap-4 lg:grid-cols-2"><ChartPanel title="主要收入分类"><div className="space-y-2">{data.kpis.primary_categories.length ? data.kpis.primary_categories.map((item) => <p key={item.category_id}>{item.category_name} {money(item.amount)}</p>) : <p>暂无数据</p>}</div></ChartPanel><ChartPanel title="每日营业额" kind="bar" data={data.daily.map((item) => ({ ...item, revenue: chartNumber(item.revenue), revenue_raw: item.revenue }))} xKey="date" valueKey="revenue" /><ChartPanel title="收入构成" kind="pie" data={data.categories.map((item) => ({ name: item.category_name, amount: chartNumber(item.amount), amount_raw: item.amount }))} xKey="name" valueKey="amount" /><ChartPanel title="月度趋势" kind="line" data={data.monthly.map((item) => ({ ...item, revenue: chartNumber(item.revenue), revenue_raw: item.revenue }))} xKey="month" valueKey="revenue" /><ChartPanel title="天气表现" kind="bar" data={data.weather.map((item) => ({ ...item, average_revenue: chartNumber(item.average_revenue), average_revenue_raw: item.average_revenue }))} xKey="weather" valueKey="average_revenue" /><ChartPanel title="星期表现" kind="bar" data={data.weekday.map((item) => ({ label: weekdays[item.weekday] ?? String(item.weekday), average_revenue: chartNumber(item.average_revenue), average_revenue_raw: item.average_revenue }))} xKey="label" valueKey="average_revenue" /></div></>}
-  </section>;
+  return (
+    <section className="grid gap-5">
+      <div>
+        <h1 className="text-2xl font-semibold">营业分析</h1>
+        <p className="mt-1 text-sm text-muted-foreground">查看营业额趋势和收入构成</p>
+      </div>
+
+      <div className="flex flex-wrap gap-2" aria-label="分析日期范围">
+        <button className="rounded-lg border bg-card px-4 py-2 text-sm aria-pressed:border-primary aria-pressed:bg-primary aria-pressed:text-primary-foreground" aria-pressed={mode === "week"} onClick={() => selectPreset("week")}>最近 7 天</button>
+        <button className="rounded-lg border bg-card px-4 py-2 text-sm aria-pressed:border-primary aria-pressed:bg-primary aria-pressed:text-primary-foreground" aria-pressed={mode === "month"} onClick={() => selectPreset("month")}>本月</button>
+        <button className="rounded-lg border bg-card px-4 py-2 text-sm aria-pressed:border-primary aria-pressed:bg-primary aria-pressed:text-primary-foreground" aria-pressed={mode === "custom"} onClick={() => setMode("custom")}>自定义日期</button>
+      </div>
+
+      {mode === "custom" && (
+        <div className="flex flex-wrap gap-4 rounded-xl border bg-card p-4">
+          <label className="text-sm">开始日期<input aria-label="图表开始日期" type="date" value={start} max={end} onChange={(event) => setStart(event.target.value)} className="ml-2 rounded-lg border bg-background p-2" /></label>
+          <label className="text-sm">结束日期<input aria-label="图表结束日期" type="date" value={end} min={start} max={today} onChange={(event) => setEnd(event.target.value)} className="ml-2 rounded-lg border bg-background p-2" /></label>
+        </div>
+      )}
+
+      {charts.isLoading ? <p role="status">加载分析数据…</p> : charts.error ? <div role="alert"><span>{charts.error.message}</span><button className="ml-2 underline" onClick={() => void charts.refetch()}>重试</button></div> : data && (
+        <>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <KpiCard title="总营业额" value={money(data.kpis.total_revenue)} />
+            <KpiCard title="营业天数" value={`${data.kpis.open_days} 天`} />
+            <KpiCard title="平均营业额" value={money(data.kpis.average_revenue)} />
+          </div>
+          <ChartPanel
+            title="营业额趋势"
+            kind="line"
+            data={data.daily.map((item) => ({ ...item, revenue: chartNumber(item.revenue), revenue_raw: item.revenue }))}
+            xKey="date"
+            valueKey="revenue"
+          />
+          {data.categories.length > 1 && (
+            <ChartPanel
+              title="收入构成"
+              kind="horizontal-bar"
+              data={data.categories.map((item) => ({ name: item.category_name, amount: chartNumber(item.amount), amount_raw: item.amount }))}
+              xKey="name"
+              valueKey="amount"
+            />
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function KpiCard({ title, value }: { title: string; value: string }) {
+  return <Card><CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">{title}</CardTitle></CardHeader><CardContent><strong className="text-2xl">{value}</strong></CardContent></Card>;
 }

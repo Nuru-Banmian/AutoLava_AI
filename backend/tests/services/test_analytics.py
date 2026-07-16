@@ -95,12 +95,62 @@ async def test_analytics_returns_expected_groups(db_session: AsyncSession) -> No
     assert result["kpis"]["total_revenue"] == "350.00"
     assert result["kpis"]["record_days"] == 2
     assert result["kpis"]["open_days"] == 1
+    assert result["kpis"]["average_revenue"] == "350.00"
     assert result["kpis"]["total_wash_count"] == 5
     assert result["kpis"]["average_ticket"] == "70.00"
     assert result["daily"][0] == {"date": "2026-07-12", "revenue": "150.00"}
     assert result["monthly"] == [{"month": "2026-07", "revenue": "350.00"}]
     assert {item["weather"] for item in result["weather"]} == {"晴", "未记录"}
     assert [item["weekday"] for item in result["weekday"]] == [0, 6]
+
+
+async def test_total_only_records_affect_trend_not_composition(
+    db_session: AsyncSession,
+) -> None:
+    store, category_ids = await _seed_records(db_session, suffix="-legacy")
+    records = list(
+        await db_session.scalars(
+            select(StoreDailyRecord)
+            .where(StoreDailyRecord.store_id == store.id)
+            .order_by(StoreDailyRecord.date)
+        )
+    )
+    for record in records:
+        record.items.clear()
+    records[0].daily_revenue = Decimal("100.00")
+    records[1].daily_revenue = Decimal("0.00")
+    await db_session.flush()
+
+    result = await AnalyticsService(db_session).calculate(
+        store_id=store.id,
+        start=date(2026, 7, 1),
+        end=date(2026, 7, 31),
+        category_ids=category_ids,
+    )
+
+    assert result["kpis"]["total_revenue"] == "100.00"
+    assert result["daily"][0]["revenue"] == "100.00"
+    assert result["categories"] == []
+    assert result["kpis"]["average_revenue"] == "100.00"
+
+
+async def test_average_revenue_is_zero_without_open_days(db_session: AsyncSession) -> None:
+    store, category_ids = await _seed_records(db_session, suffix="-closed")
+    records = await db_session.scalars(
+        select(StoreDailyRecord).where(StoreDailyRecord.store_id == store.id)
+    )
+    for record in records:
+        record.is_open = "休息"
+    await db_session.flush()
+
+    result = await AnalyticsService(db_session).calculate(
+        store_id=store.id,
+        start=date(2026, 7, 1),
+        end=date(2026, 7, 31),
+        category_ids=category_ids,
+    )
+
+    assert result["kpis"]["average_revenue"] == "0.00"
 
 
 async def test_wash_metrics_are_null_without_recorded_counts(db_session: AsyncSession) -> None:
