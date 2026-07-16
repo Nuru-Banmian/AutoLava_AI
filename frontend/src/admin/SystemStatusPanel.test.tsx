@@ -1,0 +1,126 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen } from "@testing-library/react";
+import { http, HttpResponse } from "msw";
+import { setupServer } from "msw/node";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+
+import { SystemStatusPanel } from "@/admin/SystemStatusPanel";
+
+vi.mock("@/stores/StoreProvider", () => ({
+  useStore: () => ({ selected: { id: 1, name: "Roma", timezone: "Europe/Rome" } }),
+}));
+
+const server = setupServer();
+const dashboard = [{
+  card_type: "today",
+  state: "recorded",
+  revenue: "100.00",
+  weather: "晴",
+  weekday: null,
+  temperature_max: null,
+  temperature_min: null,
+  precipitation: null,
+  hint: null,
+  generated_at: "2026-07-16T08:30:00Z",
+}];
+const weatherTask = [{
+  id: 1,
+  store_id: 1,
+  task_type: "weather",
+  status: "success",
+  message: null,
+  retry_count: 0,
+  started_at: "2026-07-16T08:00:00Z",
+  finished_at: "2026-07-16T08:05:00Z",
+  created_at: "2026-07-16T08:00:00Z",
+}];
+
+beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
+
+function mockStatus({ alerts = [], taskLogs = weatherTask, cards = dashboard }: {
+  alerts?: unknown[];
+  taskLogs?: unknown[];
+  cards?: unknown[];
+} = {}) {
+  server.use(
+    http.get("/api/admin/stores", () => HttpResponse.json([{ id: 1, name: "Roma", address: "Roma", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true }])),
+    http.get("/api/admin/alerts", () => HttpResponse.json(alerts)),
+    http.get("/api/admin/task-logs", () => HttpResponse.json(taskLogs)),
+    http.get("/api/dashboard/1", () => HttpResponse.json(cards)),
+  );
+}
+
+function renderStatus() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={client}><SystemStatusPanel /></QueryClientProvider>);
+}
+
+describe("SystemStatusPanel", () => {
+  it("reports loading without claiming a healthy state", () => {
+    mockStatus();
+    renderStatus();
+    expect(screen.getByRole("status")).toHaveTextContent("正在获取系统状态");
+    expect(screen.queryByText("运行正常")).not.toBeInTheDocument();
+  });
+
+  it.each(["/api/admin/stores", "/api/admin/alerts", "/api/admin/task-logs", "/api/dashboard/1"])("does not claim healthy when required request %s fails", async (endpoint) => {
+    mockStatus();
+    server.use(http.get(endpoint, () => HttpResponse.json({ detail: "boom" }, { status: 500 })));
+    renderStatus();
+    expect(await screen.findByRole("alert")).toHaveTextContent("状态暂时无法获取");
+    expect(screen.queryByText("运行正常")).not.toBeInTheDocument();
+  });
+
+  it("distinguishes empty and partial status data", async () => {
+    mockStatus({ taskLogs: [], cards: [] });
+    const empty = renderStatus();
+    expect(await screen.findByText("暂无可用状态数据")).toBeInTheDocument();
+    expect(screen.queryByText("运行正常")).not.toBeInTheDocument();
+    empty.unmount();
+
+    mockStatus({ taskLogs: [] });
+    renderStatus();
+    expect(await screen.findByText("状态数据不完整")).toBeInTheDocument();
+    expect(screen.getByText(/最近仪表盘生成/)).toBeInTheDocument();
+    expect(screen.getByText("暂无记录")).toBeInTheDocument();
+    expect(screen.queryByText("运行正常")).not.toBeInTheDocument();
+  });
+
+  it("shows unresolved alerts and blocks healthy state for error-level alerts", async () => {
+    mockStatus({ alerts: [{
+      id: 8,
+      store_id: 1,
+      alert_type: "weather",
+      level: "error",
+      message: "天气同步失败",
+      is_resolved: false,
+      created_at: "2026-07-16T08:10:00Z",
+      resolved_at: null,
+    }] });
+    renderStatus();
+    expect(await screen.findByText("系统存在未解决错误")).toBeInTheDocument();
+    expect(screen.getByText(/天气同步失败/)).toBeInTheDocument();
+    expect(screen.getByText("未解决告警（1）")).toBeInTheDocument();
+    expect(screen.queryByText("运行正常")).not.toBeInTheDocument();
+  });
+
+  it("claims healthy only with complete successful data and no unresolved error", async () => {
+    mockStatus({ alerts: [{
+      id: 9,
+      store_id: null,
+      alert_type: "reminder",
+      level: "warning",
+      message: "一条提醒",
+      is_resolved: false,
+      created_at: "2026-07-16T08:15:00Z",
+      resolved_at: null,
+    }] });
+    renderStatus();
+    expect(await screen.findByText("运行正常")).toBeInTheDocument();
+    expect(screen.getByText(/最近天气更新/)).toBeInTheDocument();
+    expect(screen.getByText(/最近仪表盘生成/)).toBeInTheDocument();
+    expect(screen.getByText(/一条提醒/)).toBeInTheDocument();
+  });
+});

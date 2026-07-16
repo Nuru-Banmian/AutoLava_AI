@@ -28,6 +28,11 @@ async function mockApi(page: Page, options: { authenticated?: boolean; role?: Ro
     if (path.startsWith("/api/weather/1/")) return json({ weather: null, weather_code: null, temperature_max: null, temperature_min: null, precipitation: null });
     if (path === "/api/charts/1") return json({ kpis: { total_revenue: "100", record_days: 1, open_days: 1, primary_categories: [{ category_id: 1, category_name: "收入分类1", amount: "100" }], total_wash_count: null, average_ticket: null }, daily: [{ date: "2026-07-01", revenue: "100" }], categories: [{ category_id: 1, category_name: "收入分类1", amount: "100" }], monthly: [{ month: "2026-07", revenue: "100" }], weather: [{ weather: "晴", average_revenue: "100" }], weekday: [{ weekday: 0, average_revenue: "100" }] });
     if (path === "/api/dashboard/1") return json([]);
+    if (path === "/api/admin/stores") return json([{ id: 1, name: storeName, address: "Berlin", latitude: "52.52", longitude: "13.405", timezone: "Europe/Berlin", is_active: true }]);
+    if (path === "/api/admin/users") return json([]);
+    if (path === "/api/admin/alerts") return json([]);
+    if (path === "/api/admin/task-logs") return json([]);
+    if (path === "/api/admin/income-categories") return json([]);
     return json({ detail: `unmocked ${path}` }, 500);
   });
 }
@@ -150,4 +155,26 @@ test("desktop sidebar preserves exact role navigation and chart controls", async
   await page.getByRole("button", { name: "自定义日期" }).click();
   await expect(page.getByLabel("图表开始日期")).toBeVisible();
   await expect(page.getByLabel("图表结束日期")).toBeVisible();
+});
+
+test("admin panels stay reachable above mobile navigation at 320px", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 500 });
+  await loginAs(page, "admin");
+  await page.goto("/admin");
+
+  const tabs = page.getByRole("tab");
+  await expect(tabs).toHaveText(["收入项目", "用户与权限", "门店设置", "系统状态"]);
+  for (const name of ["收入项目", "用户与权限", "门店设置", "系统状态"]) {
+    await page.getByRole("tab", { name }).click();
+    await expectNoHorizontalScroll(page);
+  }
+
+  await page.getByRole("tab", { name: "门店设置" }).click();
+  const lastAction = page.getByRole("button", { name: "永久删除门店 Berlin" });
+  const bottomNavigation = page.getByRole("navigation", { name: "移动导航" });
+  await lastAction.scrollIntoViewIfNeeded();
+  const [actionBox, navigationBox] = await Promise.all([lastAction.boundingBox(), bottomNavigation.boundingBox()]);
+  expect(actionBox, "门店危险操作应有真实浏览器布局框").not.toBeNull();
+  expect(navigationBox, "移动底栏应有真实浏览器布局框").not.toBeNull();
+  expect(actionBox!.y + actionBox!.height).toBeLessThanOrEqual(navigationBox!.y);
 });
