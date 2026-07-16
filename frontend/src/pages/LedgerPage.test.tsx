@@ -105,6 +105,44 @@ describe("LedgerPage", () => {
     expect(futureRequests).toEqual([]);
   });
 
+  it("never reuses the previous store date while switching across timezone day boundaries", async () => {
+    vi.setSystemTime(new Date("2026-07-15T23:30:00Z"));
+    const invalidStoreTwoRequests: string[] = [];
+    const capture = (scope: string, store: string, date: string) => {
+      if (store === "2" && date > "2026-07-15") invalidStoreTwoRequests.push(`${scope}:${date}`);
+    };
+    server.use(
+      http.get("/api/stores/accessible", () => HttpResponse.json([
+        { id: 1, name: "Berlin", timezone: "Europe/Berlin" },
+        { id: 2, name: "New York", timezone: "America/New_York" },
+      ])),
+      http.get("/api/income-config/:store/current", ({ params }) => HttpResponse.json({ store_id: Number(params.store), version_id: null, version: 0, enabled: false, formula: "", created_at: null, items: [] })),
+      http.get("/api/database/:store/records", ({ params, request }) => {
+        capture("categories", String(params.store), new URL(request.url).searchParams.get("start") ?? "");
+        return HttpResponse.json({ items: [], categories: [], sum_daily_revenue: "0", total: 0, page: 1, page_size: 1 });
+      }),
+      http.get("/api/ledger/:store/recent", () => HttpResponse.json([])),
+      http.get("/api/weather/:store/:date", ({ params }) => {
+        capture("weather", String(params.store), String(params.date));
+        return HttpResponse.json({ weather: null });
+      }),
+      http.get("/api/ledger/:store/:date", ({ params }) => {
+        capture("ledger", String(params.store), String(params.date));
+        return HttpResponse.json({ detail: "not found" }, { status: 404 });
+      }),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<MemoryRouter><QueryClientProvider client={client}><StoreProvider><StoreControls /><LedgerPage /></StoreProvider></QueryClientProvider></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "choose1" }));
+    expect(await screen.findByRole("button", { name: "选择台账日期：2026年7月16日" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "保存今日记录" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "choose2" }));
+    expect(await screen.findByRole("button", { name: "选择台账日期：2026年7月15日" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "保存今日记录" })).toBeEnabled();
+    expect(invalidStoreTwoRequests).toEqual([]);
+  });
+
   it("keeps income visible while weather and wash/activity start collapsed", async () => {
     renderLedger();
 
@@ -123,7 +161,7 @@ describe("LedgerPage", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "选择台账日期：2026年7月15日" }));
     expect(screen.getByText("补记历史记录")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "2026年7月14日，已有记录" }));
+    fireEvent.click(await screen.findByRole("button", { name: "2026年7月14日，已有记录" }));
 
     const trigger = await screen.findByRole("button", { name: "选择台账日期：2026年7月14日" });
     fireEvent.click(trigger);

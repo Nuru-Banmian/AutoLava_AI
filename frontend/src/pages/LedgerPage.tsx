@@ -19,10 +19,10 @@ function validDateParameter(value: string | null) {
 
 export function LedgerPage() {
   const { selected } = useStore(); const client = useQueryClient(); const { markDirty, requestTransition } = useUnsavedChanges();
-  const [searchParams, setSearchParams] = useSearchParams(); const parameterDate = validDateParameter(searchParams.get("date"));
-  const today = selected ? storeLocalToday(selected) : ""; const allowedParameterDate = today && parameterDate && parameterDate <= today ? parameterDate : null; const [date, setDate] = useState(""); const [pending, setPending] = useState<{ storeId: number; date: string; body: LedgerBody } | null>(null); const [message, setMessage] = useState(""); const [savedSubmission, setSavedSubmission] = useState<{ revision: number; storeId: number; date: string; body: LedgerBody; canonicalRequested: boolean; canonicalReady: boolean } | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams(); const hasDateParameter = searchParams.has("date"); const parameterDate = validDateParameter(searchParams.get("date"));
+  const today = selected ? storeLocalToday(selected) : ""; const allowedParameterDate = today && parameterDate && parameterDate <= today ? parameterDate : null; const [dateSelection, setDateSelection] = useState<{ storeId: number | null; date: string }>({ storeId: null, date: "" }); const storedDate = dateSelection.storeId === selected?.id && dateSelection.date <= today ? dateSelection.date : ""; const date = hasDateParameter ? allowedParameterDate ?? today : storedDate || today; const [pending, setPending] = useState<{ storeId: number; date: string; body: LedgerBody } | null>(null); const [message, setMessage] = useState(""); const [savedSubmission, setSavedSubmission] = useState<{ revision: number; storeId: number; date: string; body: LedgerBody; canonicalRequested: boolean; canonicalReady: boolean } | null>(null);
   const scopeRef = useRef({ storeId: selected?.id ?? null, date }); scopeRef.current = { storeId: selected?.id ?? null, date };
-  useEffect(() => setDate(allowedParameterDate ?? today), [selected?.id, today, allowedParameterDate]);
+  useEffect(() => setDateSelection({ storeId: selected?.id ?? null, date }), [selected?.id, date]);
   useEffect(() => { setPending(null); setMessage(""); setSavedSubmission(null); }, [selected?.id, date]);
   const catalog = useQuery({ queryKey: selected ? categoryCatalogKey(selected.id, date) : ["categoryCatalog", "none"], enabled: Boolean(selected && date), queryFn: () => api<DatabaseResponse>(`/database/${selected!.id}/records?start=${date}&end=${date}&page=1&page_size=1`) });
   const config = useQuery({ queryKey: selected ? incomeConfigKey(selected.id) : ["income-config", "none", "current"], enabled: Boolean(selected), queryFn: () => api<IncomeConfigResponse>(`/income-config/${selected!.id}/current`) });
@@ -36,7 +36,7 @@ export function LedgerPage() {
   const currentSavedSubmission = savedSubmission && savedSubmission.storeId === selected?.id && savedSubmission.date === date ? savedSubmission : undefined;
   const recordedDates = useMemo(() => new Set([...(recent.data?.map((item) => item.date) ?? []), ...(record.data ? [record.data.date] : [])]), [recent.data, record.data]);
   const chooseDate = (nextDate: string) => requestTransition(() => {
-    setDate(nextDate);
+    setDateSelection({ storeId: selected?.id ?? null, date: nextDate });
     setSearchParams((current) => {
       const next = new URLSearchParams(current);
       next.set("date", nextDate);
