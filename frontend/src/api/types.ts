@@ -8,6 +8,7 @@ export interface User {
 
 export interface AdminUser extends User {
   is_active: boolean;
+  store_ids: number[];
 }
 
 export interface AccessibleStore {

@@ -5,13 +5,14 @@ from typing import Annotated, Any
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import Session, require_capability
 from app.core.security import hash_password
 from app.models.audit import AuditLog
 from app.models.identity import Store, StoreMember, StoreSetting, User
+from app.models.income_config import IncomeConfigVersion
 from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
 from app.models.operations import ScheduledTaskLog, SystemAlert
 from app.schemas.admin import (
@@ -52,8 +53,16 @@ def _user_payload(user: User) -> dict[str, Any]:
     }
 
 
-def _user_snapshot(user: User, *, password_changed: bool = False) -> dict[str, Any]:
+def _managed_user_payload(user: User, store_ids: list[int]) -> dict[str, Any]:
+    return _user_payload(user) | {"store_ids": store_ids}
+
+
+def _user_snapshot(
+    user: User, *, password_changed: bool = False, store_ids: list[int] | None = None
+) -> dict[str, Any]:
     snapshot = _user_payload(user)
+    if store_ids is not None:
+        snapshot["store_ids"] = store_ids
     if password_changed:
         snapshot["password_changed"] = True
     return snapshot
@@ -171,10 +180,39 @@ async def _require_users(session: Session, user_ids: Iterable[int]) -> None:
         raise HTTPException(404, "User not found")
 
 
+async def _require_stores(session: Session, store_ids: Iterable[int]) -> None:
+    unique_ids = sorted(set(store_ids))
+    if not unique_ids:
+        return
+    found_ids = set(await session.scalars(select(Store.id).where(Store.id.in_(unique_ids))))
+    if found_ids != set(unique_ids):
+        raise HTTPException(404, "Store not found")
+
+
+async def _user_store_ids(session: Session, user_id: int) -> list[int]:
+    return list(
+        await session.scalars(
+            select(StoreMember.store_id)
+            .where(StoreMember.user_id == user_id)
+            .order_by(StoreMember.store_id)
+        )
+    )
+
+
 @router.get("/users", dependencies=[Depends(require_capability("users.manage"))])
 async def list_users(session: Session) -> list[dict[str, Any]]:
     users = (await session.scalars(select(User).order_by(User.username, User.id))).all()
-    return [_user_payload(user) for user in users]
+    memberships = await session.execute(
+        select(StoreMember.user_id, StoreMember.store_id).order_by(
+            StoreMember.user_id, StoreMember.store_id
+        )
+    )
+    store_ids_by_user: dict[int, list[int]] = {}
+    for user_id, store_id in memberships:
+        store_ids_by_user.setdefault(user_id, []).append(store_id)
+    return [
+        _managed_user_payload(user, store_ids_by_user.get(user.id, [])) for user in users
+    ]
 
 
 @router.post("/users", status_code=201)
@@ -201,7 +239,7 @@ async def create_user(body: UserCreate, session: Session, actor: UsersManager) -
         after=_user_snapshot(user, password_changed=True),
     )
     await session.commit()
-    return _user_payload(user)
+    return _managed_user_payload(user, [])
 
 
 @router.patch("/users/{user_id}")
@@ -209,7 +247,8 @@ async def patch_user(
     user_id: int, body: UserPatch, session: Session, actor: UsersManager
 ) -> dict[str, Any]:
     active_admins: list[User] = []
-    if body.is_active is False:
+    removes_active_admin = body.is_active is False or body.role == "user"
+    if removes_active_admin:
         active_admins = list(
             await session.scalars(
                 select(User)
@@ -232,12 +271,34 @@ async def patch_user(
             raise HTTPException(409, "You cannot deactivate your current account")
         if user.role == "admin" and len(active_admins) <= 1:
             raise HTTPException(409, "At least one active administrator is required")
+    if body.role == "user" and user.role == "admin" and user.is_active:
+        if len(active_admins) <= 1:
+            raise HTTPException(409, "At least one active administrator is required")
+    previous_store_ids = await _user_store_ids(session, user.id)
     password_changed = body.password is not None
-    before = _user_snapshot(user, password_changed=password_changed)
+    includes_access_change = body.role is not None or body.store_ids is not None
+    before = _user_snapshot(
+        user,
+        password_changed=password_changed,
+        store_ids=previous_store_ids if includes_access_change else None,
+    )
     if body.password is not None:
         user.password_hash = hash_password(body.password)
     if body.is_active is not None:
         user.is_active = body.is_active
+    if body.role is not None:
+        user.role = body.role
+    next_store_ids = previous_store_ids
+    if user.role == "admin":
+        next_store_ids = []
+    elif body.store_ids is not None:
+        next_store_ids = sorted(set(body.store_ids))
+        await _require_stores(session, next_store_ids)
+    if includes_access_change:
+        await session.execute(delete(StoreMember).where(StoreMember.user_id == user.id))
+        session.add_all(
+            StoreMember(store_id=store_id, user_id=user.id) for store_id in next_store_ids
+        )
     add_admin_audit(
         session,
         actor_id=actor.id,
@@ -246,10 +307,50 @@ async def patch_user(
         operation_type="update",
         description=f"Updated user {user.username}",
         before=before,
-        after=_user_snapshot(user, password_changed=password_changed),
+        after=_user_snapshot(
+            user,
+            password_changed=password_changed,
+            store_ids=next_store_ids if includes_access_change else None,
+        ),
     )
     await session.commit()
-    return _user_payload(user)
+    return _managed_user_payload(user, next_store_ids)
+
+
+@router.delete("/users/{user_id}", status_code=204)
+async def delete_unused_user(
+    user_id: int, session: Session, actor: UsersManager
+) -> None:
+    user = await session.scalar(
+        select(User).where(User.id == user_id).with_for_update()
+    )
+    if user is None:
+        raise HTTPException(404, "User not found")
+    if user.id == actor.id:
+        raise HTTPException(409, "You cannot delete your current account")
+    ledger_references = await session.scalar(
+        select(func.count())
+        .select_from(StoreDailyRecord)
+        .where(
+            (StoreDailyRecord.created_by == user.id)
+            | (StoreDailyRecord.updated_by == user.id)
+        )
+    )
+    audit_references = await session.scalar(
+        select(func.count())
+        .select_from(AuditLog)
+        .where(AuditLog.operator_user_id == user.id)
+    )
+    config_references = await session.scalar(
+        select(func.count())
+        .select_from(IncomeConfigVersion)
+        .where(IncomeConfigVersion.created_by == user.id)
+    )
+    if ledger_references or audit_references or config_references:
+        raise HTTPException(409, "该用户已有历史记录，不能永久删除；请停用账号")
+    await session.execute(delete(StoreMember).where(StoreMember.user_id == user.id))
+    await session.delete(user)
+    await session.commit()
 
 
 @router.get(

@@ -170,6 +170,7 @@ async def test_admin_can_create_list_patch_and_audit_users(
         "username": "zoe",
         "role": "user",
         "is_active": True,
+        "store_ids": [],
     }
     user_id = created.json()["id"]
 
@@ -216,6 +217,150 @@ async def test_admin_can_create_list_patch_and_audit_users(
     }
     assert "hash" not in str([audit.before_json for audit in audits])
     assert "hash" not in str([audit.after_json for audit in audits])
+
+
+async def test_admin_can_assign_user_role_and_stores_in_one_audited_patch(
+    admin_client, user_factory, store_factory, db_session: AsyncSession
+) -> None:
+    user = await user_factory(username="operator", password="secret")
+    first = await store_factory(name="First")
+    second = await store_factory(name="Second")
+
+    response = await admin_client.patch(
+        f"/api/admin/users/{user.id}",
+        json={"role": "user", "store_ids": [second.id, first.id, second.id]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["store_ids"] == [first.id, second.id]
+    member_store_ids = list(
+        await db_session.scalars(
+            select(StoreMember.store_id)
+            .where(StoreMember.user_id == user.id)
+            .order_by(StoreMember.store_id)
+        )
+    )
+    assert member_store_ids == [first.id, second.id]
+    audit = await db_session.scalar(
+        select(AuditLog)
+        .where(AuditLog.operation_domain == "admin", AuditLog.record_id == user.id)
+        .order_by(AuditLog.id.desc())
+    )
+    assert audit is not None
+    assert audit.before_json["store_ids"] == []
+    assert audit.after_json["store_ids"] == [first.id, second.id]
+
+    promoted = await admin_client.patch(
+        f"/api/admin/users/{user.id}", json={"role": "admin"}
+    )
+    assert promoted.status_code == 200
+    assert promoted.json()["role"] == "admin"
+    assert promoted.json()["store_ids"] == []
+    assert await db_session.scalar(
+        select(func.count()).select_from(StoreMember).where(StoreMember.user_id == user.id)
+    ) == 0
+
+
+async def test_last_active_admin_cannot_be_demoted(
+    admin_client, db_session: AsyncSession
+) -> None:
+    administrator = await db_session.scalar(
+        select(User).where(User.username == "administrator")
+    )
+    assert administrator is not None
+
+    response = await admin_client.patch(
+        f"/api/admin/users/{administrator.id}", json={"role": "user"}
+    )
+
+    assert response.status_code == 409
+    await db_session.refresh(administrator)
+    assert administrator.role == "admin"
+
+
+async def test_never_used_user_can_be_deleted_with_memberships(
+    admin_client, user_factory, store_factory, db_session: AsyncSession
+) -> None:
+    user = await user_factory(username="mistake", password="secret")
+    store = await store_factory(name="Assigned")
+    db_session.add(StoreMember(store_id=store.id, user_id=user.id))
+    await db_session.flush()
+
+    response = await admin_client.delete(f"/api/admin/users/{user.id}")
+
+    assert response.status_code == 204
+    assert await db_session.get(User, user.id) is None
+    assert await db_session.scalar(
+        select(func.count()).select_from(StoreMember).where(StoreMember.user_id == user.id)
+    ) == 0
+
+
+@pytest.mark.parametrize("reference_kind", ["creator", "updater", "audit", "income_config"])
+async def test_user_with_history_cannot_be_deleted(
+    admin_client,
+    user_factory,
+    store_factory,
+    db_session: AsyncSession,
+    reference_kind: str,
+) -> None:
+    user = await user_factory(username=f"used-{reference_kind}", password="secret")
+    other = await user_factory(username=f"other-{reference_kind}", password="secret")
+    store = await store_factory(name=f"History {reference_kind}")
+    if reference_kind == "audit":
+        db_session.add(
+            AuditLog(
+                operation_domain="admin",
+                store_id=None,
+                record_id=user.id,
+                record_date=None,
+                operation_type="update",
+                operation_source="manual",
+                operator_user_id=user.id,
+                before_json=None,
+                after_json=None,
+                description="Historical operation",
+                requires_approval=False,
+                approved=True,
+                rollbackable=False,
+            )
+        )
+    elif reference_kind == "income_config":
+        db_session.add(
+            IncomeConfigVersion(
+                store_id=store.id,
+                version=1,
+                enabled=True,
+                created_by=user.id,
+            )
+        )
+    else:
+        db_session.add(
+            StoreDailyRecord(
+                store_id=store.id,
+                date=date(2026, 7, 16),
+                daily_revenue=Decimal("0.00"),
+                wash_count=None,
+                is_open="休息",
+                weather=None,
+                weather_auto=None,
+                weather_code=None,
+                temperature_max=None,
+                temperature_min=None,
+                precipitation=None,
+                activity=None,
+                weather_edited=False,
+                scanned=False,
+                created_by=user.id if reference_kind == "creator" else other.id,
+                updated_by=user.id if reference_kind == "updater" else other.id,
+            )
+        )
+    await db_session.flush()
+
+    response = await admin_client.delete(f"/api/admin/users/{user.id}")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "该用户已有历史记录，不能永久删除；请停用账号"
+    assert await db_session.get(User, user.id) is not None
 
 
 async def test_admin_cannot_deactivate_current_account(

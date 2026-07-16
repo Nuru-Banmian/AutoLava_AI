@@ -36,7 +36,9 @@ class UserCreate(BaseModel):
 
 class UserPatch(BaseModel):
     password: str | None = Field(default=None, min_length=8, max_length=128)
+    role: Literal["admin", "user"] | None = None
     is_active: bool | None = None
+    store_ids: list[int] | None = None
 
 
 class StoreCreate(BaseModel):
