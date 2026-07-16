@@ -105,6 +105,7 @@ async def test_retention_callback_logs_success(monkeypatch: pytest.MonkeyPatch) 
     assert session.added[0].task_type == "retention_cleanup"
     assert session.added[0].status == "success"
     assert session.added[0].timestamp_contract == "utc_v1"
+    assert session.added[0].created_at == session.added[0].started_at
     assert "2 ledger snapshots" in session.added[0].message
 
 

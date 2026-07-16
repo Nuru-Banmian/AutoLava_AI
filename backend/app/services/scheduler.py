@@ -164,6 +164,7 @@ def make_retention_callback(
                     retry_count=0,
                     started_at=started_at,
                     finished_at=datetime.now(UTC).replace(tzinfo=None),
+                    created_at=started_at,
                     timestamp_contract=UTC_TIMESTAMP_CONTRACT,
                 )
             )
