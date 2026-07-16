@@ -78,6 +78,33 @@ describe("LedgerPage", () => {
     expect(requestedDates).toContain("2026-07-14");
   });
 
+  it("rejects a future date query before any date-scoped request is sent", async () => {
+    const futureRequests: string[] = [];
+    renderLedger([
+      http.get("/api/database/1/records", ({ request }) => {
+        const url = new URL(request.url);
+        const date = url.searchParams.get("start") ?? "";
+        if (date > "2026-07-15") futureRequests.push(`categories:${date}`);
+        return HttpResponse.json({ items: [], categories: [], sum_daily_revenue: "0", total: 0, page: 1, page_size: 1 });
+      }),
+      http.get("/api/weather/1/:date", ({ params }) => {
+        const date = String(params.date);
+        if (date > "2026-07-15") futureRequests.push(`weather:${date}`);
+        return HttpResponse.json({ weather: null });
+      }),
+      http.get("/api/ledger/1/:date", ({ params }) => {
+        const date = String(params.date);
+        if (date === "recent") return HttpResponse.json([]);
+        if (date > "2026-07-15") futureRequests.push(`ledger:${date}`);
+        return HttpResponse.json({ detail: "not found" }, { status: 404 });
+      }),
+    ], "/ledger?date=2026-07-16");
+
+    expect(await screen.findByRole("button", { name: "选择台账日期：2026年7月15日" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "保存今日记录" })).toBeEnabled();
+    expect(futureRequests).toEqual([]);
+  });
+
   it("keeps income visible while weather and wash/activity start collapsed", async () => {
     renderLedger();
 

@@ -20,9 +20,9 @@ function validDateParameter(value: string | null) {
 export function LedgerPage() {
   const { selected } = useStore(); const client = useQueryClient(); const { markDirty, requestTransition } = useUnsavedChanges();
   const [searchParams, setSearchParams] = useSearchParams(); const parameterDate = validDateParameter(searchParams.get("date"));
-  const today = selected ? storeLocalToday(selected) : ""; const [date, setDate] = useState(parameterDate ?? today); const [pending, setPending] = useState<{ storeId: number; date: string; body: LedgerBody } | null>(null); const [message, setMessage] = useState(""); const [savedSubmission, setSavedSubmission] = useState<{ revision: number; storeId: number; date: string; body: LedgerBody; canonicalRequested: boolean; canonicalReady: boolean } | null>(null);
+  const today = selected ? storeLocalToday(selected) : ""; const allowedParameterDate = today && parameterDate && parameterDate <= today ? parameterDate : null; const [date, setDate] = useState(""); const [pending, setPending] = useState<{ storeId: number; date: string; body: LedgerBody } | null>(null); const [message, setMessage] = useState(""); const [savedSubmission, setSavedSubmission] = useState<{ revision: number; storeId: number; date: string; body: LedgerBody; canonicalRequested: boolean; canonicalReady: boolean } | null>(null);
   const scopeRef = useRef({ storeId: selected?.id ?? null, date }); scopeRef.current = { storeId: selected?.id ?? null, date };
-  useEffect(() => setDate(parameterDate ?? today), [selected?.id, today, parameterDate]);
+  useEffect(() => setDate(allowedParameterDate ?? today), [selected?.id, today, allowedParameterDate]);
   useEffect(() => { setPending(null); setMessage(""); setSavedSubmission(null); }, [selected?.id, date]);
   const catalog = useQuery({ queryKey: selected ? categoryCatalogKey(selected.id, date) : ["categoryCatalog", "none"], enabled: Boolean(selected && date), queryFn: () => api<DatabaseResponse>(`/database/${selected!.id}/records?start=${date}&end=${date}&page=1&page_size=1`) });
   const config = useQuery({ queryKey: selected ? incomeConfigKey(selected.id) : ["income-config", "none", "current"], enabled: Boolean(selected), queryFn: () => api<IncomeConfigResponse>(`/income-config/${selected!.id}/current`) });
