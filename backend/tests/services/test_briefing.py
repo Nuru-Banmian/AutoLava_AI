@@ -1,5 +1,5 @@
 import asyncio
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
@@ -38,7 +38,63 @@ async def test_yesterday_card_mentions_missing_record(briefing_service, store) -
     assert cards[0].content == "昨天还没有经营记录，可以在记账页补录。"
 
 
-async def test_yesterday_card_is_deterministic_and_only_uses_included_categories(
+@pytest.mark.parametrize(
+    ("record_status", "expected_state"),
+    [
+        (None, "missing"),
+        ("营业", "recorded"),
+        ("休息", "rest"),
+        ("天气停业", "weather_closed"),
+    ],
+)
+async def test_yesterday_is_deterministic(
+    record_status,
+    expected_state,
+    db_session: AsyncSession,
+    store: Store,
+    user_factory,
+) -> None:
+    if record_status is not None:
+        owner = await user_factory(username=f"yesterday-{expected_state}", password="secret")
+        db_session.add(
+            StoreDailyRecord(
+                store_id=store.id,
+                date=date(2026, 7, 14),
+                daily_revenue=Decimal("150.00"),
+                wash_count=12,
+                is_open=record_status,
+                weather="晴",
+                weather_auto="晴",
+                weather_code=0,
+                temperature_max=Decimal("30.00"),
+                temperature_min=Decimal("20.00"),
+                precipitation=Decimal("0.00"),
+                activity="会员日",
+                weather_edited=False,
+                scanned=False,
+                created_by=owner.id,
+                updated_by=owner.id,
+            )
+        )
+        await db_session.flush()
+
+    card = await BriefingService(db_session, StubWeatherService()).build_yesterday(
+        store_id=store.id, local_date=date(2026, 7, 15)
+    )
+
+    assert card.card_type == "yesterday"
+    assert card.state == expected_state
+    assert card.revenue == (Decimal("150.00") if record_status == "营业" else None)
+    assert card.weather is None
+    assert card.weekday is None
+    assert card.temperature_max is None
+    assert card.temperature_min is None
+    assert card.precipitation is None
+    assert card.hint is None
+    assert isinstance(card.generated_at, datetime)
+
+
+async def test_yesterday_card_excludes_categories_weather_washes_and_activity(
     db_session: AsyncSession, store: Store, user_factory
 ) -> None:
     owner: User = await user_factory(username="briefing-owner", password="secret")
@@ -87,14 +143,7 @@ async def test_yesterday_card_is_deterministic_and_only_uses_included_categories
         store.id, ["yesterday"], local_date=date(2026, 7, 13)
     )
 
-    content = cards[0].content
-    assert "营业额 €150.00" in content
-    assert "洗车 €100.00、咖啡 €50.00" in content
-    assert "代收" not in content
-    assert "营业" in content
-    assert "晴" in content
-    assert "洗车 12 辆" in content
-    assert "会员日" in content
+    assert cards[0].content == "昨天营业，营业额 €150.00。"
 
 
 async def test_today_and_tomorrow_copy_and_upsert(db_session: AsyncSession, store: Store) -> None:
@@ -116,6 +165,68 @@ async def test_today_and_tomorrow_copy_and_upsert(db_session: AsyncSession, stor
         await db_session.scalars(select(DailyBriefing).where(DailyBriefing.store_id == store.id))
     )
     assert len(rows) == 2
+
+
+async def test_today_and_tomorrow_persist_approved_structured_payloads(
+    db_session: AsyncSession, store: Store, user_factory
+) -> None:
+    local_date = date(2026, 7, 15)
+    owner = await user_factory(username="structured-cards", password="secret")
+    db_session.add(
+        StoreDailyRecord(
+            store_id=store.id,
+            date=local_date,
+            daily_revenue=Decimal("321.00"),
+            wash_count=8,
+            is_open="营业",
+            weather="手工天气",
+            weather_auto="晴",
+            weather_code=0,
+            temperature_max=Decimal("30.00"),
+            temperature_min=Decimal("20.00"),
+            precipitation=Decimal("0.00"),
+            activity="促销",
+            weather_edited=True,
+            scanned=False,
+            created_by=owner.id,
+            updated_by=owner.id,
+        )
+    )
+    await db_session.flush()
+    today_weather = WeatherResult("多云", 2, 27.5, 18.1, 0.2)
+    tomorrow_weather = WeatherResult("雨", 61, 22.5, 16.0, 4.2)
+
+    cards = await BriefingService(
+        db_session,
+        StubWeatherService(
+            {local_date: today_weather, local_date.replace(day=16): tomorrow_weather}
+        ),
+    ).regenerate(store.id, ["today", "tomorrow"], local_date=local_date)
+
+    assert cards[0].payload == {
+        "card_type": "today",
+        "state": "recorded",
+        "revenue": "321.00",
+        "weather": "多云",
+        "weekday": None,
+        "temperature_max": None,
+        "temperature_min": None,
+        "precipitation": None,
+        "hint": None,
+        "generated_at": cards[0].payload["generated_at"],
+    }
+    assert cards[1].payload == {
+        "card_type": "tomorrow",
+        "state": "forecast",
+        "revenue": None,
+        "weather": "雨",
+        "weekday": "星期四",
+        "temperature_max": "22.5",
+        "temperature_min": "16.0",
+        "precipitation": "4.2",
+        "hint": None,
+        "generated_at": cards[1].payload["generated_at"],
+    }
 
 
 async def _committed_store() -> int:

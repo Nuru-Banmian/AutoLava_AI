@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, ForeignKey, String, Text, UniqueConstraint, func
+from sqlalchemy import JSON, Boolean, ForeignKey, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -12,6 +12,7 @@ class DailyBriefing(Base):
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"))
     card_type: Mapped[str] = mapped_column(String(20))
     content: Mapped[str] = mapped_column(Text)
+    payload: Mapped[dict | None] = mapped_column(JSON)
     generated_at: Mapped[datetime] = mapped_column(server_default=func.now())
     __table_args__ = (
         UniqueConstraint("store_id", "card_type", name="uq_daily_briefings_store_card"),

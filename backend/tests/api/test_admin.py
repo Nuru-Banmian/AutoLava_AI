@@ -614,7 +614,8 @@ async def test_include_in_total_change_recomputes_and_audits_every_affected_reco
     )
     assert response.status_code == 200
     dashboard = await admin_client.get(f"/api/dashboard/{store.id}")
-    assert dashboard.json()[0]["content"].startswith("昨天营业，营业额 €10.00")
+    assert dashboard.json()[0]["state"] == "recorded"
+    assert dashboard.json()[0]["revenue"] == "10.00"
     for record in records:
         await db_session.refresh(record)
         assert record.daily_revenue == Decimal("10.00")

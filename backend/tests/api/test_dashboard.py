@@ -1,10 +1,14 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from unittest.mock import AsyncMock
+from zoneinfo import ZoneInfo
 
 import httpx
+from starlette.requests import Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.routes.dashboard import RefreshLimiter
+from app.api.routes.ledger import _refresh_briefing_after_commit
 from app.models.identity import Store, StoreMember, User
 from app.models.operations import DailyBriefing
 
@@ -35,6 +39,89 @@ async def test_dashboard_returns_cached_cards(auth_client, db_session, store_fac
     assert [card["card_type"] for card in response.json()] == ["yesterday", "today", "tomorrow"]
 
 
+async def test_dashboard_returns_structured_payload_without_calling_weather(
+    auth_client, db_session, store_factory
+) -> None:
+    store = await _assign_store(auth_client, db_session, store_factory)
+    generated_at = datetime(2026, 7, 15, 4, 0)
+    db_session.add(
+        DailyBriefing(
+            store_id=store.id,
+            card_type="today",
+            content="兼容文本",
+            payload={
+                "card_type": "today",
+                "state": "missing",
+                "revenue": None,
+                "weather": "多云",
+                "weekday": None,
+                "temperature_max": None,
+                "temperature_min": None,
+                "precipitation": None,
+                "hint": None,
+                "generated_at": generated_at.isoformat(),
+            },
+        )
+    )
+    await db_session.flush()
+    weather = auth_client._transport.app.state.weather_service
+    weather.get_daily = AsyncMock(side_effect=AssertionError("GET must be cache-only"))
+
+    response = await auth_client.get(f"/api/dashboard/{store.id}")
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "card_type": "today",
+            "state": "missing",
+            "revenue": None,
+            "weather": "多云",
+            "weekday": None,
+            "temperature_max": None,
+            "temperature_min": None,
+            "precipitation": None,
+            "hint": None,
+            "generated_at": "2026-07-15T04:00:00",
+        }
+    ]
+    weather.get_daily.assert_not_awaited()
+
+
+async def test_dashboard_old_cache_row_falls_back_to_unavailable(
+    auth_client, db_session, store_factory
+) -> None:
+    store = await _assign_store(auth_client, db_session, store_factory)
+    card = DailyBriefing(store_id=store.id, card_type="yesterday", content="旧缓存")
+    db_session.add(card)
+    await db_session.flush()
+
+    response = await auth_client.get(f"/api/dashboard/{store.id}")
+
+    body = response.json()[0]
+    assert body["card_type"] == "yesterday"
+    assert body["state"] == "unavailable"
+    assert body["revenue"] is None
+    assert body["hint"] is None
+
+
+async def test_yesterday_ledger_change_regenerates_only_yesterday(
+    auth_client, db_session, store_factory, monkeypatch
+) -> None:
+    store = await _assign_store(auth_client, db_session, store_factory)
+    regenerate = AsyncMock(return_value=[])
+    monkeypatch.setattr("app.services.briefing.BriefingService.regenerate", regenerate)
+    local_date = datetime.now(ZoneInfo(store.timezone)).date()
+
+    await _refresh_briefing_after_commit(
+        Request({"type": "http", "app": auth_client._transport.app}),
+        db_session,
+        store,
+        local_date - timedelta(days=1),
+    )
+
+    assert regenerate.await_args.args[1] == ["yesterday"]
+
+
 async def test_manual_refresh_is_limited_per_user_and_store(
     auth_client, db_session, store_factory
 ) -> None:
@@ -45,7 +132,7 @@ async def test_manual_refresh_is_limited_per_user_and_store(
 
     assert first.status_code == 200
     assert second.status_code == 429
-    assert second.json()["detail"] == "Please wait five minutes before refreshing again"
+    assert second.json()["detail"] == "请等待五分钟后再刷新"
 
 
 def test_refresh_limiter_is_per_user_store_and_per_app_instance() -> None:

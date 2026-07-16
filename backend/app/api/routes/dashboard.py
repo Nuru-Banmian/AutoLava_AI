@@ -8,6 +8,7 @@ from sqlalchemy import case, select
 
 from app.api.deps import Session, StoreAccess, require_store_access
 from app.models.operations import DailyBriefing
+from app.schemas.dashboard import DashboardCardResponse
 from app.services.briefing import BriefingService
 from app.services.weather import WeatherResult, WeatherService
 
@@ -42,12 +43,14 @@ def get_weather_service(request: Request) -> WeatherService:
 Weather = Annotated[WeatherService, Depends(get_weather_service)]
 
 
-def _card_payload(card: DailyBriefing) -> dict:
-    return {
-        "card_type": card.card_type,
-        "content": card.content,
-        "generated_at": card.generated_at,
-    }
+def _card_payload(card: DailyBriefing) -> DashboardCardResponse:
+    if card.payload is not None:
+        return DashboardCardResponse.model_validate(card.payload)
+    return DashboardCardResponse(
+        card_type=card.card_type,
+        state="unavailable",
+        generated_at=card.generated_at,
+    )
 
 
 def _weather_payload(result: WeatherResult | None) -> dict[str, str | int | float | None]:
@@ -87,7 +90,7 @@ async def get_dashboard(
     store_id: int,
     session: Session,
     access: StoreAccess = Depends(require_store_access),
-) -> list[dict]:
+) -> list[DashboardCardResponse]:
     card_order = case(
         (DailyBriefing.card_type == "yesterday", 0),
         (DailyBriefing.card_type == "today", 1),
@@ -109,10 +112,10 @@ async def refresh_dashboard(
     session: Session,
     weather: Weather,
     access: StoreAccess = Depends(require_store_access),
-) -> list[dict]:
+) -> list[DashboardCardResponse]:
     limiter: RefreshLimiter = request.app.state.dashboard_refresh_limiter
     if not limiter.allow(user_id=access.user.id, store_id=access.store.id):
-        raise HTTPException(429, "Please wait five minutes before refreshing again")
+        raise HTTPException(429, "请等待五分钟后再刷新")
     cards = await BriefingService(session, weather).regenerate(
         access.store.id, ["yesterday", "today", "tomorrow"]
     )

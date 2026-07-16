@@ -331,9 +331,10 @@ async def test_create_update_and_delete_refresh_persisted_today_briefing(
     created = await auth_client.put(path, json=ledger_payload)
     assert created.status_code == 201
     cards = (await auth_client.get(f"/api/dashboard/{assigned_store.id}")).json()
-    assert next(card for card in cards if card["card_type"] == "today")["content"] == (
-        "今天：天气暂时不可用；已记账，营业额 €200.00。"
-    )
+    today = next(card for card in cards if card["card_type"] == "today")
+    assert today["state"] == "recorded"
+    assert today["revenue"] == "200.00"
+    assert today["weather"] == "天气暂时不可用"
 
     updated = await auth_client.put(
         path + "?overwrite=true",
@@ -344,12 +345,16 @@ async def test_create_update_and_delete_refresh_persisted_today_briefing(
     )
     assert updated.status_code == 200
     cards = (await auth_client.get(f"/api/dashboard/{assigned_store.id}")).json()
-    assert "€321.00" in next(card for card in cards if card["card_type"] == "today")["content"]
+    today = next(card for card in cards if card["card_type"] == "today")
+    assert today["state"] == "recorded"
+    assert today["revenue"] == "321.00"
 
     deleted = await auth_client.delete(path, params={"expected_version": 2})
     assert deleted.status_code == 204
     cards = (await auth_client.get(f"/api/dashboard/{assigned_store.id}")).json()
-    assert "还未记账" in next(card for card in cards if card["card_type"] == "today")["content"]
+    today = next(card for card in cards if card["card_type"] == "today")
+    assert today["state"] == "missing"
+    assert today["revenue"] is None
 
 
 async def test_briefing_refresh_failure_does_not_undo_committed_ledger(
