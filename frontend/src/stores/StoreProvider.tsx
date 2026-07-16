@@ -82,6 +82,8 @@ function StoreStateProvider({ children, userId }: StoreProviderProps) {
       if (userId === undefined) return;
       if (fallback === null) localStorage.removeItem(STORE_SELECTION_KEY);
       else writeStoredSelection(userId, fallback.id);
+    }, () => {
+      if (reconciliationRef.current === reconciliationKey) reconciliationRef.current = null;
     });
   }, [isSuccess, liveSelected, requestTransition, resetUnsavedChanges, sameUser, selectedId, selection.snapshot, stores, userId]);
 

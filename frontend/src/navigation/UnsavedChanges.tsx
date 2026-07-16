@@ -28,24 +28,36 @@ function BeforeUnloadGuard() {
 export function UnsavedChangesProvider({ children }: PropsWithChildren) {
   const [dirty, setDirty] = useState(false);
   const [pending, setPending] = useState<PendingTransition | null>(null);
+  const pendingRef = useRef<PendingTransition | null>(null);
   const requestTransition = useCallback((proceed: () => void, cancel?: () => void) => {
     if (!dirty) {
       proceed();
       return;
     }
-    setPending({ proceed, cancel });
+    if (pendingRef.current) {
+      cancel?.();
+      return;
+    }
+    const next = { proceed, cancel };
+    pendingRef.current = next;
+    setPending(next);
   }, [dirty]);
   const resetUnsavedChanges = useCallback(() => {
-    pending?.cancel?.();
+    const active = pendingRef.current;
+    pendingRef.current = null;
+    active?.cancel?.();
     setPending(null);
     setDirty(false);
-  }, [pending]);
+  }, []);
   const cancel = () => {
-    pending?.cancel?.();
+    const active = pendingRef.current;
+    pendingRef.current = null;
+    active?.cancel?.();
     setPending(null);
   };
   const discard = () => {
-    const proceed = pending?.proceed;
+    const proceed = pendingRef.current?.proceed;
+    pendingRef.current = null;
     setPending(null);
     setDirty(false);
     proceed?.();

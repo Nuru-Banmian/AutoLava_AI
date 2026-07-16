@@ -44,12 +44,16 @@ function renderLedger(extra: Parameters<typeof server.use> = []) {
   return render(<QueryClientProvider client={client}><StoreProvider><LedgerPage /></StoreProvider></QueryClientProvider>);
 }
 
-function recordSnapshot(amount: string, activity: string | null = null) {
+function recordSnapshot(amount: string, activity: string | null = null, weather: string | null = null) {
   return {
     id: 9, store_id: 1, date: "2026-07-15", daily_revenue: amount, income_mode: "composed", income_config_version_id: 4, row_version: 2,
-    wash_count: null, is_open: "营业", weather: null, weather_auto: null, weather_code: null, temperature_max: null, temperature_min: null, precipitation: null,
+    wash_count: null, is_open: "营业", weather, weather_auto: weather, weather_code: null, temperature_max: null, temperature_min: null, precipitation: null,
     activity, weather_edited: false, scanned: false, created_by: 1, updated_by: 1, created_at: "2026-07-15T08:00:00", updated_at: "2026-07-15T08:00:00",
-    items: [{ id: 21, category_id: 1, category_name: "现金", include_in_total: true, sort_order: 1, amount, created_at: "2026-07-15T08:00:00", updated_at: "2026-07-15T08:00:00" }],
+    items: [
+      { id: 21, category_id: 1, category_name: "现金", include_in_total: true, sort_order: 1, amount, created_at: "2026-07-15T08:00:00", updated_at: "2026-07-15T08:00:00" },
+      { id: 22, category_id: 2, category_name: "刷卡", include_in_total: true, sort_order: 2, amount: "0.00", created_at: "2026-07-15T08:00:00", updated_at: "2026-07-15T08:00:00" },
+      { id: 23, category_id: 3, category_name: "暗钱", include_in_total: false, sort_order: 3, amount: "0.00", created_at: "2026-07-15T08:00:00", updated_at: "2026-07-15T08:00:00" },
+    ],
   };
 }
 
@@ -294,9 +298,31 @@ describe("LedgerPage", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("保存成功");
     await waitFor(() => expect(saved).toBe(true));
 
-    const event = new Event("beforeunload", { cancelable: true });
-    window.dispatchEvent(event);
-    expect(event.defaultPrevented).toBe(false);
+    await waitFor(() => {
+      const event = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+    });
+  });
+
+  it("absorbs canonical automatic weather after save and remains clean", async () => {
+    let saved = false;
+    renderLedger([
+      http.get("/api/weather/1/:date", () => HttpResponse.json({ weather: null })),
+      http.get("/api/ledger/1/:date", ({ params }) => params.date === "recent" ? HttpResponse.json([]) : saved ? HttpResponse.json(recordSnapshot("10.00", null, "晴")) : HttpResponse.json({ detail: "not found" }, { status: 404 })),
+      http.put("/api/ledger/1/:date", () => { saved = true; return HttpResponse.json(recordSnapshot("10.00", null, "晴")); }),
+    ]);
+    fireEvent.change(await screen.findByLabelText("现金"), { target: { value: "10" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存今日记录" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("保存成功");
+    fireEvent.click(screen.getByRole("button", { name: "天气" }));
+    await waitFor(() => expect(screen.getByLabelText("天气")).toHaveValue("晴"));
+
+    await waitFor(() => {
+      const event = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+    });
   });
 
   it("keeps edits made while a save is pending after success and record refetch", async () => {

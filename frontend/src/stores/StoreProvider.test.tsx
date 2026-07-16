@@ -1,11 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { createMemoryRouter, Link, Outlet, RouterProvider } from "react-router-dom";
 
 import { accessibleStoresKeyFor, STORE_SELECTION_KEY, StoreProvider, useStore } from "@/stores/StoreProvider";
-import { useUnsavedChanges } from "@/navigation/UnsavedChanges";
+import { UnsavedRouteGuard, useUnsavedChanges } from "@/navigation/UnsavedChanges";
 
 const server = setupServer();
 
@@ -25,9 +26,16 @@ function Probe() {
       <span>selected:{selected?.name ?? "未选择"}</span>
       <input aria-label="账本输入" />
       <button onClick={() => markDirty(true)}>mark dirty</button>
+      <button onClick={() => markDirty(false)}>mark clean</button>
       <button onClick={() => select(2)}>select Roma</button>
     </>
   );
+}
+
+function RouteStoreProbe() {
+  const { selected } = useStore();
+  const { markDirty } = useUnsavedChanges();
+  return <><UnsavedRouteGuard /><span>route-store:{selected?.name ?? "未选择"}</span><button onClick={() => markDirty(true)}>route dirty</button><Link to="/next">route next</Link></>;
 }
 
 function providerTree(userId: number, client: QueryClient) {
@@ -168,6 +176,54 @@ describe("StoreProvider selection persistence", () => {
     ]);
     fireEvent.click(await screen.findByRole("button", { name: "放弃修改" }));
     expect(await screen.findByText("selected:Roma")).toBeInTheDocument();
+  });
+
+  it("retries the same revoked-store reconciliation after cancel once the form is clean", async () => {
+    server.use(http.get("/api/stores/accessible", () => HttpResponse.json([
+      { id: 1, name: "Berlin", timezone: "Europe/Berlin" },
+      { id: 2, name: "Roma", timezone: "Europe/Rome" },
+    ])));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderProvider(1, client);
+    expect(await screen.findByText("selected:Berlin")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "mark dirty" }));
+    const revoked = [{ id: 2, name: "Roma", timezone: "Europe/Rome" }];
+    client.setQueryData(accessibleStoresKeyFor(1), revoked);
+    fireEvent.click(await screen.findByRole("button", { name: "继续编辑" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "mark clean" }));
+    client.setQueryData(accessibleStoresKeyFor(1), [...revoked]);
+
+    expect(await screen.findByText("selected:Roma")).toBeInTheDocument();
+    expect(localStorage.getItem(STORE_SELECTION_KEY)).toBe(JSON.stringify({ userId: 1, storeId: 2 }));
+  });
+
+  it("finishes a blocked route when store reconciliation competes with it", async () => {
+    server.use(http.get("/api/stores/accessible", () => HttpResponse.json([
+      { id: 1, name: "Berlin", timezone: "Europe/Berlin" },
+      { id: 2, name: "Roma", timezone: "Europe/Rome" },
+    ])));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    function ProviderLayout() {
+      return <QueryClientProvider client={client}><StoreProvider userId={1}><Outlet /></StoreProvider></QueryClientProvider>;
+    }
+    const router = createMemoryRouter([{ path: "/", element: <ProviderLayout />, children: [
+      { index: true, element: <RouteStoreProbe /> },
+      { path: "next", element: <p>route complete</p> },
+    ] }]);
+    render(<RouterProvider router={router} />);
+    expect(await screen.findByText("route-store:Berlin")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "route dirty" }));
+    await act(async () => {
+      client.setQueryData(accessibleStoresKeyFor(1), [{ id: 2, name: "Roma", timezone: "Europe/Rome" }]);
+    });
+    expect(await screen.findByRole("alertdialog", { name: "放弃未保存的修改？" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("link", { name: "route next", hidden: true }));
+    fireEvent.click(screen.getByRole("button", { name: "放弃修改" }));
+
+    expect(await screen.findByText("route-store:Roma")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("link", { name: "route next" }));
+    expect(await screen.findByText("route complete")).toBeInTheDocument();
   });
 
   it("clears dirty reconciliation immediately when the account changes", async () => {

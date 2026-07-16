@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { createMemoryRouter, Link, RouterProvider } from "react-router-dom";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { UnsavedChangesProvider, UnsavedRouteGuard, useUnsavedChanges } from "@/navigation/UnsavedChanges";
 
@@ -12,6 +12,11 @@ function GuardHarness() {
 function BeforeUnloadHarness() {
   const { markDirty } = useUnsavedChanges();
   return <><button onClick={() => markDirty(true)}>设为已修改</button><button onClick={() => markDirty(false)}>设为已保存</button></>;
+}
+
+function CompetingTransitionsHarness({ first, second, cancelSecond }: { first(): void; second(): void; cancelSecond(): void }) {
+  const { markDirty, requestTransition } = useUnsavedChanges();
+  return <><button onClick={() => markDirty(true)}>修改</button><button onClick={() => requestTransition(first)}>第一个动作</button><button onClick={() => requestTransition(second, cancelSecond)}>第二个动作</button></>;
 }
 
 describe("UnsavedChangesProvider", () => {
@@ -48,5 +53,21 @@ describe("UnsavedChangesProvider", () => {
     const savedEvent = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(savedEvent);
     expect(savedEvent.defaultPrevented).toBe(false);
+  });
+
+  it("keeps one active transition and explicitly cancels a competing request", async () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    const cancelSecond = vi.fn();
+    render(<UnsavedChangesProvider><CompetingTransitionsHarness first={first} second={second} cancelSecond={cancelSecond} /></UnsavedChangesProvider>);
+
+    fireEvent.click(screen.getByRole("button", { name: "修改" }));
+    fireEvent.click(screen.getByRole("button", { name: "第一个动作" }));
+    fireEvent.click(screen.getByRole("button", { name: "第二个动作", hidden: true }));
+
+    expect(cancelSecond).toHaveBeenCalledOnce();
+    fireEvent.click(await screen.findByRole("button", { name: "放弃修改" }));
+    expect(first).toHaveBeenCalledOnce();
+    expect(second).not.toHaveBeenCalled();
   });
 });

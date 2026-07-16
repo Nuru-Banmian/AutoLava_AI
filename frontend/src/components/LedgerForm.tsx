@@ -13,6 +13,7 @@ export interface LedgerFormProps {
   saving?: boolean;
   submitLabel?: string;
   savedSubmission?: { revision: number; body: LedgerBody };
+  recordRevision?: number;
 }
 
 function semanticAmount(value: string) {
@@ -20,7 +21,7 @@ function semanticAmount(value: string) {
   return "value" in result ? result.value : `invalid:${value}`;
 }
 
-export function LedgerForm({ categories, config, record, weather, onSave, onDirtyChange, saving = false, submitLabel = "保存", savedSubmission }: LedgerFormProps) {
+export function LedgerForm({ categories, config, record, weather, onSave, onDirtyChange, saving = false, submitLabel = "保存", savedSubmission, recordRevision }: LedgerFormProps) {
   const resolvedConfig = useMemo(() => config ?? ({
     store_id: record?.store_id ?? 0,
     version_id: record?.income_config_version_id ?? null,
@@ -57,7 +58,7 @@ export function LedgerForm({ categories, config, record, weather, onSave, onDirt
   const [validationError, setValidationError] = useState("");
   const [weatherOpen, setWeatherOpen] = useState(false);
   const [washActivityOpen, setWashActivityOpen] = useState(false);
-  const incomingSignature = JSON.stringify({ record, loadedAmounts, automaticWeather: record ? null : weather?.weather ?? null });
+  const incomingSignature = JSON.stringify({ record, recordRevision, loadedAmounts, automaticWeather: record ? null : weather?.weather ?? null });
   const semanticSignature = (values: { status: LedgerStatus; wash: string; weatherValue: string; weatherEdited: boolean; activity: string; directTotal: string; amounts: Record<number, string> }) => JSON.stringify({
     is_open: values.status,
     daily_revenue: composed ? null : semanticAmount(values.directTotal),
@@ -79,22 +80,21 @@ export function LedgerForm({ categories, config, record, weather, onSave, onDirt
   const loadedSemanticSignature = semanticSignature({ status: record?.is_open ?? "营业", wash: record?.wash_count == null ? "" : String(record.wash_count), weatherValue: record?.weather ?? weather?.weather ?? "", weatherEdited: record?.weather_edited ?? false, activity: record?.activity ?? "", directTotal: record?.daily_revenue ?? "0", amounts: loadedAmounts });
   const [baselineSignature, setBaselineSignature] = useState(loadedSemanticSignature);
   const [appliedIncomingSignature, setAppliedIncomingSignature] = useState(incomingSignature);
+  const [consumedSubmissionRevision, setConsumedSubmissionRevision] = useState<number | null>(null);
   const currentSignature = semanticSignature({ status, wash, weatherValue, weatherEdited, activity, directTotal, amounts });
-  const effectiveBaselineSignature = savedSubmission ? submittedSignature(savedSubmission.body) : baselineSignature;
+  const pendingSavedSubmission = savedSubmission?.revision === consumedSubmissionRevision ? undefined : savedSubmission;
+  const effectiveBaselineSignature = pendingSavedSubmission ? submittedSignature(pendingSavedSubmission.body) : baselineSignature;
   useEffect(() => {
     if (incomingSignature === appliedIncomingSignature) return;
-    setAppliedIncomingSignature(incomingSignature);
     if (currentSignature !== effectiveBaselineSignature) return;
+    setAppliedIncomingSignature(incomingSignature);
     setStatus(record?.is_open ?? "营业"); setWash(record?.wash_count == null ? "" : String(record.wash_count));
     setWeatherValue(record?.weather ?? weather?.weather ?? ""); setWeatherEdited(record?.weather_edited ?? false); setActivity(record?.activity ?? "");
     setDirectTotal(record?.daily_revenue ?? "0");
     setAmounts(loadedAmounts);
     setBaselineSignature(loadedSemanticSignature);
-  }, [appliedIncomingSignature, currentSignature, effectiveBaselineSignature, incomingSignature, loadedAmounts, loadedSemanticSignature, record, weather?.weather]);
-  useEffect(() => {
-    if (!savedSubmission) return;
-    setBaselineSignature(submittedSignature(savedSubmission.body));
-  }, [savedSubmission?.revision]);
+    if (pendingSavedSubmission && record) setConsumedSubmissionRevision(pendingSavedSubmission.revision);
+  }, [appliedIncomingSignature, currentSignature, effectiveBaselineSignature, incomingSignature, loadedAmounts, loadedSemanticSignature, pendingSavedSubmission, record, weather?.weather]);
   useEffect(() => { onDirtyChange?.(currentSignature !== effectiveBaselineSignature); }, [currentSignature, effectiveBaselineSignature, onDirtyChange]);
   const includedCents = active.filter((category) => category.include_in_total).map((category) => amountToCents(amounts[category.id] ?? "0"));
   const total = includedCents.every((value): value is bigint => value !== null) ? includedCents.reduce<bigint>((sum, value) => sum + value, 0n) : null;

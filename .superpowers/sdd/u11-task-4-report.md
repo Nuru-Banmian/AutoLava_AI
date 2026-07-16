@@ -91,3 +91,39 @@ The StoreProvider file exposed a teardown-order flake twice under broader execut
 - The frontend build retains the existing large-chunk advisory.
 - The backend full suite retains one upstream Starlette/httpx deprecation warning.
 - The first backend attempts executed zero tests because the database environment was loaded from the wrong working directory; the successful commands above ran from `backend` and injected only the dedicated test database URL without printing it.
+
+## Resume re-review repair — 2026-07-16
+
+### RED evidence
+
+All three re-review findings were reproduced before production changes:
+
+1. A second `requestTransition` replaced the active transition; its cancel callback was called zero times.
+2. With revoked-store reconciliation pending first and a route blocker second, discard executed the route action instead of the store fallback.
+3. After a saved creation refetched a realistic three-item canonical record with automatic weather `晴`, the UI absorbed the weather but `beforeunload` remained blocked.
+4. Cancelling a revoked-store reconciliation and then becoming clean/refetching the same list left the revoked Berlin snapshot selected instead of applying Roma.
+
+The first route/store test did not force the competing effect to run and passed incorrectly. It was corrected to make store reconciliation the confirmed active transition before requesting the route, then failed with the wrong route action as expected.
+
+### GREEN implementation
+
+- `UnsavedChangesProvider` now owns one synchronous active transition. A competing request is rejected through its own cancel callback, so route blockers reset instead of being silently displaced.
+- Store reconciliation clears only its matching reconciliation key when cancelled or rejected. Dirty-to-clean changes or a same-list refetch can therefore reconsider the fallback without repeated dialogs while the original request remains active.
+- A saved submission is now only a temporary semantic baseline until the record query revision changes. Clean canonical absorption consumes that exact revision and promotes the server snapshot; dirty drafts leave the revision pending and are not overwritten.
+- Removed the redundant saved-submission baseline effect that could run after canonical absorption in the same render and restore the pre-canonical signature.
+
+### Verification commands and results
+
+- Four focused files — `40 passed`; repeated three consecutive times at `40/40`.
+- `npm test -- --run` — 17 files, 138 passed.
+- `npm run build` — passed; existing large-chunk advisory only.
+- `npm run test:e2e` — 5 passed.
+- `uv run pytest tests/api/test_ledger.py -q` with the process-only `autolava_test` URL — 29 passed.
+- `uv run pytest -q` with the process-only `autolava_test` URL — 253 passed; existing Starlette/httpx deprecation warning only.
+- `uv run ruff check .` — all checks passed.
+- `git diff --check` — passed.
+
+### Commit and concerns
+
+- Commit: `fix: serialize unsaved ledger transitions` (this report is included in the commit; the resulting hash is returned in the task handoff).
+- No backend production files changed in this follow-up; backend tests were rerun to verify the existing 409 contract.
