@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
+import { MemoryRouter } from "react-router-dom";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { AdminPage } from "@/pages/AdminPage";
@@ -21,31 +22,35 @@ beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
-function renderAdmin() {
+function renderAdmin(initialEntry = "/admin") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return { client, ...render(
-    <QueryClientProvider client={client}>
-      <AdminPage />
-    </QueryClientProvider>,
+    <MemoryRouter initialEntries={[initialEntry]}>
+      <QueryClientProvider client={client}>
+        <AdminPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
   ) };
 }
 
-function activateTab(name: string) {
-  const tab = screen.getByRole("tab", { name });
-  fireEvent.mouseDown(tab, { button: 0, ctrlKey: false });
-  fireEvent.mouseUp(tab, { button: 0, ctrlKey: false });
-  fireEvent.click(tab);
-}
-
 describe("AdminPage", () => {
-  it("offers all six administration areas", async () => {
+  it("shows the four administration areas in the approved order and defaults to income", async () => {
     server.use(...emptyLists);
     renderAdmin();
 
-    expect(await screen.findByRole("tab", { name: "用户" })).toBeInTheDocument();
-    for (const name of ["门店", "成员", "收入分类", "告警", "任务日志"]) {
-      expect(screen.getByRole("tab", { name })).toBeInTheDocument();
-    }
+    const tabs = await screen.findAllByRole("tab");
+    expect(tabs.map((tab) => tab.textContent)).toEqual(["收入项目", "用户与权限", "门店设置", "系统状态"]);
+    expect(screen.getByRole("tab", { name: "收入项目" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("selects a panel from the tab query and safely falls back for invalid values", async () => {
+    server.use(...emptyLists);
+    const first = renderAdmin("/admin?tab=status");
+    expect(screen.getByRole("tab", { name: "系统状态" })).toHaveAttribute("aria-selected", "true");
+    first.unmount();
+
+    renderAdmin("/admin?tab=unknown");
+    expect(screen.getByRole("tab", { name: "收入项目" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("creates a user and refetches only the exact users list", async () => {
@@ -68,7 +73,7 @@ describe("AdminPage", () => {
         return HttpResponse.json({ id: 3, username: "operator", role: "user", is_active: true }, { status: 201 });
       }),
     );
-    renderAdmin();
+    renderAdmin("/admin?tab=users");
     await waitFor(() => expect(userFetches).toBe(1));
     await waitFor(() => expect(storeFetches).toBe(1));
 
@@ -86,7 +91,7 @@ describe("AdminPage", () => {
       http.get("/api/admin/users", () => HttpResponse.json({ detail: "Admin access required" }, { status: 403 })),
       ...emptyLists.slice(1),
     );
-    renderAdmin();
+    renderAdmin("/admin?tab=users");
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Admin access required");
   });
@@ -107,9 +112,7 @@ describe("AdminPage", () => {
         return HttpResponse.json({ id: 9, name: "Roma", address: "Via Uno", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true }, { status: 201 });
       }),
     );
-    renderAdmin();
-    await screen.findByRole("tab", { name: "门店" });
-    activateTab("门店");
+    renderAdmin("/admin?tab=stores");
     fireEvent.change(await screen.findByLabelText("门店名称"), { target: { value: "Roma" } });
     fireEvent.change(screen.getByLabelText("地址"), { target: { value: "Via Uno" } });
     fireEvent.change(screen.getByLabelText("纬度"), { target: { value: "41.9" } });
@@ -142,10 +145,9 @@ describe("AdminPage", () => {
         return HttpResponse.json({ store_id: 9, user_ids: [1, 2] });
       }),
     );
-    const { client } = renderAdmin();
+    const { client } = renderAdmin("/admin?tab=users");
     client.setQueryData(scopedAccessibleStoresKey, [{ id: 9 }]);
-    await screen.findByRole("tab", { name: "成员" });
-    activateTab("成员");
+    await screen.findByRole("option", { name: "Roma" });
     fireEvent.change(await screen.findByLabelText("成员门店"), { target: { value: "9" } });
     await waitFor(() => expect(screen.getByLabelText("admin")).toBeChecked());
     fireEvent.click(screen.getByLabelText("operator"));
@@ -166,9 +168,8 @@ describe("AdminPage", () => {
       http.get("/api/admin/stores/9/members", () => HttpResponse.json({ detail: "Members unavailable" }, { status: 500 })),
       http.put("/api/admin/stores/9/members", () => { puts += 1; return HttpResponse.json({ store_id: 9, user_ids: [] }); }),
     );
-    renderAdmin();
-    await screen.findByRole("tab", { name: "成员" });
-    activateTab("成员");
+    renderAdmin("/admin?tab=users");
+    await screen.findByRole("option", { name: "Roma" });
     fireEvent.change(await screen.findByLabelText("成员门店"), { target: { value: "9" } });
     expect(await screen.findByRole("alert")).toHaveTextContent("Members unavailable");
     const save = screen.getByRole("button", { name: "保存成员" });
@@ -187,9 +188,8 @@ describe("AdminPage", () => {
       http.get("/api/admin/stores/9/members", () => HttpResponse.json([])),
       http.put("/api/admin/stores/9/members", () => { puts += 1; return HttpResponse.json({ store_id: 9, user_ids: [] }); }),
     );
-    renderAdmin();
-    await screen.findByRole("tab", { name: "成员" });
-    activateTab("成员");
+    renderAdmin("/admin?tab=users");
+    await screen.findByRole("option", { name: "Roma" });
     fireEvent.change(await screen.findByLabelText("成员门店"), { target: { value: "9" } });
     await waitFor(() => expect(screen.getByRole("button", { name: "保存成员" })).toBeDisabled());
     fireEvent.submit(screen.getByRole("button", { name: "保存成员" }).closest("form")!);
@@ -217,8 +217,7 @@ describe("AdminPage", () => {
       }),
     );
     renderAdmin();
-    await screen.findByRole("tab", { name: "收入分类" });
-    activateTab("收入分类");
+    await screen.findByRole("option", { name: "Roma" });
     fireEvent.change(await screen.findByLabelText("分类门店"), { target: { value: "9" } });
     fireEvent.change(await screen.findByLabelText("分类名称"), { target: { value: "现金" } });
     fireEvent.change(screen.getByLabelText("排序"), { target: { value: "2" } });
@@ -238,7 +237,7 @@ describe("AdminPage", () => {
       http.patch("/api/admin/users/2", async ({ request }) => { patch = await request.json(); return HttpResponse.json({ id: 2, username: "operator", role: "user", is_active: false }); }),
       http.get("/api/admin/users/2/operations", () => HttpResponse.json([{ id: 7, description: "Updated ledger", operation_type: "update", created_at: "2026-07-14T10:00:00" }])),
     );
-    renderAdmin();
+    renderAdmin("/admin?tab=users");
     await screen.findByText("operator");
     fireEvent.click(screen.getByRole("button", { name: "停用用户 operator" }));
     await waitFor(() => expect(patch).toEqual({ is_active: false }));
@@ -258,10 +257,9 @@ describe("AdminPage", () => {
       http.get("/api/admin/task-logs", () => HttpResponse.json([])),
       http.patch("/api/admin/stores/9", async ({ request }) => { patch = await request.json(); return HttpResponse.json({ id: 9, name: "Milano", address: "Via Due", latitude: "45.4", longitude: "9.2", timezone: "Europe/Rome", is_active: true }); }),
     );
-    const { client } = renderAdmin();
+    const { client } = renderAdmin("/admin?tab=stores");
     client.setQueryData(scopedAccessibleStoresKey, [{ id: 9 }]);
     client.setQueryData(["dashboard", 10], { untouched: true });
-    activateTab("门店");
     fireEvent.change(await screen.findByLabelText("门店名称 Roma"), { target: { value: "Milano" } });
     fireEvent.click(screen.getByRole("button", { name: "保存门店 Roma" }));
     await waitFor(() => expect(patch).toMatchObject({ name: "Milano" }));
@@ -279,9 +277,8 @@ describe("AdminPage", () => {
       http.post("/api/admin/stores", () => HttpResponse.json({ id: 10, name: "Milano", address: "Via Due", latitude: "45.4", longitude: "9.2", timezone: "Europe/Rome", is_active: true }, { status: 201 })),
       http.patch("/api/admin/stores/9", () => { active = false; return HttpResponse.json({ id: 9, name: "Roma", address: "Via", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: false }); }),
     );
-    const { client } = renderAdmin();
+    const { client } = renderAdmin("/admin?tab=stores");
     client.setQueryData(scopedAccessibleStoresKey, [{ id: 9 }]);
-    activateTab("门店");
     await screen.findByRole("button", { name: "停用门店 Roma" });
     fireEvent.change(screen.getByLabelText("门店名称"), { target: { value: "Milano" } });
     fireEvent.change(screen.getByLabelText("地址"), { target: { value: "Via Due" } });
@@ -305,7 +302,7 @@ describe("AdminPage", () => {
       http.get("/api/admin/task-logs", () => HttpResponse.json([])),
       http.patch("/api/admin/users/2", async () => { await delayed; return HttpResponse.json({ detail: "Edit rejected" }, { status: 409 }); }),
     );
-    renderAdmin();
+    renderAdmin("/admin?tab=users");
     const toggle = await screen.findByRole("button", { name: "停用用户 operator" });
     fireEvent.click(toggle);
     await waitFor(() => expect(toggle).toBeDisabled());
@@ -327,7 +324,6 @@ describe("AdminPage", () => {
     const { client } = renderAdmin();
     client.setQueryData(["dashboard", 9], []); client.setQueryData(["dashboard", 10], []);
     client.setQueryData(["charts", 9, ""], {}); client.setQueryData(["database", "records", 9, ""], {});
-    activateTab("收入分类");
     await screen.findByRole("option", { name: "Roma" });
     fireEvent.change(await screen.findByLabelText("分类门店"), { target: { value: "9" } });
     await screen.findByLabelText("计入总收入 现金");
