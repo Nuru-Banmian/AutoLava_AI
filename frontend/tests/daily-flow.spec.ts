@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 const categories = [
   { id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 },
@@ -73,14 +73,19 @@ async function expectNoHorizontalScroll(page: Page) {
   await expect.poll(() => page.evaluate(() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) <= window.innerWidth)).toBe(true);
 }
 
-async function expectBottomNavigationClear(page: Page) {
+async function expectPageEndClear(page: Page, sentinel: Locator) {
   const navigation = page.getByRole("navigation", { name: "移动导航" });
-  const lastMainControl = page.getByRole("main").getByRole("link").or(page.getByRole("main").getByRole("button")).last();
-  await lastMainControl.scrollIntoViewIfNeeded();
-  const [control, bar] = await Promise.all([lastMainControl.boundingBox(), navigation.boundingBox()]);
-  expect(control).not.toBeNull();
+  await expect(navigation).toBeVisible();
+  await expect(sentinel).toBeVisible();
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await expect.poll(() => page.evaluate(() => {
+    const maximum = document.documentElement.scrollHeight - window.innerHeight;
+    return Math.abs(maximum - window.scrollY);
+  })).toBeLessThanOrEqual(1);
+  const [content, bar] = await Promise.all([sentinel.boundingBox(), navigation.boundingBox()]);
+  expect(content).not.toBeNull();
   expect(bar).not.toBeNull();
-  expect(control!.y + control!.height).toBeLessThanOrEqual(bar!.y);
+  expect(content!.y + content!.height).toBeLessThanOrEqual(bar!.y);
 }
 
 for (const viewport of [{ name: "desktop", width: 1280, height: 900 }, { name: "320px", width: 320, height: 700 }]) {
@@ -100,17 +105,25 @@ for (const viewport of [{ name: "desktop", width: 1280, height: 900 }, { name: "
     await page.getByLabel("现金").fill("100");
     await page.getByRole("button", { name: "保存今日记录" }).click();
     await expect(page.getByRole("status")).toContainText("保存成功");
+    await expectNoHorizontalScroll(page);
+    if (viewport.width === 320) {
+      await expectPageEndClear(page, page.getByRole("heading", { name: "最近七天" }).locator(".."));
+    }
 
     const navigation = viewport.width === 320
       ? page.getByRole("navigation", { name: "移动导航" })
       : page.getByRole("navigation", { name: "主导航" });
     await navigation.getByRole("link", { name: viewport.width === 320 ? "记录" : "历史记录" }).click();
+    await expect(page.getByRole("searchbox")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "补记一天", exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /已有记录/ })).toBeVisible();
     await page.getByRole("button", { name: /已有记录/ }).click();
     const [year, month, day] = today.split("-").map(Number);
     const detail = page.getByRole("heading", { name: `${year}年${month}月${day}日` }).locator("xpath=../..");
     await expect(detail.getByText("营业额", { exact: true }).locator("..").getByText("€100.00", { exact: true })).toBeVisible();
     await expect(detail.getByRole("link", { name: "修改这天记录" })).toBeVisible();
+    await expectNoHorizontalScroll(page);
+    if (viewport.width === 320) await expectPageEndClear(page, detail);
 
     if (viewport.width === 320) {
       await navigation.getByRole("link", { name: "更多" }).click();
@@ -118,9 +131,27 @@ for (const viewport of [{ name: "desktop", width: 1280, height: 900 }, { name: "
     } else {
       await navigation.getByRole("link", { name: "经营分析" }).click();
     }
+    const week = page.getByRole("button", { name: "最近 7 天" });
+    const monthPreset = page.getByRole("button", { name: "本月" });
+    const custom = page.getByRole("button", { name: "自定义日期" });
+    await expect(week).toBeVisible();
+    await expect(monthPreset).toHaveAttribute("aria-pressed", "true");
+    await expect(custom).toBeVisible();
+    await week.click();
+    await expect(week).toHaveAttribute("aria-pressed", "true");
+    await expect(monthPreset).toHaveAttribute("aria-pressed", "false");
+    await monthPreset.click();
+    await expect(monthPreset).toHaveAttribute("aria-pressed", "true");
+    await custom.click();
+    await expect(custom).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByLabel("图表开始日期")).toBeVisible();
+    await expect(page.getByLabel("图表结束日期")).toBeVisible();
     await expect(page.getByRole("heading", { name: "营业额趋势" })).toBeVisible();
     await expect(page.getByText("€100.00").first()).toBeVisible();
     await expectNoHorizontalScroll(page);
-    if (viewport.width === 320) await expectBottomNavigationClear(page);
+    if (viewport.width === 320) {
+      const chartEnd = page.getByRole("heading", { name: "收入构成" }).locator("xpath=../..");
+      await expectPageEndClear(page, chartEnd);
+    }
   });
 }
