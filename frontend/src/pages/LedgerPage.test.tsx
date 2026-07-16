@@ -374,6 +374,36 @@ describe("LedgerPage", () => {
     await waitFor(() => expect(screen.getByLabelText("天气")).toHaveValue("晴"));
   });
 
+  it("keeps a newly created record retryable when its post-save refetch fails", async () => {
+    let recordCalls = 0;
+    renderLedger([
+      http.get("/api/ledger/1/:date", ({ params }) => {
+        if (params.date === "recent") return HttpResponse.json([]);
+        recordCalls += 1;
+        if (recordCalls === 1) return HttpResponse.json({ detail: "not found" }, { status: 404 });
+        return recordCalls === 2 ? HttpResponse.json({ detail: "failed" }, { status: 500 }) : HttpResponse.json(recordSnapshot("10.00", null, "晴"));
+      }),
+      http.put("/api/ledger/1/:date", () => HttpResponse.json(recordSnapshot("10.00"))),
+    ]);
+    fireEvent.change(await screen.findByLabelText("现金"), { target: { value: "10" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存今日记录" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("保存成功");
+    await waitFor(() => expect(recordCalls).toBe(2));
+
+    expect(screen.getByLabelText("现金")).toHaveValue("10");
+    expect(screen.getByRole("alert")).toHaveTextContent("台账刷新失败，请稍后重试");
+    const savedEvent = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(savedEvent);
+    expect(savedEvent.defaultPrevented).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "重试台账" }));
+    fireEvent.click(screen.getByRole("button", { name: "天气" }));
+    await waitFor(() => expect(screen.getByLabelText("天气")).toHaveValue("晴"));
+    const canonicalEvent = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(canonicalEvent);
+    expect(canonicalEvent.defaultPrevented).toBe(false);
+  });
+
   it("keeps edits made while a save is pending after success and record refetch", async () => {
     let release!: () => void;
     const delayed = new Promise<void>((resolve) => { release = resolve; });

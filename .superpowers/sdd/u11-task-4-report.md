@@ -157,3 +157,43 @@ The first route/store test did not force the competing effect to run and passed 
 - Commit: `fix: bind saved baseline to record refresh` (this report is included in the commit; the resulting hash is returned in the task handoff).
 - The frontend build retains the existing large-chunk advisory, and the backend suite retains one upstream Starlette/httpx deprecation warning.
 - Pre-existing workspace changes and cleanup files were preserved and excluded from this commit.
+
+## Newly created record refetch recovery — 2026-07-16
+
+### RED evidence
+
+- The creation-path regression began with an initial record 404, returned a real `RecordSnapshot`
+  from PUT, and failed the post-save record GET with 500. Before production changes the page replaced
+  `LedgerForm` with a blocking error, so the submitted `现金` field was no longer present.
+
+### GREEN implementation
+
+- A successful save now writes the PUT response to the exact
+  `ledgerRecordKey(variables.storeId, variables.date)` cache before invalidation/refetch. The key is
+  always bound to the submitted mutation scope, so a later store/date switch cannot redirect the
+  snapshot into the current screen's cache.
+- The returned snapshot is retained only as a stale/canonical candidate. The existing
+  `canonicalRequested`/`canonicalReady` handshake still requires a successful post-save GET before
+  canonical absorption, while a failed GET keeps the submitted clean baseline, visible form values,
+  a Chinese non-blocking refresh alert, and `重试台账` action.
+- A later successful retry absorbs the canonical weather snapshot and leaves `beforeunload` clean.
+
+### Verification commands and results
+
+- The new focused test failed before implementation because `现金` was absent, then passed after the
+  cache recovery implementation.
+- `npm test -- src/pages/LedgerPage.test.tsx src/components/LedgerForm.test.tsx` — 2 files,
+  29 passed; repeated two additional times at 29/29.
+- `npm test -- --run` — 17 files, 140 passed.
+- `npm run build` — passed; existing Vite large-chunk advisory only.
+- `npm run test:e2e` — 5 passed.
+- `uv run pytest tests/api/test_ledger.py -q` with the process-only `autolava_test` URL — 29 passed.
+- `uv run pytest -q` with the process-only `autolava_test` URL — 253 passed; existing
+  Starlette/httpx deprecation warning only.
+- `uv run ruff check .` — all checks passed.
+- `git diff --check` — passed.
+
+### Scope
+
+- Only `frontend/src/pages/LedgerPage.tsx`, `frontend/src/pages/LedgerPage.test.tsx`, and this U11
+  report are included. Pre-existing README, progress, cleanup, and handoff changes remain excluded.
