@@ -24,6 +24,13 @@ export interface AdminStore extends AccessibleStore {
   is_active: boolean;
 }
 
+export interface StoreLocation {
+  label: string;
+  latitude: number;
+  longitude: number;
+  timezone: string;
+}
+
 export interface IncomeCategory {
   id: number;
   store_id: number;

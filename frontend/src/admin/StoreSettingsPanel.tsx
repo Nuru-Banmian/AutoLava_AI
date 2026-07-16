@@ -3,8 +3,10 @@ import { useEffect, useState, type FormEvent } from "react";
 
 import { api, ApiError } from "@/api/client";
 import type { AdminStore } from "@/api/types";
+import { StoreLocationPicker } from "@/components/StoreLocationPicker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import type { MapLocation } from "@/maps/types";
 import { accessibleStoresKey } from "@/stores/StoreProvider";
 
 const storesKey = ["admin", "stores"] as const;
@@ -22,10 +24,21 @@ export function StoreSettingsPanel() {
   const stores = useQuery({ queryKey: storesKey, queryFn: () => api<AdminStore[]>("/admin/stores") });
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [createLocation, setCreateLocation] = useState<MapLocation | null>(null);
+  const [editLocation, setEditLocation] = useState<MapLocation | null>(null);
   useEffect(() => {
     if (stores.data?.some((store) => store.id === selectedStoreId)) return;
     setSelectedStoreId(stores.data?.[0]?.id ?? null);
   }, [selectedStoreId, stores.data]);
+  const selectedStore = stores.data?.find((store) => store.id === selectedStoreId) ?? null;
+  useEffect(() => {
+    setEditLocation(selectedStore ? {
+      label: selectedStore.address,
+      latitude: Number(selectedStore.latitude),
+      longitude: Number(selectedStore.longitude),
+      timezone: selectedStore.timezone,
+    } : null);
+  }, [selectedStore?.id, selectedStore?.address, selectedStore?.latitude, selectedStore?.longitude, selectedStore?.timezone]);
 
   const invalidateStores = async () => {
     await queryClient.invalidateQueries({ queryKey: storesKey, exact: true });
@@ -48,13 +61,14 @@ export function StoreSettingsPanel() {
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
+    if (!createLocation) return;
     createStore.mutate({
       name: String(data.get("name")),
-      address: String(data.get("address")),
-      latitude: Number(data.get("latitude")),
-      longitude: Number(data.get("longitude")),
-      timezone: String(data.get("timezone")),
-    }, { onSuccess: () => form.reset() });
+      address: createLocation.label,
+      latitude: createLocation.latitude,
+      longitude: createLocation.longitude,
+      timezone: createLocation.timezone,
+    }, { onSuccess: () => { form.reset(); setCreateLocation(null); setShowCreate(false); } });
   }
 
   return <div className="space-y-4">
@@ -73,23 +87,23 @@ export function StoreSettingsPanel() {
     <ErrorMessage error={patchStore.error} />
     <ErrorMessage deletion error={deleteStore.variables === selectedStoreId ? deleteStore.error : null} />
 
-    {showCreate && <form className="grid gap-3 rounded-lg border p-4 md:grid-cols-3" onSubmit={submitStore}>
+    {showCreate && <form className="grid gap-3 rounded-lg border p-4 md:grid-cols-2" onSubmit={submitStore}>
       <div><label htmlFor="store-name">门店名称</label><Input id="store-name" name="name" required /></div>
-      <div><label htmlFor="store-address">地址</label><Input id="store-address" name="address" required /></div>
-      <div><label htmlFor="store-latitude">纬度</label><Input id="store-latitude" name="latitude" required type="number" step="any" /></div>
-      <div><label htmlFor="store-longitude">经度</label><Input id="store-longitude" name="longitude" required type="number" step="any" /></div>
-      <div><label htmlFor="store-timezone">时区</label><Input defaultValue="Europe/Rome" id="store-timezone" name="timezone" required /></div>
-      <Button className="self-end" disabled={createStore.isPending} type="submit">{createStore.isPending ? "添加中…" : "添加门店"}</Button>
+      <div className="space-y-2"><p className="text-sm font-medium">门店位置</p><StoreLocationPicker value={createLocation} onConfirm={setCreateLocation} />{createLocation && <p className="text-sm text-muted-foreground">{createLocation.label}</p>}</div>
+      <Button className="self-end" disabled={createStore.isPending || !createLocation} type="submit">{createStore.isPending ? "添加中…" : "添加门店"}</Button>
     </form>}
 
     <ul className="space-y-3">{stores.data?.filter((store) => store.id === selectedStoreId).map((store) => <li className="rounded-lg border p-4" key={store.id}>
       <form className="space-y-3" onSubmit={(event) => {
         event.preventDefault();
         const data = new FormData(event.currentTarget);
-        patchStore.mutate({ storeId: store.id, body: { name: String(data.get("name")) } });
+        patchStore.mutate({ storeId: store.id, body: {
+          name: String(data.get("name")),
+          ...(editLocation ? { address: editLocation.label, latitude: String(editLocation.latitude), longitude: String(editLocation.longitude), timezone: editLocation.timezone } : {}),
+        } });
       }}>
         <div><label htmlFor={`store-name-${store.id}`}>门店名称 {store.name}</label><Input defaultValue={store.name} id={`store-name-${store.id}`} name="name" required /></div>
-        <div><p className="text-sm font-medium">位置摘要</p><p className="text-sm text-muted-foreground">{store.address}</p></div>
+        <div className="space-y-2"><p className="text-sm font-medium">位置摘要</p><p className="text-sm text-muted-foreground">{editLocation?.label ?? store.address}</p><StoreLocationPicker value={editLocation} onConfirm={setEditLocation} /></div>
         <Button aria-label={`保存门店 ${store.name}`} disabled={patchStore.isPending} type="submit">保存</Button>
       </form>
       <section aria-label="危险操作" className="mt-6 border-t border-destructive/30 pt-4">

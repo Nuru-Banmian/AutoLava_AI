@@ -100,6 +100,26 @@ class OpenMeteoProvider:
         except Exception:
             return []
 
+    async def timezone(self, latitude: float, longitude: float) -> str | None:
+        """Resolve coordinates without exposing the provider to API or UI callers."""
+        try:
+            response = await self._get(
+                "https://api.open-meteo.com/v1/forecast",
+                params={
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "timezone": "auto",
+                    "forecast_days": 1,
+                },
+                timeout=8,
+            )
+            response.raise_for_status()
+            timezone = str(response.json()["timezone"])
+            ZoneInfo(timezone)
+            return timezone
+        except (httpx.HTTPError, KeyError, TypeError, ValueError):
+            return None
+
 
 class WeatherService:
     def __init__(self, primary: WeatherProvider, fallback: WeatherProvider | None = None):

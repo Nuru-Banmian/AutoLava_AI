@@ -3,10 +3,18 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { MemoryRouter } from "react-router-dom";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { AdminPage } from "@/pages/AdminPage";
 import { accessibleStoresKeyFor } from "@/stores/StoreProvider";
+
+vi.mock("@/components/StoreLocationPicker", () => ({
+  StoreLocationPicker: ({ value, onConfirm }: { value: unknown; onConfirm: (location: unknown) => void }) => (
+    <button type="button" onClick={() => onConfirm({ label: "Via Uno", latitude: 41.9, longitude: 12.5, timezone: "Europe/Rome" })}>
+      {value ? "修改地图位置" : "打开地图选择"}
+    </button>
+  ),
+}));
 
 const server = setupServer();
 const scopedAccessibleStoresKey = accessibleStoresKeyFor(1);
@@ -115,9 +123,7 @@ describe("AdminPage", () => {
     renderAdmin("/admin?tab=stores");
     fireEvent.click(await screen.findByRole("button", { name: "新建门店" }));
     fireEvent.change(await screen.findByLabelText("门店名称"), { target: { value: "Roma" } });
-    fireEvent.change(screen.getByLabelText("地址"), { target: { value: "Via Uno" } });
-    fireEvent.change(screen.getByLabelText("纬度"), { target: { value: "41.9" } });
-    fireEvent.change(screen.getByLabelText("经度"), { target: { value: "12.5" } });
+    fireEvent.click(screen.getByRole("button", { name: "打开地图选择" }));
     fireEvent.click(screen.getByRole("button", { name: "添加门店" }));
 
     await waitFor(() => expect(storeFetches).toBe(2));
@@ -288,9 +294,7 @@ describe("AdminPage", () => {
     await screen.findByRole("button", { name: "停用门店 Roma" });
     fireEvent.click(screen.getByRole("button", { name: "新建门店" }));
     fireEvent.change(screen.getByLabelText("门店名称"), { target: { value: "Milano" } });
-    fireEvent.change(screen.getByLabelText("地址"), { target: { value: "Via Due" } });
-    fireEvent.change(screen.getByLabelText("纬度"), { target: { value: "45.4" } });
-    fireEvent.change(screen.getByLabelText("经度"), { target: { value: "9.2" } });
+    fireEvent.click(screen.getByRole("button", { name: "打开地图选择" }));
     fireEvent.click(screen.getByRole("button", { name: "添加门店" }));
     await waitFor(() => expect(client.getQueryState(scopedAccessibleStoresKey)?.isInvalidated).toBe(true));
     client.setQueryData(scopedAccessibleStoresKey, [{ id: 9 }]);

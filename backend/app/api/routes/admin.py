@@ -403,6 +403,23 @@ async def geocode_store(
     return await request.app.state.open_meteo_provider.geocode(query)
 
 
+@router.get(
+    "/stores/timezone",
+    dependencies=[Depends(require_capability("stores.manage"))],
+)
+async def timezone_for_store_location(
+    request: Request,
+    latitude: Annotated[float, Query(ge=-90, le=90)],
+    longitude: Annotated[float, Query(ge=-180, le=180)],
+) -> dict[str, str]:
+    timezone = await request.app.state.open_meteo_provider.timezone(
+        latitude, longitude
+    )
+    if timezone is None:
+        raise HTTPException(503, "暂时无法识别该位置的时区，请稍后重试")
+    return {"timezone": timezone}
+
+
 @router.get("/stores", dependencies=[Depends(require_capability("stores.manage"))])
 async def list_stores(session: Session) -> list[dict[str, Any]]:
     stores = (await session.scalars(select(Store).order_by(Store.name, Store.id))).all()

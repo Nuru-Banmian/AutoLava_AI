@@ -29,11 +29,15 @@ it("keeps the current-store selector and new-store action together in the header
   expect(screen.queryByLabelText("门店名称")).not.toBeInTheDocument();
   fireEvent.click(within(header).getByRole("button", { name: "新建门店" }));
   expect(screen.getByLabelText("门店名称")).toBeInTheDocument();
+  expect(screen.queryByLabelText("纬度")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("经度")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "打开地图选择" })).toBeInTheDocument();
   fireEvent.click(within(header).getByRole("button", { name: "取消新建" }));
   expect(screen.queryByLabelText("门店名称")).not.toBeInTheDocument();
   await within(header).findByRole("option", { name: "Roma" });
   expect(await screen.findByLabelText("门店名称 Roma")).toBeInTheDocument();
   expect(screen.getByText("Roma Centro")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "修改地图位置" })).toBeInTheDocument();
 });
 
 it("puts deactivate and permanent delete in a confirmed danger area", async () => {

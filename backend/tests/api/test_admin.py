@@ -100,6 +100,13 @@ async def test_geocode_is_admin_only(auth_client) -> None:
     assert denied.status_code == 403
 
 
+async def test_timezone_lookup_is_admin_only(auth_client) -> None:
+    denied = await auth_client.get(
+        "/api/admin/stores/timezone", params={"latitude": 45.46, "longitude": 9.19}
+    )
+    assert denied.status_code == 403
+
+
 async def test_admin_geocode_is_normalized(admin_client, open_meteo_app, respx_mock) -> None:
     respx_mock.get("https://geocoding-api.open-meteo.com/v1/search").mock(
         return_value=httpx.Response(
@@ -128,6 +135,50 @@ async def test_admin_geocode_is_normalized(admin_client, open_meteo_app, respx_m
             "timezone": "Europe/Rome",
         }
     ]
+
+
+async def test_admin_timezone_lookup_uses_open_meteo_auto_timezone(
+    admin_client, open_meteo_app, respx_mock
+) -> None:
+    route = respx_mock.get("https://api.open-meteo.com/v1/forecast").mock(
+        return_value=httpx.Response(200, json={"timezone": "Europe/Rome"})
+    )
+
+    response = await admin_client.get(
+        "/api/admin/stores/timezone", params={"latitude": 45.46, "longitude": 9.19}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"timezone": "Europe/Rome"}
+    assert route.calls[0].request.url.params["timezone"] == "auto"
+    assert route.calls[0].request.url.params["forecast_days"] == "1"
+
+
+@pytest.mark.parametrize(
+    ("latitude", "longitude"),
+    [(91, 9), (-91, 9), (45, 181), (45, -181)],
+)
+async def test_timezone_lookup_rejects_out_of_range_coordinates(
+    admin_client, latitude, longitude
+) -> None:
+    response = await admin_client.get(
+        "/api/admin/stores/timezone",
+        params={"latitude": latitude, "longitude": longitude},
+    )
+    assert response.status_code == 422
+
+
+async def test_timezone_lookup_returns_friendly_error_when_provider_fails(
+    admin_client, open_meteo_app, respx_mock
+) -> None:
+    respx_mock.get("https://api.open-meteo.com/v1/forecast").mock(
+        return_value=httpx.Response(503)
+    )
+    response = await admin_client.get(
+        "/api/admin/stores/timezone", params={"latitude": 45.46, "longitude": 9.19}
+    )
+    assert response.status_code == 503
+    assert response.json() == {"detail": "暂时无法识别该位置的时区，请稍后重试"}
 
 
 @pytest.mark.parametrize(
