@@ -36,6 +36,11 @@ interface AuditPageResponse {
   page_size: number;
 }
 
+interface AuditTarget {
+  date: string;
+  recordId: number | null;
+}
+
 export function DatabasePage() {
   const { selected } = useStore();
   const { user } = useAuth();
@@ -48,6 +53,7 @@ export function DatabasePage() {
   const [month, setMonth] = useState(today.slice(0, 7));
   const [selectedDate, setSelectedDate] = useState(today);
   const [adminOpen, setAdminOpen] = useState(false);
+  const [auditTarget, setAuditTarget] = useState<AuditTarget | null>(null);
   const [deleting, setDeleting] = useState<RecordSnapshot | null>(null);
   const [rolling, setRolling] = useState<AuditEntry | null>(null);
   const [message, setMessage] = useState("");
@@ -56,6 +62,7 @@ export function DatabasePage() {
     setMonth(today.slice(0, 7));
     setSelectedDate(today);
     setAdminOpen(false);
+    setAuditTarget(null);
     setDeleting(null);
     setRolling(null);
     setMessage("");
@@ -71,17 +78,16 @@ export function DatabasePage() {
   const recordedDates = useMemo(() => new Set(records.data?.items.map((record) => record.date) ?? []), [records.data?.items]);
   const selectedRecord = records.data?.items.find((record) => record.date === selectedDate) ?? null;
   const history = useQuery({
-    queryKey: ["database", "history", selected?.id, selectedRecord?.id],
-    enabled: Boolean(selected && selectedRecord) && isAdmin && adminOpen,
-    queryFn: () => api<AuditPageResponse>(`/database/${selected!.id}/history?record_id=${selectedRecord!.id}`),
+    queryKey: ["database", "history", selected?.id, auditTarget?.recordId, auditTarget?.date],
+    enabled: Boolean(selected && auditTarget) && isAdmin && adminOpen,
+    queryFn: () => api<AuditPageResponse>(`/database/${selected!.id}/history${auditTarget!.recordId === null ? "?page_size=100" : `?record_id=${auditTarget!.recordId}`}`),
   });
 
-  const selectedHistory = history.data?.items.filter((entry) => entry.record_date === selectedDate) ?? [];
+  const selectedHistory = history.data?.items.filter((entry) => entry.record_date === auditTarget?.date) ?? [];
 
   const finish = async (storeId: number) => {
     if (selectedIdRef.current === storeId) {
       setMessage("操作成功");
-      setAdminOpen(false);
       setDeleting(null);
       setRolling(null);
     }
@@ -107,11 +113,13 @@ export function DatabasePage() {
     setMonth(next);
     setSelectedDate(next === today.slice(0, 7) ? today : `${next}-01`);
     setAdminOpen(false);
+    setAuditTarget(null);
   };
   const selectDate = (date: string) => {
     setSelectedDate(date);
     if (date.slice(0, 7) !== month) setMonth(date.slice(0, 7));
     setAdminOpen(false);
+    setAuditTarget(null);
   };
 
   return (
@@ -138,17 +146,17 @@ export function DatabasePage() {
         </CardContent>
       </Card>
 
-      {selectedRecord ? (
-        <RecordDetail record={selectedRecord} canEdit={isAdmin || selectedDate === today} canManage={isAdmin} onManage={() => setAdminOpen(true)} />
+      {records.isSuccess && (selectedRecord ? (
+        <RecordDetail record={selectedRecord} canEdit canManage={isAdmin} onManage={() => { setAuditTarget({ date: selectedRecord.date, recordId: selectedRecord.id }); setAdminOpen(true); }} />
       ) : (
-        <Card><CardContent className="grid gap-3 p-4"><p>{format(parseISO(selectedDate), "yyyy年M月d日")}尚未记录</p><Button asChild className="w-fit"><Link to={`/ledger?date=${selectedDate}`}>补记这一天</Link></Button></CardContent></Card>
-      )}
+        <Card><CardContent className="grid gap-3 p-4"><p>{format(parseISO(selectedDate), "yyyy年M月d日")}尚未记录</p><div className="flex flex-wrap gap-2"><Button asChild className="w-fit"><Link to={`/ledger?date=${selectedDate}`}>补记这一天</Link></Button>{isAdmin && <Button type="button" variant="outline" onClick={() => { setAuditTarget({ date: selectedDate, recordId: null }); setAdminOpen(true); }}>管理这天审计</Button>}</div></CardContent></Card>
+      ))}
 
       <Dialog open={adminOpen} onOpenChange={setAdminOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>管理 {selectedDate} 记录</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>管理 {auditTarget?.date ?? selectedDate} 记录</DialogTitle></DialogHeader>
           <div className="grid gap-4">
-            {selectedRecord && <Button type="button" variant="destructive" className="w-fit" onClick={() => setDeleting(selectedRecord)}>删除这天记录</Button>}
+            {selectedRecord && selectedRecord.date === auditTarget?.date && <Button type="button" variant="destructive" className="w-fit" onClick={() => setDeleting(selectedRecord)}>删除这天记录</Button>}
             <div><h3 className="font-medium">修改历史</h3>
               {history.isLoading ? <p role="status">加载修改历史…</p> : history.error ? <div role="alert"><span>{history.error.message}</span><button className="ml-2 underline" onClick={() => void history.refetch()}>重试历史记录</button></div> : selectedHistory.length ? selectedHistory.map((entry) => (
                 <div key={entry.id} className="flex items-center justify-between gap-2 border-b py-2 text-sm"><span>{entry.operation_type} · {entry.operator_username}</span>{entry.rollbackable !== false ? <Button size="sm" variant="outline" onClick={() => setRolling(entry)}>回滚 #{entry.id}</Button> : <span className="text-muted-foreground">不可回滚</span>}</div>

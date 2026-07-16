@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
+import { MemoryRouter } from "react-router-dom";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LedgerPage } from "@/pages/LedgerPage";
@@ -22,7 +23,7 @@ afterEach(() => {
 });
 afterAll(() => server.close());
 
-function renderLedger(extra: Parameters<typeof server.use> = []) {
+function renderLedger(extra: Parameters<typeof server.use> = [], initialEntry = "/ledger") {
   server.use(
     ...extra,
     http.get("/api/stores/accessible", () => HttpResponse.json([{ id: 1, name: "Berlin", timezone: "Europe/Berlin" }])),
@@ -41,7 +42,7 @@ function renderLedger(extra: Parameters<typeof server.use> = []) {
     http.get("/api/ledger/1/:date", () => HttpResponse.json({ detail: "not found" }, { status: 404 })),
   );
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return render(<QueryClientProvider client={client}><StoreProvider><LedgerPage /></StoreProvider></QueryClientProvider>);
+  return render(<MemoryRouter initialEntries={[initialEntry]}><QueryClientProvider client={client}><StoreProvider><LedgerPage /></StoreProvider></QueryClientProvider></MemoryRouter>);
 }
 
 function recordSnapshot(amount: string, activity: string | null = null, weather: string | null = null) {
@@ -58,6 +59,25 @@ function recordSnapshot(amount: string, activity: string | null = null, weather:
 }
 
 describe("LedgerPage", () => {
+  it("uses a valid date query parameter for the visible date and API requests", async () => {
+    const requestedDates = new Set<string>();
+    renderLedger([
+      http.get("/api/database/1/records", ({ request }) => {
+        const url = new URL(request.url);
+        requestedDates.add(url.searchParams.get("start") ?? "");
+        return HttpResponse.json({ items: [], categories: [], sum_daily_revenue: "0", total: 0, page: 1, page_size: 1 });
+      }),
+      http.get("/api/ledger/1/:date", ({ params }) => {
+        requestedDates.add(String(params.date));
+        return HttpResponse.json({ detail: "not found" }, { status: 404 });
+      }),
+    ], "/ledger?date=2026-07-14");
+
+    expect(await screen.findByRole("button", { name: "选择台账日期：2026年7月14日" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "补记历史记录" })).toBeEnabled();
+    expect(requestedDates).toContain("2026-07-14");
+  });
+
   it("keeps income visible while weather and wash/activity start collapsed", async () => {
     renderLedger();
 
@@ -434,7 +454,7 @@ describe("LedgerPage", () => {
       http.put("/api/ledger/:store/:date", async ({ request }) => { if (!new URL(request.url).searchParams.has("overwrite")) return HttpResponse.json({ detail: "exists" }, { status: 409 }); overwriteUrl = request.url; await delayed; return HttpResponse.json({}); }),
     );
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-    render(<QueryClientProvider client={client}><StoreProvider><StoreControls /><LedgerPage /></StoreProvider></QueryClientProvider>);
+    render(<MemoryRouter><QueryClientProvider client={client}><StoreProvider><StoreControls /><LedgerPage /></StoreProvider></QueryClientProvider></MemoryRouter>);
     fireEvent.click(await screen.findByRole("button", { name: "choose1" })); fireEvent.click(await screen.findByRole("button", { name: "选择台账日期：2026年7月15日" })); fireEvent.click(screen.getByRole("button", { name: "2026年7月13日" }));
     fireEvent.change(await screen.findByLabelText("现金"), { target: { value: "1" } }); fireEvent.click(screen.getByRole("button", { name: "补记历史记录" })); await screen.findByRole("alertdialog");
     client.setQueryData(["dashboard", 1], true); client.setQueryData(["dashboard", 2], true); fireEvent.click(screen.getByRole("button", { name: "确认覆盖" })); fireEvent.click(screen.getByRole("button", { name: "choose2" })); release();
@@ -451,7 +471,7 @@ describe("LedgerPage", () => {
       http.get("/api/ledger/:store/:date", () => HttpResponse.json({ detail: "not found" }, { status: 404 })),
     );
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-    render(<QueryClientProvider client={client}><StoreProvider><StoreControls /><LedgerPage /></StoreProvider></QueryClientProvider>);
+    render(<MemoryRouter><QueryClientProvider client={client}><StoreProvider><StoreControls /><LedgerPage /></StoreProvider></QueryClientProvider></MemoryRouter>);
     fireEvent.click(await screen.findByRole("button", { name: "choose1" }));
     fireEvent.change(await screen.findByLabelText("现金"), { target: { value: "77" } });
 
