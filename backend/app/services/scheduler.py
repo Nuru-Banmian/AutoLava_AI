@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.identity import Store
 from app.models.ledger import StoreDailyRecord
-from app.models.operations import ScheduledTaskLog
+from app.models.operations import ScheduledTaskLog, UTC_TIMESTAMP_CONTRACT
 from app.services.briefing import BriefingService
 from app.services.retention import RetentionService
 from app.services.weather import WeatherResult, WeatherService
@@ -164,6 +164,7 @@ def make_retention_callback(
                     retry_count=0,
                     started_at=started_at,
                     finished_at=datetime.now(UTC).replace(tzinfo=None),
+                    timestamp_contract=UTC_TIMESTAMP_CONTRACT,
                 )
             )
             await session.commit()

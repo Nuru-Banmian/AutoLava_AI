@@ -2,9 +2,10 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, model_validator
 
-from app.schemas.time import as_utc
+from app.models.operations import UTC_TIMESTAMP_CONTRACT
+from app.schemas.time import trusted_utc
 
 
 class DashboardCardResponse(BaseModel):
@@ -17,11 +18,11 @@ class DashboardCardResponse(BaseModel):
     temperature_min: Decimal | None = None
     precipitation: Decimal | None = None
     hint: str | None = None
-    generated_at: datetime
+    generated_at: datetime | None = None
+    timestamp_status: Literal["utc", "legacy_unknown"] = "legacy_unknown"
 
-    @field_validator("generated_at")
-    @classmethod
-    def generated_at_is_explicit_utc(cls, value: datetime) -> datetime:
-        normalized = as_utc(value)
-        assert normalized is not None
-        return normalized
+    @model_validator(mode="after")
+    def generated_at_matches_source_contract(self) -> "DashboardCardResponse":
+        contract = UTC_TIMESTAMP_CONTRACT if self.timestamp_status == "utc" else "legacy_unknown"
+        self.generated_at = trusted_utc(self.generated_at, contract)
+        return self

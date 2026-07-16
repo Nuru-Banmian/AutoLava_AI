@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.identity import Store
 from app.models.ledger import StoreDailyRecord
-from app.models.operations import DailyBriefing
+from app.models.operations import DailyBriefing, UTC_TIMESTAMP_CONTRACT
 from app.schemas.dashboard import DashboardCardResponse
 from app.services.weather import WeatherResult, WeatherService
 
@@ -53,6 +53,7 @@ class BriefingService:
             state=state,
             revenue=revenue,
             generated_at=datetime.now(UTC),
+            timestamp_status="utc",
         )
 
     async def build_today(
@@ -82,6 +83,7 @@ class BriefingService:
             revenue=revenue,
             weather=weather_override or (result.weather if result is not None else None),
             generated_at=datetime.now(UTC),
+            timestamp_status="utc",
         )
 
     async def build_tomorrow(self, *, store: Store, local_date: date) -> DashboardCardResponse:
@@ -96,6 +98,7 @@ class BriefingService:
             temperature_min=(Decimal(str(result.temperature_min)) if result is not None else None),
             precipitation=(Decimal(str(result.precipitation)) if result is not None else None),
             generated_at=datetime.now(UTC),
+            timestamp_status="utc",
         )
 
     @staticmethod
@@ -159,12 +162,14 @@ class BriefingService:
                 content=content,
                 payload=payload,
                 generated_at=datetime.now(UTC).replace(tzinfo=None),
+                timestamp_contract=UTC_TIMESTAMP_CONTRACT,
             )
             await self.session.execute(
                 statement.on_duplicate_key_update(
                     content=statement.inserted.content,
                     payload=statement.inserted.payload,
                     generated_at=datetime.now(UTC).replace(tzinfo=None),
+                    timestamp_contract=UTC_TIMESTAMP_CONTRACT,
                 )
             )
             card = await self.session.scalar(

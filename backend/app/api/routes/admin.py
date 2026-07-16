@@ -24,7 +24,7 @@ from app.schemas.admin import (
     UserCreate,
     UserPatch,
 )
-from app.schemas.time import as_utc
+from app.schemas.time import timestamp_status, trusted_utc
 from app.services.audit import add_admin_audit, record_snapshot
 from app.services.briefing import BriefingService
 from app.services.income_config import IncomeConfigService
@@ -119,8 +119,9 @@ def _alert_payload(alert: SystemAlert) -> dict[str, Any]:
         "level": alert.level,
         "message": alert.message,
         "is_resolved": alert.is_resolved,
-        "created_at": as_utc(alert.created_at),
-        "resolved_at": as_utc(alert.resolved_at),
+        "created_at": trusted_utc(alert.created_at, alert.timestamp_contract),
+        "resolved_at": trusted_utc(alert.resolved_at, alert.timestamp_contract),
+        "timestamp_status": timestamp_status(alert.timestamp_contract),
     }
 
 
@@ -132,9 +133,10 @@ def _task_log_payload(task_log: ScheduledTaskLog) -> dict[str, Any]:
         "status": task_log.status,
         "message": task_log.message,
         "retry_count": task_log.retry_count,
-        "started_at": as_utc(task_log.started_at),
-        "finished_at": as_utc(task_log.finished_at),
-        "created_at": as_utc(task_log.created_at),
+        "started_at": trusted_utc(task_log.started_at, task_log.timestamp_contract),
+        "finished_at": trusted_utc(task_log.finished_at, task_log.timestamp_contract),
+        "created_at": trusted_utc(task_log.created_at, task_log.timestamp_contract),
+        "timestamp_status": timestamp_status(task_log.timestamp_contract),
     }
 
 

@@ -67,3 +67,10 @@ def test_income_config_item_keeps_snapshot_when_category_is_deleted() -> None:
 
     assert table.c.category_id.nullable is True
     assert foreign_key.ondelete == "SET NULL"
+
+
+def test_operational_timestamps_persist_their_source_contract() -> None:
+    for table_name in ("daily_briefings", "scheduled_task_logs", "system_alerts"):
+        column = Base.metadata.tables[table_name].c.timestamp_contract
+        assert column.nullable is False
+        assert column.server_default is not None

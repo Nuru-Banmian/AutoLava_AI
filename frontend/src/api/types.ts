@@ -71,8 +71,9 @@ export interface SystemAlert {
   level: string;
   message: string;
   is_resolved: boolean;
-  created_at: string;
+  created_at: string | null;
   resolved_at: string | null;
+  timestamp_status: "utc" | "legacy_unknown";
 }
 
 export interface ScheduledTaskLog {
@@ -84,7 +85,8 @@ export interface ScheduledTaskLog {
   retry_count: number;
   started_at: string | null;
   finished_at: string | null;
-  created_at: string;
+  created_at: string | null;
+  timestamp_status: "utc" | "legacy_unknown";
 }
 
 export type LedgerStatus = "营业" | "休息" | "天气停业";
@@ -124,7 +126,8 @@ export interface BriefingCard {
   temperature_min: string | null;
   precipitation: string | null;
   hint: string | null;
-  generated_at: string;
+  generated_at: string | null;
+  timestamp_status: "utc" | "legacy_unknown";
 }
 export interface WeatherResponse { weather: string | null; weather_code: number | null; temperature_max: number | null; temperature_min: number | null; precipitation: number | null }
 export interface ChartsResponse {

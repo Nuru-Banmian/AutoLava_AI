@@ -22,6 +22,7 @@ const dashboard = [{
   precipitation: null,
   hint: null,
   generated_at: "2026-07-16T08:30:00Z",
+  timestamp_status: "utc",
 }];
 const weatherTask = [{
   id: 1,
@@ -33,6 +34,7 @@ const weatherTask = [{
   started_at: "2026-07-16T08:00:00Z",
   finished_at: "2026-07-16T08:05:00Z",
   created_at: "2026-07-16T08:00:00Z",
+  timestamp_status: "utc",
 }];
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
@@ -104,6 +106,7 @@ describe("SystemStatusPanel", () => {
       is_resolved: false,
       created_at: "2026-07-16T08:10:00Z",
       resolved_at: null,
+      timestamp_status: "utc",
     }] });
     renderStatus();
     expect(await screen.findByText("系统存在未解决错误")).toBeInTheDocument();
@@ -122,6 +125,7 @@ describe("SystemStatusPanel", () => {
       is_resolved: false,
       created_at: "2026-07-16T08:15:00Z",
       resolved_at: null,
+      timestamp_status: "utc",
     }] });
     renderStatus();
     expect(await screen.findByText("运行正常")).toBeInTheDocument();
@@ -173,6 +177,17 @@ describe("SystemStatusPanel", () => {
     renderStatus();
     expect(await screen.findByText("状态数据不完整")).toBeInTheDocument();
     expect(screen.getAllByText("时间格式缺少时区").length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText("运行正常")).not.toBeInTheDocument();
+  });
+
+  it("blocks healthy when valid and legacy-unknown required timestamps are mixed", async () => {
+    mockStatus({
+      taskLogs: [weatherTask[0], { ...weatherTask[0], id: 2, timestamp_status: "legacy_unknown", started_at: null, finished_at: null, created_at: null }],
+      cardsByStore: { 1: [dashboard[0], { ...dashboard[0], card_type: "tomorrow", timestamp_status: "legacy_unknown", generated_at: null }] },
+    });
+    renderStatus();
+    expect(await screen.findByText("状态数据不完整")).toBeInTheDocument();
+    expect(screen.getAllByText(/历史时间时区未知/).length).toBeGreaterThanOrEqual(2);
     expect(screen.queryByText("运行正常")).not.toBeInTheDocument();
   });
 });

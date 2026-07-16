@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import case, select
 
 from app.api.deps import Session, StoreAccess, require_store_access
-from app.models.operations import DailyBriefing
+from app.models.operations import DailyBriefing, UTC_TIMESTAMP_CONTRACT
 from app.schemas.dashboard import DashboardCardResponse
 from app.services.briefing import BriefingService
 from app.services.weather import WeatherResult, WeatherService
@@ -45,11 +45,20 @@ Weather = Annotated[WeatherService, Depends(get_weather_service)]
 
 def _card_payload(card: DailyBriefing) -> DashboardCardResponse:
     if card.payload is not None:
-        return DashboardCardResponse.model_validate(card.payload)
+        payload = dict(card.payload)
+        payload["timestamp_status"] = (
+            "utc" if card.timestamp_contract == UTC_TIMESTAMP_CONTRACT else "legacy_unknown"
+        )
+        if card.timestamp_contract != UTC_TIMESTAMP_CONTRACT:
+            payload["generated_at"] = None
+        return DashboardCardResponse.model_validate(payload)
     return DashboardCardResponse(
         card_type=card.card_type,
         state="unavailable",
         generated_at=card.generated_at,
+        timestamp_status=(
+            "utc" if card.timestamp_contract == UTC_TIMESTAMP_CONTRACT else "legacy_unknown"
+        ),
     )
 
 

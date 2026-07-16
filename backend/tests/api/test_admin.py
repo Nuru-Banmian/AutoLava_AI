@@ -1237,6 +1237,7 @@ async def test_admin_can_list_alerts_and_task_logs_newest_first(
                 is_resolved=False,
                 created_at=earlier,
                 resolved_at=None,
+                timestamp_contract="utc_v1",
             ),
             SystemAlert(
                 store_id=None,
@@ -1246,6 +1247,7 @@ async def test_admin_can_list_alerts_and_task_logs_newest_first(
                 is_resolved=True,
                 created_at=later,
                 resolved_at=later,
+                timestamp_contract="utc_v1",
             ),
             ScheduledTaskLog(
                 store_id=store.id,
@@ -1256,6 +1258,7 @@ async def test_admin_can_list_alerts_and_task_logs_newest_first(
                 started_at=earlier,
                 finished_at=earlier,
                 created_at=earlier,
+                timestamp_contract="utc_v1",
             ),
             ScheduledTaskLog(
                 store_id=None,
@@ -1266,6 +1269,7 @@ async def test_admin_can_list_alerts_and_task_logs_newest_first(
                 started_at=later,
                 finished_at=None,
                 created_at=later,
+                timestamp_contract="utc_v1",
             ),
         ]
     )
@@ -1276,6 +1280,7 @@ async def test_admin_can_list_alerts_and_task_logs_newest_first(
     assert [item["message"] for item in alerts.json()] == ["Later alert", "Earlier alert"]
     assert alerts.json()[0]["resolved_at"] is not None
     for item in alerts.json():
+        assert item["timestamp_status"] == "utc"
         created_at = datetime.fromisoformat(item["created_at"].replace("Z", "+00:00"))
         assert created_at.utcoffset() == timedelta(0)
         if item["resolved_at"] is not None:
@@ -1287,7 +1292,47 @@ async def test_admin_can_list_alerts_and_task_logs_newest_first(
     assert [item["message"] for item in task_logs.json()] == ["Later task", "Earlier task"]
     assert task_logs.json()[0]["retry_count"] == 2
     for item in task_logs.json():
+        assert item["timestamp_status"] == "utc"
         for field in ("started_at", "finished_at", "created_at"):
             if item[field] is not None:
                 value = datetime.fromisoformat(item[field].replace("Z", "+00:00"))
                 assert value.utcoffset() == timedelta(0)
+
+
+async def test_admin_marks_legacy_operation_timestamps_unknown(
+    admin_client, db_session: AsyncSession
+) -> None:
+    db_session.add_all(
+        [
+            SystemAlert(
+                store_id=None,
+                alert_type="legacy",
+                level="warning",
+                message="Legacy alert",
+                is_resolved=False,
+                created_at=datetime(2026, 7, 12, 8, 0),
+                resolved_at=None,
+            ),
+            ScheduledTaskLog(
+                store_id=None,
+                task_type="weather",
+                status="success",
+                message="Legacy task",
+                retry_count=0,
+                started_at=datetime(2026, 7, 12, 8, 0),
+                finished_at=datetime(2026, 7, 12, 8, 5),
+                created_at=datetime(2026, 7, 12, 8, 0),
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    alerts = (await admin_client.get("/api/admin/alerts")).json()
+    tasks = (await admin_client.get("/api/admin/task-logs")).json()
+
+    assert alerts[0]["timestamp_status"] == "legacy_unknown"
+    assert alerts[0]["created_at"] is None
+    assert tasks[0]["timestamp_status"] == "legacy_unknown"
+    assert tasks[0]["started_at"] is None
+    assert tasks[0]["finished_at"] is None
+    assert tasks[0]["created_at"] is None

@@ -214,6 +214,7 @@ async def test_today_and_tomorrow_persist_approved_structured_payloads(
         "precipitation": None,
         "hint": None,
         "generated_at": cards[0].payload["generated_at"],
+        "timestamp_status": "utc",
     }
     assert cards[1].payload == {
         "card_type": "tomorrow",
@@ -226,7 +227,9 @@ async def test_today_and_tomorrow_persist_approved_structured_payloads(
         "precipitation": "4.2",
         "hint": None,
         "generated_at": cards[1].payload["generated_at"],
+        "timestamp_status": "utc",
     }
+    assert [card.timestamp_contract for card in cards] == ["utc_v1", "utc_v1"]
 
 
 async def _committed_store() -> int:

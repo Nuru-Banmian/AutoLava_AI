@@ -81,7 +81,8 @@ async def test_dashboard_returns_structured_payload_without_calling_weather(
             "temperature_min": None,
             "precipitation": None,
             "hint": None,
-            "generated_at": "2026-07-15T04:00:00Z",
+            "generated_at": None,
+            "timestamp_status": "legacy_unknown",
         }
     ]
     weather.get_daily.assert_not_awaited()
@@ -101,6 +102,7 @@ async def test_dashboard_normalizes_offset_timestamp_to_utc(
                 "state": "missing",
                 "generated_at": "2026-07-15T06:00:00+02:00",
             },
+            timestamp_contract="utc_v1",
         )
     )
     await db_session.flush()
@@ -109,6 +111,7 @@ async def test_dashboard_normalizes_offset_timestamp_to_utc(
 
     assert response.status_code == 200
     assert response.json()[0]["generated_at"] == "2026-07-15T04:00:00Z"
+    assert response.json()[0]["timestamp_status"] == "utc"
 
 
 async def test_dashboard_old_cache_row_falls_back_to_unavailable(
