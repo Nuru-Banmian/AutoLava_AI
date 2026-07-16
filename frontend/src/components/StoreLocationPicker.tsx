@@ -25,6 +25,7 @@ export function StoreLocationPicker({ value, onConfirm, adapter = leafletMapAdap
   const [searching, setSearching] = useState(false);
   const [mapNode, setMapNode] = useState<HTMLDivElement | null>(null);
   const requestSequence = useRef(0);
+  const openRef = useRef(false);
 
   useEffect(() => {
     requestSequence.current += 1;
@@ -45,6 +46,30 @@ export function StoreLocationPicker({ value, onConfirm, adapter = leafletMapAdap
       setError(friendlyApiError(reason, "暂时无法识别该位置的时区，请重新选择或稍后重试"));
     }
   }, []);
+
+  const useCurrentLocation = useCallback(() => {
+    const sequence = ++requestSequence.current;
+    setError("");
+    const isCurrent = () => openRef.current && sequence === requestSequence.current;
+    if (!navigator.geolocation) {
+      if (isCurrent()) setError("无法获取当前位置，你仍然可以搜索地点");
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        if (!isCurrent()) return;
+        void resolveCoordinates({ latitude: coords.latitude, longitude: coords.longitude });
+      },
+      () => {
+        if (isCurrent()) setError("无法获取当前位置，你仍然可以搜索地点");
+      },
+      { enableHighAccuracy: true, timeout: 10000 },
+    );
+  }, [resolveCoordinates]);
+
+  useEffect(() => {
+    if (open) useCurrentLocation();
+  }, [open, useCurrentLocation]);
 
   useEffect(() => {
     if (!open || !mapNode) return;
@@ -67,19 +92,8 @@ export function StoreLocationPicker({ value, onConfirm, adapter = leafletMapAdap
     }
   }
 
-  function useCurrentLocation() {
-    if (!navigator.geolocation) {
-      setError("无法获取当前位置，你仍然可以搜索地点");
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      ({ coords }) => void resolveCoordinates({ latitude: coords.latitude, longitude: coords.longitude }),
-      () => setError("无法获取当前位置，你仍然可以搜索地点"),
-      { enableHighAccuracy: true, timeout: 10000 },
-    );
-  }
-
   function close(next: boolean) {
+    openRef.current = next;
     if (!next) {
       requestSequence.current += 1;
       setError("");
