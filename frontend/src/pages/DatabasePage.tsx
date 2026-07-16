@@ -1,46 +1,166 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { addMonths, endOfMonth, format, parseISO } from "date-fns";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
+
 import { api, ApiError } from "@/api/client";
-import type { AuditEntry, DatabaseResponse, LedgerBody, LedgerStatus, RecordSnapshot } from "@/api/types";
+import type { AuditEntry, DatabaseResponse, RecordSnapshot } from "@/api/types";
 import { useAuth } from "@/auth/AuthProvider";
-import { LedgerForm } from "@/components/LedgerForm";
-import { RecordTable } from "@/components/RecordTable";
+import { MonthCalendar } from "@/components/MonthCalendar";
+import { RecordDetail } from "@/components/RecordDetail";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { databaseKey, formatMoney, invalidateUserData, storeLocalToday } from "@/lib/user-api";
+import { amountToCents, centsToMoney, databaseKey, formatMoney, invalidateUserData, storeLocalToday } from "@/lib/user-api";
 import { useStore } from "@/stores/StoreProvider";
 
-interface Filters { start: string; end: string; status: "" | LedgerStatus; weather: string; activity_query: string; missing_wash_count: boolean; page: number; page_size: number }
-function addDays(date: string, amount: number) { const value = new Date(`${date}T12:00:00Z`); value.setUTCDate(value.getUTCDate() + amount); return value.toISOString().slice(0, 10); }
-function monthRange(today: string, offset = 0) { const [year, month] = today.split("-").map(Number); const first = new Date(Date.UTC(year, month - 1 + offset, 1)); const last = offset === 0 ? today : new Date(Date.UTC(year, month + offset, 0)).toISOString().slice(0, 10); return [first.toISOString().slice(0, 10), last] as const; }
-export function databaseParams(filters: Filters, includePage = true) { const params = new URLSearchParams(); (["start", "end", "status", "weather", "activity_query"] as const).forEach((key) => { if (filters[key]) params.set(key, String(filters[key])); }); if (filters.missing_wash_count) params.set("missing_wash_count", "true"); if (includePage) { params.set("page", String(filters.page)); params.set("page_size", String(filters.page_size)); } return params; }
+function monthBounds(month: string) {
+  const start = `${month}-01`;
+  return { start, end: format(endOfMonth(parseISO(start)), "yyyy-MM-dd") };
+}
+
+function averageOpenRevenue(records: RecordSnapshot[]) {
+  const open = records.filter((record) => record.is_open === "营业");
+  if (!open.length) return centsToMoney(0n);
+  const total = open.reduce((sum, record) => sum + (amountToCents(record.daily_revenue) ?? 0n), 0n);
+  const count = BigInt(open.length);
+  return centsToMoney((total + count / 2n) / count);
+}
+
+interface AuditPageResponse {
+  items: AuditEntry[];
+  total: number;
+  page: number;
+  page_size: number;
+}
 
 export function DatabasePage() {
-  const { selected } = useStore(); const { user } = useAuth(); const client = useQueryClient(); const today = selected ? storeLocalToday(selected) : ""; const isAdmin = user?.role === "admin";
-  const selectedIdRef = useRef(selected?.id); selectedIdRef.current = selected?.id;
-  const initial = useMemo<Filters>(() => ({ start: "", end: "", status: "", weather: "", activity_query: "", missing_wash_count: false, page: 1, page_size: 50 }), [selected?.id]);
-  const [filters, setFilters] = useState(initial); useEffect(() => setFilters(initial), [initial]);
-  const queryString = databaseParams(filters).toString();
-  const records = useQuery({ queryKey: selected ? databaseKey(selected.id, queryString) : ["database", "none"], enabled: Boolean(selected), queryFn: () => api<DatabaseResponse>(`/database/${selected!.id}/records?${queryString}`) });
-  const history = useQuery({ queryKey: ["database", "history", selected?.id], enabled: Boolean(selected) && isAdmin, queryFn: () => api<AuditEntry[]>(`/database/${selected!.id}/history`) });
-  const [editing, setEditing] = useState<{ storeId: number; record: RecordSnapshot } | null>(null); const [deleting, setDeleting] = useState<{ storeId: number; record: RecordSnapshot } | null>(null); const [rolling, setRolling] = useState<{ storeId: number; entry: AuditEntry } | null>(null); const [message, setMessage] = useState("");
-  useEffect(() => { setEditing(null); setDeleting(null); setRolling(null); setMessage(""); }, [selected?.id]);
-  const finish = async (storeId: number) => { if (selectedIdRef.current === storeId) { setMessage("操作成功"); setEditing(null); setDeleting(null); setRolling(null); } await invalidateUserData(client, storeId); await client.invalidateQueries({ queryKey: ["database", "history", storeId], exact: true }); };
-  const edit = useMutation({ mutationFn: ({ storeId, date, body }: { storeId: number; date: string; body: LedgerBody }) => api(`/ledger/${storeId}/${date}?overwrite=true`, { method: "PUT", body: JSON.stringify(body) }), onSuccess: (_data, variables) => finish(variables.storeId), onError: (e, variables) => { if (selectedIdRef.current === variables.storeId) setMessage(e instanceof ApiError ? e.detail : "编辑失败"); } });
-  const remove = useMutation({ mutationFn: ({ storeId, date }: { storeId: number; date: string }) => api<void>(`/ledger/${storeId}/${date}`, { method: "DELETE" }), onSuccess: (_data, variables) => finish(variables.storeId), onError: (e, variables) => { if (selectedIdRef.current === variables.storeId) setMessage(e instanceof ApiError ? e.detail : "删除失败"); } });
-  const rollback = useMutation({ mutationFn: ({ storeId, auditId }: { storeId: number; auditId: number }) => api(`/database/${storeId}/history/${auditId}/rollback`, { method: "POST" }), onSuccess: (_data, variables) => finish(variables.storeId), onError: (e, variables) => { if (selectedIdRef.current === variables.storeId) setMessage(e instanceof ApiError ? e.detail : "回滚失败"); } });
-  const update = (values: Partial<Filters>) => setFilters((old) => ({ ...old, ...values, page: values.page ?? 1 }));
-  if (!selected) return <section><h1 className="text-2xl font-semibold">数据库</h1><p role="status">请先选择门店。</p></section>;
-  return <section className="grid gap-4"><h1 className="text-2xl font-semibold">数据库</h1><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => { const [start, end] = monthRange(today); update({ start, end }); }}>本月</Button><Button variant="outline" onClick={() => { const [start, end] = monthRange(today, -1); update({ start, end }); }}>上月</Button><Button variant="outline" onClick={() => update({ start: addDays(today, -6), end: today })}>最近7天</Button><Button variant="outline" onClick={() => update({ start: addDays(today, -29), end: today })}>最近30天</Button></div>
-    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4"><label>开始日期<input aria-label="开始日期" type="date" value={filters.start} onChange={(e) => update({ start: e.target.value })} className="w-full rounded border p-2" /></label><label>结束日期<input aria-label="结束日期" type="date" value={filters.end} onChange={(e) => update({ end: e.target.value })} className="w-full rounded border p-2" /></label><label>状态<select aria-label="筛选状态" value={filters.status} onChange={(e) => update({ status: e.target.value as Filters["status"] })} className="w-full rounded border p-2"><option value="">全部</option><option>营业</option><option>休息</option><option>天气停业</option></select></label><label>天气<input aria-label="筛选天气" value={filters.weather} onChange={(e) => update({ weather: e.target.value })} className="w-full rounded border p-2" /></label><label>活动搜索<input aria-label="活动搜索" value={filters.activity_query} onChange={(e) => update({ activity_query: e.target.value })} className="w-full rounded border p-2" /></label><label className="flex items-center gap-2"><input aria-label="缺少洗车数量" type="checkbox" checked={filters.missing_wash_count} onChange={(e) => update({ missing_wash_count: e.target.checked })} />缺少洗车数量</label></div>
-    <a role="button" className="w-fit rounded border px-4 py-2" href={`/api/database/${selected.id}/export.xlsx?${databaseParams(filters, false)}`} download>导出 Excel</a>
-    {records.isLoading ? <p role="status">加载记录…</p> : records.error ? <p role="alert">{records.error.message}</p> : <><p>{records.data?.total ?? 0} 条 · 合计 {formatMoney(records.data?.sum_daily_revenue ?? "0")}</p><RecordTable records={records.data?.items ?? []} categories={records.data?.categories ?? []} onEdit={(record) => setEditing({ storeId: selected.id, record })} onDelete={isAdmin ? (record) => setDeleting({ storeId: selected.id, record }) : undefined} /></>}
-    <div className="flex gap-2"><Button disabled={filters.page <= 1} onClick={() => update({ page: filters.page - 1 })}>上一页</Button><span>第 {filters.page} 页</span><Button disabled={filters.page * filters.page_size >= (records.data?.total ?? 0)} onClick={() => update({ page: filters.page + 1 })}>下一页</Button></div>
-    {isAdmin && <div><h2 className="text-lg font-semibold">修改历史</h2>{history.isLoading ? <p role="status">加载修改历史…</p> : history.error ? <div role="alert"><span>{history.error.message}</span><button className="ml-2 underline" onClick={() => void history.refetch()}>重试历史记录</button></div> : history.data?.length ? history.data.map((entry) => <div key={entry.id} className="flex items-center gap-2 border-b py-2"><span>{entry.record_date ?? "已删除"} · {entry.operation_type} · {entry.operator_username}</span>{entry.rollbackable !== false ? <Button size="sm" variant="outline" onClick={() => setRolling({ storeId: selected.id, entry })}>回滚 #{entry.id}</Button> : <span className="text-sm text-muted-foreground">不可回滚</span>}</div>) : <p>暂无修改历史</p>}</div>}
-    <Dialog open={Boolean(editing && editing.storeId === selected.id)} onOpenChange={(open) => { if (!open) setEditing(null); }}><DialogContent className="max-h-[90vh] overflow-y-auto"><DialogHeader><DialogTitle>编辑记录</DialogTitle></DialogHeader>{editing && <LedgerForm categories={records.data?.categories ?? []} record={editing.record} onSave={(body) => edit.mutate({ storeId: editing.storeId, date: editing.record.date, body })} saving={edit.isPending} />}</DialogContent></Dialog>
-    {isAdmin && <AlertDialog open={Boolean(deleting && deleting.storeId === selected.id)} onOpenChange={(open) => { if (!open) setDeleting(null); }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认删除记录？</AlertDialogTitle><AlertDialogDescription>删除后可通过历史记录回滚。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction onClick={() => deleting && remove.mutate({ storeId: deleting.storeId, date: deleting.record.date })}>确认删除</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>}
-    {isAdmin && <AlertDialog open={Boolean(rolling && rolling.storeId === selected.id)} onOpenChange={(open) => { if (!open) setRolling(null); }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认回滚记录？</AlertDialogTitle><AlertDialogDescription>记录将恢复到该历史版本。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction onClick={() => rolling && rollback.mutate({ storeId: rolling.storeId, auditId: rolling.entry.id })}>确认回滚</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>}
-    {message && <p role={message === "操作成功" ? "status" : "alert"}>{message}</p>}
-  </section>;
+  const { selected } = useStore();
+  const { user } = useAuth();
+  const client = useQueryClient();
+  const today = selected ? storeLocalToday(selected) : "";
+  const isAdmin = user?.role === "admin";
+  const selectedIdRef = useRef(selected?.id);
+  selectedIdRef.current = selected?.id;
+
+  const [month, setMonth] = useState(today.slice(0, 7));
+  const [selectedDate, setSelectedDate] = useState(today);
+  const [adminOpen, setAdminOpen] = useState(false);
+  const [deleting, setDeleting] = useState<RecordSnapshot | null>(null);
+  const [rolling, setRolling] = useState<AuditEntry | null>(null);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    setMonth(today.slice(0, 7));
+    setSelectedDate(today);
+    setAdminOpen(false);
+    setDeleting(null);
+    setRolling(null);
+    setMessage("");
+  }, [selected?.id, today]);
+
+  const { start, end } = monthBounds(month || "1970-01");
+  const queryString = new URLSearchParams({ start, end, page: "1", page_size: "31" }).toString();
+  const records = useQuery({
+    queryKey: selected ? databaseKey(selected.id, `${start}:${end}`) : ["database", "none"],
+    enabled: Boolean(selected && month),
+    queryFn: () => api<DatabaseResponse>(`/database/${selected!.id}/records?${queryString}`),
+  });
+  const recordedDates = useMemo(() => new Set(records.data?.items.map((record) => record.date) ?? []), [records.data?.items]);
+  const selectedRecord = records.data?.items.find((record) => record.date === selectedDate) ?? null;
+  const history = useQuery({
+    queryKey: ["database", "history", selected?.id, selectedRecord?.id],
+    enabled: Boolean(selected && selectedRecord) && isAdmin && adminOpen,
+    queryFn: () => api<AuditPageResponse>(`/database/${selected!.id}/history?record_id=${selectedRecord!.id}`),
+  });
+
+  const selectedHistory = history.data?.items.filter((entry) => entry.record_date === selectedDate) ?? [];
+
+  const finish = async (storeId: number) => {
+    if (selectedIdRef.current === storeId) {
+      setMessage("操作成功");
+      setAdminOpen(false);
+      setDeleting(null);
+      setRolling(null);
+    }
+    await invalidateUserData(client, storeId);
+    await client.invalidateQueries({ queryKey: ["database", "history", storeId] });
+  };
+  const remove = useMutation({
+    mutationFn: ({ storeId, date }: { storeId: number; date: string }) => api<void>(`/ledger/${storeId}/${date}`, { method: "DELETE" }),
+    onSuccess: (_data, variables) => finish(variables.storeId),
+    onError: (error, variables) => { if (selectedIdRef.current === variables.storeId) setMessage(error instanceof ApiError ? error.detail : "删除失败"); },
+  });
+  const rollback = useMutation({
+    mutationFn: ({ storeId, auditId }: { storeId: number; auditId: number }) => api(`/database/${storeId}/history/${auditId}/rollback`, { method: "POST" }),
+    onSuccess: (_data, variables) => finish(variables.storeId),
+    onError: (error, variables) => { if (selectedIdRef.current === variables.storeId) setMessage(error instanceof ApiError ? error.detail : "回滚失败"); },
+  });
+
+  if (!selected) return <section><h1 className="text-2xl font-semibold">历史记录</h1><p role="status">请先选择门店。</p></section>;
+  if (!month || !selectedDate) return <section><h1 className="text-2xl font-semibold">历史记录</h1><p role="status">加载记录…</p></section>;
+
+  const moveMonth = (amount: number) => {
+    const next = format(addMonths(parseISO(`${month}-01`), amount), "yyyy-MM");
+    setMonth(next);
+    setSelectedDate(next === today.slice(0, 7) ? today : `${next}-01`);
+    setAdminOpen(false);
+  };
+  const selectDate = (date: string) => {
+    setSelectedDate(date);
+    if (date.slice(0, 7) !== month) setMonth(date.slice(0, 7));
+    setAdminOpen(false);
+  };
+
+  return (
+    <section className="mx-auto grid w-full max-w-4xl gap-4">
+      <div className="flex items-center justify-between gap-3">
+        <div><h1 className="text-2xl font-semibold">历史记录</h1><p className="text-sm text-muted-foreground">按日期查看门店记录</p></div>
+        <a className="text-sm text-primary underline-offset-4 hover:underline" href={`/api/database/${selected.id}/export.xlsx?${queryString}`} download>导出本月</a>
+      </div>
+
+      <div className="grid grid-cols-3 gap-2" aria-label="本月摘要">
+        <Card className="shadow-sm"><CardContent className="p-3"><p className="text-xs text-muted-foreground">本月营业额</p><p className="mt-1 text-sm font-semibold sm:text-lg">{formatMoney(records.data?.sum_daily_revenue ?? "0")}</p></CardContent></Card>
+        <Card className="shadow-sm"><CardContent className="p-3"><p className="text-xs text-muted-foreground">记录天数</p><p className="mt-1 text-sm font-semibold sm:text-lg">已记录 {records.data?.items.length ?? 0} 天</p></CardContent></Card>
+        <Card className="shadow-sm"><CardContent className="p-3"><p className="text-xs text-muted-foreground">营业日均</p><p className="mt-1 text-sm font-semibold sm:text-lg">营业日均 {averageOpenRevenue(records.data?.items ?? [])}</p></CardContent></Card>
+      </div>
+
+      <Card className="shadow-sm">
+        <CardContent className="grid gap-3 p-3 sm:p-4">
+          <div className="flex items-center justify-between">
+            <Button type="button" size="icon" variant="ghost" aria-label="上个月" onClick={() => moveMonth(-1)}><ChevronLeft aria-hidden="true" /></Button>
+            <p className="font-semibold">{format(parseISO(`${month}-01`), "yyyy年M月")}</p>
+            <Button type="button" size="icon" variant="ghost" aria-label="下个月" disabled={month >= today.slice(0, 7)} onClick={() => moveMonth(1)}><ChevronRight aria-hidden="true" /></Button>
+          </div>
+          {records.isLoading ? <p role="status">加载记录…</p> : records.error ? <p role="alert">{records.error.message}</p> : <MonthCalendar month={month} selected={selectedDate} today={today} recordedDates={recordedDates} onSelect={selectDate} />}
+        </CardContent>
+      </Card>
+
+      {selectedRecord ? (
+        <RecordDetail record={selectedRecord} canEdit={isAdmin || selectedDate === today} canManage={isAdmin} onManage={() => setAdminOpen(true)} />
+      ) : (
+        <Card><CardContent className="grid gap-3 p-4"><p>{format(parseISO(selectedDate), "yyyy年M月d日")}尚未记录</p><Button asChild className="w-fit"><Link to={`/ledger?date=${selectedDate}`}>补记这一天</Link></Button></CardContent></Card>
+      )}
+
+      <Dialog open={adminOpen} onOpenChange={setAdminOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>管理 {selectedDate} 记录</DialogTitle></DialogHeader>
+          <div className="grid gap-4">
+            {selectedRecord && <Button type="button" variant="destructive" className="w-fit" onClick={() => setDeleting(selectedRecord)}>删除这天记录</Button>}
+            <div><h3 className="font-medium">修改历史</h3>
+              {history.isLoading ? <p role="status">加载修改历史…</p> : history.error ? <div role="alert"><span>{history.error.message}</span><button className="ml-2 underline" onClick={() => void history.refetch()}>重试历史记录</button></div> : selectedHistory.length ? selectedHistory.map((entry) => (
+                <div key={entry.id} className="flex items-center justify-between gap-2 border-b py-2 text-sm"><span>{entry.operation_type} · {entry.operator_username}</span>{entry.rollbackable !== false ? <Button size="sm" variant="outline" onClick={() => setRolling(entry)}>回滚 #{entry.id}</Button> : <span className="text-muted-foreground">不可回滚</span>}</div>
+              )) : <p className="text-sm text-muted-foreground">暂无修改历史</p>}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={Boolean(deleting)} onOpenChange={(open) => { if (!open) setDeleting(null); }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认删除记录？</AlertDialogTitle><AlertDialogDescription>删除后可通过历史记录回滚。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction onClick={() => deleting && remove.mutate({ storeId: selected.id, date: deleting.date })}>确认删除</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+      <AlertDialog open={Boolean(rolling)} onOpenChange={(open) => { if (!open) setRolling(null); }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认回滚记录？</AlertDialogTitle><AlertDialogDescription>记录将恢复到该历史版本。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction onClick={() => rolling && rollback.mutate({ storeId: selected.id, auditId: rolling.id })}>确认回滚</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+      {message && <p role={message === "操作成功" ? "status" : "alert"}>{message}</p>}
+    </section>
+  );
 }
