@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -52,7 +52,7 @@ class BriefingService:
             card_type="yesterday",
             state=state,
             revenue=revenue,
-            generated_at=datetime.now(),
+            generated_at=datetime.now(UTC),
         )
 
     async def build_today(
@@ -81,7 +81,7 @@ class BriefingService:
             state=state,
             revenue=revenue,
             weather=weather_override or (result.weather if result is not None else None),
-            generated_at=datetime.now(),
+            generated_at=datetime.now(UTC),
         )
 
     async def build_tomorrow(self, *, store: Store, local_date: date) -> DashboardCardResponse:
@@ -95,7 +95,7 @@ class BriefingService:
             temperature_max=(Decimal(str(result.temperature_max)) if result is not None else None),
             temperature_min=(Decimal(str(result.temperature_min)) if result is not None else None),
             precipitation=(Decimal(str(result.precipitation)) if result is not None else None),
-            generated_at=datetime.now(),
+            generated_at=datetime.now(UTC),
         )
 
     @staticmethod
@@ -158,12 +158,13 @@ class BriefingService:
                 card_type=card_type,
                 content=content,
                 payload=payload,
+                generated_at=datetime.now(UTC).replace(tzinfo=None),
             )
             await self.session.execute(
                 statement.on_duplicate_key_update(
                     content=statement.inserted.content,
                     payload=statement.inserted.payload,
-                    generated_at=datetime.now(),
+                    generated_at=datetime.now(UTC).replace(tzinfo=None),
                 )
             )
             card = await self.session.scalar(

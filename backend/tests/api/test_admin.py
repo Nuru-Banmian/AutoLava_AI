@@ -1,5 +1,5 @@
 import asyncio
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import httpx
@@ -1275,8 +1275,19 @@ async def test_admin_can_list_alerts_and_task_logs_newest_first(
     assert alerts.status_code == 200
     assert [item["message"] for item in alerts.json()] == ["Later alert", "Earlier alert"]
     assert alerts.json()[0]["resolved_at"] is not None
+    for item in alerts.json():
+        created_at = datetime.fromisoformat(item["created_at"].replace("Z", "+00:00"))
+        assert created_at.utcoffset() == timedelta(0)
+        if item["resolved_at"] is not None:
+            resolved_at = datetime.fromisoformat(item["resolved_at"].replace("Z", "+00:00"))
+            assert resolved_at.utcoffset() == timedelta(0)
 
     task_logs = await admin_client.get("/api/admin/task-logs")
     assert task_logs.status_code == 200
     assert [item["message"] for item in task_logs.json()] == ["Later task", "Earlier task"]
     assert task_logs.json()[0]["retry_count"] == 2
+    for item in task_logs.json():
+        for field in ("started_at", "finished_at", "created_at"):
+            if item[field] is not None:
+                value = datetime.fromisoformat(item[field].replace("Z", "+00:00"))
+                assert value.utcoffset() == timedelta(0)

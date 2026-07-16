@@ -24,6 +24,7 @@ from app.schemas.admin import (
     UserCreate,
     UserPatch,
 )
+from app.schemas.time import as_utc
 from app.services.audit import add_admin_audit, record_snapshot
 from app.services.briefing import BriefingService
 from app.services.income_config import IncomeConfigService
@@ -118,8 +119,8 @@ def _alert_payload(alert: SystemAlert) -> dict[str, Any]:
         "level": alert.level,
         "message": alert.message,
         "is_resolved": alert.is_resolved,
-        "created_at": alert.created_at,
-        "resolved_at": alert.resolved_at,
+        "created_at": as_utc(alert.created_at),
+        "resolved_at": as_utc(alert.resolved_at),
     }
 
 
@@ -131,9 +132,9 @@ def _task_log_payload(task_log: ScheduledTaskLog) -> dict[str, Any]:
         "status": task_log.status,
         "message": task_log.message,
         "retry_count": task_log.retry_count,
-        "started_at": task_log.started_at,
-        "finished_at": task_log.finished_at,
-        "created_at": task_log.created_at,
+        "started_at": as_utc(task_log.started_at),
+        "finished_at": as_utc(task_log.finished_at),
+        "created_at": as_utc(task_log.created_at),
     }
 
 

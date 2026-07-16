@@ -39,16 +39,22 @@ beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
-function mockStatus({ alerts = [], taskLogs = weatherTask, cards = dashboard }: {
+function mockStatus({
+  alerts = [],
+  taskLogs = weatherTask,
+  stores = [{ id: 1, name: "Roma", address: "Roma", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true }],
+  cardsByStore = { 1: dashboard },
+}: {
   alerts?: unknown[];
   taskLogs?: unknown[];
-  cards?: unknown[];
+  stores?: unknown[];
+  cardsByStore?: Record<number, unknown[]>;
 } = {}) {
   server.use(
-    http.get("/api/admin/stores", () => HttpResponse.json([{ id: 1, name: "Roma", address: "Roma", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true }])),
+    http.get("/api/admin/stores", () => HttpResponse.json(stores)),
     http.get("/api/admin/alerts", () => HttpResponse.json(alerts)),
     http.get("/api/admin/task-logs", () => HttpResponse.json(taskLogs)),
-    http.get("/api/dashboard/1", () => HttpResponse.json(cards)),
+    http.get("/api/dashboard/:storeId", ({ params }) => HttpResponse.json(cardsByStore[Number(params.storeId)] ?? [])),
   );
 }
 
@@ -74,7 +80,7 @@ describe("SystemStatusPanel", () => {
   });
 
   it("distinguishes empty and partial status data", async () => {
-    mockStatus({ taskLogs: [], cards: [] });
+    mockStatus({ stores: [], taskLogs: [], cardsByStore: {} });
     const empty = renderStatus();
     expect(await screen.findByText("暂无可用状态数据")).toBeInTheDocument();
     expect(screen.queryByText("运行正常")).not.toBeInTheDocument();
@@ -122,5 +128,51 @@ describe("SystemStatusPanel", () => {
     expect(screen.getByText(/最近天气更新/)).toBeInTheDocument();
     expect(screen.getByText(/最近仪表盘生成/)).toBeInTheDocument();
     expect(screen.getByText(/一条提醒/)).toBeInTheDocument();
+  });
+
+  it("keeps store-to-dashboard completeness and treats one empty store as partial", async () => {
+    const stores = [
+      { id: 1, name: "Roma", address: "Roma", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true },
+      { id: 2, name: "Milano", address: "Milano", latitude: "45.4", longitude: "9.2", timezone: "Europe/Rome", is_active: true },
+    ];
+    mockStatus({ stores, cardsByStore: { 1: dashboard, 2: [] } });
+    renderStatus();
+    expect(await screen.findByText("状态数据不完整")).toBeInTheDocument();
+    expect(screen.getByText(/Roma/)).toBeInTheDocument();
+    expect(screen.getByText(/Milano/)).toHaveTextContent("暂无记录");
+    expect(screen.queryByText("运行正常")).not.toBeInTheDocument();
+  });
+
+  it("claims healthy when every active store has a valid generated timestamp", async () => {
+    const stores = [
+      { id: 1, name: "Roma", address: "Roma", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true },
+      { id: 2, name: "Milano", address: "Milano", latitude: "45.4", longitude: "9.2", timezone: "Europe/Rome", is_active: true },
+    ];
+    mockStatus({ stores, cardsByStore: { 1: dashboard, 2: [{ ...dashboard[0], generated_at: "2026-07-16T09:00:00Z" }] } });
+    renderStatus();
+    expect(await screen.findByText("运行正常")).toBeInTheDocument();
+    expect(screen.getByText(/Roma/)).toBeInTheDocument();
+    expect(screen.getByText(/Milano/)).toBeInTheDocument();
+  });
+
+  it("orders timestamps by epoch across offsets and labels UTC explicitly", async () => {
+    mockStatus({ taskLogs: [
+      { ...weatherTask[0], id: 1, finished_at: "2026-07-16T10:00:00+02:00" },
+      { ...weatherTask[0], id: 2, finished_at: "2026-07-16T09:30:00Z" },
+    ] });
+    renderStatus();
+    expect(await screen.findByText("运行正常")).toBeInTheDocument();
+    expect(screen.getByText(/最近天气更新/).parentElement).toHaveTextContent(/UTC.*09:30/);
+  });
+
+  it("rejects naive timestamps instead of guessing their timezone", async () => {
+    mockStatus({
+      taskLogs: [{ ...weatherTask[0], finished_at: "2026-07-16T09:30:00" }],
+      cardsByStore: { 1: [{ ...dashboard[0], generated_at: "2026-07-16T08:30:00" }] },
+    });
+    renderStatus();
+    expect(await screen.findByText("状态数据不完整")).toBeInTheDocument();
+    expect(screen.getAllByText("时间格式缺少时区").length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText("运行正常")).not.toBeInTheDocument();
   });
 });
