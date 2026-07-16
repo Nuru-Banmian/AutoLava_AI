@@ -138,23 +138,26 @@ describe("AdminPage", () => {
       http.get("/api/admin/task-logs", () => HttpResponse.json([])),
       http.get("/api/admin/stores/9/members", () => {
         memberFetches += 1;
-        return HttpResponse.json([{ id: 1, username: "admin", role: "admin", is_active: true }]);
+        return HttpResponse.json([
+          { id: 1, username: "admin", role: "admin", is_active: true },
+          { id: 2, username: "operator", role: "user", is_active: true },
+        ]);
       }),
       http.put("/api/admin/stores/9/members", async ({ request }) => {
         replaced = await request.json();
-        return HttpResponse.json({ store_id: 9, user_ids: [1, 2] });
+        return HttpResponse.json({ store_id: 9, user_ids: [2] });
       }),
     );
     const { client } = renderAdmin("/admin?tab=users");
     client.setQueryData(scopedAccessibleStoresKey, [{ id: 9 }]);
     await screen.findByRole("option", { name: "Roma" });
     fireEvent.change(await screen.findByLabelText("成员门店"), { target: { value: "9" } });
-    await waitFor(() => expect(screen.getByLabelText("admin")).toBeChecked());
-    fireEvent.click(screen.getByLabelText("operator"));
+    await waitFor(() => expect(screen.getByLabelText("operator")).toBeChecked());
+    expect(screen.queryByLabelText("admin")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "保存成员" }));
 
     await waitFor(() => expect(memberFetches).toBe(2));
-    expect(replaced).toEqual({ user_ids: [1, 2] });
+    expect(replaced).toEqual({ user_ids: [2] });
     expect(client.getQueryState(scopedAccessibleStoresKey)?.isInvalidated).toBe(true);
   });
 

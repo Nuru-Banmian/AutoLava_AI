@@ -171,22 +171,27 @@ async def _require_store(session: Session, store_id: int) -> Store:
     return store
 
 
-async def _require_users(session: Session, user_ids: Iterable[int]) -> None:
+async def _require_users(session: Session, user_ids: Iterable[int]) -> list[User]:
     unique_ids = sorted(set(user_ids))
     if not unique_ids:
-        return
-    found_ids = set(await session.scalars(select(User.id).where(User.id.in_(unique_ids))))
-    if found_ids != set(unique_ids):
+        return []
+    users = list(
+        await session.scalars(select(User).where(User.id.in_(unique_ids)).order_by(User.id))
+    )
+    if {user.id for user in users} != set(unique_ids):
         raise HTTPException(404, "User not found")
+    return users
 
 
 async def _require_stores(session: Session, store_ids: Iterable[int]) -> None:
     unique_ids = sorted(set(store_ids))
     if not unique_ids:
         return
-    found_ids = set(await session.scalars(select(Store.id).where(Store.id.in_(unique_ids))))
-    if found_ids != set(unique_ids):
+    stores = list(await session.scalars(select(Store).where(Store.id.in_(unique_ids))))
+    if {store.id for store in stores} != set(unique_ids):
         raise HTTPException(404, "Store not found")
+    if any(not store.is_active for store in stores):
+        raise HTTPException(409, "停用门店不能分配给用户")
 
 
 async def _user_store_ids(session: Session, user_id: int) -> list[int]:
@@ -469,9 +474,13 @@ async def list_store_members(store_id: int, session: Session) -> list[dict[str, 
 async def replace_members(
     store_id: int, body: MemberReplace, session: Session, actor: StoresManager
 ) -> dict[str, Any]:
-    await _require_store(session, store_id)
+    store = await _require_store(session, store_id)
+    if not store.is_active:
+        raise HTTPException(409, "停用门店不能分配用户")
     user_ids = sorted(set(body.user_ids))
-    await _require_users(session, user_ids)
+    users = await _require_users(session, user_ids)
+    if any(user.role == "admin" for user in users):
+        raise HTTPException(409, "管理员默认可访问全部门店，无需分配门店")
     previous_ids = list(
         await session.scalars(
             select(StoreMember.user_id)

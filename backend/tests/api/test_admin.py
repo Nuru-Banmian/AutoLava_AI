@@ -261,6 +261,23 @@ async def test_admin_can_assign_user_role_and_stores_in_one_audited_patch(
     ) == 0
 
 
+async def test_user_cannot_be_assigned_an_inactive_store(
+    admin_client, user_factory, store_factory, db_session: AsyncSession
+) -> None:
+    user = await user_factory(username="inactive-assignment", password="secret")
+    inactive = await store_factory(name="Closed", is_active=False)
+
+    response = await admin_client.patch(
+        f"/api/admin/users/{user.id}", json={"store_ids": [inactive.id]}
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "停用门店不能分配给用户"
+    assert await db_session.scalar(
+        select(func.count()).select_from(StoreMember).where(StoreMember.user_id == user.id)
+    ) == 0
+
+
 async def test_last_active_admin_cannot_be_demoted(
     admin_client, db_session: AsyncSession
 ) -> None:
@@ -619,6 +636,46 @@ async def test_admin_can_assign_exact_store_members(
     assert audit is not None
     assert audit.before_json == {"store_id": first.id, "user_ids": [removed.id]}
     assert audit.after_json == {"store_id": first.id, "user_ids": [family.id]}
+
+
+async def test_store_member_replacement_rejects_admin_users(
+    admin_client, user_factory, store_factory, db_session: AsyncSession
+) -> None:
+    administrator = await db_session.scalar(
+        select(User).where(User.username == "administrator")
+    )
+    assert administrator is not None
+    operator = await user_factory(username="member-operator", password="secret")
+    store = await store_factory(name="Member guard")
+    db_session.add(StoreMember(store_id=store.id, user_id=operator.id))
+    await db_session.flush()
+
+    response = await admin_client.put(
+        f"/api/admin/stores/{store.id}/members",
+        json={"user_ids": [administrator.id]},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "管理员默认可访问全部门店，无需分配门店"
+    assert list(
+        await db_session.scalars(
+            select(StoreMember.user_id).where(StoreMember.store_id == store.id)
+        )
+    ) == [operator.id]
+
+
+async def test_inactive_store_members_cannot_be_replaced(
+    admin_client, user_factory, store_factory
+) -> None:
+    operator = await user_factory(username="inactive-member", password="secret")
+    store = await store_factory(name="Inactive member store", is_active=False)
+
+    response = await admin_client.put(
+        f"/api/admin/stores/{store.id}/members", json={"user_ids": [operator.id]}
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "停用门店不能分配用户"
 
 
 async def test_admin_can_create_list_and_patch_income_categories(
