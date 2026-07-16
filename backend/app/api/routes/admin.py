@@ -5,7 +5,7 @@ from typing import Annotated, Any
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, exists, func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import Session, require_capability
@@ -14,7 +14,7 @@ from app.models.audit import AuditLog
 from app.models.identity import Store, StoreMember, StoreSetting, User
 from app.models.income_config import IncomeConfigVersion
 from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
-from app.models.operations import ScheduledTaskLog, SystemAlert
+from app.models.operations import DailyBriefing, ScheduledTaskLog, SystemAlert
 from app.schemas.admin import (
     CategoryCreate,
     CategoryPatch,
@@ -451,6 +451,59 @@ async def patch_store(
     )
     await session.commit()
     return _store_payload(store)
+
+
+STORE_PROTECTED_REFERENCES = (
+    StoreDailyRecord.store_id,
+    AuditLog.store_id,
+    IncomeCategory.store_id,
+    IncomeConfigVersion.store_id,
+    DailyBriefing.store_id,
+    ScheduledTaskLog.store_id,
+    SystemAlert.store_id,
+)
+
+
+async def _store_has_protected_references(session: Session, store_id: int) -> bool:
+    for store_id_column in STORE_PROTECTED_REFERENCES:
+        if await session.scalar(select(exists().where(store_id_column == store_id))):
+            return True
+    return False
+
+
+@router.delete("/stores/{store_id}", status_code=204)
+async def delete_store(store_id: int, session: Session, actor: StoresManager) -> None:
+    store = await session.scalar(
+        select(Store).where(Store.id == store_id).with_for_update()
+    )
+    if store is None:
+        raise HTTPException(404, "Store not found")
+    if await _store_has_protected_references(session, store_id):
+        raise HTTPException(409, "该门店已有业务或历史记录，请停用门店而不是删除")
+
+    before = _store_payload(store)
+    try:
+        await session.execute(delete(StoreMember).where(StoreMember.store_id == store_id))
+        await session.execute(delete(StoreSetting).where(StoreSetting.store_id == store_id))
+        await session.delete(store)
+        # Force foreign-key checks while the transaction and row lock are still held.
+        await session.flush()
+        add_admin_audit(
+            session,
+            actor_id=actor.id,
+            store_id=None,
+            record_id=store_id,
+            operation_type="delete",
+            description=f"Deleted unused store {store.name}",
+            before=before,
+            after=None,
+        )
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            409, "该门店已有业务或历史记录，请停用门店而不是删除"
+        ) from exc
 
 
 @router.get(

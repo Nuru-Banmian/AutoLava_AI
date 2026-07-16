@@ -14,7 +14,7 @@ from app.core.database import async_session_factory, engine
 from app.core.security import hash_password
 from app.models.base import Base
 from app.models.audit import AuditLog
-from app.models.identity import StoreMember, StoreSetting, User
+from app.models.identity import Store, StoreMember, StoreSetting, User
 from app.models.income_config import IncomeConfigVersion
 from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
 from app.models.operations import DailyBriefing, ScheduledTaskLog, SystemAlert
@@ -594,6 +594,150 @@ async def test_admin_can_create_list_patch_stores_with_default_setting_and_audit
     assert audits[0].after_json["standard_work_hours"] == 8
     assert audits[1].before_json["address"] == "Old address"
     assert audits[1].after_json["address"] == "New address"
+
+
+@pytest.mark.parametrize(
+    "reference_kind",
+    ["ledger", "audit", "category", "config", "briefing", "alert", "task"],
+)
+async def test_referenced_store_cannot_be_deleted(
+    admin_client,
+    db_session: AsyncSession,
+    store_factory,
+    user_factory,
+    reference_kind: str,
+) -> None:
+    store = await store_factory(name=f"Referenced {reference_kind}")
+    owner = await user_factory(username=f"owner-{reference_kind}", password="secret")
+    if reference_kind == "ledger":
+        db_session.add(
+            StoreDailyRecord(
+                store_id=store.id,
+                date=date(2026, 7, 15),
+                daily_revenue=Decimal("10.00"),
+                wash_count=None,
+                is_open="营业",
+                weather=None,
+                weather_auto=None,
+                weather_code=None,
+                temperature_max=None,
+                temperature_min=None,
+                precipitation=None,
+                activity=None,
+                weather_edited=False,
+                scanned=False,
+                created_by=owner.id,
+                updated_by=owner.id,
+            )
+        )
+    elif reference_kind == "audit":
+        db_session.add(
+            AuditLog(
+                operation_domain="admin",
+                store_id=store.id,
+                record_id=store.id,
+                record_date=None,
+                operation_type="update",
+                operation_source="manual",
+                operator_user_id=owner.id,
+                before_json=None,
+                after_json={"name": store.name},
+                description="Store history",
+                requires_approval=False,
+                approved=True,
+                rollbackable=False,
+            )
+        )
+    elif reference_kind == "category":
+        db_session.add(
+            IncomeCategory(
+                store_id=store.id,
+                name="Cash",
+                include_in_total=True,
+                is_active=True,
+                sort_order=0,
+            )
+        )
+    elif reference_kind == "config":
+        db_session.add(
+            IncomeConfigVersion(
+                store_id=store.id, version=1, enabled=False, created_by=owner.id
+            )
+        )
+    elif reference_kind == "briefing":
+        db_session.add(
+            DailyBriefing(
+                store_id=store.id,
+                card_type="today",
+                content="cached",
+                payload={"state": "unavailable"},
+            )
+        )
+    elif reference_kind == "alert":
+        db_session.add(
+            SystemAlert(
+                store_id=store.id,
+                alert_type="weather",
+                level="warning",
+                message="Provider unavailable",
+                is_resolved=False,
+            )
+        )
+    else:
+        db_session.add(
+            ScheduledTaskLog(
+                store_id=store.id,
+                task_type="briefing",
+                status="success",
+                message="done",
+                retry_count=0,
+                started_at=datetime.now(UTC),
+                finished_at=datetime.now(UTC),
+            )
+        )
+    await db_session.flush()
+
+    response = await admin_client.delete(f"/api/admin/stores/{store.id}")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "该门店已有业务或历史记录，请停用门店而不是删除"
+    assert await db_session.get(Store, store.id) is not None
+
+
+async def test_unused_store_can_be_deleted_with_pure_settings_and_memberships(
+    admin_client, db_session: AsyncSession, store_factory, user_factory
+) -> None:
+    store = await store_factory(name="Mistaken empty store")
+    member = await user_factory(username="unused-store-member", password="secret")
+    db_session.add_all(
+        [
+            StoreSetting(store_id=store.id, standard_work_hours=8),
+            StoreMember(store_id=store.id, user_id=member.id),
+        ]
+    )
+    await db_session.flush()
+
+    response = await admin_client.delete(f"/api/admin/stores/{store.id}")
+
+    assert response.status_code == 204
+    assert await db_session.get(Store, store.id) is None
+    assert await db_session.scalar(
+        select(func.count()).select_from(StoreSetting).where(StoreSetting.store_id == store.id)
+    ) == 0
+    assert await db_session.scalar(
+        select(func.count()).select_from(StoreMember).where(StoreMember.store_id == store.id)
+    ) == 0
+    audit = await db_session.scalar(
+        select(AuditLog).where(
+            AuditLog.operation_domain == "admin",
+            AuditLog.operation_type == "delete",
+            AuditLog.record_id == store.id,
+        )
+    )
+    assert audit is not None
+    assert audit.store_id is None
+    assert audit.before_json["name"] == "Mistaken empty store"
+    assert audit.after_json is None
 
 
 async def test_admin_can_assign_exact_store_members(
