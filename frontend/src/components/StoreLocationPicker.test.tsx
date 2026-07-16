@@ -112,6 +112,67 @@ it("map selection invalidates a pending geolocation callback", async () => {
   expect(await screen.findByText("地图选点 · Europe/Rome")).toBeInTheDocument();
 });
 
+it("clears pending search when closed and ignores its response after reopening", async () => {
+  let finishSearch!: () => void;
+  const pending = new Promise<void>((resolve) => { finishSearch = resolve; });
+  server.use(http.get("/api/admin/stores/geocode", async () => {
+    await pending;
+    return HttpResponse.json([{ name: "Late", country: "Italia", latitude: 1, longitude: 1, timezone: "Europe/Rome" }]);
+  }));
+  render(<StoreLocationPicker adapter={adapterHarness().adapter} value={null} onConfirm={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: "打开地图选择" }));
+  fireEvent.change(screen.getByLabelText("搜索城市、区域或地点"), { target: { value: "Late" } });
+  fireEvent.submit(screen.getByRole("search"));
+  expect(screen.getByRole("button", { name: "搜索中…" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "取消" }));
+  fireEvent.click(screen.getByRole("button", { name: "打开地图选择" }));
+  expect(screen.getByRole("button", { name: "搜索" })).not.toBeDisabled();
+  finishSearch();
+  await waitFor(() => expect(screen.queryByRole("button", { name: /Late.*Italia/ })).not.toBeInTheDocument());
+});
+
+it("map selection clears pending search and ignores the late search result", async () => {
+  const map = adapterHarness();
+  let finishSearch!: () => void;
+  const pending = new Promise<void>((resolve) => { finishSearch = resolve; });
+  server.use(
+    http.get("/api/admin/stores/geocode", async () => { await pending; return HttpResponse.json([{ name: "Late", country: "Italia", latitude: 1, longitude: 1, timezone: "Europe/Rome" }]); }),
+    http.get("/api/admin/stores/timezone", () => HttpResponse.json({ timezone: "Europe/Rome" })),
+  );
+  render(<StoreLocationPicker adapter={map.adapter} value={null} onConfirm={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: "打开地图选择" }));
+  await waitFor(() => expect(map.adapter.mount).toHaveBeenCalledOnce());
+  fireEvent.change(screen.getByLabelText("搜索城市、区域或地点"), { target: { value: "Late" } });
+  fireEvent.submit(screen.getByRole("search"));
+  map.move({ latitude: 45, longitude: 9 });
+  await waitFor(() => expect(screen.getByRole("button", { name: "搜索" })).not.toBeDisabled());
+  finishSearch();
+  expect(await screen.findByText("地图选点 · Europe/Rome")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Late.*Italia/ })).not.toBeInTheDocument();
+});
+
+it("re-locating clears pending search and ignores the late search result", async () => {
+  const successes: ((position: GeolocationPosition) => void)[] = [];
+  Object.defineProperty(navigator, "geolocation", { configurable: true, value: { getCurrentPosition: vi.fn((ok: (position: GeolocationPosition) => void) => successes.push(ok)) } });
+  let finishSearch!: () => void;
+  const pending = new Promise<void>((resolve) => { finishSearch = resolve; });
+  server.use(
+    http.get("/api/admin/stores/geocode", async () => { await pending; return HttpResponse.json([{ name: "Late", country: "Italia", latitude: 1, longitude: 1, timezone: "Europe/Rome" }]); }),
+    http.get("/api/admin/stores/timezone", () => HttpResponse.json({ timezone: "Europe/Rome" })),
+  );
+  render(<StoreLocationPicker adapter={adapterHarness().adapter} value={null} onConfirm={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: "打开地图选择" }));
+  await waitFor(() => expect(successes).toHaveLength(1));
+  fireEvent.change(screen.getByLabelText("搜索城市、区域或地点"), { target: { value: "Late" } });
+  fireEvent.submit(screen.getByRole("search"));
+  fireEvent.click(screen.getByRole("button", { name: "使用当前位置" }));
+  expect(screen.getByRole("button", { name: "搜索" })).not.toBeDisabled();
+  successes[1]({ coords: { latitude: 45, longitude: 9 } } as GeolocationPosition);
+  finishSearch();
+  expect(await screen.findByText("地图选点 · Europe/Rome")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Late.*Italia/ })).not.toBeInTheDocument();
+});
+
 it("only accepts the newest of consecutive geolocation requests", async () => {
   const successes: ((position: GeolocationPosition) => void)[] = [];
   const getCurrentPosition = vi.fn((ok: (position: GeolocationPosition) => void) => { successes.push(ok); });

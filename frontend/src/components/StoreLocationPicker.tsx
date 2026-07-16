@@ -25,7 +25,13 @@ export function StoreLocationPicker({ value, onConfirm, adapter = leafletMapAdap
   const [searching, setSearching] = useState(false);
   const [mapNode, setMapNode] = useState<HTMLDivElement | null>(null);
   const requestSequence = useRef(0);
+  const searchSequence = useRef(0);
   const openRef = useRef(false);
+
+  const cancelSearch = useCallback(() => {
+    searchSequence.current += 1;
+    setSearching(false);
+  }, []);
 
   useEffect(() => {
     requestSequence.current += 1;
@@ -33,6 +39,7 @@ export function StoreLocationPicker({ value, onConfirm, adapter = leafletMapAdap
   }, [open, value]);
 
   const resolveCoordinates = useCallback(async (point: Pick<MapLocation, "latitude" | "longitude">) => {
+    cancelSearch();
     const sequence = ++requestSequence.current;
     setError("");
     setDraft({ label: "地图选点", ...point, timezone: "" });
@@ -45,9 +52,10 @@ export function StoreLocationPicker({ value, onConfirm, adapter = leafletMapAdap
       if (sequence !== requestSequence.current) return;
       setError(friendlyApiError(reason, "暂时无法识别该位置的时区，请重新选择或稍后重试"));
     }
-  }, []);
+  }, [cancelSearch]);
 
   const useCurrentLocation = useCallback(() => {
+    cancelSearch();
     const sequence = ++requestSequence.current;
     setError("");
     const isCurrent = () => openRef.current && sequence === requestSequence.current;
@@ -65,7 +73,7 @@ export function StoreLocationPicker({ value, onConfirm, adapter = leafletMapAdap
       },
       { enableHighAccuracy: true, timeout: 10000 },
     );
-  }, [resolveCoordinates]);
+  }, [cancelSearch, resolveCoordinates]);
 
   useEffect(() => {
     if (open) useCurrentLocation();
@@ -79,22 +87,25 @@ export function StoreLocationPicker({ value, onConfirm, adapter = leafletMapAdap
   async function search(event: FormEvent) {
     event.preventDefault();
     if (!query.trim()) return;
-    const sequence = ++requestSequence.current;
+    requestSequence.current += 1;
+    const sequence = ++searchSequence.current;
     setSearching(true);
     setError("");
+    setResults([]);
     try {
       const candidates = await api<GeocodeCandidate[]>(`/admin/stores/geocode?query=${encodeURIComponent(query.trim())}`);
-      if (sequence === requestSequence.current) setResults(candidates);
+      if (sequence === searchSequence.current) setResults(candidates);
     } catch (reason) {
-      if (sequence === requestSequence.current) setError(friendlyApiError(reason, "地点搜索失败，请稍后重试"));
+      if (sequence === searchSequence.current) setError(friendlyApiError(reason, "地点搜索失败，请稍后重试"));
     } finally {
-      if (sequence === requestSequence.current) setSearching(false);
+      if (sequence === searchSequence.current) setSearching(false);
     }
   }
 
   function close(next: boolean) {
     openRef.current = next;
     if (!next) {
+      cancelSearch();
       requestSequence.current += 1;
       setError("");
       setResults([]);
@@ -114,6 +125,7 @@ export function StoreLocationPicker({ value, onConfirm, adapter = leafletMapAdap
         </form>
         {results.length > 0 && <ul className="space-y-1">{results.map((result) => <li key={`${result.latitude}-${result.longitude}`}>
           <Button className="h-auto w-full justify-start py-2" type="button" variant="ghost" onClick={() => {
+            cancelSearch();
             requestSequence.current += 1;
             setDraft({ label: `${result.name}, ${result.country}`, latitude: result.latitude, longitude: result.longitude, timezone: result.timezone });
             setResults([]);
