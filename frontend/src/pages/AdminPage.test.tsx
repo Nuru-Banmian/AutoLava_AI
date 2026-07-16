@@ -217,6 +217,9 @@ describe("AdminPage", () => {
     renderAdmin();
     await screen.findByRole("option", { name: "Roma" });
     fireEvent.change(await screen.findByLabelText("收入项目门店"), { target: { value: "9" } });
+    const enabled = await screen.findByRole("checkbox", { name: "启用收入项目明细" });
+    await waitFor(() => expect(enabled).toBeEnabled());
+    fireEvent.click(enabled);
     fireEvent.change(await screen.findByLabelText("新收入项目名称"), { target: { value: "现金" } });
     fireEvent.click(screen.getByRole("button", { name: "添加收入项目" }));
     expect(publishCount).toBe(0);

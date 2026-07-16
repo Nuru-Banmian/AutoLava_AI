@@ -48,6 +48,8 @@ export function IncomeItemsPanel({ selectedStoreId, onSelectedStoreChange }: {
   const queryClient = useQueryClient();
   const [items, setItems] = useState<DraftItem[]>([]);
   const [draftStoreId, setDraftStoreId] = useState<number | null>(null);
+  const [draftEnabled, setDraftEnabled] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
   const [newName, setNewName] = useState("");
   const stores = useQuery({ queryKey: storesKey, queryFn: () => api<AdminStore[]>("/admin/stores") });
   const currentConfig = useQuery({
@@ -64,14 +66,18 @@ export function IncomeItemsPanel({ selectedStoreId, onSelectedStoreChange }: {
   useEffect(() => {
     setItems([]);
     setDraftStoreId(null);
+    setDraftEnabled(false);
+    setIsDirty(false);
+    setNewName("");
   }, [selectedStoreId]);
 
   useEffect(() => {
-    if (currentConfig.data && currentConfig.data.store_id === selectedStoreId) {
+    if (currentConfig.data && currentConfig.data.store_id === selectedStoreId && !isDirty) {
       setItems(configItems(currentConfig.data));
       setDraftStoreId(currentConfig.data.store_id);
+      setDraftEnabled(currentConfig.data.enabled);
     }
-  }, [currentConfig.data, selectedStoreId]);
+  }, [currentConfig.data, isDirty, selectedStoreId]);
 
   async function refreshStore(storeId: number) {
     await Promise.all([
@@ -85,7 +91,7 @@ export function IncomeItemsPanel({ selectedStoreId, onSelectedStoreChange }: {
     mutationFn: ({ storeId, draft }: { storeId: number; draft: DraftItem[] }) => api<IncomeConfigResponse>(`/admin/stores/${storeId}/income-config`, {
       method: "PUT",
       body: JSON.stringify({
-        enabled: draft.length > 0,
+        enabled: draftEnabled,
         items: draft.map(({ category_id, name, include_in_total, is_active }, sort_order) => ({
           category_id,
           name: name.trim(),
@@ -100,12 +106,14 @@ export function IncomeItemsPanel({ selectedStoreId, onSelectedStoreChange }: {
       if (config.store_id === selectedStoreId) {
         setItems(configItems(config));
         setDraftStoreId(config.store_id);
+        setDraftEnabled(config.enabled);
+        setIsDirty(false);
       }
       await refreshStore(config.store_id);
     },
   });
   const archive = useMutation({
-    mutationFn: (categoryId: number) => api<CategoryWithArchive>(`/admin/income-categories/${categoryId}/archive`, { method: "POST" }),
+    mutationFn: ({ categoryId }: { categoryId: number; storeId: number }) => api<CategoryWithArchive>(`/admin/income-categories/${categoryId}/archive`, { method: "POST" }),
     onSuccess: async (category) => {
       if (category.store_id === selectedStoreId) {
         setItems((current) => current.filter((item) => item.category_id !== category.id).map((item, sort_order) => ({ ...item, sort_order })));
@@ -114,13 +122,14 @@ export function IncomeItemsPanel({ selectedStoreId, onSelectedStoreChange }: {
     },
   });
   const restore = useMutation({
-    mutationFn: (categoryId: number) => api<CategoryWithArchive>(`/admin/income-categories/${categoryId}/restore`, { method: "POST" }),
+    mutationFn: ({ categoryId }: { categoryId: number; storeId: number }) => api<CategoryWithArchive>(`/admin/income-categories/${categoryId}/restore`, { method: "POST" }),
     onSuccess: async (category) => {
       if (category.store_id === selectedStoreId) {
         setItems((current) => current.some((item) => item.category_id === category.id) ? current : [
           ...current,
           { key: `category-${category.id}`, category_id: category.id, name: category.name, include_in_total: category.include_in_total, is_active: true, sort_order: current.length },
         ]);
+        setIsDirty(true);
       }
       await queryClient.invalidateQueries({ queryKey: categoriesKey(category.store_id), exact: true });
     },
@@ -132,6 +141,7 @@ export function IncomeItemsPanel({ selectedStoreId, onSelectedStoreChange }: {
 
   function update(key: string, patch: Partial<DraftItem>) {
     setItems((current) => current.map((item) => item.key === key ? { ...item, ...patch } : item));
+    setIsDirty(true);
   }
 
   function move(index: number, offset: -1 | 1) {
@@ -142,6 +152,7 @@ export function IncomeItemsPanel({ selectedStoreId, onSelectedStoreChange }: {
       [next[index], next[target]] = [next[target], next[index]];
       return next.map((item, sort_order) => ({ ...item, sort_order }));
     });
+    setIsDirty(true);
   }
 
   function addItem() {
@@ -155,6 +166,7 @@ export function IncomeItemsPanel({ selectedStoreId, onSelectedStoreChange }: {
       is_active: true,
       sort_order: current.length,
     }]);
+    setIsDirty(true);
     setNewName("");
   }
 
@@ -163,39 +175,54 @@ export function IncomeItemsPanel({ selectedStoreId, onSelectedStoreChange }: {
   const formula = `营业额 = ${included.length ? included.join(" + ") : "0"}${excluded.length ? `；“${excluded.join("、")}”只记录，不计入营业额` : ""}`;
   const archived = categories.data?.filter((category) => category.archived_at !== null) ?? [];
   const lifecyclePending = archive.isPending || restore.isPending || deleteUnused.isPending;
+  const operationPending = publish.isPending || lifecyclePending;
+  const mutationError = (publish.variables?.storeId === selectedStoreId ? publish.error : null)
+    ?? (archive.variables?.storeId === selectedStoreId ? archive.error : null)
+    ?? (restore.variables?.storeId === selectedStoreId ? restore.error : null)
+    ?? (deleteUnused.variables?.storeId === selectedStoreId ? deleteUnused.error : null);
 
   return <div className="space-y-4">
     <div className="space-y-1">
       <label htmlFor="income-store">收入项目门店</label>
-      <select id="income-store" className="h-9 w-full max-w-sm rounded-md border px-2" value={selectedStoreId ?? ""} onChange={(event) => onSelectedStoreChange(event.target.value ? Number(event.target.value) : null)}>
+      <select id="income-store" className="h-9 w-full max-w-sm rounded-md border px-2" disabled={operationPending} value={selectedStoreId ?? ""} onChange={(event) => onSelectedStoreChange(event.target.value ? Number(event.target.value) : null)}>
         <option value="">请选择门店</option>
         {stores.data?.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
       </select>
     </div>
-    <ErrorMessage error={stores.error ?? currentConfig.error ?? categories.error ?? publish.error ?? archive.error ?? restore.error ?? deleteUnused.error} />
+    <ErrorMessage error={stores.error ?? currentConfig.error ?? categories.error ?? mutationError} />
     {selectedStoreId !== null && <>
+      <label className="flex items-center gap-2">
+        <input aria-label="启用收入项目明细" checked={draftEnabled} disabled={operationPending || currentConfig.isLoading || draftStoreId !== selectedStoreId} type="checkbox" onChange={(event) => {
+          setDraftEnabled(event.target.checked);
+          setIsDirty(true);
+        }} />
+        启用收入项目明细
+      </label>
       <div className="rounded-lg border bg-muted/30 p-4">
         <p className="font-medium">营业额计算预览</p>
         <p className="text-sm text-muted-foreground">{formula}</p>
       </div>
       <div className="flex flex-col gap-2 rounded-lg border p-4 sm:flex-row">
-        <Input aria-label="新收入项目名称" placeholder="例如：现金、刷卡" value={newName} onChange={(event) => setNewName(event.target.value)} />
-        <Button type="button" variant="outline" onClick={addItem}>添加收入项目</Button>
+        <Input aria-label="新收入项目名称" disabled={operationPending} placeholder="例如：现金、刷卡" value={newName} onChange={(event) => setNewName(event.target.value)} />
+        <Button disabled={operationPending} type="button" variant="outline" onClick={addItem}>添加收入项目</Button>
       </div>
       {currentConfig.isLoading ? <p>正在加载收入项目…</p> : <ol className="space-y-3">
         {items.map((item, index) => <li className="grid gap-3 rounded-lg border p-3 md:grid-cols-[minmax(10rem,1fr)_auto_auto]" key={item.key}>
-          <Input aria-label={`项目名称 ${item.name}`} value={item.name} onChange={(event) => update(item.key, { name: event.target.value })} />
-          <label className="flex items-center gap-2"><input aria-label={`计入营业额 ${item.name}`} checked={item.include_in_total} type="checkbox" onChange={(event) => update(item.key, { include_in_total: event.target.checked })} />计入营业额</label>
+          <Input aria-label={`项目名称 ${item.name}`} disabled={operationPending} value={item.name} onChange={(event) => update(item.key, { name: event.target.value })} />
+          <label className="flex items-center gap-2"><input aria-label={`计入营业额 ${item.name}`} checked={item.include_in_total} disabled={operationPending} type="checkbox" onChange={(event) => update(item.key, { include_in_total: event.target.checked })} />计入营业额</label>
           <div className="flex flex-wrap gap-2">
-            <Button aria-label={`上移 ${item.name}`} disabled={index === 0} type="button" variant="outline" onClick={() => move(index, -1)}>上移</Button>
-            <Button aria-label={`下移 ${item.name}`} disabled={index === items.length - 1} type="button" variant="outline" onClick={() => move(index, 1)}>下移</Button>
+            <Button aria-label={`上移 ${item.name}`} disabled={operationPending || index === 0} type="button" variant="outline" onClick={() => move(index, -1)}>上移</Button>
+            <Button aria-label={`下移 ${item.name}`} disabled={operationPending || index === items.length - 1} type="button" variant="outline" onClick={() => move(index, 1)}>下移</Button>
             {item.category_id !== null
-              ? <Button aria-label={`归档 ${item.name}`} disabled={lifecyclePending} type="button" variant="outline" onClick={() => archive.mutate(item.category_id!)}>归档</Button>
-              : <Button aria-label={`移除 ${item.name}`} type="button" variant="outline" onClick={() => setItems((current) => current.filter((candidate) => candidate.key !== item.key).map((candidate, sort_order) => ({ ...candidate, sort_order })))}>移除</Button>}
+              ? <Button aria-label={`归档 ${item.name}`} disabled={operationPending} type="button" variant="outline" onClick={() => archive.mutate({ categoryId: item.category_id!, storeId: selectedStoreId })}>归档</Button>
+              : <Button aria-label={`移除 ${item.name}`} disabled={operationPending} type="button" variant="outline" onClick={() => {
+                setItems((current) => current.filter((candidate) => candidate.key !== item.key).map((candidate, sort_order) => ({ ...candidate, sort_order })));
+                setIsDirty(true);
+              }}>移除</Button>}
           </div>
         </li>)}
       </ol>}
-      <Button disabled={publish.isPending || currentConfig.isLoading || draftStoreId !== selectedStoreId || items.some((item) => !item.name.trim())} type="button" onClick={() => {
+      <Button disabled={operationPending || currentConfig.isLoading || draftStoreId !== selectedStoreId || items.some((item) => !item.name.trim())} type="button" onClick={() => {
         if (selectedStoreId !== null) publish.mutate({ storeId: selectedStoreId, draft: items });
       }}>{publish.isPending ? "保存中…" : "保存并发布"}</Button>
       {archived.length > 0 && <section className="space-y-2 rounded-lg border p-4" aria-label="已归档收入项目">
@@ -203,8 +230,8 @@ export function IncomeItemsPanel({ selectedStoreId, onSelectedStoreChange }: {
         <ul className="space-y-2">{archived.map((category) => <li className="flex flex-wrap items-center justify-between gap-2" key={category.id}>
           <span>{category.name}</span>
           <div className="flex gap-2">
-            <Button aria-label={`恢复 ${category.name}`} disabled={lifecyclePending} type="button" variant="outline" onClick={() => restore.mutate(category.id)}>恢复</Button>
-            <Button aria-label={`永久删除 ${category.name}`} disabled={lifecyclePending} type="button" variant="outline" onClick={() => {
+            <Button aria-label={`恢复 ${category.name}`} disabled={operationPending} type="button" variant="outline" onClick={() => restore.mutate({ categoryId: category.id, storeId: category.store_id })}>恢复</Button>
+            <Button aria-label={`永久删除 ${category.name}`} disabled={operationPending} type="button" variant="outline" onClick={() => {
               if (window.confirm(`永久删除后无法恢复，确定删除“${category.name}”吗？`)) {
                 deleteUnused.mutate({ categoryId: category.id, storeId: category.store_id });
               }

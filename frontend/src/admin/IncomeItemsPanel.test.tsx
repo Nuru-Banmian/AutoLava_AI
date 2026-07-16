@@ -141,4 +141,80 @@ describe("IncomeItemsPanel", () => {
     release();
     await waitFor(() => expect(screen.queryByText("正在加载收入项目…")).not.toBeInTheDocument());
   });
+
+  it("preserves a disabled non-empty configuration when publishing edits", async () => {
+    const disabled = { ...current, enabled: false };
+    let published: { enabled?: boolean } | undefined;
+    server.use(
+      http.get("/api/admin/stores", () => HttpResponse.json([store])),
+      http.get("/api/income-config/9/current", () => HttpResponse.json(disabled)),
+      http.get("/api/admin/income-categories", () => HttpResponse.json([])),
+      http.put("/api/admin/stores/9/income-config", async ({ request }) => {
+        published = await request.json() as { enabled: boolean };
+        return HttpResponse.json(disabled);
+      }),
+    );
+    const user = userEvent.setup();
+    renderPanel();
+
+    expect(await screen.findByRole("checkbox", { name: "启用收入项目明细" })).not.toBeChecked();
+    const name = await screen.findByRole("textbox", { name: "项目名称 现金" });
+    await user.clear(name);
+    await user.type(name, "现金收款");
+    await user.click(screen.getByRole("button", { name: "保存并发布" }));
+
+    await waitFor(() => expect(published?.enabled).toBe(false));
+  });
+
+  it("keeps unrelated unsaved draft edits after archiving an item", async () => {
+    let configReads = 0;
+    const afterArchive = { ...current, version_id: 4, version: 4, items: [current.items[0], current.items[1]] };
+    mockReads();
+    server.use(
+      http.get("/api/income-config/9/current", () => HttpResponse.json(configReads++ === 0 ? current : afterArchive)),
+      http.post("/api/admin/income-categories/3/archive", () => HttpResponse.json({ id: 3, store_id: 9, name: "其他", include_in_total: false, is_active: false, sort_order: 2, archived_at: "2026-07-16T12:00:00" })),
+    );
+    const user = userEvent.setup();
+    renderPanel();
+
+    const cash = await screen.findByRole("textbox", { name: "项目名称 现金" });
+    await user.clear(cash);
+    await user.type(cash, "现金收款");
+    await user.click(screen.getByRole("button", { name: "归档 其他" }));
+
+    await waitFor(() => expect(configReads).toBeGreaterThan(1));
+    expect(screen.getByDisplayValue("现金收款")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "项目名称 其他" })).not.toBeInTheDocument();
+  });
+
+  it("locks draft controls during publish and hides a stale error after an external store switch", async () => {
+    let reject!: () => void;
+    const pending = new Promise<void>((resolve) => { reject = resolve; });
+    server.use(
+      http.get("/api/admin/stores", () => HttpResponse.json([store, { ...store, id: 10, name: "Milano" }])),
+      http.get("/api/income-config/9/current", () => HttpResponse.json(current)),
+      http.get("/api/income-config/10/current", () => HttpResponse.json({ ...current, store_id: 10, version_id: null, version: 0, enabled: false, items: [] })),
+      http.get("/api/admin/income-categories", () => HttpResponse.json([])),
+      http.put("/api/admin/stores/9/income-config", async () => { await pending; return HttpResponse.json({ detail: "旧门店保存失败" }, { status: 500 }); }),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    function Harness() {
+      const [storeId, setStoreId] = useState<number | null>(9);
+      return <><button type="button" onClick={() => setStoreId(10)}>外部切换门店</button><IncomeItemsPanel selectedStoreId={storeId} onSelectedStoreChange={setStoreId} /></>;
+    }
+    const user = userEvent.setup();
+    render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>);
+
+    await screen.findByRole("textbox", { name: "项目名称 现金" });
+    await user.click(screen.getByRole("button", { name: "保存并发布" }));
+    expect(screen.getByRole("textbox", { name: "项目名称 现金" })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "计入营业额 现金" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "添加收入项目" })).toBeDisabled();
+    expect(screen.getByLabelText("收入项目门店")).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "外部切换门店" }));
+    reject();
+    await screen.findByText("营业额 = 0");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
 });
