@@ -21,7 +21,7 @@ export function StoreSettingsPanel() {
   const queryClient = useQueryClient();
   const stores = useQuery({ queryKey: storesKey, queryFn: () => api<AdminStore[]>("/admin/stores") });
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
-  const [showCreate, setShowCreate] = useState(true);
+  const [showCreate, setShowCreate] = useState(false);
   useEffect(() => {
     if (stores.data?.some((store) => store.id === selectedStoreId)) return;
     setSelectedStoreId(stores.data?.[0]?.id ?? null);
@@ -65,13 +65,13 @@ export function StoreSettingsPanel() {
           {stores.data?.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
         </select>
       </div>
-      <Button type="button" onClick={() => setShowCreate((value) => !value)}>新建门店</Button>
+      <Button type="button" onClick={() => setShowCreate((value) => !value)}>{showCreate ? "取消新建" : "新建门店"}</Button>
     </header>
 
     <ErrorMessage error={stores.error} />
     <ErrorMessage error={createStore.error} />
     <ErrorMessage error={patchStore.error} />
-    <ErrorMessage deletion error={deleteStore.error} />
+    <ErrorMessage deletion error={deleteStore.variables === selectedStoreId ? deleteStore.error : null} />
 
     {showCreate && <form className="grid gap-3 rounded-lg border p-4 md:grid-cols-3" onSubmit={submitStore}>
       <div><label htmlFor="store-name">门店名称</label><Input id="store-name" name="name" required /></div>

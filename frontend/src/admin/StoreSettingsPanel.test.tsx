@@ -26,6 +26,11 @@ it("keeps the current-store selector and new-store action together in the header
   const header = await screen.findByRole("banner", { name: "门店设置操作" });
   expect(within(header).getByLabelText("当前门店")).toBeInTheDocument();
   expect(within(header).getByRole("button", { name: "新建门店" })).toBeInTheDocument();
+  expect(screen.queryByLabelText("门店名称")).not.toBeInTheDocument();
+  fireEvent.click(within(header).getByRole("button", { name: "新建门店" }));
+  expect(screen.getByLabelText("门店名称")).toBeInTheDocument();
+  fireEvent.click(within(header).getByRole("button", { name: "取消新建" }));
+  expect(screen.queryByLabelText("门店名称")).not.toBeInTheDocument();
   await within(header).findByRole("option", { name: "Roma" });
   expect(await screen.findByLabelText("门店名称 Roma")).toBeInTheDocument();
   expect(screen.getByText("Roma Centro")).toBeInTheDocument();
@@ -60,4 +65,21 @@ it("explains that a referenced store must be deactivated when deletion returns 4
   fireEvent.click(await screen.findByRole("button", { name: "永久删除门店 Roma" }));
 
   expect(await screen.findByRole("alert")).toHaveTextContent("已有经营或历史记录，只能停用门店");
+});
+
+it("does not carry a delete error to another selected store", async () => {
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  const milano = { ...roma, id: 10, name: "Milano", address: "Milano Centro" };
+  server.use(
+    http.get("/api/admin/stores", () => HttpResponse.json([roma, milano])),
+    http.delete("/api/admin/stores/9", () => HttpResponse.json({ detail: "该门店已有业务或历史记录，请停用门店而不是删除" }, { status: 409 })),
+  );
+  renderPanel();
+  fireEvent.click(await screen.findByRole("button", { name: "永久删除门店 Roma" }));
+  expect(await screen.findByRole("alert")).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("当前门店"), { target: { value: "10" } });
+
+  expect(await screen.findByLabelText("门店名称 Milano")).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });

@@ -740,6 +740,39 @@ async def test_unused_store_can_be_deleted_with_pure_settings_and_memberships(
     assert audit.after_json is None
 
 
+async def test_api_created_unused_store_can_be_deleted_and_keeps_both_audits(
+    admin_client, db_session: AsyncSession
+) -> None:
+    created = await admin_client.post(
+        "/api/admin/stores",
+        json={
+            "name": "Accidental store",
+            "address": "Wrong place",
+            "latitude": "45.000000",
+            "longitude": "9.000000",
+            "timezone": "Europe/Rome",
+        },
+    )
+    assert created.status_code == 201
+    store_id = created.json()["id"]
+
+    response = await admin_client.delete(f"/api/admin/stores/{store_id}")
+
+    assert response.status_code == 204
+    assert await db_session.get(Store, store_id) is None
+    audits = list(
+        await db_session.scalars(
+            select(AuditLog)
+            .where(AuditLog.operation_domain == "admin", AuditLog.record_id == store_id)
+            .order_by(AuditLog.id)
+        )
+    )
+    assert [audit.operation_type for audit in audits] == ["create", "delete"]
+    assert [audit.store_id for audit in audits] == [None, None]
+    assert audits[0].after_json["name"] == "Accidental store"
+    assert audits[1].before_json["name"] == "Accidental store"
+
+
 async def test_admin_can_assign_exact_store_members(
     admin_client, user_factory, store_factory, db_session: AsyncSession
 ) -> None:

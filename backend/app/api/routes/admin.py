@@ -455,7 +455,6 @@ async def patch_store(
 
 STORE_PROTECTED_REFERENCES = (
     StoreDailyRecord.store_id,
-    AuditLog.store_id,
     IncomeCategory.store_id,
     IncomeConfigVersion.store_id,
     DailyBriefing.store_id,
@@ -471,6 +470,37 @@ async def _store_has_protected_references(session: Session, store_id: int) -> bo
     return False
 
 
+def _is_initial_store_create_audit(audit: AuditLog, store_id: int) -> bool:
+    after = audit.after_json
+    return (
+        audit.operation_domain == "admin"
+        and audit.operation_type == "create"
+        and audit.record_id == store_id
+        and audit.before_json is None
+        and isinstance(after, dict)
+        and after.get("id") == store_id
+        and after.get("standard_work_hours") == 8
+    )
+
+
+async def _initial_store_create_audit_for_delete(
+    session: Session, store_id: int
+) -> AuditLog | None:
+    audits = list(
+        await session.scalars(
+            select(AuditLog)
+            .where(AuditLog.store_id == store_id)
+            .order_by(AuditLog.id)
+            .with_for_update()
+        )
+    )
+    if not audits:
+        return None
+    if len(audits) == 1 and _is_initial_store_create_audit(audits[0], store_id):
+        return audits[0]
+    raise HTTPException(409, "该门店已有业务或历史记录，请停用门店而不是删除")
+
+
 @router.delete("/stores/{store_id}", status_code=204)
 async def delete_store(store_id: int, session: Session, actor: StoresManager) -> None:
     store = await session.scalar(
@@ -480,9 +510,12 @@ async def delete_store(store_id: int, session: Session, actor: StoresManager) ->
         raise HTTPException(404, "Store not found")
     if await _store_has_protected_references(session, store_id):
         raise HTTPException(409, "该门店已有业务或历史记录，请停用门店而不是删除")
+    initial_create_audit = await _initial_store_create_audit_for_delete(session, store_id)
 
     before = _store_payload(store)
     try:
+        if initial_create_audit is not None:
+            initial_create_audit.store_id = None
         await session.execute(delete(StoreMember).where(StoreMember.store_id == store_id))
         await session.execute(delete(StoreSetting).where(StoreSetting.store_id == store_id))
         await session.delete(store)

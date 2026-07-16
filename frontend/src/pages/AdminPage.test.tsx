@@ -113,6 +113,7 @@ describe("AdminPage", () => {
       }),
     );
     renderAdmin("/admin?tab=stores");
+    fireEvent.click(await screen.findByRole("button", { name: "新建门店" }));
     fireEvent.change(await screen.findByLabelText("门店名称"), { target: { value: "Roma" } });
     fireEvent.change(screen.getByLabelText("地址"), { target: { value: "Via Uno" } });
     fireEvent.change(screen.getByLabelText("纬度"), { target: { value: "41.9" } });
@@ -285,6 +286,7 @@ describe("AdminPage", () => {
     const { client } = renderAdmin("/admin?tab=stores");
     client.setQueryData(scopedAccessibleStoresKey, [{ id: 9 }]);
     await screen.findByRole("button", { name: "停用门店 Roma" });
+    fireEvent.click(screen.getByRole("button", { name: "新建门店" }));
     fireEvent.change(screen.getByLabelText("门店名称"), { target: { value: "Milano" } });
     fireEvent.change(screen.getByLabelText("地址"), { target: { value: "Via Due" } });
     fireEvent.change(screen.getByLabelText("纬度"), { target: { value: "45.4" } });
