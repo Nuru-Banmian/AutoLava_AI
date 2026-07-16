@@ -106,7 +106,18 @@ export interface RecordSnapshot {
 }
 export interface DatabaseResponse { items: RecordSnapshot[]; categories: CategoryDescriptor[]; sum_daily_revenue: string; total: number; page: number; page_size: number }
 export interface AuditEntry { id: number; record_id: number | null; record_date: string | null; operation_type: string; operation_source: string; operator_user_id: number; operator_username: string; before: RecordSnapshot | null; after: RecordSnapshot | null; description: string; requires_approval: boolean; approved: boolean; rollbackable: boolean; created_at: string }
-export interface BriefingCard { card_type: "yesterday" | "today" | "tomorrow"; content: string; generated_at: string }
+export interface BriefingCard {
+  card_type: "yesterday" | "today" | "tomorrow";
+  state: "missing" | "recorded" | "rest" | "weather_closed" | "forecast" | "unavailable";
+  revenue: string | null;
+  weather: string | null;
+  weekday: string | null;
+  temperature_max: string | null;
+  temperature_min: string | null;
+  precipitation: string | null;
+  hint: string | null;
+  generated_at: string;
+}
 export interface WeatherResponse { weather: string | null; weather_code: number | null; temperature_max: number | null; temperature_min: number | null; precipitation: number | null }
 export interface ChartsResponse {
   kpis: { total_revenue: string; record_days: number; open_days: number; primary_categories: { category_id: number; category_name: string; amount: string }[]; total_wash_count: number | null; average_ticket: string | null };
