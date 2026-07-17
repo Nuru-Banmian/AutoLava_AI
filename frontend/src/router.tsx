@@ -7,7 +7,7 @@ import { LoginPage } from "@/pages/LoginPage";
 import { HomePage } from "@/pages/HomePage";
 import { LedgerPage } from "@/pages/LedgerPage";
 import { MorePage } from "@/pages/MorePage";
-import { DatabasePage } from "@/pages/DatabasePage";
+import { BusinessRecordsPage } from "@/pages/BusinessRecordsPage";
 import { ChartsPage } from "@/pages/ChartsPage";
 import { AccountPasswordPage } from "@/pages/AccountPasswordPage";
 import { StoreProvider } from "@/stores/StoreProvider";
@@ -46,7 +46,7 @@ const routes: RouteObject[] = [{
     { element: <ProtectedShell />, children: [
       { index: true, element: <HomePage /> },
       { path: "ledger", element: <LedgerPage /> },
-      { path: "database", element: <DatabasePage /> },
+      { path: "database", element: <BusinessRecordsPage /> },
       { path: "charts", element: <ChartsPage /> },
       { path: "more", element: <MoreRoute /> },
       { path: "account/password", element: <AccountPasswordPage /> },
