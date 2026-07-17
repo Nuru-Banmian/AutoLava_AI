@@ -40,6 +40,13 @@ export function UsersPanel() {
   selectionRef.current = selection;
 
   useEffect(() => () => markDirty(false), [markDirty]);
+  useEffect(() => {
+    if (typeof selection !== "number" || !users.isSuccess) return;
+    if (users.data.some((user) => user.id === selection)) return;
+    setEditorFailure(null);
+    setSelection(null);
+    markDirty(false);
+  }, [markDirty, selection, users.data, users.isSuccess]);
 
   async function invalidateUserData() {
     await Promise.all([
@@ -77,7 +84,6 @@ export function UsersPanel() {
       if (isLatestRequest("new", requestId)) setEditorFailure({ selection: "new", error });
     },
     onSuccess: async (_data, { requestId }) => {
-      if (!isLatestRequest("new", requestId)) return;
       await invalidateUserData();
       if (!isLatestRequest("new", requestId)) return;
       recordSuccess("new");
@@ -92,7 +98,6 @@ export function UsersPanel() {
       if (isLatestRequest(userId, requestId)) setEditorFailure({ selection: userId, error });
     },
     onSuccess: async (_data, { userId, requestId }) => {
-      if (!isLatestRequest(userId, requestId)) return;
       await invalidateUserData();
       if (!isLatestRequest(userId, requestId)) return;
       recordSuccess(userId);
@@ -106,7 +111,6 @@ export function UsersPanel() {
       if (isLatestRequest(userId, requestId)) setEditorFailure({ selection: userId, error: deletionError(error) });
     },
     onSuccess: async (_data, { userId, requestId }) => {
-      if (!isLatestRequest(userId, requestId)) return;
       await invalidateUserData();
       if (!isLatestRequest(userId, requestId)) return;
       if (selectionRef.current === userId) {

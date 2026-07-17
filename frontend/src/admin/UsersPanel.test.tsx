@@ -340,3 +340,58 @@ it("ignores an older callback after a newer save for the same user", async () =>
   await userEvent.click(screen.getByRole("button", { name: /operator/ }));
   expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
 });
+
+it("reconciles a stale successful delete when the newer edit fails", async () => {
+  let deleted = false;
+  let userFetches = 0;
+  let resolveDelete!: () => void;
+  let resolvePatch!: () => void;
+  let markDeleteResponded!: () => void;
+  let markPatchResponded!: () => void;
+  const deleteResponded = new Promise<void>((resolve) => { markDeleteResponded = resolve; });
+  const patchResponded = new Promise<void>((resolve) => { markPatchResponded = resolve; });
+  server.use(
+    http.get("/api/admin/users", () => {
+      userFetches += 1;
+      return HttpResponse.json(deleted ? [operator] : [maria, operator]);
+    }),
+    http.get("/api/admin/stores", () => HttpResponse.json([roma])),
+    http.delete("/api/admin/users/2", async () => {
+      await new Promise<void>((resolve) => { resolveDelete = resolve; });
+      deleted = true;
+      markDeleteResponded();
+      return new HttpResponse(null, { status: 204 });
+    }),
+    http.patch("/api/admin/users/2", async () => {
+      await new Promise<void>((resolve) => { resolvePatch = resolve; });
+      markPatchResponded();
+      return HttpResponse.json({ detail: "user no longer exists" }, { status: 409 });
+    }),
+  );
+  renderPanel();
+  await userEvent.click(await screen.findByRole("button", { name: /maria/ }));
+  await userEvent.click(screen.getByRole("button", { name: "永久删除" }));
+  await userEvent.click(screen.getByRole("button", { name: "确认删除" }));
+  await waitFor(() => expect(resolveDelete).toBeDefined());
+  await userEvent.click(screen.getByRole("button", { name: /operator/ }));
+  await userEvent.click(screen.getByRole("button", { name: /maria/ }));
+  await userEvent.type(screen.getByLabelText("重置密码（可选）"), "newer-edit-123");
+  await userEvent.click(screen.getByRole("button", { name: "保存用户" }));
+  await waitFor(() => expect(resolvePatch).toBeDefined());
+
+  await act(async () => {
+    resolveDelete();
+    await deleteResponded;
+  });
+  await act(async () => {
+    resolvePatch();
+    await patchResponded;
+  });
+
+  await waitFor(() => expect(userFetches).toBe(2));
+  expect(screen.queryByRole("button", { name: /maria/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("main")).toHaveTextContent("请选择用户");
+  await userEvent.click(screen.getByRole("button", { name: /operator/ }));
+  expect(screen.getByRole("heading", { name: "编辑 operator" })).toBeInTheDocument();
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+});
