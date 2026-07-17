@@ -33,6 +33,8 @@ export function UsersPanel() {
   const { markDirty, requestTransition } = useUnsavedChanges();
   const [selection, setSelection] = useState<UserSelection>(null);
   const selectionRef = useRef<UserSelection>(selection);
+  const mountedRef = useRef(false);
+  const lifecycleGeneration = useRef(0);
   const requestIds = useRef(new Map<string, number>());
   const [requestStates, setRequestStates] = useState<Record<string, TargetState>>({});
   const [successVersions, setSuccessVersions] = useState<Record<string, number>>({});
@@ -46,7 +48,11 @@ export function UsersPanel() {
   }
 
   function select(next: UserSelection) {
-    requestTransition(() => commitSelection(next));
+    if (selectionRef.current === next) return;
+    requestTransition(() => {
+      if (selectionRef.current === next) return;
+      commitSelection(next);
+    });
   }
 
   function beginRequest(target: string) {
@@ -56,15 +62,17 @@ export function UsersPanel() {
       ...current,
       [target]: { requestId, pending: true, error: null },
     }));
-    return requestId;
+    return { requestId, generation: lifecycleGeneration.current };
   }
 
   function isLatest(target: string, requestId: number) {
     return requestIds.current.get(target) === requestId;
   }
 
-  function isMountedTarget(target: string) {
-    return targetFor(selectionRef.current) === target;
+  function isMountedTarget(target: string, generation: number) {
+    return mountedRef.current
+      && lifecycleGeneration.current === generation
+      && targetFor(selectionRef.current) === target;
   }
 
   function recordSuccess(target: string) {
@@ -74,11 +82,11 @@ export function UsersPanel() {
     }));
   }
 
-  function finishPending(target: string, requestId: number, error: Error | null) {
+  function finishPending(target: string, requestId: number, generation: number, error: Error | null) {
     if (!isLatest(target, requestId)) return;
     setRequestStates((current) => ({
       ...current,
-      [target]: { requestId, pending: false, error: isMountedTarget(target) ? error : null },
+      [target]: { requestId, pending: false, error: isMountedTarget(target, generation) ? error : null },
     }));
   }
 
@@ -90,47 +98,47 @@ export function UsersPanel() {
   }
 
   const createUser = useMutation({
-    mutationFn: ({ body }: { target: "new"; requestId: number; body: { username: string; password: string; role: UserRole; store_ids: number[] } }) =>
+    mutationFn: ({ body }: { target: "new"; requestId: number; generation: number; body: { username: string; password: string; role: UserRole; store_ids: number[] } }) =>
       api<AdminUser>("/admin/users", { method: "POST", body: JSON.stringify(body) }),
-    onSuccess: async (created, { target, requestId }) => {
+    onSuccess: async (created, { target, requestId, generation }) => {
       await invalidateAuthoritativeData();
-      finishPending(target, requestId, null);
-      if (!isLatest(target, requestId) || !isMountedTarget(target)) return;
+      finishPending(target, requestId, generation, null);
+      if (!isLatest(target, requestId) || !isMountedTarget(target, generation)) return;
       markDirty(false);
       recordSuccess(target);
       commitSelection(created.id);
     },
-    onError: (error: Error, { target, requestId }) => finishPending(target, requestId, error),
+    onError: (error: Error, { target, requestId, generation }) => finishPending(target, requestId, generation, error),
   });
 
   const patchUser = useMutation({
-    mutationFn: ({ userId, body }: { target: string; requestId: number; userId: number; body: UserPatchBody }) =>
+    mutationFn: ({ userId, body }: { target: string; requestId: number; generation: number; userId: number; body: UserPatchBody }) =>
       api<AdminUser>(`/admin/users/${userId}`, { method: "PATCH", body: JSON.stringify(body) }),
-    onSuccess: async (_updated, { target, requestId }) => {
+    onSuccess: async (_updated, { target, requestId, generation }) => {
       await invalidateAuthoritativeData();
-      finishPending(target, requestId, null);
-      if (!isLatest(target, requestId) || !isMountedTarget(target)) return;
+      finishPending(target, requestId, generation, null);
+      if (!isLatest(target, requestId) || !isMountedTarget(target, generation)) return;
       markDirty(false);
       recordSuccess(target);
     },
-    onError: (error: Error, { target, requestId }) => finishPending(target, requestId, error),
+    onError: (error: Error, { target, requestId, generation }) => finishPending(target, requestId, generation, error),
   });
 
   const deleteUser = useMutation({
-    mutationFn: ({ userId }: { target: string; requestId: number; userId: number }) =>
+    mutationFn: ({ userId }: { target: string; requestId: number; generation: number; userId: number }) =>
       api<void>(`/admin/users/${userId}`, { method: "DELETE" }),
-    onSuccess: async (_result, { target, requestId }) => {
+    onSuccess: async (_result, { target, requestId, generation }) => {
       await invalidateAuthoritativeData();
-      finishPending(target, requestId, null);
-      if (!isLatest(target, requestId) || !isMountedTarget(target)) return;
+      finishPending(target, requestId, generation, null);
+      if (!isLatest(target, requestId) || !isMountedTarget(target, generation)) return;
       markDirty(false);
       commitSelection(null);
     },
-    onError: (error: Error, { target, requestId }) => {
+    onError: (error: Error, { target, requestId, generation }) => {
       const friendly = error instanceof ApiError && error.status === 409 && error.detail.includes("历史")
         ? new ApiError(409, "该用户有历史记录，只能停用账号，不能永久删除。")
         : error;
-      finishPending(target, requestId, friendly);
+      finishPending(target, requestId, generation, friendly);
     },
   });
 
@@ -153,14 +161,24 @@ export function UsersPanel() {
     markDirty(false);
   }, [markDirty, selection, users.data, users.isSuccess]);
 
-  useEffect(() => () => markDirty(false), [markDirty]);
+  useEffect(() => {
+    mountedRef.current = true;
+    lifecycleGeneration.current += 1;
+    return () => {
+      mountedRef.current = false;
+      lifecycleGeneration.current += 1;
+      selectionRef.current = null;
+      markDirty(false);
+    };
+  }, [markDirty]);
 
   function submitCreate(draft: UserDraft) {
     const target = "new";
-    const requestId = beginRequest(target);
+    const { requestId, generation } = beginRequest(target);
     createUser.mutate({
       target,
       requestId,
+      generation,
       body: {
         username: draft.username.trim(),
         password: draft.password,
@@ -173,10 +191,11 @@ export function UsersPanel() {
   function submitEdit(draft: UserDraft) {
     if (typeof selection !== "number") return;
     const target = String(selection);
-    const requestId = beginRequest(target);
+    const { requestId, generation } = beginRequest(target);
     patchUser.mutate({
       target,
       requestId,
+      generation,
       userId: selection,
       body: {
         role: draft.role,
@@ -189,8 +208,8 @@ export function UsersPanel() {
 
   function removeUser(userId: number) {
     const target = String(userId);
-    const requestId = beginRequest(target);
-    deleteUser.mutate({ target, requestId, userId });
+    const { requestId, generation } = beginRequest(target);
+    deleteUser.mutate({ target, requestId, generation, userId });
   }
 
   const list = users.data ?? [];

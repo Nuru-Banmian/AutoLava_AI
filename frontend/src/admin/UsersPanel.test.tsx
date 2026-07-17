@@ -3,11 +3,12 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
+import { useState } from "react";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 
 import { UsersPanel } from "@/admin/UsersPanel";
 import type { AdminUser } from "@/api/types";
-import { UnsavedChangesProvider } from "@/navigation/UnsavedChanges";
+import { UnsavedChangesProvider, useUnsavedChanges } from "@/navigation/UnsavedChanges";
 import { accessibleStoresKey } from "@/stores/StoreProvider";
 
 const authState = vi.hoisted(() => ({
@@ -46,6 +47,34 @@ function renderPanel() {
   const result = render(
     <QueryClientProvider client={client}>
       <UnsavedChangesProvider><UsersPanel /></UnsavedChangesProvider>
+    </QueryClientProvider>,
+  );
+  return { ...result, client };
+}
+
+function UnmountHarness() {
+  const [showPanel, setShowPanel] = useState(true);
+  const [transitioned, setTransitioned] = useState(false);
+  const { markDirty, requestTransition } = useUnsavedChanges();
+
+  return <>
+    {showPanel
+      ? <><UsersPanel /><button type="button" onClick={() => setShowPanel(false)}>离开用户面板</button></>
+      : <>
+        <button type="button" onClick={() => markDirty(true)}>标记其他草稿</button>
+        <button type="button" onClick={() => requestTransition(() => setTransitioned(true))}>离开其他草稿</button>
+        <span>已离开：{String(transitioned)}</span>
+      </>}
+  </>;
+}
+
+function renderUnmountHarness() {
+  const client = new QueryClient({ defaultOptions: {
+    queries: { retry: false }, mutations: { retry: false },
+  } });
+  const result = render(
+    <QueryClientProvider client={client}>
+      <UnsavedChangesProvider><UnmountHarness /></UnsavedChangesProvider>
     </QueryClientProvider>,
   );
   return { ...result, client };
@@ -129,6 +158,37 @@ it("guards user switches while the editor is dirty", async () => {
   expect(screen.getByRole("alertdialog", { name: "放弃未保存的修改？" })).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "继续编辑" }));
   expect(screen.getByRole("heading", { name: "编辑 maria" })).toBeInTheDocument();
+});
+
+it("keeps a dirty existing-user editor dirty when its selected rail item is clicked again", async () => {
+  mockUsers([maria]);
+  renderPanel();
+  const mariaButton = await screen.findByRole("button", { name: /maria/ });
+  await userEvent.click(mariaButton);
+  await userEvent.type(screen.getByLabelText("重置密码（可选）"), "replacement123");
+
+  await userEvent.click(mariaButton);
+
+  expect(screen.queryByRole("alertdialog", { name: "放弃未保存的修改？" })).not.toBeInTheDocument();
+  expect(screen.getByLabelText("重置密码（可选）")).toHaveValue("replacement123");
+  await userEvent.click(screen.getByRole("button", { name: "新建用户" }));
+  expect(screen.getByRole("alertdialog", { name: "放弃未保存的修改？" })).toBeInTheDocument();
+});
+
+it("keeps a dirty create editor dirty when the persistent new-user button is clicked again", async () => {
+  mockUsers([maria]);
+  renderPanel();
+  const newUser = await screen.findByRole("button", { name: "新建用户" });
+  await userEvent.click(newUser);
+  await userEvent.type(screen.getByLabelText("用户名"), "operator");
+  await userEvent.type(screen.getByLabelText("初始密码"), "operator123");
+
+  await userEvent.click(newUser);
+
+  expect(screen.queryByRole("alertdialog", { name: "放弃未保存的修改？" })).not.toBeInTheDocument();
+  expect(screen.getByLabelText("用户名")).toHaveValue("operator");
+  await userEvent.click(screen.getByRole("button", { name: /maria/ }));
+  expect(screen.getByRole("alertdialog", { name: "放弃未保存的修改？" })).toBeInTheDocument();
 });
 
 it("creates a user with store access in the right-hand workspace", async () => {
@@ -253,6 +313,27 @@ it("invalidates authoritative users and accessible stores for a superseded succe
   await waitFor(() => expect(userFetches).toBe(2));
   expect(client.getQueryState(accessibleStoresKey)?.isInvalidated).toBe(true);
   expect(screen.getByRole("heading", { name: "编辑 operator" })).toBeInTheDocument();
+});
+
+it("does not clear another consumer's dirty state when an unmounted request succeeds", async () => {
+  const mariaResponse = deferred<HttpResponse<AdminUser>>();
+  mockUsers([maria]);
+  server.use(http.patch("/api/admin/users/2", () => mariaResponse.promise));
+  const { client } = renderUnmountHarness();
+  client.setQueryData(accessibleStoresKey, [{ id: 9, name: "Roma", timezone: "Europe/Rome" }]);
+  await userEvent.click(await screen.findByRole("button", { name: /maria/ }));
+  await userEvent.type(screen.getByLabelText("重置密码（可选）"), "replacement123");
+  await userEvent.click(screen.getByRole("button", { name: "保存用户" }));
+  await userEvent.click(screen.getByRole("button", { name: "离开用户面板" }));
+  await userEvent.click(screen.getByRole("button", { name: "标记其他草稿" }));
+
+  mariaResponse.resolve(HttpResponse.json(maria));
+
+  await waitFor(() => expect(client.getQueryState(["admin", "users"])?.isInvalidated).toBe(true));
+  expect(client.getQueryState(accessibleStoresKey)?.isInvalidated).toBe(true);
+  await userEvent.click(screen.getByRole("button", { name: "离开其他草稿" }));
+  expect(screen.getByRole("alertdialog", { name: "放弃未保存的修改？" })).toBeInTheDocument();
+  expect(screen.getByText("已离开：false")).toBeInTheDocument();
 });
 
 it("clears a dirty selection when the authoritative refetch removes it", async () => {
