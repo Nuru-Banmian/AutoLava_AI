@@ -28,6 +28,7 @@ from app.schemas.time import timestamp_status, trusted_utc
 from app.services.audit import add_admin_audit, record_snapshot
 from app.services.briefing import BriefingService
 from app.services.income_config import IncomeConfigService
+from app.services.owner import is_owner, owner_username
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 UsersManager = Annotated[User, Depends(require_capability("users.manage"))]
@@ -35,6 +36,18 @@ StoresManager = Annotated[User, Depends(require_capability("stores.manage"))]
 IncomeConfigManager = Annotated[
     User, Depends(require_capability("income_config.manage"))
 ]
+
+
+def _require_can_assign_role(actor: User, role: str | None) -> None:
+    if role == "admin" and not is_owner(actor):
+        raise HTTPException(403, "只有最终管理员可以授予管理员角色")
+
+
+def _require_can_manage_target(actor: User, target: User) -> None:
+    if is_owner(target):
+        raise HTTPException(403, "最终管理员账号受保护")
+    if target.role == "admin" and not is_owner(actor):
+        raise HTTPException(403, "只有最终管理员可以管理管理员账号")
 
 
 def _decimal(value: Decimal | None) -> str | None:
@@ -209,7 +222,11 @@ async def _user_store_ids(session: Session, user_id: int) -> list[int]:
 
 @router.get("/users", dependencies=[Depends(require_capability("users.manage"))])
 async def list_users(session: Session) -> list[dict[str, Any]]:
-    users = (await session.scalars(select(User).order_by(User.username, User.id))).all()
+    statement = select(User).order_by(User.username, User.id)
+    configured_owner = owner_username()
+    if configured_owner:
+        statement = statement.where(User.username != configured_owner)
+    users = (await session.scalars(statement)).all()
     memberships = await session.execute(
         select(StoreMember.user_id, StoreMember.store_id).order_by(
             StoreMember.user_id, StoreMember.store_id
@@ -225,6 +242,9 @@ async def list_users(session: Session) -> list[dict[str, Any]]:
 
 @router.post("/users", status_code=201)
 async def create_user(body: UserCreate, session: Session, actor: UsersManager) -> dict[str, Any]:
+    _require_can_assign_role(actor, body.role)
+    next_store_ids = [] if body.role == "admin" else sorted(set(body.store_ids))
+    await _require_stores(session, next_store_ids)
     user = User(
         username=body.username,
         password_hash=hash_password(body.password),
@@ -236,6 +256,9 @@ async def create_user(body: UserCreate, session: Session, actor: UsersManager) -
             await session.flush()
     except IntegrityError as exc:
         raise HTTPException(409, "Username already exists") from exc
+    session.add_all(
+        StoreMember(store_id=store_id, user_id=user.id) for store_id in next_store_ids
+    )
     add_admin_audit(
         session,
         actor_id=actor.id,
@@ -244,10 +267,12 @@ async def create_user(body: UserCreate, session: Session, actor: UsersManager) -
         operation_type="create",
         description=f"Created user {user.username}",
         before=None,
-        after=_user_snapshot(user, password_changed=True),
+        after=_user_snapshot(
+            user, password_changed=True, store_ids=next_store_ids
+        ),
     )
     await session.commit()
-    return _managed_user_payload(user, [])
+    return _managed_user_payload(user, next_store_ids)
 
 
 @router.patch("/users/{user_id}")
@@ -274,6 +299,8 @@ async def patch_user(
     )
     if user is None:
         raise HTTPException(404, "User not found")
+    _require_can_manage_target(actor, user)
+    _require_can_assign_role(actor, body.role)
     if body.is_active is False and user.is_active:
         if user.id == actor.id:
             raise HTTPException(409, "You cannot deactivate your current account")
@@ -334,6 +361,7 @@ async def delete_unused_user(
     )
     if user is None:
         raise HTTPException(404, "User not found")
+    _require_can_manage_target(actor, user)
     if user.id == actor.id:
         raise HTTPException(409, "You cannot delete your current account")
     ledger_references = await session.scalar(

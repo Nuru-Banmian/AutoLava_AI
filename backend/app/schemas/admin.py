@@ -32,6 +32,7 @@ class UserCreate(BaseModel):
     username: str = Field(min_length=3, max_length=80)
     password: str = Field(min_length=8, max_length=128)
     role: Literal["admin", "user"] = "user"
+    store_ids: list[int] = Field(default_factory=list)
 
 
 class UserPatch(BaseModel):
