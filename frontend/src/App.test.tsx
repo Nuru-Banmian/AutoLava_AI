@@ -72,7 +72,7 @@ describe("App", () => {
     expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["首页", "记账", "记录", "更多"]);
     expect(nav).toHaveClass("grid-cols-4");
     const more = screen.getByRole("navigation", { name: "更多功能" });
-    expect(within(more).getByRole("link", { name: "经营分析" })).toBeInTheDocument();
+    expect(within(more).queryByRole("link", { name: "经营分析" })).not.toBeInTheDocument();
     expect(within(more).getByRole("combobox", { name: "门店" })).toBeInTheDocument();
     expect(within(more).getByRole("link", { name: "修改密码" })).toBeInTheDocument();
     expect(screen.queryByText("管理中心")).not.toBeInTheDocument();
@@ -108,8 +108,7 @@ describe("App", () => {
     expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual([
       "首页",
       "每日记账",
-      "历史记录",
-      "经营分析",
+      "营业记录",
       "管理中心",
     ]);
   });
