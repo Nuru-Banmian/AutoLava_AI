@@ -1,124 +1,276 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
+import { UserEditor, type UserDraft } from "@/admin/UserEditor";
 import { api, ApiError } from "@/api/client";
 import type { AdminStore, AdminUser, UserRole } from "@/api/types";
+import { useAuth } from "@/auth/AuthProvider";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { useUnsavedChanges } from "@/navigation/UnsavedChanges";
 import { accessibleStoresKey } from "@/stores/StoreProvider";
 
 const usersKey = ["admin", "users"] as const;
 const storesKey = ["admin", "stores"] as const;
-const membersKey = (storeId: number) => ["admin", "stores", storeId, "members"] as const;
-const operationsKey = (userId: number) => ["admin", "users", userId, "operations"] as const;
-type UserOperation = { id: number; description: string; operation_type: string; created_at: string };
+
+type UserSelection = number | "new" | null;
 type UserPatchBody = { password?: string; role?: UserRole; is_active?: boolean; store_ids?: number[] };
+type TargetState = { requestId: number; pending: boolean; error: Error | null };
+
+function targetFor(selection: UserSelection) {
+  return selection === null ? null : String(selection);
+}
 
 function ErrorMessage({ error }: { error: Error | null }) {
   if (!error) return null;
-  return <p role="alert" className="text-sm text-destructive">{error instanceof ApiError ? error.detail : "请求失败"}</p>;
+  return <p className="text-sm text-destructive" role="alert">
+    {error instanceof ApiError ? error.detail : "请求失败"}
+  </p>;
 }
 
-export function UsersPanel({ selectedStoreId, onSelectedStoreChange }: { selectedStoreId: number | null; onSelectedStoreChange: (storeId: number | null) => void }) {
+export function UsersPanel() {
   const queryClient = useQueryClient();
-  const [role, setRole] = useState<UserRole>("user");
-  const [memberIds, setMemberIds] = useState<number[]>([]);
-  const [historyUserId, setHistoryUserId] = useState<number | null>(null);
+  const { user: actor } = useAuth();
+  const { markDirty, requestTransition } = useUnsavedChanges();
+  const [selection, setSelection] = useState<UserSelection>(null);
+  const selectionRef = useRef<UserSelection>(selection);
+  const requestIds = useRef(new Map<string, number>());
+  const [requestStates, setRequestStates] = useState<Record<string, TargetState>>({});
+  const [successVersions, setSuccessVersions] = useState<Record<string, number>>({});
+
   const users = useQuery({ queryKey: usersKey, queryFn: () => api<AdminUser[]>("/admin/users") });
   const stores = useQuery({ queryKey: storesKey, queryFn: () => api<AdminStore[]>("/admin/stores") });
-  const members = useQuery({ queryKey: membersKey(selectedStoreId ?? 0), queryFn: () => api<AdminUser[]>(`/admin/stores/${selectedStoreId}/members`), enabled: selectedStoreId !== null });
-  const operations = useQuery({ queryKey: operationsKey(historyUserId ?? 0), queryFn: () => api<UserOperation[]>(`/admin/users/${historyUserId}/operations`), enabled: historyUserId !== null });
-  const createUser = useMutation({ mutationFn: (input: { username: string; password: string; role: UserRole }) => api<AdminUser>("/admin/users", { method: "POST", body: JSON.stringify(input) }), onSuccess: () => queryClient.invalidateQueries({ queryKey: usersKey, exact: true }) });
-  const patchUser = useMutation({ mutationFn: ({ userId, body }: { userId: number; body: UserPatchBody }) => api<AdminUser>(`/admin/users/${userId}`, { method: "PATCH", body: JSON.stringify(body) }), onSuccess: () => queryClient.invalidateQueries({ queryKey: usersKey, exact: true }) });
-  const deleteUser = useMutation({ mutationFn: (userId: number) => api<void>(`/admin/users/${userId}`, { method: "DELETE" }), onSuccess: () => queryClient.invalidateQueries({ queryKey: usersKey, exact: true }) });
-  const replaceMembers = useMutation({
-    mutationFn: (input: { storeId: number; userIds: number[] }) => api<{ store_id: number; user_ids: number[] }>(`/admin/stores/${input.storeId}/members`, { method: "PUT", body: JSON.stringify({ user_ids: input.userIds }) }),
-    onSuccess: async (_data, input) => { await queryClient.invalidateQueries({ queryKey: membersKey(input.storeId), exact: true }); await queryClient.invalidateQueries({ queryKey: accessibleStoresKey }); },
+
+  function commitSelection(next: UserSelection) {
+    selectionRef.current = next;
+    setSelection(next);
+  }
+
+  function select(next: UserSelection) {
+    requestTransition(() => commitSelection(next));
+  }
+
+  function beginRequest(target: string) {
+    const requestId = (requestIds.current.get(target) ?? 0) + 1;
+    requestIds.current.set(target, requestId);
+    setRequestStates((current) => ({
+      ...current,
+      [target]: { requestId, pending: true, error: null },
+    }));
+    return requestId;
+  }
+
+  function isLatest(target: string, requestId: number) {
+    return requestIds.current.get(target) === requestId;
+  }
+
+  function isMountedTarget(target: string) {
+    return targetFor(selectionRef.current) === target;
+  }
+
+  function recordSuccess(target: string) {
+    setSuccessVersions((current) => ({
+      ...current,
+      [target]: (current[target] ?? 0) + 1,
+    }));
+  }
+
+  function finishPending(target: string, requestId: number, error: Error | null) {
+    if (!isLatest(target, requestId)) return;
+    setRequestStates((current) => ({
+      ...current,
+      [target]: { requestId, pending: false, error: isMountedTarget(target) ? error : null },
+    }));
+  }
+
+  async function invalidateAuthoritativeData() {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: usersKey, exact: true }),
+      queryClient.invalidateQueries({ queryKey: accessibleStoresKey }),
+    ]);
+  }
+
+  const createUser = useMutation({
+    mutationFn: ({ body }: { target: "new"; requestId: number; body: { username: string; password: string; role: UserRole; store_ids: number[] } }) =>
+      api<AdminUser>("/admin/users", { method: "POST", body: JSON.stringify(body) }),
+    onSuccess: async (created, { target, requestId }) => {
+      await invalidateAuthoritativeData();
+      finishPending(target, requestId, null);
+      if (!isLatest(target, requestId) || !isMountedTarget(target)) return;
+      markDirty(false);
+      recordSuccess(target);
+      commitSelection(created.id);
+    },
+    onError: (error: Error, { target, requestId }) => finishPending(target, requestId, error),
   });
-  useEffect(() => { if (members.data) setMemberIds(members.data.filter((user) => user.role === "user").map((user) => user.id)); }, [members.data]);
-  const selectedStore = stores.data?.find((store) => store.id === selectedStoreId);
-  const canSaveMembers = selectedStoreId !== null && selectedStore?.is_active === true && users.isSuccess && members.isSuccess;
-  const deleteError = deleteUser.error instanceof ApiError && deleteUser.error.status === 409 && deleteUser.error.detail.includes("历史")
-    ? new ApiError(409, "该用户有历史记录，只能停用账号，不能永久删除。")
-    : deleteUser.error;
 
-  function submitUser(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); const form = event.currentTarget; const data = new FormData(form);
-    createUser.mutate({ username: String(data.get("username")), password: String(data.get("password")), role }, { onSuccess: () => form.reset() });
+  const patchUser = useMutation({
+    mutationFn: ({ userId, body }: { target: string; requestId: number; userId: number; body: UserPatchBody }) =>
+      api<AdminUser>(`/admin/users/${userId}`, { method: "PATCH", body: JSON.stringify(body) }),
+    onSuccess: async (_updated, { target, requestId }) => {
+      await invalidateAuthoritativeData();
+      finishPending(target, requestId, null);
+      if (!isLatest(target, requestId) || !isMountedTarget(target)) return;
+      markDirty(false);
+      recordSuccess(target);
+    },
+    onError: (error: Error, { target, requestId }) => finishPending(target, requestId, error),
+  });
+
+  const deleteUser = useMutation({
+    mutationFn: ({ userId }: { target: string; requestId: number; userId: number }) =>
+      api<void>(`/admin/users/${userId}`, { method: "DELETE" }),
+    onSuccess: async (_result, { target, requestId }) => {
+      await invalidateAuthoritativeData();
+      finishPending(target, requestId, null);
+      if (!isLatest(target, requestId) || !isMountedTarget(target)) return;
+      markDirty(false);
+      commitSelection(null);
+    },
+    onError: (error: Error, { target, requestId }) => {
+      const friendly = error instanceof ApiError && error.status === 409 && error.detail.includes("历史")
+        ? new ApiError(409, "该用户有历史记录，只能停用账号，不能永久删除。")
+        : error;
+      finishPending(target, requestId, friendly);
+    },
+  });
+
+  const createSuccessVersion = successVersions.new ?? 0;
+  const editSuccessVersion = typeof selection === "number"
+    ? successVersions[String(selection)] ?? 0
+    : 0;
+
+  const selectedUser = typeof selection === "number"
+    ? users.data?.find((user) => user.id === selection) ?? null
+    : null;
+  const mountedTarget = targetFor(selection);
+  const mountedRequest = mountedTarget ? requestStates[mountedTarget] : undefined;
+
+  useEffect(() => {
+    if (typeof selection !== "number" || !users.isSuccess) return;
+    if (users.data.some((user) => user.id === selection)) return;
+    selectionRef.current = null;
+    setSelection(null);
+    markDirty(false);
+  }, [markDirty, selection, users.data, users.isSuccess]);
+
+  useEffect(() => () => markDirty(false), [markDirty]);
+
+  function submitCreate(draft: UserDraft) {
+    const target = "new";
+    const requestId = beginRequest(target);
+    createUser.mutate({
+      target,
+      requestId,
+      body: {
+        username: draft.username.trim(),
+        password: draft.password,
+        role: draft.role,
+        store_ids: draft.role === "user" ? draft.store_ids : [],
+      },
+    });
   }
 
-  return <>
-    <ErrorMessage error={users.error} /><ErrorMessage error={createUser.error} /><ErrorMessage error={patchUser.error} /><ErrorMessage error={deleteError} />
-    <p className="rounded-lg bg-blue-50 p-3 text-sm text-blue-900">普通用户看不到管理中心，只能使用已分配门店的日常经营页面。</p>
-    <form className="grid gap-3 rounded-lg border p-4 md:grid-cols-4" onSubmit={submitUser}>
-      <div><label htmlFor="new-username">新用户名</label><Input id="new-username" name="username" minLength={3} required /></div>
-      <div><label htmlFor="new-password">初始密码</label><Input id="new-password" name="password" minLength={8} required type="password" /></div>
-      <div><label htmlFor="new-role">角色</label><select id="new-role" className="h-9 w-full rounded-md border px-2" value={role} onChange={(event) => setRole(event.target.value as UserRole)}><option value="user">普通用户</option><option value="admin">管理员</option></select></div>
-      <Button className="self-end" disabled={createUser.isPending} type="submit">{createUser.isPending ? "添加中…" : "添加用户"}</Button>
-    </form>
-    <ul className="divide-y rounded-lg border">{users.data?.map((user) => <UserRow key={user.id} user={user} stores={stores.data} storesPending={stores.isPending} storesError={stores.isError} pending={patchUser.isPending || deleteUser.isPending} onPatch={(body) => patchUser.mutate({ userId: user.id, body })} onDelete={() => { if (window.confirm(`确定永久删除用户“${user.username}”吗？此操作不可恢复。`)) deleteUser.mutate(user.id); }} onHistory={() => setHistoryUserId(user.id)} />)}</ul>
-    {historyUserId !== null && <section className="rounded-lg border p-3"><div className="flex justify-between"><h2 className="font-medium">用户操作历史</h2><Button size="sm" variant="ghost" onClick={() => setHistoryUserId(null)}>关闭</Button></div><ErrorMessage error={operations.error} /><ul>{operations.data?.map((entry) => <li className="border-t py-2" key={entry.id}>{entry.description}</li>)}</ul></section>}
-    <section className="space-y-3 rounded-lg border p-4">
-      <h2 className="font-medium">门店成员</h2>
-      <label htmlFor="member-store">成员门店</label>
-      <select id="member-store" className="h-9 w-full max-w-sm rounded-md border px-2" value={selectedStoreId ?? ""} onChange={(event) => { onSelectedStoreChange(event.target.value ? Number(event.target.value) : null); setMemberIds([]); }}><option value="">请选择门店</option>{stores.data?.filter((store) => store.is_active).map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}</select>
-      <ErrorMessage error={stores.error} /><ErrorMessage error={members.error} /><ErrorMessage error={replaceMembers.error} />
-      {selectedStoreId !== null && <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); if (canSaveMembers) replaceMembers.mutate({ storeId: selectedStoreId, userIds: memberIds }); }}>
-        <fieldset className="space-y-2"><legend>门店成员</legend>{users.data?.filter((user) => user.role === "user").map((user) => <label className="flex items-center gap-2" key={user.id}><input checked={memberIds.includes(user.id)} onChange={(event) => setMemberIds((current) => event.target.checked ? [...current, user.id].sort((a, b) => a - b) : current.filter((id) => id !== user.id))} type="checkbox" />{user.username}</label>)}</fieldset>
-        <Button disabled={!canSaveMembers || replaceMembers.isPending} type="submit">{replaceMembers.isPending ? "保存中…" : "保存成员"}</Button>
-      </form>}
-    </section>
-  </>;
-}
-
-function UserRow({ user, stores, storesPending, storesError, pending, onPatch, onDelete, onHistory }: { user: AdminUser; stores: AdminStore[] | undefined; storesPending: boolean; storesError: boolean; pending: boolean; onPatch: (body: UserPatchBody) => void; onDelete: () => void; onHistory: () => void }) {
-  const [editing, setEditing] = useState(false);
-  const [draftRole, setDraftRole] = useState<UserRole>(user.role);
-  const [draftActive, setDraftActive] = useState(user.is_active);
-  const [draftStoreIds, setDraftStoreIds] = useState<number[]>(user.store_ids ?? []);
-
-  let accessibleStoreNames = "全部门店";
-  if (user.role !== "admin") {
-    if (storesPending) accessibleStoreNames = "加载中";
-    else if (storesError || !stores) accessibleStoreNames = "暂时无法获取";
-    else accessibleStoreNames = stores
-      .filter((store) => (user.store_ids ?? []).includes(store.id))
-      .map((store) => `${store.name}${store.is_active ? "" : "（已停用）"}`)
-      .join("、") || "未分配门店";
+  function submitEdit(draft: UserDraft) {
+    if (typeof selection !== "number") return;
+    const target = String(selection);
+    const requestId = beginRequest(target);
+    patchUser.mutate({
+      target,
+      requestId,
+      userId: selection,
+      body: {
+        role: draft.role,
+        is_active: draft.is_active,
+        store_ids: draft.role === "user" ? draft.store_ids : [],
+        ...(draft.password ? { password: draft.password } : {}),
+      },
+    });
   }
 
-  function toggleEditing() {
-    if (!editing) {
-      setDraftRole(user.role);
-      setDraftActive(user.is_active);
-      setDraftStoreIds((user.store_ids ?? []).filter((id) => stores?.some((store) => store.id === id && store.is_active)));
-    }
-    setEditing((value) => !value);
+  function removeUser(userId: number) {
+    const target = String(userId);
+    const requestId = beginRequest(target);
+    deleteUser.mutate({ target, requestId, userId });
   }
 
-  return <li className="space-y-3 p-3">
-    <div className="flex flex-wrap items-start justify-between gap-2">
-      <div>
-        <p className="font-medium">{user.username}</p>
-        <p className="text-sm text-muted-foreground">{user.role === "admin" ? "管理员" : "普通用户"} · {user.is_active ? "启用" : "停用"}</p>
-        <p className="text-sm">可访问门店：{accessibleStoreNames}</p>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <Button aria-label={`${user.is_active ? "停用" : "启用"}用户 ${user.username}`} disabled={pending} size="sm" variant="outline" onClick={() => onPatch({ is_active: !user.is_active })}>{user.is_active ? "停用" : "启用"}</Button>
-        <Button aria-label={`编辑用户 ${user.username}`} disabled={pending} size="sm" variant="outline" onClick={toggleEditing}>{editing ? "取消编辑" : "编辑"}</Button>
-        <Button aria-label={`操作历史 ${user.username}`} size="sm" variant="outline" onClick={onHistory}>操作历史</Button>
-        <Button aria-label={`永久删除用户 ${user.username}`} disabled={pending} size="sm" variant="destructive" onClick={onDelete}>永久删除</Button>
-      </div>
+  const list = users.data ?? [];
+
+  let editor;
+  if (selection === "new") {
+    editor = <UserEditor
+      error={mountedRequest?.error ?? null}
+      isOwner={actor?.is_owner === true}
+      key="new"
+      mode="create"
+      onDirtyChange={markDirty}
+      onSubmit={submitCreate}
+      pending={mountedRequest?.pending === true}
+      stores={stores.data ?? []}
+      successVersion={createSuccessVersion}
+      user={null}
+    />;
+  } else if (!selectedUser) {
+    editor = <p className="text-sm text-muted-foreground">请选择用户</p>;
+  } else if (selectedUser.role === "admin" && !actor?.is_owner) {
+    editor = <section className="rounded-lg border bg-card p-4">
+      <h2 className="font-medium">{selectedUser.username}</h2>
+      <p className="text-sm text-muted-foreground">管理员账号只能由最终管理员编辑</p>
+    </section>;
+  } else {
+    editor = <UserEditor
+      error={mountedRequest?.error ?? null}
+      isOwner={actor?.is_owner === true}
+      key={selectedUser.id}
+      mode="edit"
+      onDelete={() => removeUser(selectedUser.id)}
+      onDirtyChange={markDirty}
+      onSubmit={submitEdit}
+      pending={mountedRequest?.pending === true}
+      stores={stores.data ?? []}
+      successVersion={editSuccessVersion}
+      user={selectedUser}
+    />;
+  }
+
+  return <div className="space-y-4">
+    <ErrorMessage error={users.error} />
+    <ErrorMessage error={stores.error} />
+    <div className="flex justify-end">
+      <Button onClick={() => select("new")} type="button">新建用户</Button>
     </div>
-    <form className="flex gap-2" onSubmit={(event) => { event.preventDefault(); const form = event.currentTarget; const password = String(new FormData(form).get("password")); onPatch({ password }); form.reset(); }}>
-      <label className="sr-only" htmlFor={`password-${user.id}`}>新密码 {user.username}</label><Input disabled={pending} id={`password-${user.id}`} minLength={8} name="password" placeholder="新密码" required type="password" /><Button aria-label={`修改密码 ${user.username}`} disabled={pending} size="sm" type="submit">修改密码</Button>
-    </form>
-    {editing && <form className="space-y-3 rounded-md bg-muted/40 p-3" onSubmit={(event) => { event.preventDefault(); const password = String(new FormData(event.currentTarget).get("editor-password")); onPatch({ role: draftRole, is_active: draftActive, store_ids: draftRole === "admin" ? [] : draftStoreIds, ...(password ? { password } : {}) }); }}>
-      <div><label htmlFor={`role-${user.id}`}>角色 {user.username}</label><select id={`role-${user.id}`} className="h-9 w-full rounded-md border px-2" value={draftRole} onChange={(event) => setDraftRole(event.target.value as UserRole)}><option value="user">普通用户</option><option value="admin">管理员</option></select></div>
-      <label className="flex items-center gap-2"><input checked={draftActive} onChange={(event) => setDraftActive(event.target.checked)} type="checkbox" />账号启用 {user.username}</label>
-      {draftRole === "user" && <fieldset className="space-y-2"><legend>可访问门店</legend>{stores?.filter((store) => store.is_active).map((store) => <label className="flex items-center gap-2" key={store.id}><input aria-label={`${user.username} 可访问 ${store.name}`} checked={draftStoreIds.includes(store.id)} onChange={(event) => setDraftStoreIds((current) => event.target.checked ? [...current, store.id].sort((a, b) => a - b) : current.filter((id) => id !== store.id))} type="checkbox" />{store.name}</label>)}</fieldset>}
-      <div><label htmlFor={`editor-password-${user.id}`}>重置密码 {user.username}</label><Input id={`editor-password-${user.id}`} minLength={8} name="editor-password" placeholder="留空则不修改" type="password" /></div>
-      <Button aria-label={`保存用户 ${user.username}`} disabled={pending} size="sm" type="submit">保存用户</Button>
-    </form>}
-  </li>;
+    <label className="md:hidden">
+      <span className="sr-only">用户</span>
+      <select
+        aria-label="用户"
+        className="h-9 w-full rounded-md border bg-background px-2"
+        onChange={(event) => select(event.target.value === "new" ? "new" : event.target.value ? Number(event.target.value) : null)}
+        value={selection ?? ""}
+      >
+        <option value="">请选择用户</option>
+        <option value="new">新建用户</option>
+        {list.map((user) => <option key={user.id} value={user.id}>{user.username}</option>)}
+      </select>
+    </label>
+    <div className="grid gap-4 md:grid-cols-[minmax(13rem,18rem)_minmax(0,1fr)]">
+      <aside className="hidden md:block">
+        <ul className="divide-y rounded-lg border bg-card">
+          {list.map((user) => <li key={user.id}>
+            <button
+              className="w-full p-3 text-left hover:bg-accent disabled:opacity-50"
+              onClick={() => select(user.id)}
+              type="button"
+            >
+              <span className="block font-medium">{user.username}</span>
+              <span className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                <span>{user.role === "admin" ? "管理员" : "普通用户"}</span>
+                <span>{user.is_active ? "启用" : "停用"}</span>
+                <span>{user.store_ids.length} 个门店</span>
+              </span>
+            </button>
+          </li>)}
+        </ul>
+      </aside>
+      <main>{editor}</main>
+    </div>
+  </div>;
 }
