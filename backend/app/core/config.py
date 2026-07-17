@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     environment: str = "development"
     database_url: str = "mysql+asyncmy://autolava:autolava@127.0.0.1/autolava"
     jwt_secret: SecretStr = SecretStr("development-only-secret")
+    bootstrap_username: str = ""
     cookie_secure: bool = False
     cors_origins: list[str] = ["http://localhost:5173"]
 

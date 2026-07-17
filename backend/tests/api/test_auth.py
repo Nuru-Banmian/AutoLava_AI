@@ -63,6 +63,50 @@ async def test_login_sets_http_only_cookie(client, user_factory) -> None:
     assert "SameSite=lax" in cookie
 
 
+async def test_login_and_me_report_configured_owner(
+    client, user_factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AUTOLAVA_BOOTSTRAP_USERNAME", "Nuru_Banmian")
+    get_settings.cache_clear()
+    await user_factory(username="Nuru_Banmian", password="secret123", role="admin")
+
+    login = await client.post(
+        "/api/auth/login",
+        json={
+            "username": "Nuru_Banmian",
+            "password": "secret123",
+            "remember": False,
+        },
+    )
+    assert login.status_code == 200
+    assert login.json() == {
+        "id": login.json()["id"],
+        "username": "Nuru_Banmian",
+        "role": "admin",
+        "is_owner": True,
+    }
+    assert (await client.get("/api/auth/me")).json()["is_owner"] is True
+
+
+async def test_non_owner_auth_payload_is_explicitly_false(
+    client, user_factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AUTOLAVA_BOOTSTRAP_USERNAME", "Nuru_Banmian")
+    get_settings.cache_clear()
+    await user_factory(username="secondary-admin", password="secret123", role="admin")
+
+    response = await client.post(
+        "/api/auth/login",
+        json={
+            "username": "secondary-admin",
+            "password": "secret123",
+            "remember": False,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["is_owner"] is False
+
+
 async def test_login_sets_session_cookie_attributes(client, user_factory) -> None:
     await user_factory(username="session-user", password="secret")
     response = await client.post(
