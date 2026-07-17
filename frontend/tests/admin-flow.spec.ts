@@ -79,6 +79,7 @@ test("admin configures income, user, and mapped store without coordinate fields"
   await expect.poll(() => capture.incomePublish).toMatchObject({ enabled: true, items: [{ name: "现金" }, { name: "其他" }] });
 
   await page.getByRole("tab", { name: "用户与权限" }).click();
+  await page.getByRole("button", { name: "新建用户" }).click();
   await page.getByLabel("新用户名").fill("operator");
   await page.getByLabel("初始密码").fill("operator-123");
   await page.getByRole("button", { name: "添加用户" }).click();
