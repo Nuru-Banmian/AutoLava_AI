@@ -13,10 +13,25 @@ const record: RecordSnapshot = {
 };
 
 describe("RecordTable", () => {
+  it("selects an unrecorded row by mouse and keyboard", () => {
+    const onSelect = vi.fn();
+    const onRetry = vi.fn();
+    const empty = { id: null, date: "2026-07-15" };
+    render(<RecordTable records={[empty]} selectedDate={empty.date} loading={false} error={null} onSelect={onSelect} onRetry={onRetry} />);
+
+    const row = screen.getByRole("row", { name: /2026年7月15日 未录入/ });
+    expect(row).toHaveAttribute("aria-selected", "true");
+    expect(row).toHaveAttribute("tabIndex", "0");
+    fireEvent.click(row);
+    fireEvent.keyDown(row, { key: "Enter" });
+    expect(onSelect).toHaveBeenNthCalledWith(1, empty);
+    expect(onSelect).toHaveBeenNthCalledWith(2, empty);
+  });
+
   it("uses a semantic four-column table and activates the selected row by keyboard", () => {
     const onSelect = vi.fn();
     const onRetry = vi.fn();
-    render(<RecordTable records={[record]} selectedId={record.id} loading={false} error={null} onSelect={onSelect} onRetry={onRetry} />);
+    render(<RecordTable records={[record]} selectedDate={record.date} loading={false} error={null} onSelect={onSelect} onRetry={onRetry} />);
 
     expect(screen.getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["日期", "状态", "总营业额", "天气"]);
     expect(screen.queryByRole("columnheader", { name: /洗车|活动|收入/ })).not.toBeInTheDocument();
@@ -30,18 +45,18 @@ describe("RecordTable", () => {
   it("uses Space to activate records and renders loading, errors, and an empty state", () => {
     const onSelect = vi.fn();
     const onRetry = vi.fn();
-    const { rerender } = render(<RecordTable records={[record]} selectedId={null} loading={false} error={null} onSelect={onSelect} onRetry={onRetry} />);
+    const { rerender } = render(<RecordTable records={[record]} selectedDate={null} loading={false} error={null} onSelect={onSelect} onRetry={onRetry} />);
 
     fireEvent.keyDown(screen.getByRole("row", { name: /2026年7月14日 休息/ }), { key: " " });
     expect(onSelect).toHaveBeenCalledWith(record);
 
-    rerender(<RecordTable records={[]} selectedId={null} loading error={null} onSelect={onSelect} onRetry={onRetry} />);
+    rerender(<RecordTable records={[]} selectedDate={null} loading error={null} onSelect={onSelect} onRetry={onRetry} />);
     expect(screen.getByRole("status")).toBeInTheDocument();
-    rerender(<RecordTable records={[]} selectedId={null} loading={false} error={new Error("加载失败")} onSelect={onSelect} onRetry={onRetry} />);
+    rerender(<RecordTable records={[]} selectedDate={null} loading={false} error={new Error("加载失败")} onSelect={onSelect} onRetry={onRetry} />);
     expect(screen.getByRole("alert")).toHaveTextContent("加载失败");
     fireEvent.click(screen.getByRole("button", { name: "重试" }));
     expect(onRetry).toHaveBeenCalledOnce();
-    rerender(<RecordTable records={[]} selectedId={null} loading={false} error={null} onSelect={onSelect} onRetry={onRetry} />);
+    rerender(<RecordTable records={[]} selectedDate={null} loading={false} error={null} onSelect={onSelect} onRetry={onRetry} />);
     expect(screen.getByText("暂无记录")).toBeInTheDocument();
   });
 });
