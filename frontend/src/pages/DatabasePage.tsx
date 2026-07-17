@@ -8,7 +8,7 @@ import { api, ApiError, friendlyApiError } from "@/api/client";
 import type { AuditEntry, DatabaseResponse, RecordSnapshot } from "@/api/types";
 import { useAuth } from "@/auth/AuthProvider";
 import { MonthCalendar } from "@/components/MonthCalendar";
-import { RecordDetail } from "@/components/RecordDetail";
+import { RecordDetailPanel } from "@/components/RecordDetailPanel";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -174,7 +174,7 @@ export function DatabasePage() {
       </Card>
 
       {records.isSuccess && (selectedRecord ? (
-        <RecordDetail record={selectedRecord} canEdit canManage={isAdmin} onManage={() => { setAuditTarget({ date: selectedRecord.date, recordId: selectedRecord.id }); setAdminOpen(true); }} />
+        <RecordDetailPanel record={selectedRecord} canEdit canManage={isAdmin} onManage={() => { setAuditTarget({ date: selectedRecord.date, recordId: selectedRecord.id }); setAdminOpen(true); }} />
       ) : (
         <Card><CardContent className="grid gap-3 p-4"><p>{format(parseISO(selectedDate), "yyyy年M月d日")}尚未记录</p><div className="flex flex-wrap gap-2"><Button asChild className="w-fit"><Link to={`/ledger?date=${selectedDate}`}>补记这一天</Link></Button>{isAdmin && <Button type="button" variant="outline" onClick={() => { setAuditTarget({ date: selectedDate, recordId: null }); setAdminOpen(true); }}>管理这天审计</Button>}</div></CardContent></Card>
       ))}

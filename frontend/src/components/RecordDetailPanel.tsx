@@ -6,14 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatMoney } from "@/lib/user-api";
 
-interface RecordDetailProps {
+export interface RecordDetailPanelProps {
   record: RecordSnapshot;
   canEdit: boolean;
   canManage: boolean;
   onManage(): void;
 }
 
-export function RecordDetail({ record, canEdit, canManage, onManage }: RecordDetailProps) {
+export function RecordDetailPanel({ record, canEdit, canManage, onManage }: RecordDetailPanelProps) {
   const composedItems = record.income_mode === "composed" ? record.items : [];
 
   return (
@@ -23,7 +23,10 @@ export function RecordDetail({ record, canEdit, canManage, onManage }: RecordDet
       </CardHeader>
       <CardContent className="grid gap-4 p-4 pt-0">
         <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-          <div><p className="text-muted-foreground">营业状态</p><p className="font-medium">{record.is_open}</p></div>
+          <div>
+            <p className="text-muted-foreground">营业状态</p>
+            <p className="flex items-center gap-2 font-medium"><span aria-hidden="true" className="inline-block size-2 rounded-full bg-current" />{record.is_open}</p>
+          </div>
           <div><p className="text-muted-foreground">营业额</p><p className="font-medium">{formatMoney(record.daily_revenue)}</p></div>
           <div><p className="text-muted-foreground">洗车数量</p><p className="font-medium">洗车数量 {record.wash_count ?? "—"}</p></div>
           <div><p className="text-muted-foreground">天气</p><p className="font-medium">{record.weather ?? "—"}</p></div>
@@ -32,9 +35,13 @@ export function RecordDetail({ record, canEdit, canManage, onManage }: RecordDet
         {record.income_mode === "legacy_total" ? (
           <p className="rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">历史记录仅保存营业额总计</p>
         ) : composedItems.length > 0 ? (
-          <div className="grid gap-1 text-sm">
+          <div className="grid gap-2 text-sm">
             {composedItems.map((item) => (
-              <div key={item.id} className="flex justify-between gap-4"><span>{item.category_name}</span><span>{formatMoney(item.amount)}</span></div>
+              <div key={item.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+                <span>{item.category_name}</span>
+                <span className="text-muted-foreground">{item.include_in_total ? "计入总营业额" : "独立记录"}</span>
+                <span>{formatMoney(item.amount)}</span>
+              </div>
             ))}
           </div>
         ) : null}
