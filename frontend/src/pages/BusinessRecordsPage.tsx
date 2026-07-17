@@ -31,7 +31,7 @@ export function BusinessRecordsPage() {
   const [recordMode, setRecordMode] = useState<RecordRangeMode>("current-month");
   const [range, setRange] = useState<DateRange>(() => recordRange("current-month", today));
   const [page, setPage] = useState(1);
-  const [selectedRecordId, setSelectedRecordId] = useState<number | null>(null);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [mobileRecord, setMobileRecord] = useState<RecordSnapshot | null>(null);
   const [returnFocusTo, setReturnFocusTo] = useState<HTMLButtonElement | null>(null);
   const [managementOpen, setManagementOpen] = useState(false);
@@ -42,7 +42,7 @@ export function BusinessRecordsPage() {
   useEffect(() => {
     if (!selected) {
       setRecordStoreId(null);
-      setSelectedRecordId(null);
+      setSelectedDate(null);
       setMobileRecord(null);
       setReturnFocusTo(null);
       setManagementOpen(false);
@@ -53,7 +53,7 @@ export function BusinessRecordsPage() {
     setRecordMode("current-month");
     setRange(recordRange("current-month", storeLocalToday(selected)));
     setPage(1);
-    setSelectedRecordId(null);
+    setSelectedDate(null);
     setMobileRecord(null);
     setReturnFocusTo(null);
     setManagementOpen(false);
@@ -76,7 +76,7 @@ export function BusinessRecordsPage() {
   useEffect(() => {
     if (!records.isSuccess) return;
     const items = records.data.items.filter((item) => item.store_id === selected?.id);
-    setSelectedRecordId((current) => items.some((item) => item.id === current) ? current : (items[0]?.id ?? null));
+    setSelectedDate((current) => current ?? items[0]?.date ?? null);
     setMobileRecord((current) => {
       if (!current) return null;
       return items.find((item) => item.id === current.id) ?? null;
@@ -84,7 +84,7 @@ export function BusinessRecordsPage() {
   }, [records.data, records.isSuccess, selected?.id]);
 
   const selectedRecordFromResponse = records.data?.items.find((item) => (
-    item.id === selectedRecordId && item.store_id === selected?.id
+    item.date === selectedDate && item.store_id === selected?.id
   )) ?? null;
   if (!selectedRecordFromResponse) {
     selectedRecordRef.current = null;
@@ -105,6 +105,7 @@ export function BusinessRecordsPage() {
       .map((day) => byDate.get(format(day, "yyyy-MM-dd")) ?? { id: null, date: format(day, "yyyy-MM-dd") })
       .reverse();
   }, [range.end, range.start, today, visibleRecords]);
+  const selectedTableRow = tableRows.find((record) => record.date === selectedDate) ?? null;
   const pagedTableRows = tableRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const exportMutation = useMutation({
     mutationFn: ({ storeId, requestedRange }: { storeId: number; requestedRange: DateRange }) => (
@@ -119,12 +120,12 @@ export function BusinessRecordsPage() {
     setRecordMode(nextMode);
     setRange(nextRange);
     setPage(1);
-    setSelectedRecordId(null);
+    setSelectedDate(null);
     setMobileRecord(null);
   };
   const handlePageChange = (nextPage: number) => {
     setPage(nextPage);
-    setSelectedRecordId(null);
+    setSelectedDate(null);
     setMobileRecord(null);
   };
 
@@ -149,19 +150,19 @@ export function BusinessRecordsPage() {
           <div className="hidden lg:block">
             <RecordTable
               records={pagedTableRows}
-              selectedId={selectedRecordId}
+              selectedDate={selectedDate}
               loading={records.isLoading}
               error={records.error}
-              onSelect={(nextRecord) => setSelectedRecordId(nextRecord.id)}
+              onSelect={(nextRecord) => setSelectedDate(nextRecord.date)}
               onRetry={() => void records.refetch()}
             />
           </div>
           <div className="lg:hidden">
             <MobileRecordList
               records={visibleRecords}
-              selectedId={selectedRecordId}
+              selectedId={selectedRecord?.id ?? null}
               onSelect={(nextRecord, trigger) => {
-                setSelectedRecordId(nextRecord.id);
+                setSelectedDate(nextRecord.date);
                 setMobileRecord(nextRecord);
                 setReturnFocusTo(trigger);
               }}
@@ -182,13 +183,14 @@ export function BusinessRecordsPage() {
         </div>
         <aside className="grid gap-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
           <div className="hidden lg:block">
-            {selectedRecord ? (
+            {selectedTableRow ? (
               <RecordDetailPanel
-                record={selectedRecord}
+                record={selectedTableRow}
                 canEdit
-                canManage={isAdmin}
+                canManage={isAdmin && selectedTableRow.id !== null}
                 onManage={() => {
-                  setManagementDate(selectedRecord.date);
+                  if (selectedTableRow.id === null) return;
+                  setManagementDate(selectedTableRow.date);
                   setManagementOpen(true);
                 }}
               />
