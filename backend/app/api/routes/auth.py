@@ -7,6 +7,7 @@ from app.core.security import create_access_token, hash_password, verify_passwor
 from app.models.identity import User
 from app.schemas.auth import LoginBody, PasswordChange
 from app.services.access import list_accessible_stores
+from app.services.owner import authenticated_user_payload
 
 router = APIRouter(tags=["auth"])
 _DUMMY_PASSWORD_HASH = "$2b$12$IQOOUtkNRsdb1U4AxGQsf.mE9yqB1P7aZxsi4Y3eqQ6kGfJkWVZl2"
@@ -29,7 +30,7 @@ async def login(body: LoginBody, response: Response, session: Session) -> dict:
         max_age=max_age,
         path="/",
     )
-    return {"id": user.id, "username": user.username, "role": user.role}
+    return authenticated_user_payload(user)
 
 
 @router.post("/auth/logout", status_code=204)
@@ -55,7 +56,7 @@ async def change_password(body: PasswordChange, session: Session, user: CurrentU
 
 @router.get("/auth/me")
 async def me(user: CurrentUser) -> dict:
-    return {"id": user.id, "username": user.username, "role": user.role}
+    return authenticated_user_payload(user)
 
 
 @router.get("/stores/accessible")
