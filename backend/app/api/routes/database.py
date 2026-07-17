@@ -7,7 +7,7 @@ from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import Session, StoreAccess, require_capability, require_store_access
+from app.api.deps import Session, StoreAccess, require_capability, require_store_access, require_store_read_access
 from app.api.routes.ledger import _safely_refresh_briefing
 from app.models.audit import AuditLog
 from app.models.identity import User
@@ -209,7 +209,7 @@ async def export_records(
     weather: Annotated[str | None, Query(max_length=50)] = None,
     activity_query: Annotated[str | None, Query(max_length=2000)] = None,
     missing_wash_count: bool = False,
-    access: StoreAccess = Depends(require_store_access),
+    access: StoreAccess = Depends(require_store_read_access),
 ) -> Response:
     filters = _filters(start, end, status, weather, activity_query, missing_wash_count)
     record_query = build_record_query(store_id, filters)
@@ -244,7 +244,7 @@ async def record_history(
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
     record_id: int | None = None,
     record_date: date | None = None,
-    access: StoreAccess = Depends(require_store_access),
+    access: StoreAccess = Depends(require_store_read_access),
 ) -> dict:
     del access
     conditions = [
@@ -292,7 +292,7 @@ async def record_page(
     missing_wash_count: bool = False,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=200)] = 50,
-    access: StoreAccess = Depends(require_store_access),
+    access: StoreAccess = Depends(require_store_read_access),
 ) -> dict:
     del access
     filters = _filters(start, end, status, weather, activity_query, missing_wash_count)

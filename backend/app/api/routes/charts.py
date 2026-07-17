@@ -4,7 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 
-from app.api.deps import Session, StoreAccess, require_store_access
+from app.api.deps import Session, StoreAccess, require_store_read_access
 from app.models.ledger import IncomeCategory
 from app.schemas.charts import ChartsResponse
 from app.services.analytics import AnalyticsService
@@ -17,7 +17,7 @@ async def get_charts(
     start: date,
     end: date,
     session: Session,
-    access: Annotated[StoreAccess, Depends(require_store_access)],
+    access: Annotated[StoreAccess, Depends(require_store_read_access)],
     category_id: Annotated[list[int] | None, Query()] = None,
 ) -> ChartsResponse:
     if start > end:

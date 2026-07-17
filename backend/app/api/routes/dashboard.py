@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import case, select
 
-from app.api.deps import Session, StoreAccess, require_store_access
+from app.api.deps import Session, StoreAccess, require_store_access, require_store_read_access
 from app.models.operations import DailyBriefing, UTC_TIMESTAMP_CONTRACT
 from app.schemas.dashboard import DashboardCardResponse
 from app.services.briefing import BriefingService
@@ -85,7 +85,7 @@ async def get_weather(
     store_id: int,
     target_date: date,
     weather: Weather,
-    access: StoreAccess = Depends(require_store_access),
+    access: StoreAccess = Depends(require_store_read_access),
 ) -> dict[str, str | int | float | None]:
     try:
         result = await weather.get_daily(access.store, target_date)
@@ -98,7 +98,7 @@ async def get_weather(
 async def get_dashboard(
     store_id: int,
     session: Session,
-    access: StoreAccess = Depends(require_store_access),
+    access: StoreAccess = Depends(require_store_read_access),
 ) -> list[DashboardCardResponse]:
     card_order = case(
         (DailyBriefing.card_type == "yesterday", 0),

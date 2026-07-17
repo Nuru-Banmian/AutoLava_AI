@@ -14,7 +14,7 @@ const storesKey = ["admin", "stores"] as const;
 function ErrorMessage({ error, deletion = false }: { error: Error | null; deletion?: boolean }) {
   if (!error) return null;
   if (deletion && error instanceof ApiError && error.status === 409) {
-    return <p role="alert" className="text-sm text-destructive">该门店已有经营或历史记录，只能停用门店。</p>;
+    return <p role="alert" className="text-sm text-destructive">该门店已有经营或历史记录，只能归档门店。</p>;
   }
   return <p role="alert" className="text-sm text-destructive">{error instanceof ApiError ? error.detail : "请求失败"}</p>;
 }
@@ -23,14 +23,16 @@ export function StoreSettingsPanel() {
   const queryClient = useQueryClient();
   const stores = useQuery({ queryKey: storesKey, queryFn: () => api<AdminStore[]>("/admin/stores") });
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [createLocation, setCreateLocation] = useState<MapLocation | null>(null);
   const [editLocation, setEditLocation] = useState<MapLocation | null>(null);
+  const visibleStores = stores.data?.filter((store) => store.is_active || showArchived) ?? [];
   useEffect(() => {
-    if (stores.data?.some((store) => store.id === selectedStoreId)) return;
-    setSelectedStoreId(stores.data?.[0]?.id ?? null);
-  }, [selectedStoreId, stores.data]);
-  const selectedStore = stores.data?.find((store) => store.id === selectedStoreId) ?? null;
+    if (visibleStores.some((store) => store.id === selectedStoreId)) return;
+    setSelectedStoreId(visibleStores[0]?.id ?? null);
+  }, [selectedStoreId, visibleStores]);
+  const selectedStore = visibleStores.find((store) => store.id === selectedStoreId) ?? null;
   useEffect(() => {
     setEditLocation(selectedStore ? {
       label: selectedStore.address,
@@ -76,9 +78,10 @@ export function StoreSettingsPanel() {
       <div className="min-w-48 flex-1">
         <label htmlFor="current-store">当前门店</label>
         <select id="current-store" className="mt-1 h-9 w-full rounded-md border bg-background px-3" value={selectedStoreId ?? ""} onChange={(event) => setSelectedStoreId(Number(event.target.value))}>
-          {stores.data?.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
+          {visibleStores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
         </select>
       </div>
+      <Button type="button" variant="outline" onClick={() => setShowArchived((value) => !value)}>{showArchived ? "隐藏已归档门店" : "显示已归档门店"}</Button>
       <Button type="button" onClick={() => setShowCreate((value) => !value)}>{showCreate ? "取消新建" : "新建门店"}</Button>
     </header>
 
@@ -107,9 +110,9 @@ export function StoreSettingsPanel() {
         <Button aria-label={`保存门店 ${store.name}`} disabled={patchStore.isPending} type="submit">保存</Button>
       </form>
       <section aria-label="危险操作" className="mt-6 border-t border-destructive/30 pt-4">
-        <p className="mb-3 text-sm text-muted-foreground">有经营记录的门店只能停用；只有从未使用的误建门店才能永久删除。</p>
+        <p className="mb-3 text-sm text-muted-foreground">归档会保留经营和历史数据，并从日常门店列表隐藏；只有从未使用的误建门店才能永久删除。</p>
         <div className="flex flex-wrap gap-2">
-          <Button aria-label={`${store.is_active ? "停用" : "启用"}门店 ${store.name}`} disabled={patchStore.isPending} type="button" variant="outline" onClick={() => patchStore.mutate({ storeId: store.id, body: { is_active: !store.is_active } })}>{store.is_active ? "停用" : "启用"}</Button>
+          <Button aria-label={`${store.is_active ? "归档" : "恢复归档"}门店 ${store.name}`} disabled={patchStore.isPending} type="button" variant="outline" onClick={() => patchStore.mutate({ storeId: store.id, body: { is_active: !store.is_active } })}>{store.is_active ? "归档门店" : "恢复归档"}</Button>
           <Button aria-label={`永久删除门店 ${store.name}`} disabled={deleteStore.isPending} type="button" variant="destructive" onClick={() => {
             if (window.confirm(`确定永久删除门店“${store.name}”吗？只有从未使用的门店可以删除。`)) deleteStore.mutate(store.id);
           }}>永久删除</Button>

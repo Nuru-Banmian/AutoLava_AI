@@ -61,4 +61,7 @@ async def me(user: CurrentUser) -> dict:
 @router.get("/stores/accessible")
 async def accessible_stores(user: CurrentUser, session: Session) -> list[dict]:
     stores = await list_accessible_stores(session, user)
-    return [{"id": store.id, "name": store.name, "timezone": store.timezone} for store in stores]
+    return [
+        {"id": store.id, "name": store.name, "timezone": store.timezone, "is_active": store.is_active}
+        for store in stores
+    ]

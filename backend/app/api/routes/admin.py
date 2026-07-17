@@ -194,7 +194,7 @@ async def _require_stores(session: Session, store_ids: Iterable[int]) -> None:
     if {store.id for store in stores} != set(unique_ids):
         raise HTTPException(404, "Store not found")
     if any(not store.is_active for store in stores):
-        raise HTTPException(409, "停用门店不能分配给用户")
+        raise HTTPException(409, "归档门店不能分配给用户")
 
 
 async def _user_store_ids(session: Session, user_id: int) -> list[int]:
@@ -518,7 +518,7 @@ async def _initial_store_create_audit_for_delete(
         return None
     if len(audits) == 1 and _is_initial_store_create_audit(audits[0], store_id):
         return audits[0]
-    raise HTTPException(409, "该门店已有业务或历史记录，请停用门店而不是删除")
+    raise HTTPException(409, "该门店已有业务或历史记录，请归档门店而不是删除")
 
 
 @router.delete("/stores/{store_id}", status_code=204)
@@ -529,7 +529,7 @@ async def delete_store(store_id: int, session: Session, actor: StoresManager) ->
     if store is None:
         raise HTTPException(404, "Store not found")
     if await _store_has_protected_references(session, store_id):
-        raise HTTPException(409, "该门店已有业务或历史记录，请停用门店而不是删除")
+        raise HTTPException(409, "该门店已有业务或历史记录，请归档门店而不是删除")
     initial_create_audit = await _initial_store_create_audit_for_delete(session, store_id)
 
     before = _store_payload(store)
@@ -555,7 +555,7 @@ async def delete_store(store_id: int, session: Session, actor: StoresManager) ->
     except IntegrityError as exc:
         await session.rollback()
         raise HTTPException(
-            409, "该门店已有业务或历史记录，请停用门店而不是删除"
+            409, "该门店已有业务或历史记录，请归档门店而不是删除"
         ) from exc
 
 
@@ -582,7 +582,7 @@ async def replace_members(
 ) -> dict[str, Any]:
     store = await _require_store(session, store_id)
     if not store.is_active:
-        raise HTTPException(409, "停用门店不能分配用户")
+        raise HTTPException(409, "归档门店不能分配用户")
     user_ids = sorted(set(body.user_ids))
     users = await _require_users(session, user_ids)
     if any(user.role == "admin" for user in users):

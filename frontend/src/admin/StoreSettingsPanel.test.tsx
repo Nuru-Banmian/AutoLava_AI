@@ -40,7 +40,7 @@ it("keeps the current-store selector and new-store action together in the header
   expect(screen.getByRole("button", { name: "修改地图位置" })).toBeInTheDocument();
 });
 
-it("puts deactivate and permanent delete in a confirmed danger area", async () => {
+it("puts archive and permanent delete in a confirmed danger area", async () => {
   let deleted = false;
   vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
   server.use(
@@ -58,17 +58,63 @@ it("puts deactivate and permanent delete in a confirmed danger area", async () =
   expect(window.confirm).toHaveBeenCalledTimes(2);
 });
 
-it("explains that a referenced store must be deactivated when deletion returns 409", async () => {
+it("hides archived stores until requested and restores them through the store patch", async () => {
+  const closed = { ...roma, id: 10, name: "Closed", is_active: false };
+  let restored = false;
+  let patchBody: unknown;
+  server.use(
+    http.get("/api/admin/stores", () => HttpResponse.json([roma, restored ? { ...closed, is_active: true } : closed])),
+    http.patch("/api/admin/stores/10", async ({ request }) => {
+      patchBody = await request.json();
+      restored = true;
+      return HttpResponse.json({ ...closed, is_active: true });
+    }),
+  );
+  renderPanel();
+
+  const selector = await screen.findByLabelText("当前门店");
+  expect(within(selector).queryByRole("option", { name: "Closed" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "显示已归档门店" }));
+  expect(await within(selector).findByRole("option", { name: "Closed" })).toBeInTheDocument();
+  fireEvent.change(selector, { target: { value: "10" } });
+
+  fireEvent.click(await screen.findByRole("button", { name: "恢复归档门店 Closed" }));
+
+  await waitFor(() => expect(patchBody).toEqual({ is_active: true }));
+});
+
+it("archives the current store and selects the next active store", async () => {
+  const milano = { ...roma, id: 10, name: "Milano", address: "Milano Centro" };
+  let archived = false;
+  let patchBody: unknown;
+  server.use(
+    http.get("/api/admin/stores", () => HttpResponse.json([archived ? { ...roma, is_active: false } : roma, milano])),
+    http.patch("/api/admin/stores/9", async ({ request }) => {
+      patchBody = await request.json();
+      archived = true;
+      return HttpResponse.json({ ...roma, is_active: false });
+    }),
+  );
+  renderPanel();
+
+  fireEvent.click(await screen.findByRole("button", { name: "归档门店 Roma" }));
+
+  await waitFor(() => expect(patchBody).toEqual({ is_active: false }));
+  await waitFor(() => expect(screen.getByLabelText("当前门店")).toHaveValue("10"));
+  expect(screen.getByLabelText("门店名称 Milano")).toBeInTheDocument();
+});
+
+it("explains that a referenced store must be archived when deletion returns 409", async () => {
   vi.spyOn(window, "confirm").mockReturnValue(true);
   server.use(
     http.get("/api/admin/stores", () => HttpResponse.json([roma])),
-    http.delete("/api/admin/stores/9", () => HttpResponse.json({ detail: "该门店已有业务或历史记录，请停用门店而不是删除" }, { status: 409 })),
+    http.delete("/api/admin/stores/9", () => HttpResponse.json({ detail: "该门店已有业务或历史记录，请归档门店而不是删除" }, { status: 409 })),
   );
   renderPanel();
 
   fireEvent.click(await screen.findByRole("button", { name: "永久删除门店 Roma" }));
 
-  expect(await screen.findByRole("alert")).toHaveTextContent("已有经营或历史记录，只能停用门店");
+  expect(await screen.findByRole("alert")).toHaveTextContent("已有经营或历史记录，只能归档门店");
 });
 
 it("does not carry a delete error to another selected store", async () => {
@@ -76,7 +122,7 @@ it("does not carry a delete error to another selected store", async () => {
   const milano = { ...roma, id: 10, name: "Milano", address: "Milano Centro" };
   server.use(
     http.get("/api/admin/stores", () => HttpResponse.json([roma, milano])),
-    http.delete("/api/admin/stores/9", () => HttpResponse.json({ detail: "该门店已有业务或历史记录，请停用门店而不是删除" }, { status: 409 })),
+    http.delete("/api/admin/stores/9", () => HttpResponse.json({ detail: "该门店已有业务或历史记录，请归档门店而不是删除" }, { status: 409 })),
   );
   renderPanel();
   fireEvent.click(await screen.findByRole("button", { name: "永久删除门店 Roma" }));

@@ -279,7 +279,7 @@ describe("AdminPage", () => {
     expect(client.getQueryState(["dashboard", 10])?.isInvalidated).toBe(false);
   });
 
-  it("invalidates the canonical accessible-store key after create and disable", async () => {
+  it("invalidates the canonical accessible-store key after create and archive", async () => {
     let active = true;
     server.use(
       http.get("/api/admin/users", () => HttpResponse.json([])),
@@ -291,14 +291,14 @@ describe("AdminPage", () => {
     );
     const { client } = renderAdmin("/admin?tab=stores");
     client.setQueryData(scopedAccessibleStoresKey, [{ id: 9 }]);
-    await screen.findByRole("button", { name: "停用门店 Roma" });
+    await screen.findByRole("button", { name: "归档门店 Roma" });
     fireEvent.click(screen.getByRole("button", { name: "新建门店" }));
     fireEvent.change(screen.getByLabelText("门店名称"), { target: { value: "Milano" } });
     fireEvent.click(screen.getByRole("button", { name: "打开地图选择" }));
     fireEvent.click(screen.getByRole("button", { name: "添加门店" }));
     await waitFor(() => expect(client.getQueryState(scopedAccessibleStoresKey)?.isInvalidated).toBe(true));
     client.setQueryData(scopedAccessibleStoresKey, [{ id: 9 }]);
-    fireEvent.click(screen.getByRole("button", { name: "停用门店 Roma" }));
+    fireEvent.click(screen.getByRole("button", { name: "归档门店 Roma" }));
     await waitFor(() => expect(active).toBe(false));
     expect(client.getQueryState(scopedAccessibleStoresKey)?.isInvalidated).toBe(true);
   });

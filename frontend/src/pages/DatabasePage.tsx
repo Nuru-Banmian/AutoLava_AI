@@ -124,6 +124,7 @@ export function DatabasePage() {
   });
 
   if (!selected) return <section><h1 className="text-2xl font-semibold">历史记录</h1><p role="status">请先选择门店。</p></section>;
+  const canModify = selected.is_active !== false;
   if (!month || !selectedDate) return <section><h1 className="text-2xl font-semibold">历史记录</h1><p role="status">加载记录…</p></section>;
 
   const moveMonth = (amount: number) => {
@@ -174,19 +175,19 @@ export function DatabasePage() {
       </Card>
 
       {records.isSuccess && (selectedRecord ? (
-        <RecordDetail record={selectedRecord} canEdit canManage={isAdmin} onManage={() => { setAuditTarget({ date: selectedRecord.date, recordId: selectedRecord.id }); setAdminOpen(true); }} />
+        <RecordDetail record={selectedRecord} canEdit={canModify} canManage={isAdmin && canModify} onManage={() => { setAuditTarget({ date: selectedRecord.date, recordId: selectedRecord.id }); setAdminOpen(true); }} />
       ) : (
-        <Card><CardContent className="grid gap-3 p-4"><p>{format(parseISO(selectedDate), "yyyy年M月d日")}尚未记录</p><div className="flex flex-wrap gap-2"><Button asChild className="w-fit"><Link to={`/ledger?date=${selectedDate}`}>补记这一天</Link></Button>{isAdmin && <Button type="button" variant="outline" onClick={() => { setAuditTarget({ date: selectedDate, recordId: null }); setAdminOpen(true); }}>管理这天审计</Button>}</div></CardContent></Card>
+        <Card><CardContent className="grid gap-3 p-4"><p>{format(parseISO(selectedDate), "yyyy年M月d日")}尚未记录</p>{canModify && <div className="flex flex-wrap gap-2"><Button asChild className="w-fit"><Link to={`/ledger?date=${selectedDate}`}>补记这一天</Link></Button>{isAdmin && <Button type="button" variant="outline" onClick={() => { setAuditTarget({ date: selectedDate, recordId: null }); setAdminOpen(true); }}>管理这天审计</Button>}</div>}</CardContent></Card>
       ))}
 
       <Dialog open={adminOpen} onOpenChange={setAdminOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>管理 {auditTarget?.date ?? selectedDate} 记录</DialogTitle></DialogHeader>
           <div className="grid gap-4">
-            {selectedRecord && selectedRecord.date === auditTarget?.date && <Button type="button" variant="destructive" className="w-fit" onClick={() => { setDeleteConflict(false); setDeleting(selectedRecord); }}>删除这天记录</Button>}
+            {canModify && selectedRecord && selectedRecord.date === auditTarget?.date && <Button type="button" variant="destructive" className="w-fit" onClick={() => { setDeleteConflict(false); setDeleting(selectedRecord); }}>删除这天记录</Button>}
             <div><h3 className="font-medium">修改历史</h3>
               {history.isLoading ? <p role="status">加载修改历史…</p> : history.error ? <div role="alert"><span>{history.error.message}</span><button className="ml-2 underline" onClick={() => void history.refetch()}>重试历史记录</button></div> : selectedHistory.length ? selectedHistory.map((entry) => (
-                <div key={entry.id} className="flex items-center justify-between gap-2 border-b py-2 text-sm"><span>{entry.operation_type} · {entry.operator_username}</span>{entry.rollbackable !== false ? <Button size="sm" variant="outline" onClick={() => setRolling(entry)}>回滚 #{entry.id}</Button> : <span className="text-muted-foreground">不可回滚</span>}</div>
+                <div key={entry.id} className="flex items-center justify-between gap-2 border-b py-2 text-sm"><span>{entry.operation_type} · {entry.operator_username}</span>{canModify && entry.rollbackable !== false ? <Button size="sm" variant="outline" onClick={() => setRolling(entry)}>回滚 #{entry.id}</Button> : <span className="text-muted-foreground">不可回滚</span>}</div>
               )) : <p className="text-sm text-muted-foreground">暂无修改历史</p>}
             </div>
           </div>
