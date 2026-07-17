@@ -80,7 +80,7 @@ def make_refresh_callback(
         async def get_daily(self, store: Store, target: date) -> WeatherResult | None:
             return self.results.get(target)
 
-    async def refresh_store(store: Store) -> None:
+    async def refresh_store(store: Store) -> bool:
         today = datetime.now(ZoneInfo(store.timezone)).date()
         weather_dates = [today - timedelta(days=1), today, today + timedelta(days=1)]
 
@@ -117,23 +117,64 @@ def make_refresh_callback(
                     store.id, ["yesterday", "today", "tomorrow"], local_date=today
                 )
                 await session.commit()
+                return all(result is not None for result in weather_values)
             except Exception:
                 await session.rollback()
+                return False
 
     async def refresh_all() -> None:
-        async with session_factory() as session:
-            stores = list(
-                await session.scalars(
-                    select(Store).where(Store.is_active.is_(True)).order_by(Store.id)
+        started_at = datetime.now(UTC).replace(tzinfo=None)
+        discovery_failed = False
+        try:
+            async with session_factory() as session:
+                stores = list(
+                    await session.scalars(
+                        select(Store).where(Store.is_active.is_(True)).order_by(Store.id)
+                    )
                 )
-            )
+        except Exception:
+            stores = []
+            discovery_failed = True
         semaphore = asyncio.Semaphore(store_concurrency)
 
-        async def bounded_refresh(store: Store) -> None:
+        async def bounded_refresh(store: Store) -> bool:
             async with semaphore:
-                await refresh_store(store)
+                try:
+                    return await refresh_store(store)
+                except Exception:
+                    return False
 
-        await asyncio.gather(*(bounded_refresh(store) for store in stores))
+        outcomes = await asyncio.gather(*(bounded_refresh(store) for store in stores))
+        succeeded = sum(outcomes)
+        failed = len(stores) - succeeded
+        if discovery_failed:
+            status = "failed"
+            message = "天气刷新失败：无法读取启用门店"
+        elif not stores:
+            status = "success"
+            message = "天气刷新完成：当前没有启用门店"
+        else:
+            status = "success" if failed == 0 else "failed"
+            message = (
+                f"天气刷新完成：共 {len(stores)} 个门店，"
+                f"成功 {succeeded} 个，失败 {failed} 个"
+            )
+
+        async with session_factory() as session:
+            session.add(
+                ScheduledTaskLog(
+                    store_id=None,
+                    task_type="weather_refresh",
+                    status=status,
+                    message=message,
+                    retry_count=0,
+                    started_at=started_at,
+                    finished_at=datetime.now(UTC).replace(tzinfo=None),
+                    created_at=started_at,
+                    timestamp_contract=UTC_TIMESTAMP_CONTRACT,
+                )
+            )
+            await session.commit()
 
     return refresh_all
 

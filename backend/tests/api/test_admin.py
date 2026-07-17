@@ -1262,7 +1262,7 @@ async def test_admin_can_list_alerts_and_task_logs_newest_first(
             ),
             ScheduledTaskLog(
                 store_id=None,
-                task_type="weather",
+                task_type="weather_refresh",
                 status="failed",
                 message="Later task",
                 retry_count=2,
@@ -1290,6 +1290,7 @@ async def test_admin_can_list_alerts_and_task_logs_newest_first(
     task_logs = await admin_client.get("/api/admin/task-logs")
     assert task_logs.status_code == 200
     assert [item["message"] for item in task_logs.json()] == ["Later task", "Earlier task"]
+    assert task_logs.json()[0]["task_type"] == "weather_refresh"
     assert task_logs.json()[0]["retry_count"] == 2
     for item in task_logs.json():
         assert item["timestamp_status"] == "utc"

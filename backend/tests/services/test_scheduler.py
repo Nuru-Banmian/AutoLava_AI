@@ -11,6 +11,7 @@ from app.core.database import async_session_factory, engine
 from app.models.base import Base
 from app.models.identity import Store, User
 from app.models.ledger import StoreDailyRecord
+from app.models.operations import ScheduledTaskLog
 from app.main import create_app
 from app.services.scheduler import (
     BackgroundRefreshScheduler,
@@ -193,6 +194,12 @@ async def test_refresh_rechecks_weather_edited_after_network_wait() -> None:
         assert refreshed.weather_edited is True
         assert refreshed.weather == "用户手工天气"
         assert refreshed.weather_auto == "晴"
+        task = await verify.scalar(
+            select(ScheduledTaskLog).where(ScheduledTaskLog.task_type == "weather_refresh")
+        )
+        assert task is not None
+        assert task.status == "success"
+        assert task.message == "天气刷新完成：共 1 个门店，成功 1 个，失败 0 个"
 
 
 async def test_refresh_callback_isolates_failure_and_progresses_other_stores() -> None:
@@ -238,3 +245,40 @@ async def test_refresh_callback_isolates_failure_and_progresses_other_stores() -
     assert len(calls[slow_id]) == 3
     assert len(calls[failed_id]) == 3
     assert len(calls[healthy_id]) == 3
+
+    async with async_session_factory() as verify:
+        task = await verify.scalar(
+            select(ScheduledTaskLog).where(ScheduledTaskLog.task_type == "weather_refresh")
+        )
+        assert task is not None
+        assert task.store_id is None
+        assert task.status == "failed"
+        assert task.timestamp_contract == "utc_v1"
+        assert task.created_at == task.started_at
+        assert task.finished_at is not None
+        assert task.started_at.tzinfo is None
+        assert task.finished_at.tzinfo is None
+        assert task.message == "天气刷新完成：共 3 个门店，成功 2 个，失败 1 个"
+        assert "one store weather failed" not in task.message
+
+
+async def test_refresh_callback_logs_truthful_success_when_no_stores() -> None:
+    if engine.dialect.name != "mysql" or engine.url.database != "autolava_test":
+        pytest.fail("Scheduler test requires the dedicated autolava_test database")
+    async with engine.begin() as connection:
+        for table in reversed(Base.metadata.sorted_tables):
+            await connection.execute(table.delete())
+
+    weather = AsyncMock(side_effect=AssertionError("no store must not call weather"))
+    await make_refresh_callback(async_session_factory, weather)()
+
+    async with async_session_factory() as verify:
+        task = await verify.scalar(select(ScheduledTaskLog))
+        assert task is not None
+        assert task.task_type == "weather_refresh"
+        assert task.status == "success"
+        assert task.message == "天气刷新完成：当前没有启用门店"
+        assert task.timestamp_contract == "utc_v1"
+        assert task.created_at == task.started_at
+        assert task.started_at <= task.finished_at
+    weather.assert_not_awaited()

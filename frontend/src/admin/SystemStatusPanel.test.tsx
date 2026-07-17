@@ -27,7 +27,7 @@ const dashboard = [{
 const weatherTask = [{
   id: 1,
   store_id: 1,
-  task_type: "weather",
+  task_type: "weather_refresh",
   status: "success",
   message: null,
   retry_count: 0,
@@ -132,6 +132,13 @@ describe("SystemStatusPanel", () => {
     expect(screen.getByText(/最近天气更新/)).toBeInTheDocument();
     expect(screen.getByText(/最近仪表盘生成/)).toBeInTheDocument();
     expect(screen.getByText(/一条提醒/)).toBeInTheDocument();
+  });
+
+  it("reports the production weather refresh task when its latest run failed", async () => {
+    mockStatus({ taskLogs: [{ ...weatherTask[0], status: "failed", message: "天气刷新完成：共 2 个门店，成功 1 个，失败 1 个" }] });
+    renderStatus();
+    expect(await screen.findByRole("alert")).toHaveTextContent("最近天气任务未成功");
+    expect(screen.queryByText("运行正常")).not.toBeInTheDocument();
   });
 
   it("keeps store-to-dashboard completeness and treats one empty store as partial", async () => {
