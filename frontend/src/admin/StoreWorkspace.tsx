@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { api, friendlyApiError } from "@/api/client";
@@ -16,6 +16,8 @@ export function StoreWorkspace() {
   const selectionRef = useRef<StoreSelection>(null);
   const [detailsDirty, setDetailsDirty] = useState(false);
   const [incomeDirty, setIncomeDirty] = useState(false);
+  const detailsDirtyRef = useRef(false);
+  const incomeDirtyRef = useRef(false);
   const { markDirty, requestTransition } = useUnsavedChanges();
   const stores = useQuery({ queryKey: storesKey, queryFn: () => api<AdminStore[]>("/admin/stores") });
   const list = stores.data ?? [];
@@ -28,18 +30,28 @@ export function StoreWorkspace() {
     setSelection(next);
   }
 
+  const updateDetailsDirty = useCallback((dirty: boolean) => {
+    detailsDirtyRef.current = dirty;
+    setDetailsDirty(dirty);
+  }, []);
+
+  const updateIncomeDirty = useCallback((dirty: boolean) => {
+    incomeDirtyRef.current = dirty;
+    setIncomeDirty(dirty);
+  }, []);
+
   function select(next: StoreSelection) {
     if (selectionRef.current === next) return;
     requestTransition(() => {
-      setDetailsDirty(false);
-      setIncomeDirty(false);
+      updateDetailsDirty(false);
+      updateIncomeDirty(false);
       commitSelection(next);
     });
   }
 
   function created(store: AdminStore) {
     if (selectionRef.current !== "new") return;
-    setDetailsDirty(false);
+    updateDetailsDirty(false);
     commitSelection(store.id);
   }
 
@@ -47,8 +59,8 @@ export function StoreWorkspace() {
     if (selectionRef.current !== storeId) return;
     const result = await stores.refetch();
     if (selectionRef.current !== storeId) return;
-    setDetailsDirty(false);
-    setIncomeDirty(false);
+    updateDetailsDirty(false);
+    updateIncomeDirty(false);
     commitSelection(result.data?.find((store) => store.id !== storeId)?.id ?? null);
   }
 
@@ -69,7 +81,7 @@ export function StoreWorkspace() {
       onDeleted={() => undefined}
       onDeleteFailed={() => undefined}
       onDeleteRequested={() => undefined}
-      onDirtyChange={setDetailsDirty}
+      onDirtyChange={updateDetailsDirty}
       onSaved={created}
       store={null}
     />;
@@ -89,15 +101,15 @@ export function StoreWorkspace() {
           });
         }}
         onDeleteFailed={() => {
-          if (selectionRef.current === capturedStoreId && (detailsDirty || incomeDirty)) markDirty(true);
+          if (selectionRef.current === capturedStoreId && (detailsDirtyRef.current || incomeDirtyRef.current)) markDirty(true);
         }}
-        onDirtyChange={setDetailsDirty}
+        onDirtyChange={updateDetailsDirty}
         onSaved={() => {
-          if (selectionRef.current === capturedStoreId) setDetailsDirty(false);
+          if (selectionRef.current === capturedStoreId) updateDetailsDirty(false);
         }}
         store={selectedStore}
       />
-      <IncomeItemsPanel key={`income-${selection}`} onDirtyChange={setIncomeDirty} storeId={selectedStore.id} />
+      <IncomeItemsPanel key={`income-${selection}`} onDirtyChange={updateIncomeDirty} storeId={selectedStore.id} />
     </div>;
   }
 

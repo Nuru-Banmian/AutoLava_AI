@@ -378,3 +378,43 @@ it("does not reassert a stale rejected delete for another store selection", asyn
   expect(screen.queryByRole("alertdialog", { name: "放弃未保存的修改？" })).not.toBeInTheDocument();
   expect(screen.getByLabelText("门店名称 Roma")).toBeInTheDocument();
 });
+
+it("does not reassert a clean income draft when a current pending delete is rejected", async () => {
+  const deletePending = deferredResponse();
+  let deleteStarted = false;
+  let publishCalls = 0;
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  mockStoreWorkspace({
+    stores: [roma, milano],
+    deleteStore: () => {
+      deleteStarted = true;
+      return deletePending.promise;
+    },
+    publishIncome: () => {
+      publishCalls += 1;
+      return HttpResponse.json(publishedIncomeConfig);
+    },
+  });
+  renderWorkspace();
+  await userEvent.click(await screen.findByRole("button", { name: /Roma/ }));
+  await userEvent.click(await screen.findByRole("checkbox", { name: "计入营业额 现金" }));
+  await userEvent.click(screen.getByRole("button", { name: "永久删除门店 Roma" }));
+  await userEvent.click(screen.getByRole("button", { name: "放弃修改" }));
+  await waitFor(() => expect(deleteStarted).toBe(true));
+
+  const income = screen.getByRole("region", { name: "收入项目" });
+  await userEvent.click(within(income).getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(publishCalls).toBe(1));
+  await waitFor(() => expect(within(income).getByRole("button", { name: "保存" })).not.toBeDisabled());
+  expect(screen.getByRole("checkbox", { name: "计入营业额 现金" })).toBeChecked();
+
+  await act(async () => {
+    deletePending.resolve(HttpResponse.json({ detail: "已有历史记录" }, { status: 409 }));
+    await deletePending.promise;
+  });
+  expect(await screen.findByRole("alert")).toHaveTextContent("已有经营或历史记录，只能停用门店");
+  await userEvent.click(screen.getByRole("button", { name: /Milano/ }));
+
+  expect(screen.queryByRole("alertdialog", { name: "放弃未保存的修改？" })).not.toBeInTheDocument();
+  expect(await screen.findByLabelText("门店名称 Milano")).toBeInTheDocument();
+});
