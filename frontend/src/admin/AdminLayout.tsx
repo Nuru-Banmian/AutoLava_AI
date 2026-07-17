@@ -2,12 +2,11 @@ import type { ReactNode } from "react";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-export type AdminTab = "income" | "users" | "stores" | "status";
+export type AdminTab = "stores" | "users" | "status";
 
 export const orderedAdminTabs: { value: AdminTab; label: string }[] = [
-  { value: "income", label: "收入项目" },
+  { value: "stores", label: "门店与收入" },
   { value: "users", label: "用户与权限" },
-  { value: "stores", label: "门店设置" },
   { value: "status", label: "系统状态" },
 ];
 

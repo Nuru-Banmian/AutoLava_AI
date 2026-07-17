@@ -8,7 +8,6 @@ import { useState } from "react";
 
 import { IncomeItemsPanel } from "@/admin/IncomeItemsPanel";
 
-const store = { id: 9, name: "Roma", address: "Via", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true };
 const current = {
   store_id: 9,
   version_id: 3,
@@ -29,13 +28,13 @@ beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
-function renderPanel() {
+function renderPanel(onDirtyChange = vi.fn(), storeId = 9) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return render(
+  return { onDirtyChange, ...render(
     <QueryClientProvider client={client}>
-      <IncomeItemsPanel selectedStoreId={9} onSelectedStoreChange={() => undefined} />
+      <IncomeItemsPanel storeId={storeId} onDirtyChange={onDirtyChange} />
     </QueryClientProvider>,
-  );
+  ) };
 }
 
 type CategoryFixture = { id: number; store_id: number; name: string; include_in_total: boolean; is_active: boolean; sort_order: number; archived_at: string | null };
@@ -46,7 +45,6 @@ function mockReads(categories: CategoryFixture[] = [
   { id: 3, store_id: 9, name: "其他", include_in_total: false, is_active: true, sort_order: 2, archived_at: null },
 ]) {
   server.use(
-    http.get("/api/admin/stores", () => HttpResponse.json([store])),
     http.get("/api/income-config/9/current", () => HttpResponse.json(current)),
     http.get("/api/admin/income-categories", () => HttpResponse.json(categories)),
   );
@@ -63,10 +61,13 @@ describe("IncomeItemsPanel", () => {
       return HttpResponse.json(current);
     }));
     const user = userEvent.setup();
-    renderPanel();
+    const dirty = vi.fn();
+    renderPanel(dirty);
 
+    expect(screen.queryByLabelText("收入项目门店")).not.toBeInTheDocument();
     expect(await screen.findByText("营业额 = 现金 + 刷卡；“其他”只记录，不计入营业额")).toBeInTheDocument();
     await user.click(screen.getByRole("checkbox", { name: "计入营业额 其他" }));
+    expect(dirty).toHaveBeenLastCalledWith(true);
     expect(screen.getByText("营业额 = 现金 + 刷卡 + 其他")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "上移 其他" }));
     const otherName = screen.getByRole("textbox", { name: "项目名称 其他" });
@@ -76,9 +77,10 @@ describe("IncomeItemsPanel", () => {
     await user.click(screen.getByRole("button", { name: "添加收入项目" }));
 
     expect(publishCount).toBe(0);
-    await user.click(screen.getByRole("button", { name: "保存并发布" }));
+    await user.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() => expect(publishCount).toBe(1));
+    await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(false));
     expect(published).toEqual({
       enabled: true,
       items: [
@@ -121,23 +123,22 @@ describe("IncomeItemsPanel", () => {
     let release!: () => void;
     const loading = new Promise<void>((resolve) => { release = resolve; });
     server.use(
-      http.get("/api/admin/stores", () => HttpResponse.json([store, { ...store, id: 10, name: "Milano" }])),
       http.get("/api/income-config/9/current", () => HttpResponse.json(current)),
       http.get("/api/income-config/10/current", async () => { await loading; return HttpResponse.json({ ...current, store_id: 10, version_id: null, version: 0, enabled: false, items: [] }); }),
       http.get("/api/admin/income-categories", () => HttpResponse.json([])),
     );
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     function Harness() {
-      const [storeId, setStoreId] = useState<number | null>(9);
-      return <IncomeItemsPanel selectedStoreId={storeId} onSelectedStoreChange={setStoreId} />;
+      const [storeId, setStoreId] = useState(9);
+      return <><button type="button" onClick={() => setStoreId(10)}>外部切换门店</button><IncomeItemsPanel storeId={storeId} onDirtyChange={() => undefined} /></>;
     }
     const user = userEvent.setup();
     render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>);
 
     await screen.findByRole("textbox", { name: "项目名称 现金" });
-    await user.selectOptions(screen.getByLabelText("收入项目门店"), "10");
+    await user.click(screen.getByRole("button", { name: "外部切换门店" }));
     expect(screen.queryByRole("textbox", { name: "项目名称 现金" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "保存并发布" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
     release();
     await waitFor(() => expect(screen.queryByText("正在加载收入项目…")).not.toBeInTheDocument());
   });
@@ -146,7 +147,6 @@ describe("IncomeItemsPanel", () => {
     const disabled = { ...current, enabled: false };
     let published: { enabled?: boolean } | undefined;
     server.use(
-      http.get("/api/admin/stores", () => HttpResponse.json([store])),
       http.get("/api/income-config/9/current", () => HttpResponse.json(disabled)),
       http.get("/api/admin/income-categories", () => HttpResponse.json([])),
       http.put("/api/admin/stores/9/income-config", async ({ request }) => {
@@ -161,7 +161,7 @@ describe("IncomeItemsPanel", () => {
     const name = await screen.findByRole("textbox", { name: "项目名称 现金" });
     await user.clear(name);
     await user.type(name, "现金收款");
-    await user.click(screen.getByRole("button", { name: "保存并发布" }));
+    await user.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() => expect(published?.enabled).toBe(false));
   });
@@ -191,7 +191,6 @@ describe("IncomeItemsPanel", () => {
     let reject!: () => void;
     const pending = new Promise<void>((resolve) => { reject = resolve; });
     server.use(
-      http.get("/api/admin/stores", () => HttpResponse.json([store, { ...store, id: 10, name: "Milano" }])),
       http.get("/api/income-config/9/current", () => HttpResponse.json(current)),
       http.get("/api/income-config/10/current", () => HttpResponse.json({ ...current, store_id: 10, version_id: null, version: 0, enabled: false, items: [] })),
       http.get("/api/admin/income-categories", () => HttpResponse.json([])),
@@ -199,18 +198,18 @@ describe("IncomeItemsPanel", () => {
     );
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     function Harness() {
-      const [storeId, setStoreId] = useState<number | null>(9);
-      return <><button type="button" onClick={() => setStoreId(10)}>外部切换门店</button><IncomeItemsPanel selectedStoreId={storeId} onSelectedStoreChange={setStoreId} /></>;
+      const [storeId, setStoreId] = useState(9);
+      return <><button type="button" onClick={() => setStoreId(10)}>外部切换门店</button><IncomeItemsPanel storeId={storeId} onDirtyChange={() => undefined} /></>;
     }
     const user = userEvent.setup();
     render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>);
 
     await screen.findByRole("textbox", { name: "项目名称 现金" });
-    await user.click(screen.getByRole("button", { name: "保存并发布" }));
+    await user.click(screen.getByRole("button", { name: "保存" }));
     expect(screen.getByRole("textbox", { name: "项目名称 现金" })).toBeDisabled();
     expect(screen.getByRole("checkbox", { name: "计入营业额 现金" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "添加收入项目" })).toBeDisabled();
-    expect(screen.getByLabelText("收入项目门店")).toBeDisabled();
+    expect(screen.queryByLabelText("收入项目门店")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "外部切换门店" }));
     reject();

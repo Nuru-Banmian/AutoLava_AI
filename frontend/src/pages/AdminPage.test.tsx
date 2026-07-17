@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { MemoryRouter } from "react-router-dom";
@@ -11,9 +12,9 @@ import { AdminPage } from "@/pages/AdminPage";
 import { accessibleStoresKeyFor } from "@/stores/StoreProvider";
 
 vi.mock("@/components/StoreLocationPicker", () => ({
-  StoreLocationPicker: ({ value, onConfirm }: { value: unknown; onConfirm: (location: unknown) => void }) => (
+  StoreLocationPicker: ({ value, onConfirm, buttonLabel }: { value: unknown; onConfirm: (location: unknown) => void; buttonLabel?: string }) => (
     <button type="button" onClick={() => onConfirm({ label: "Via Uno", latitude: 41.9, longitude: 12.5, timezone: "Europe/Rome" })}>
-      {value ? "修改地图位置" : "打开地图选择"}
+      {buttonLabel ?? (value ? "修改地图位置" : "打开地图选择")}
     </button>
   ),
 }));
@@ -37,7 +38,7 @@ function renderAdmin(initialEntry = "/admin") {
   return { client, ...render(
     <MemoryRouter initialEntries={[initialEntry]}>
       <QueryClientProvider client={client}>
-        <AdminPage />
+        <UnsavedChangesProvider><AdminPage /></UnsavedChangesProvider>
       </QueryClientProvider>
     </MemoryRouter>,
   ) };
@@ -63,13 +64,13 @@ function renderUserAdmin(initialEntry = "/admin?tab=users") {
 }
 
 describe("AdminPage", () => {
-  it("shows the four administration areas in the approved order and defaults to income", async () => {
+  it("shows the three administration areas in the approved order and defaults to stores", async () => {
     server.use(...emptyLists);
     renderAdmin();
 
     const tabs = await screen.findAllByRole("tab");
-    expect(tabs.map((tab) => tab.textContent)).toEqual(["收入项目", "用户与权限", "门店设置", "系统状态"]);
-    expect(screen.getByRole("tab", { name: "收入项目" })).toHaveAttribute("aria-selected", "true");
+    expect(tabs.map((tab) => tab.textContent)).toEqual(["门店与收入", "用户与权限", "系统状态"]);
+    expect(screen.getByRole("tab", { name: "门店与收入" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("selects a panel from the tab query and safely falls back for invalid values", async () => {
@@ -79,7 +80,26 @@ describe("AdminPage", () => {
     first.unmount();
 
     renderAdmin("/admin?tab=unknown");
-    expect(screen.getByRole("tab", { name: "收入项目" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "门店与收入" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("keeps the store workspace selected when a dirty tab transition is cancelled", async () => {
+    server.use(
+      http.get("/api/admin/stores", () => HttpResponse.json([{ id: 9, name: "Roma", address: "Via Uno", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true }])),
+      http.get("/api/income-config/9/current", () => HttpResponse.json({ store_id: 9, version_id: 1, version: 1, enabled: true, formula: "营业额 = 现金", created_at: "2026-07-17T08:00:00Z", items: [{ id: 1, category_id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 0 }] })),
+      http.get("/api/admin/income-categories", () => HttpResponse.json([])),
+    );
+    const user = userEvent.setup();
+    renderAdmin();
+    await user.click(await screen.findByRole("button", { name: /Roma/ }));
+    const name = screen.getByLabelText("门店名称 Roma");
+    await user.clear(name);
+    await user.type(name, "Roma Centro");
+    await user.click(screen.getByRole("tab", { name: "系统状态" }));
+
+    expect(screen.getByRole("alertdialog", { name: "放弃未保存的修改？" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "继续编辑" }));
+    expect(screen.getByRole("tab", { name: "门店与收入" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("creates a user from the user workspace and refetches the users list", async () => {
@@ -171,15 +191,14 @@ describe("AdminPage", () => {
       }),
     );
     renderAdmin();
-    await screen.findByRole("option", { name: "Roma" });
-    fireEvent.change(await screen.findByLabelText("收入项目门店"), { target: { value: "9" } });
+    fireEvent.click(await screen.findByRole("button", { name: /Roma/ }));
     const enabled = await screen.findByRole("checkbox", { name: "启用收入项目明细" });
     await waitFor(() => expect(enabled).toBeEnabled());
     fireEvent.click(enabled);
     fireEvent.change(await screen.findByLabelText("新收入项目名称"), { target: { value: "现金" } });
     fireEvent.click(screen.getByRole("button", { name: "添加收入项目" }));
     expect(publishCount).toBe(0);
-    fireEvent.click(screen.getByRole("button", { name: "保存并发布" }));
+    fireEvent.click(within(screen.getByRole("region", { name: "收入项目" })).getByRole("button", { name: "保存" }));
 
     await waitFor(() => expect(publishCount).toBe(1));
     expect(published).toEqual({ enabled: true, items: [{ category_id: null, name: "现金", include_in_total: true, is_active: true, sort_order: 0 }] });
@@ -219,13 +238,16 @@ describe("AdminPage", () => {
       http.get("/api/admin/stores", () => HttpResponse.json([{ id: 9, name: "Roma", address: "Via Uno", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true }])),
       http.get("/api/admin/alerts", () => HttpResponse.json([])),
       http.get("/api/admin/task-logs", () => HttpResponse.json([])),
+      http.get("/api/income-config/9/current", () => HttpResponse.json({ store_id: 9, version_id: null, version: 0, enabled: false, formula: "营业额 = 0", created_at: null, items: [] })),
+      http.get("/api/admin/income-categories", () => HttpResponse.json([])),
       http.patch("/api/admin/stores/9", async ({ request }) => { patch = await request.json(); return HttpResponse.json({ id: 9, name: "Milano", address: "Via Due", latitude: "45.4", longitude: "9.2", timezone: "Europe/Rome", is_active: true }); }),
     );
     const { client } = renderAdmin("/admin?tab=stores");
     client.setQueryData(scopedAccessibleStoresKey, [{ id: 9 }]);
     client.setQueryData(["dashboard", 10], { untouched: true });
+    fireEvent.click(await screen.findByRole("button", { name: /Roma/ }));
     fireEvent.change(await screen.findByLabelText("门店名称 Roma"), { target: { value: "Milano" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存门店 Roma" }));
+    fireEvent.click(within(screen.getByRole("region", { name: "门店资料" })).getByRole("button", { name: "保存" }));
     await waitFor(() => expect(patch).toMatchObject({ name: "Milano" }));
     expect(client.getQueryState(scopedAccessibleStoresKey)?.isInvalidated).toBe(true);
     expect(client.getQueryState(["dashboard", 10])?.isInvalidated).toBe(false);
@@ -233,23 +255,37 @@ describe("AdminPage", () => {
 
   it("invalidates the canonical accessible-store key after create and disable", async () => {
     let active = true;
+    let storeReads = 0;
+    let stores = [{ id: 9, name: "Roma", address: "Via", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: active }];
     server.use(
       http.get("/api/admin/users", () => HttpResponse.json([])),
-      http.get("/api/admin/stores", () => HttpResponse.json([{ id: 9, name: "Roma", address: "Via", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: active }])),
+      http.get("/api/admin/stores", () => {
+        storeReads += 1;
+        return HttpResponse.json(stores);
+      }),
       http.get("/api/admin/alerts", () => HttpResponse.json([])),
       http.get("/api/admin/task-logs", () => HttpResponse.json([])),
-      http.post("/api/admin/stores", () => HttpResponse.json({ id: 10, name: "Milano", address: "Via Due", latitude: "45.4", longitude: "9.2", timezone: "Europe/Rome", is_active: true }, { status: 201 })),
+      http.get("/api/income-config/9/current", () => HttpResponse.json({ store_id: 9, version_id: null, version: 0, enabled: false, formula: "营业额 = 0", created_at: null, items: [] })),
+      http.get("/api/admin/income-categories", () => HttpResponse.json([])),
+      http.post("/api/admin/stores", () => {
+        stores = [...stores, { id: 10, name: "Milano", address: "Via Due", latitude: "45.4", longitude: "9.2", timezone: "Europe/Rome", is_active: true }];
+        return HttpResponse.json({ id: 10, name: "Milano", address: "Via Due", latitude: "45.4", longitude: "9.2", timezone: "Europe/Rome", is_active: true }, { status: 201 });
+      }),
       http.patch("/api/admin/stores/9", () => { active = false; return HttpResponse.json({ id: 9, name: "Roma", address: "Via", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: false }); }),
     );
     const { client } = renderAdmin("/admin?tab=stores");
     client.setQueryData(scopedAccessibleStoresKey, [{ id: 9 }]);
+    fireEvent.click(await screen.findByRole("button", { name: /Roma/ }));
     await screen.findByRole("button", { name: "停用门店 Roma" });
     fireEvent.click(screen.getByRole("button", { name: "新建门店" }));
     fireEvent.change(screen.getByLabelText("门店名称"), { target: { value: "Milano" } });
     fireEvent.click(screen.getByRole("button", { name: "打开地图选择" }));
     fireEvent.click(screen.getByRole("button", { name: "添加门店" }));
     await waitFor(() => expect(client.getQueryState(scopedAccessibleStoresKey)?.isInvalidated).toBe(true));
+    await screen.findByLabelText("门店名称 Milano");
+    expect(storeReads).toBe(2);
     client.setQueryData(scopedAccessibleStoresKey, [{ id: 9 }]);
+    fireEvent.click(screen.getByRole("button", { name: /Roma/ }));
     fireEvent.click(screen.getByRole("button", { name: "停用门店 Roma" }));
     await waitFor(() => expect(active).toBe(false));
     expect(client.getQueryState(scopedAccessibleStoresKey)?.isInvalidated).toBe(true);
@@ -291,11 +327,10 @@ describe("AdminPage", () => {
     const { client } = renderAdmin();
     client.setQueryData(["dashboard", 9], []); client.setQueryData(["dashboard", 10], []);
     client.setQueryData(["charts", 9, ""], {}); client.setQueryData(["database", "records", 9, ""], {});
-    await screen.findByRole("option", { name: "Roma" });
-    fireEvent.change(await screen.findByLabelText("收入项目门店"), { target: { value: "9" } });
+    fireEvent.click(await screen.findByRole("button", { name: /Roma/ }));
     await screen.findByLabelText("计入营业额 现金");
     fireEvent.click(screen.getByLabelText("计入营业额 现金"));
-    fireEvent.click(screen.getByRole("button", { name: "保存并发布" }));
+    fireEvent.click(within(screen.getByRole("region", { name: "收入项目" })).getByRole("button", { name: "保存" }));
     await waitFor(() => expect(published).toEqual({ enabled: true, items: [{ category_id: 4, name: "现金", include_in_total: false, is_active: true, sort_order: 0 }] }));
     expect(client.getQueryState(["dashboard", 9])?.isInvalidated).toBe(true);
     expect(client.getQueryState(["charts", 9, ""])?.isInvalidated).toBe(true);

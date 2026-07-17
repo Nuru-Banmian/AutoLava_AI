@@ -1,13 +1,12 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
 
 import { api, friendlyApiError } from "@/api/client";
-import type { AdminStore, IncomeCategory, IncomeConfigResponse } from "@/api/types";
+import type { IncomeCategory, IncomeConfigResponse } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { invalidateUserData } from "@/lib/user-api";
 
-const storesKey = ["admin", "stores"] as const;
 const configKey = (storeId: number) => ["income-config", storeId, "current"] as const;
 const categoriesKey = (storeId: number) => ["admin", "income-categories", storeId] as const;
 
@@ -41,26 +40,37 @@ function ErrorMessage({ error }: { error: unknown }) {
   return <p role="alert" className="text-sm text-destructive">{friendlyApiError(error, "请求失败，请稍后重试")}</p>;
 }
 
-export function IncomeItemsPanel({ selectedStoreId, onSelectedStoreChange }: {
-  selectedStoreId: number | null;
-  onSelectedStoreChange: (storeId: number | null) => void;
-}) {
+export interface IncomeItemsPanelProps {
+  storeId: number;
+  onDirtyChange(dirty: boolean): void;
+}
+
+interface OperationState {
+  requestId: number;
+  storeId: number;
+  pending: boolean;
+  error: unknown;
+}
+
+export function IncomeItemsPanel({ storeId, onDirtyChange }: IncomeItemsPanelProps) {
   const queryClient = useQueryClient();
+  const mountedRef = useRef(false);
+  const storeIdRef = useRef(storeId);
+  const requestSequence = useRef(0);
   const [items, setItems] = useState<DraftItem[]>([]);
   const [draftStoreId, setDraftStoreId] = useState<number | null>(null);
   const [draftEnabled, setDraftEnabled] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [newName, setNewName] = useState("");
-  const stores = useQuery({ queryKey: storesKey, queryFn: () => api<AdminStore[]>("/admin/stores") });
+  const [operation, setOperation] = useState<OperationState | null>(null);
+  storeIdRef.current = storeId;
   const currentConfig = useQuery({
-    queryKey: configKey(selectedStoreId ?? 0),
-    queryFn: () => api<IncomeConfigResponse>(`/income-config/${selectedStoreId}/current`),
-    enabled: selectedStoreId !== null,
+    queryKey: configKey(storeId),
+    queryFn: () => api<IncomeConfigResponse>(`/income-config/${storeId}/current`),
   });
   const categories = useQuery({
-    queryKey: categoriesKey(selectedStoreId ?? 0),
-    queryFn: () => api<CategoryWithArchive[]>(`/admin/income-categories?store_id=${selectedStoreId}`),
-    enabled: selectedStoreId !== null,
+    queryKey: categoriesKey(storeId),
+    queryFn: () => api<CategoryWithArchive[]>(`/admin/income-categories?store_id=${storeId}`),
   });
 
   useEffect(() => {
@@ -69,15 +79,29 @@ export function IncomeItemsPanel({ selectedStoreId, onSelectedStoreChange }: {
     setDraftEnabled(false);
     setIsDirty(false);
     setNewName("");
-  }, [selectedStoreId]);
+    setOperation(null);
+  }, [storeId]);
 
   useEffect(() => {
-    if (currentConfig.data && currentConfig.data.store_id === selectedStoreId && !isDirty) {
+    if (currentConfig.data && currentConfig.data.store_id === storeId && !isDirty) {
       setItems(configItems(currentConfig.data));
       setDraftStoreId(currentConfig.data.store_id);
       setDraftEnabled(currentConfig.data.enabled);
     }
-  }, [currentConfig.data, isDirty, selectedStoreId]);
+  }, [currentConfig.data, isDirty, storeId]);
+
+  useEffect(() => {
+    onDirtyChange(isDirty);
+  }, [isDirty, onDirtyChange]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      requestSequence.current += 1;
+      onDirtyChange(false);
+    };
+  }, [onDirtyChange]);
 
   async function refreshStore(storeId: number) {
     await Promise.all([
@@ -87,12 +111,34 @@ export function IncomeItemsPanel({ selectedStoreId, onSelectedStoreChange }: {
     ]);
   }
 
-  const publish = useMutation({
-    mutationFn: ({ storeId, draft }: { storeId: number; draft: DraftItem[] }) => api<IncomeConfigResponse>(`/admin/stores/${storeId}/income-config`, {
+  function beginOperation(capturedStoreId: number) {
+    const requestId = ++requestSequence.current;
+    setOperation({ requestId, storeId: capturedStoreId, pending: true, error: null });
+    return requestId;
+  }
+
+  function isCurrentRequest(requestId: number, capturedStoreId: number) {
+    return mountedRef.current
+      && requestSequence.current === requestId
+      && storeIdRef.current === capturedStoreId;
+  }
+
+  function finishOperation(requestId: number, capturedStoreId: number, error: unknown = null) {
+    if (!isCurrentRequest(requestId, capturedStoreId)) return;
+    setOperation({ requestId, storeId: capturedStoreId, pending: false, error });
+  }
+
+  async function publishDraft() {
+    const capturedStoreId = storeId;
+    const capturedDraft = items;
+    const capturedEnabled = draftEnabled;
+    const requestId = beginOperation(capturedStoreId);
+    try {
+      const config = await api<IncomeConfigResponse>(`/admin/stores/${capturedStoreId}/income-config`, {
       method: "PUT",
       body: JSON.stringify({
-        enabled: draftEnabled,
-        items: draft.map(({ category_id, name, include_in_total, is_active }, sort_order) => ({
+        enabled: capturedEnabled,
+        items: capturedDraft.map(({ category_id, name, include_in_total, is_active }, sort_order) => ({
           category_id,
           name: name.trim(),
           include_in_total,
@@ -100,44 +146,64 @@ export function IncomeItemsPanel({ selectedStoreId, onSelectedStoreChange }: {
           sort_order,
         })),
       }),
-    }),
-    onSuccess: async (config) => {
+      });
       queryClient.setQueryData(configKey(config.store_id), config);
-      if (config.store_id === selectedStoreId) {
+      await refreshStore(capturedStoreId);
+      if (isCurrentRequest(requestId, capturedStoreId)) {
         setItems(configItems(config));
         setDraftStoreId(config.store_id);
         setDraftEnabled(config.enabled);
         setIsDirty(false);
       }
-      await refreshStore(config.store_id);
-    },
-  });
-  const archive = useMutation({
-    mutationFn: ({ categoryId }: { categoryId: number; storeId: number }) => api<CategoryWithArchive>(`/admin/income-categories/${categoryId}/archive`, { method: "POST" }),
-    onSuccess: async (category) => {
-      if (category.store_id === selectedStoreId) {
+      finishOperation(requestId, capturedStoreId);
+    } catch (error) {
+      finishOperation(requestId, capturedStoreId, error);
+    }
+  }
+
+  async function archiveCategory(categoryId: number) {
+    const capturedStoreId = storeId;
+    const requestId = beginOperation(capturedStoreId);
+    try {
+      const category = await api<CategoryWithArchive>(`/admin/income-categories/${categoryId}/archive`, { method: "POST" });
+      if (isCurrentRequest(requestId, capturedStoreId)) {
         setItems((current) => current.filter((item) => item.category_id !== category.id).map((item, sort_order) => ({ ...item, sort_order })));
       }
-      await refreshStore(category.store_id);
-    },
-  });
-  const restore = useMutation({
-    mutationFn: ({ categoryId }: { categoryId: number; storeId: number }) => api<CategoryWithArchive>(`/admin/income-categories/${categoryId}/restore`, { method: "POST" }),
-    onSuccess: async (category) => {
-      if (category.store_id === selectedStoreId) {
+      await refreshStore(capturedStoreId);
+      finishOperation(requestId, capturedStoreId);
+    } catch (error) {
+      finishOperation(requestId, capturedStoreId, error);
+    }
+  }
+
+  async function restoreCategory(categoryId: number, capturedStoreId: number) {
+    const requestId = beginOperation(capturedStoreId);
+    try {
+      const category = await api<CategoryWithArchive>(`/admin/income-categories/${categoryId}/restore`, { method: "POST" });
+      if (isCurrentRequest(requestId, capturedStoreId)) {
         setItems((current) => current.some((item) => item.category_id === category.id) ? current : [
           ...current,
           { key: `category-${category.id}`, category_id: category.id, name: category.name, include_in_total: category.include_in_total, is_active: true, sort_order: current.length },
         ]);
         setIsDirty(true);
       }
-      await queryClient.invalidateQueries({ queryKey: categoriesKey(category.store_id), exact: true });
-    },
-  });
-  const deleteUnused = useMutation({
-    mutationFn: ({ categoryId }: { categoryId: number; storeId: number }) => api<void>(`/admin/income-categories/${categoryId}`, { method: "DELETE" }),
-    onSuccess: async (_, { storeId }) => { await refreshStore(storeId); },
-  });
+      await queryClient.invalidateQueries({ queryKey: categoriesKey(capturedStoreId), exact: true });
+      finishOperation(requestId, capturedStoreId);
+    } catch (error) {
+      finishOperation(requestId, capturedStoreId, error);
+    }
+  }
+
+  async function deleteCategory(categoryId: number, capturedStoreId: number) {
+    const requestId = beginOperation(capturedStoreId);
+    try {
+      await api<void>(`/admin/income-categories/${categoryId}`, { method: "DELETE" });
+      await refreshStore(capturedStoreId);
+      finishOperation(requestId, capturedStoreId);
+    } catch (error) {
+      finishOperation(requestId, capturedStoreId, error);
+    }
+  }
 
   function update(key: string, patch: Partial<DraftItem>) {
     setItems((current) => current.map((item) => item.key === key ? { ...item, ...patch } : item));
@@ -174,25 +240,15 @@ export function IncomeItemsPanel({ selectedStoreId, onSelectedStoreChange }: {
   const excluded = items.filter((item) => item.is_active && !item.include_in_total && item.name.trim()).map((item) => item.name.trim());
   const formula = `营业额 = ${included.length ? included.join(" + ") : "0"}${excluded.length ? `；“${excluded.join("、")}”只记录，不计入营业额` : ""}`;
   const archived = categories.data?.filter((category) => category.archived_at !== null) ?? [];
-  const lifecyclePending = archive.isPending || restore.isPending || deleteUnused.isPending;
-  const operationPending = publish.isPending || lifecyclePending;
-  const mutationError = (publish.variables?.storeId === selectedStoreId ? publish.error : null)
-    ?? (archive.variables?.storeId === selectedStoreId ? archive.error : null)
-    ?? (restore.variables?.storeId === selectedStoreId ? restore.error : null)
-    ?? (deleteUnused.variables?.storeId === selectedStoreId ? deleteUnused.error : null);
+  const operationPending = Boolean(operation?.storeId === storeId && operation?.pending);
+  const mutationError = operation?.storeId === storeId ? operation.error : null;
 
-  return <div className="space-y-4">
-    <div className="space-y-1">
-      <label htmlFor="income-store">收入项目门店</label>
-      <select id="income-store" className="h-9 w-full max-w-sm rounded-md border px-2" disabled={operationPending} value={selectedStoreId ?? ""} onChange={(event) => onSelectedStoreChange(event.target.value ? Number(event.target.value) : null)}>
-        <option value="">请选择门店</option>
-        {stores.data?.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
-      </select>
-    </div>
-    <ErrorMessage error={stores.error ?? currentConfig.error ?? categories.error ?? mutationError} />
-    {selectedStoreId !== null && <>
+  return <section className="space-y-4 rounded-lg border bg-card p-4" aria-labelledby="income-items-title">
+    <h2 id="income-items-title" className="font-medium">收入项目</h2>
+    <ErrorMessage error={currentConfig.error ?? categories.error ?? mutationError} />
+    <>
       <label className="flex items-center gap-2">
-        <input aria-label="启用收入项目明细" checked={draftEnabled} disabled={operationPending || currentConfig.isLoading || draftStoreId !== selectedStoreId} type="checkbox" onChange={(event) => {
+        <input aria-label="启用收入项目明细" checked={draftEnabled} disabled={operationPending || currentConfig.isLoading || draftStoreId !== storeId} type="checkbox" onChange={(event) => {
           setDraftEnabled(event.target.checked);
           setIsDirty(true);
         }} />
@@ -214,7 +270,7 @@ export function IncomeItemsPanel({ selectedStoreId, onSelectedStoreChange }: {
             <Button aria-label={`上移 ${item.name}`} disabled={operationPending || index === 0} type="button" variant="outline" onClick={() => move(index, -1)}>上移</Button>
             <Button aria-label={`下移 ${item.name}`} disabled={operationPending || index === items.length - 1} type="button" variant="outline" onClick={() => move(index, 1)}>下移</Button>
             {item.category_id !== null
-              ? <Button aria-label={`归档 ${item.name}`} disabled={operationPending} type="button" variant="outline" onClick={() => archive.mutate({ categoryId: item.category_id!, storeId: selectedStoreId })}>归档</Button>
+              ? <Button aria-label={`归档 ${item.name}`} disabled={operationPending} type="button" variant="outline" onClick={() => void archiveCategory(item.category_id!)}>归档</Button>
               : <Button aria-label={`移除 ${item.name}`} disabled={operationPending} type="button" variant="outline" onClick={() => {
                 setItems((current) => current.filter((candidate) => candidate.key !== item.key).map((candidate, sort_order) => ({ ...candidate, sort_order })));
                 setIsDirty(true);
@@ -222,23 +278,21 @@ export function IncomeItemsPanel({ selectedStoreId, onSelectedStoreChange }: {
           </div>
         </li>)}
       </ol>}
-      <Button disabled={operationPending || currentConfig.isLoading || draftStoreId !== selectedStoreId || items.some((item) => !item.name.trim())} type="button" onClick={() => {
-        if (selectedStoreId !== null) publish.mutate({ storeId: selectedStoreId, draft: items });
-      }}>{publish.isPending ? "保存中…" : "保存并发布"}</Button>
+      <Button disabled={operationPending || currentConfig.isLoading || draftStoreId !== storeId || items.some((item) => !item.name.trim())} type="button" onClick={() => void publishDraft()}>{operationPending ? "保存中…" : "保存"}</Button>
       {archived.length > 0 && <section className="space-y-2 rounded-lg border p-4" aria-label="已归档收入项目">
         <h2 className="font-medium">已归档项目</h2>
         <ul className="space-y-2">{archived.map((category) => <li className="flex flex-wrap items-center justify-between gap-2" key={category.id}>
           <span>{category.name}</span>
           <div className="flex gap-2">
-            <Button aria-label={`恢复 ${category.name}`} disabled={operationPending} type="button" variant="outline" onClick={() => restore.mutate({ categoryId: category.id, storeId: category.store_id })}>恢复</Button>
+            <Button aria-label={`恢复 ${category.name}`} disabled={operationPending} type="button" variant="outline" onClick={() => void restoreCategory(category.id, category.store_id)}>恢复</Button>
             <Button aria-label={`永久删除 ${category.name}`} disabled={operationPending} type="button" variant="outline" onClick={() => {
               if (window.confirm(`永久删除后无法恢复，确定删除“${category.name}”吗？`)) {
-                deleteUnused.mutate({ categoryId: category.id, storeId: category.store_id });
+                void deleteCategory(category.id, category.store_id);
               }
             }}>永久删除</Button>
           </div>
         </li>)}</ul>
       </section>}
-    </>}
-  </div>;
+    </>
+  </section>;
 }
