@@ -73,9 +73,30 @@ async def _seed_records(
     await session.flush()
     session.add_all(
         [
-            DailyIncomeItem(record_id=first.id, category_id=cash.id, amount=Decimal("100.00")),
-            DailyIncomeItem(record_id=first.id, category_id=card.id, amount=Decimal("50.00")),
-            DailyIncomeItem(record_id=second.id, category_id=cash.id, amount=Decimal("200.00")),
+            DailyIncomeItem(
+                record_id=first.id,
+                category_id=cash.id,
+                category_name=cash.name,
+                include_in_total=cash.include_in_total,
+                sort_order=cash.sort_order,
+                amount=Decimal("100.00"),
+            ),
+            DailyIncomeItem(
+                record_id=first.id,
+                category_id=card.id,
+                category_name=card.name,
+                include_in_total=card.include_in_total,
+                sort_order=card.sort_order,
+                amount=Decimal("50.00"),
+            ),
+            DailyIncomeItem(
+                record_id=second.id,
+                category_id=cash.id,
+                category_name=cash.name,
+                include_in_total=cash.include_in_total,
+                sort_order=cash.sort_order,
+                amount=Decimal("200.00"),
+            ),
         ]
     )
     await session.flush()
@@ -131,7 +152,90 @@ async def test_total_only_records_affect_trend_not_composition(
     assert result["kpis"]["total_revenue"] == "100.00"
     assert result["daily"][0]["revenue"] == "100.00"
     assert result["categories"] == []
+    assert result["classified_included_total"] == "0.00"
+    assert result["excluded_categories"] == []
     assert result["kpis"]["average_revenue"] == "100.00"
+
+
+async def test_snapshot_composition_preserves_groups_order_and_archived_names(
+    db_session: AsyncSession,
+) -> None:
+    store, category_ids = await _seed_records(db_session, suffix="-composition")
+    cash_id, card_id = category_ids
+    records = list(
+        await db_session.scalars(
+            select(StoreDailyRecord)
+            .where(StoreDailyRecord.store_id == store.id)
+            .order_by(StoreDailyRecord.date, StoreDailyRecord.id)
+        )
+    )
+    archived = IncomeCategory(
+        store_id=store.id,
+        name="当前归档名称",
+        include_in_total=False,
+        is_active=False,
+        sort_order=9,
+    )
+    db_session.add(archived)
+    await db_session.flush()
+    db_session.add(
+        DailyIncomeItem(
+            record_id=records[0].id,
+            category_id=archived.id,
+            category_name="历史优惠券",
+            include_in_total=False,
+            sort_order=0,
+            amount=Decimal("7.00"),
+        )
+    )
+    june = StoreDailyRecord(
+        store_id=store.id,
+        date=date(2026, 6, 10),
+        daily_revenue=Decimal("80.00"),
+        wash_count=None,
+        is_open="营业",
+        weather=None,
+        weather_auto=None,
+        weather_code=None,
+        temperature_max=None,
+        temperature_min=None,
+        precipitation=None,
+        activity=None,
+        weather_edited=False,
+        scanned=False,
+        created_by=records[0].created_by,
+        updated_by=records[0].updated_by,
+    )
+    db_session.add(june)
+    await db_session.flush()
+
+    result = await AnalyticsService(db_session).calculate(
+        store_id=store.id,
+        start=date(2026, 7, 1),
+        end=date(2026, 7, 31),
+        category_ids=None,
+        compare_start=date(2026, 6, 1),
+        compare_end=date(2026, 6, 30),
+        bucket="day",
+    )
+
+    assert [row["category_id"] for row in result["categories"]] == [cash_id, card_id]
+    assert result["classified_included_total"] == "350.00"
+    assert result["kpis"]["total_revenue"] == "350.00"
+    assert result["excluded_categories"] == [
+        {
+            "category_id": archived.id,
+            "category_name": "历史优惠券",
+            "amount": "7.00",
+        }
+    ]
+    assert result["comparison_kpis"] == {
+        "start": "2026-06-01",
+        "end": "2026-06-30",
+        "total_revenue": "80.00",
+        "open_days": 1,
+        "average_revenue": "80.00",
+    }
 
 
 async def test_average_revenue_is_zero_without_open_days(db_session: AsyncSession) -> None:

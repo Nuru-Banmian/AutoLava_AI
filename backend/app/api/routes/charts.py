@@ -1,5 +1,5 @@
 from datetime import date
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
@@ -19,23 +19,19 @@ async def get_charts(
     session: Session,
     access: Annotated[StoreAccess, Depends(require_store_access)],
     category_id: Annotated[list[int] | None, Query()] = None,
+    compare_start: date | None = None,
+    compare_end: date | None = None,
+    bucket: Literal["day", "month"] = "day",
 ) -> ChartsResponse:
     if start > end:
         raise HTTPException(422, "start must be on or before end")
+    if (compare_start is None) != (compare_end is None):
+        raise HTTPException(422, "compare_start and compare_end must be provided together")
+    if compare_start is not None and compare_end is not None and compare_start > compare_end:
+        raise HTTPException(422, "compare_start must be on or before compare_end")
 
-    if category_id is None:
-        selected_ids = list(
-            await session.scalars(
-                select(IncomeCategory.id)
-                .where(
-                    IncomeCategory.store_id == access.store.id,
-                    IncomeCategory.include_in_total.is_(True),
-                )
-                .order_by(IncomeCategory.sort_order, IncomeCategory.id)
-            )
-        )
-    else:
-        selected_ids = list(dict.fromkeys(category_id))
+    selected_ids = None if category_id is None else list(dict.fromkeys(category_id))
+    if selected_ids is not None:
         owned_ids = set(
             await session.scalars(
                 select(IncomeCategory.id).where(
@@ -52,5 +48,8 @@ async def get_charts(
         start=start,
         end=end,
         category_ids=selected_ids,
+        compare_start=compare_start,
+        compare_end=compare_end,
+        bucket=bucket,
     )
     return ChartsResponse.model_validate(result)

@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -41,10 +43,28 @@ class WeekdayRevenue(BaseModel):
     average_revenue: str
 
 
+class ChartRange(BaseModel):
+    start: str
+    end: str
+    bucket: Literal["day", "month"]
+
+
+class ChartComparisonKpis(BaseModel):
+    start: str
+    end: str
+    total_revenue: str
+    open_days: int
+    average_revenue: str
+
+
 class ChartsResponse(BaseModel):
     kpis: ChartKpis
+    range: ChartRange
+    comparison_kpis: ChartComparisonKpis | None
+    classified_included_total: str
     daily: list[DailyRevenue]
     categories: list[CategoryComposition]
+    excluded_categories: list[CategoryComposition]
     monthly: list[MonthlyRevenue]
     weather: list[WeatherRevenue]
     weekday: list[WeekdayRevenue]
