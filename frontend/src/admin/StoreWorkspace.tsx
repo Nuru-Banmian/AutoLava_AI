@@ -14,6 +14,7 @@ type StoreSelection = number | "new" | null;
 export function StoreWorkspace() {
   const [selection, setSelection] = useState<StoreSelection>(null);
   const selectionRef = useRef<StoreSelection>(null);
+  const initializedSelectionRef = useRef(false);
   const [detailsDirty, setDetailsDirty] = useState(false);
   const [incomeDirty, setIncomeDirty] = useState(false);
   const detailsDirtyRef = useRef(false);
@@ -29,6 +30,12 @@ export function StoreWorkspace() {
     selectionRef.current = next;
     setSelection(next);
   }
+
+  useEffect(() => {
+    if (!stores.isSuccess || initializedSelectionRef.current) return;
+    initializedSelectionRef.current = true;
+    if (selectionRef.current === null && list[0]) commitSelection(list[0].id);
+  }, [list, stores.isSuccess]);
 
   const updateDetailsDirty = useCallback((dirty: boolean) => {
     detailsDirtyRef.current = dirty;
@@ -73,7 +80,7 @@ export function StoreWorkspace() {
     ? list.find((store) => store.id === selection) ?? null
     : null;
 
-  let cards = <p className="text-sm text-muted-foreground">请选择门店</p>;
+  let cards: React.ReactNode = null;
   if (selection === "new") {
     cards = <StoreDetailsCard
       key={selection}
@@ -88,6 +95,7 @@ export function StoreWorkspace() {
   } else if (selectedStore) {
     const capturedStoreId = selectedStore.id;
     cards = <div className="space-y-4">
+      <IncomeItemsPanel key={`income-${selection}`} onDirtyChange={updateIncomeDirty} storeId={selectedStore.id} />
       <StoreDetailsCard
         key={`details-${selection}`}
         mode="edit"
@@ -109,7 +117,6 @@ export function StoreWorkspace() {
         }}
         store={selectedStore}
       />
-      <IncomeItemsPanel key={`income-${selection}`} onDirtyChange={updateIncomeDirty} storeId={selectedStore.id} />
     </div>;
   }
 
@@ -119,10 +126,12 @@ export function StoreWorkspace() {
       <select
         aria-label="门店"
         className="h-9 min-w-0 flex-1 rounded-md border bg-background px-2 md:hidden"
-        onChange={(event) => select(event.target.value ? Number(event.target.value) : null)}
+        onChange={(event) => {
+          if (event.target.value) select(Number(event.target.value));
+        }}
         value={typeof selection === "number" ? selection : ""}
       >
-        <option value="">请选择门店</option>
+        <option hidden value="" />
         {list.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
       </select>
       <Button type="button" onClick={() => select("new")}>新建门店</Button>

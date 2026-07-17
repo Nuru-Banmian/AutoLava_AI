@@ -109,6 +109,67 @@ function deferredResponse() {
   return { promise, resolve };
 }
 
+it("selects the first store on initial load and renders income before details", async () => {
+  mockStoreWorkspace({ stores: [roma, milano] });
+  renderWorkspace();
+
+  expect(await screen.findByLabelText("门店名称 Roma")).toBeInTheDocument();
+  const income = screen.getByRole("region", { name: "收入项目" });
+  const details = screen.getByRole("region", { name: "门店资料" });
+  expect(income.compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING)
+    .toBeTruthy();
+
+  const selector = screen.getByRole("combobox", { name: "门店" });
+  expect(selector).toHaveValue("9");
+  expect(within(selector).queryByRole("option", { name: "请选择门店" }))
+    .not.toBeInTheDocument();
+  expect(screen.queryByText("请选择门店")).not.toBeInTheDocument();
+});
+
+it("keeps the store selector blank in create mode without a selectable prompt", async () => {
+  mockStoreWorkspace({ stores: [roma] });
+  renderWorkspace();
+  await screen.findByLabelText("门店名称 Roma");
+
+  await userEvent.click(screen.getByRole("button", { name: "新建门店" }));
+
+  expect(screen.getByRole("combobox", { name: "门店" })).toHaveValue("");
+  expect(screen.queryByRole("option", { name: "请选择门店" })).not.toBeInTheDocument();
+  expect(screen.getByLabelText("门店名称")).toBeInTheDocument();
+});
+
+it("does not invent a store selection for an empty list", async () => {
+  mockStoreWorkspace({ stores: [] });
+  renderWorkspace();
+
+  const selector = await screen.findByRole("combobox", { name: "门店" });
+  expect(selector).toHaveValue("");
+  expect(screen.queryByText("请选择门店")).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "门店资料" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "收入项目" })).not.toBeInTheDocument();
+});
+
+it("selects a newly created store", async () => {
+  let stores = [roma];
+  mockStoreWorkspace();
+  server.use(
+    http.get("/api/admin/stores", () => HttpResponse.json(stores)),
+    http.post("/api/admin/stores", () => {
+      stores = [roma, milano];
+      return HttpResponse.json(milano, { status: 201 });
+    }),
+  );
+  renderWorkspace();
+  await screen.findByLabelText("门店名称 Roma");
+  await userEvent.click(screen.getByRole("button", { name: "新建门店" }));
+  await userEvent.type(screen.getByLabelText("门店名称"), "Milano");
+  await userEvent.click(screen.getByRole("button", { name: "打开地图选择" }));
+  await userEvent.click(screen.getByRole("button", { name: "添加门店" }));
+
+  expect(await screen.findByLabelText("门店名称 Milano")).toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: "门店" })).toHaveValue("10");
+});
+
 it("uses one store selection for independent details and income cards", async () => {
   mockStoreWorkspace();
   renderWorkspace();
