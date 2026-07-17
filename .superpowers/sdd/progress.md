@@ -73,9 +73,9 @@
 
 ## Merged Business Records Replan SDD
 
-- Branch: `codex/replan-merged-business-records`
-- Worktree: `D:\work\myself\AI-try\AutoLava-AI\.worktrees\replan-merged-business-records`
-- Plan commit: `8e39840`
+- Branch: `codex/replan-merged-business-records-isolated`
+- Worktree: `D:\work\myself\AI-try\AutoLava-AI\.worktrees\replan-merged-business-records-isolated`
+- Plan commit: `e40f95c`
 - Baseline: backend 291 passed; frontend 185 passed.
 - Preflight plan scan: complete; no user-decision conflicts found. Preserve both histories if Task 1 merges a progress-ledger conflict.
 - Task 1: pending.
