@@ -1,188 +1,397 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { HttpResponse, http } from "msw";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { type DefaultBodyType, HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 
 import { UsersPanel } from "@/admin/UsersPanel";
+import type { AdminUser } from "@/api/types";
+import { UnsavedChangesProvider } from "@/navigation/UnsavedChanges";
+
+const authState = vi.hoisted(() => ({
+  user: { id: 1, username: "Nuru_Banmian", role: "admin" as const, is_owner: true },
+}));
+
+vi.mock("@/auth/AuthProvider", () => ({ useAuth: () => authState }));
 
 const server = setupServer();
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
-afterEach(() => { server.resetHandlers(); vi.restoreAllMocks(); });
+afterEach(() => {
+  server.resetHandlers();
+  authState.user = { id: 1, username: "Nuru_Banmian", role: "admin", is_owner: true };
+});
 afterAll(() => server.close());
 
-function renderPanel(selectedStoreId: number | null = null) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return render(<QueryClientProvider client={client}><UsersPanel selectedStoreId={selectedStoreId} onSelectedStoreChange={() => undefined} /></QueryClientProvider>);
+const roma = {
+  id: 9,
+  name: "Roma",
+  address: "Via Roma",
+  latitude: "41.9",
+  longitude: "12.5",
+  timezone: "Europe/Rome",
+  is_active: true,
+};
+const maria = {
+  id: 2,
+  username: "maria",
+  role: "user" as const,
+  is_active: true,
+  store_ids: [9],
+};
+const operator = {
+  id: 3,
+  username: "operator",
+  role: "user" as const,
+  is_active: true,
+  store_ids: [],
+};
+
+function mockUsers(
+  items: AdminUser[],
+  captureCreate?: (request: Request) => Promise<void>,
+) {
+  server.use(
+    http.get("/api/admin/users", () => HttpResponse.json(items)),
+    http.get("/api/admin/stores", () => HttpResponse.json([roma])),
+    http.post("/api/admin/users", async ({ request }) => {
+      await captureCreate?.(request);
+      return HttpResponse.json({
+        id: 10,
+        username: "operator",
+        role: "user",
+        is_active: true,
+        store_ids: [9],
+      }, { status: 201 });
+    }),
+  );
 }
 
-it("shows role, accessible stores, active state and ordinary-user guidance", async () => {
-  server.use(
-    http.get("/api/admin/users", () => HttpResponse.json([
-      { id: 1, username: "boss", role: "admin", is_active: true, store_ids: [] },
-      { id: 2, username: "operator", role: "user", is_active: true, store_ids: [9] },
-    ])),
-    http.get("/api/admin/stores", () => HttpResponse.json([
-      { id: 9, name: "Roma", address: "Via", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true },
-      { id: 10, name: "Milano", address: "Via", latitude: "45.4", longitude: "9.2", timezone: "Europe/Rome", is_active: true },
-    ])),
+function renderPanel() {
+  const client = new QueryClient({ defaultOptions: {
+    queries: { retry: false },
+    mutations: { retry: false },
+  } });
+  return render(
+    <QueryClientProvider client={client}>
+      <UnsavedChangesProvider><UsersPanel /></UnsavedChangesProvider>
+    </QueryClientProvider>,
   );
-  renderPanel();
+}
 
-  expect(await screen.findByText("普通用户看不到管理中心，只能使用已分配门店的日常经营页面。")).toBeInTheDocument();
-  await screen.findByText("boss");
-  expect(screen.getByText(/可访问门店：全部门店/)).toBeInTheDocument();
-  expect(screen.getByText(/可访问门店：Roma/)).toBeInTheDocument();
-  expect(screen.getAllByText(/· 启用/)).toHaveLength(2);
+it("selects a user into one editor and removes duplicate management surfaces", async () => {
+  mockUsers([maria]);
+  renderPanel();
+  await userEvent.click(await screen.findByRole("button", { name: /maria/ }));
+
+  expect(screen.getByRole("heading", { name: "编辑 maria" })).toBeInTheDocument();
+  expect(screen.getAllByLabelText("重置密码（可选）")).toHaveLength(1);
+  expect(screen.queryByText("门店成员")).not.toBeInTheDocument();
+  expect(screen.queryByText("用户操作历史")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /操作历史/ })).not.toBeInTheDocument();
+  expect(screen.queryByText("操作历史")).not.toBeInTheDocument();
+  expect(screen.queryByText(/普通用户看不到管理中心/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/可访问 Roma/)).not.toBeInTheDocument();
 });
 
-it("edits a normal user's role, stores and password inline while hiding admin store choices", async () => {
-  let operatorPatch: unknown;
+it("renders administrators read-only for a non-owner", async () => {
+  authState.user = { id: 3, username: "manager", role: "admin", is_owner: false };
+  mockUsers([{ id: 4, username: "other-admin", role: "admin", is_active: true, store_ids: [] }]);
+  renderPanel();
+  await userEvent.click(await screen.findByRole("button", { name: /other-admin/ }));
+
+  expect(screen.getByText("管理员账号只能由最终管理员编辑")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "保存用户" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "永久删除" })).not.toBeInTheDocument();
+});
+
+it("lets the owner edit another administrator", async () => {
+  authState.user = { id: 1, username: "Nuru_Banmian", role: "admin", is_owner: true };
+  mockUsers([{ id: 4, username: "other-admin", role: "admin", is_active: true, store_ids: [] }]);
+  renderPanel();
+  await userEvent.click(await screen.findByRole("button", { name: /other-admin/ }));
+
+  expect(screen.getByRole("heading", { name: "编辑 other-admin" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "保存用户" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "永久删除" })).toBeInTheDocument();
+});
+
+it("does not offer administrator creation to a non-owner", async () => {
+  authState.user = { id: 3, username: "manager", role: "admin", is_owner: false };
+  mockUsers([]);
+  renderPanel();
+  await userEvent.click(await screen.findByRole("button", { name: "新建用户" }));
+
+  expect(screen.getByRole("option", { name: "普通用户" })).toBeInTheDocument();
+  expect(screen.queryByRole("option", { name: "管理员" })).not.toBeInTheDocument();
+});
+
+it("guards user switches while the editor is dirty", async () => {
+  authState.user = { id: 1, username: "Nuru_Banmian", role: "admin", is_owner: true };
+  mockUsers([maria, operator]);
+  renderPanel();
+  await userEvent.click(await screen.findByRole("button", { name: /maria/ }));
+  await userEvent.type(screen.getByLabelText("重置密码（可选）"), "replacement123");
+  await userEvent.click(screen.getByRole("button", { name: /operator/ }));
+
+  expect(screen.getByRole("alertdialog", { name: "放弃未保存的修改？" })).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "继续编辑" }));
+  expect(screen.getByRole("heading", { name: "编辑 maria" })).toBeInTheDocument();
+});
+
+it("creates a user with store access in the right-hand workspace", async () => {
+  let posted: unknown;
+  authState.user = { id: 1, username: "Nuru_Banmian", role: "admin", is_owner: true };
+  mockUsers([], async (request) => { posted = await request.json(); });
+  renderPanel();
+  await userEvent.click(await screen.findByRole("button", { name: "新建用户" }));
+  await userEvent.type(screen.getByLabelText("用户名"), "operator");
+  await userEvent.type(screen.getByLabelText("初始密码"), "operator123");
+  await userEvent.click(screen.getByRole("checkbox", { name: "Roma" }));
+  await userEvent.click(screen.getByRole("button", { name: "添加用户" }));
+
+  await waitFor(() => expect(posted).toEqual({
+    username: "operator",
+    password: "operator123",
+    role: "user",
+    store_ids: [9],
+  }));
+});
+
+it("requires explicit removal of inactive and unavailable memberships before saving", async () => {
+  let patched: unknown;
   server.use(
-    http.get("/api/admin/users", () => HttpResponse.json([
-      { id: 1, username: "boss", role: "admin", is_active: true, store_ids: [] },
-      { id: 2, username: "operator", role: "user", is_active: true, store_ids: [9] },
-    ])),
+    http.get("/api/admin/users", () => HttpResponse.json([{ ...maria, store_ids: [9, 99] }])),
     http.get("/api/admin/stores", () => HttpResponse.json([
-      { id: 9, name: "Roma", address: "Via", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true },
-      { id: 10, name: "Milano", address: "Via", latitude: "45.4", longitude: "9.2", timezone: "Europe/Rome", is_active: true },
+      { ...roma, is_active: false },
+      { ...roma, id: 10, name: "Milano" },
     ])),
     http.patch("/api/admin/users/2", async ({ request }) => {
-      operatorPatch = await request.json();
-      return HttpResponse.json({ id: 2, username: "operator", role: "user", is_active: true, store_ids: [9, 10] });
+      patched = await request.json();
+      return HttpResponse.json({ ...maria, store_ids: [] });
     }),
   );
   renderPanel();
-  await screen.findByText("operator");
+  await userEvent.click(await screen.findByRole("button", { name: /maria/ }));
 
-  expect(screen.queryByLabelText("boss 可访问 Roma")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "编辑用户 operator" }));
-  fireEvent.click(screen.getByLabelText("operator 可访问 Milano"));
-  fireEvent.change(screen.getByLabelText("重置密码 operator"), { target: { value: "new-password" } });
-  fireEvent.click(screen.getByRole("button", { name: "保存用户 operator" }));
+  expect(screen.getByRole("alert")).toHaveTextContent("保存前请移除不可用的门店分配");
+  expect(screen.getByText("Roma（已停用）")).toBeInTheDocument();
+  expect(screen.getByText("门店 #99（不可用）")).toBeInTheDocument();
+  const save = screen.getByRole("button", { name: "保存用户" });
+  expect(save).toBeDisabled();
+  fireEvent.submit(save.closest("form")!);
+  expect(patched).toBeUndefined();
 
-  await waitFor(() => expect(operatorPatch).toEqual({ role: "user", is_active: true, store_ids: [9, 10], password: "new-password" }));
+  await userEvent.click(screen.getByRole("button", { name: "移除 Roma（已停用）" }));
+  await userEvent.click(screen.getByRole("button", { name: "移除 门店 #99（不可用）" }));
+  expect(save).toBeEnabled();
+  await userEvent.click(save);
+
+  await waitFor(() => expect(patched).toEqual({
+    role: "user",
+    is_active: true,
+    store_ids: [],
+  }));
 });
 
-it("permanently deletes only after confirmation and refreshes the user list", async () => {
-  let users = [{ id: 2, username: "mistake", role: "user", is_active: true, store_ids: [] }];
-  let fetches = 0;
-  let deletes = 0;
-  vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+it("does not carry a failed edit error to another user", async () => {
   server.use(
-    http.get("/api/admin/users", () => { fetches += 1; return HttpResponse.json(users); }),
-    http.get("/api/admin/stores", () => HttpResponse.json([])),
-    http.delete("/api/admin/users/2", () => { deletes += 1; users = []; return new HttpResponse(null, { status: 204 }); }),
+    http.get("/api/admin/users", () => HttpResponse.json([maria, operator])),
+    http.get("/api/admin/stores", () => HttpResponse.json([roma])),
+    http.patch("/api/admin/users/2", () => HttpResponse.json({ detail: "Maria edit rejected" }, { status: 409 })),
   );
   renderPanel();
-  await screen.findByText("mistake");
+  await userEvent.click(await screen.findByRole("button", { name: /maria/ }));
+  await userEvent.type(screen.getByLabelText("重置密码（可选）"), "replacement123");
+  await userEvent.click(screen.getByRole("button", { name: "保存用户" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Maria edit rejected");
 
-  fireEvent.click(screen.getByRole("button", { name: "永久删除用户 mistake" }));
-  expect(deletes).toBe(0);
-  fireEvent.click(screen.getByRole("button", { name: "永久删除用户 mistake" }));
+  await userEvent.click(screen.getByRole("button", { name: /operator/ }));
+  await userEvent.click(screen.getByRole("button", { name: "放弃修改" }));
 
-  await waitFor(() => expect(fetches).toBe(2));
-  await waitFor(() => expect(screen.queryByText("mistake")).not.toBeInTheDocument());
-  expect(window.confirm).toHaveBeenCalled();
+  expect(screen.getByRole("heading", { name: "编辑 operator" })).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
-it("guides the administrator to deactivate a user when deletion returns 409", async () => {
-  vi.spyOn(window, "confirm").mockReturnValue(true);
+it("resets the saved draft after a prior delete error", async () => {
   server.use(
-    http.get("/api/admin/users", () => HttpResponse.json([{ id: 2, username: "used", role: "user", is_active: true, store_ids: [] }])),
-    http.get("/api/admin/stores", () => HttpResponse.json([])),
+    http.get("/api/admin/users", () => HttpResponse.json([maria])),
+    http.get("/api/admin/stores", () => HttpResponse.json([roma])),
     http.delete("/api/admin/users/2", () => HttpResponse.json({ detail: "该用户已有历史记录，不能永久删除；请停用账号" }, { status: 409 })),
+    http.patch("/api/admin/users/2", async ({ request }) => HttpResponse.json({
+      ...maria,
+      ...(await request.json() as object),
+    })),
   );
   renderPanel();
-  await screen.findByText("used");
+  await userEvent.click(await screen.findByRole("button", { name: /maria/ }));
+  await userEvent.click(screen.getByRole("button", { name: "永久删除" }));
+  await userEvent.click(screen.getByRole("button", { name: "确认删除" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("只能停用账号");
 
-  fireEvent.click(screen.getByRole("button", { name: "永久删除用户 used" }));
+  const password = screen.getByLabelText("重置密码（可选）");
+  await userEvent.type(password, "replacement123");
+  await userEvent.click(screen.getByRole("button", { name: "保存用户" }));
 
-  expect(await screen.findByRole("alert")).toHaveTextContent("有历史记录，只能停用账号");
+  await waitFor(() => expect(password).toHaveValue(""));
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
-it("never shows or submits administrators in the legacy store member editor", async () => {
-  let replaced: unknown;
+it("keeps the next user's draft after saving a different user", async () => {
+  const alpha = { id: 4, username: "alpha-admin", role: "admin" as const, is_active: true, store_ids: [] };
+  const beta = { id: 5, username: "beta", role: "user" as const, is_active: false, store_ids: [10] };
+  const milano = { ...roma, id: 10, name: "Milano" };
   server.use(
-    http.get("/api/admin/users", () => HttpResponse.json([
-      { id: 1, username: "boss", role: "admin", is_active: true, store_ids: [] },
-      { id: 2, username: "operator", role: "user", is_active: true, store_ids: [9] },
-    ])),
-    http.get("/api/admin/stores", () => HttpResponse.json([{ id: 9, name: "Roma", address: "Via", latitude: "41", longitude: "12", timezone: "Europe/Rome", is_active: true }])),
-    http.get("/api/admin/stores/9/members", () => HttpResponse.json([
-      { id: 1, username: "boss", role: "admin", is_active: true },
-      { id: 2, username: "operator", role: "user", is_active: true },
-    ])),
-    http.put("/api/admin/stores/9/members", async ({ request }) => { replaced = await request.json(); return HttpResponse.json({ store_id: 9, user_ids: [2] }); }),
+    http.get("/api/admin/users", () => HttpResponse.json([alpha, beta])),
+    http.get("/api/admin/stores", () => HttpResponse.json([roma, milano])),
+    http.patch("/api/admin/users/4", () => HttpResponse.json(alpha)),
   );
-  renderPanel(9);
-  await screen.findByLabelText("operator");
+  renderPanel();
+  await userEvent.click(await screen.findByRole("button", { name: /alpha-admin/ }));
+  const alphaPassword = screen.getByLabelText("重置密码（可选）");
+  await userEvent.type(alphaPassword, "replacement123");
+  await userEvent.click(screen.getByRole("button", { name: "保存用户" }));
+  await waitFor(() => expect(alphaPassword).toHaveValue(""));
 
-  expect(screen.queryByLabelText("boss")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "保存成员" }));
-  await waitFor(() => expect(replaced).toEqual({ user_ids: [2] }));
+  await userEvent.click(screen.getByRole("button", { name: /beta/ }));
+
+  expect(screen.getByRole("heading", { name: "编辑 beta" })).toBeInTheDocument();
+  expect(screen.getByLabelText("角色")).toHaveValue("user");
+  expect(screen.getByRole("checkbox", { name: "账号启用" })).not.toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Milano" })).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Roma" })).not.toBeChecked();
 });
 
-it("resets the edit draft from the latest user state before editing", async () => {
-  let active = true;
-  const patches: unknown[] = [];
+it("locks the submitted draft while a save is pending", async () => {
+  let resolvePatch!: (response: HttpResponse<DefaultBodyType>) => void;
   server.use(
-    http.get("/api/admin/users", () => HttpResponse.json([{ id: 2, username: "operator", role: "user", is_active: active, store_ids: [9] }])),
-    http.get("/api/admin/stores", () => HttpResponse.json([
-      { id: 9, name: "Roma", address: "Via", latitude: "41", longitude: "12", timezone: "Europe/Rome", is_active: true },
-      { id: 10, name: "Milano", address: "Via", latitude: "45", longitude: "9", timezone: "Europe/Rome", is_active: true },
-    ])),
-    http.patch("/api/admin/users/2", async ({ request }) => {
-      const body = await request.json() as { is_active?: boolean; store_ids?: number[] };
-      patches.push(body);
-      if (body.store_ids === undefined && body.is_active !== undefined) active = body.is_active;
-      return HttpResponse.json({ id: 2, username: "operator", role: "user", is_active: active, store_ids: body.store_ids ?? [9] });
+    http.get("/api/admin/users", () => HttpResponse.json([maria, operator])),
+    http.get("/api/admin/stores", () => HttpResponse.json([roma])),
+    http.patch("/api/admin/users/2", () => new Promise<HttpResponse<DefaultBodyType>>((resolve) => { resolvePatch = resolve; })),
+  );
+  renderPanel();
+  await userEvent.click(await screen.findByRole("button", { name: /maria/ }));
+  const password = screen.getByLabelText("重置密码（可选）") as HTMLInputElement;
+  const role = screen.getByLabelText("角色") as HTMLSelectElement;
+  const active = screen.getByRole("checkbox", { name: "账号启用" }) as HTMLInputElement;
+  const store = screen.getByRole("checkbox", { name: "Roma" }) as HTMLInputElement;
+  await userEvent.type(password, "submitted123");
+  await userEvent.click(screen.getByRole("button", { name: "保存用户" }));
+  const saving = await screen.findByRole("button", { name: "保存中…" });
+
+  const pendingState = {
+    ariaBusy: saving.closest("form")?.getAttribute("aria-busy"),
+    disabled: [password.disabled, role.disabled, active.disabled, store.disabled],
+  };
+  fireEvent.change(password, { target: { value: "not-sent-456" } });
+  fireEvent.click(active);
+  const attemptedState = { password: password.value, active: active.checked };
+  await act(async () => resolvePatch(HttpResponse.json(maria)));
+  await waitFor(() => expect(password).toHaveValue(""));
+
+  expect(pendingState).toEqual({ ariaBusy: "true", disabled: [true, true, true, true] });
+  expect(attemptedState).toEqual({ password: "submitted123", active: true });
+  await userEvent.click(screen.getByRole("button", { name: /operator/ }));
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+});
+
+it("ignores an older callback after a newer save for the same user", async () => {
+  let requestCount = 0;
+  let resolveFirst!: (response: HttpResponse<DefaultBodyType>) => void;
+  let resolveSecond!: (response: HttpResponse<DefaultBodyType>) => void;
+  let markFirstResponded!: () => void;
+  const firstResponded = new Promise<void>((resolve) => { markFirstResponded = resolve; });
+  server.use(
+    http.get("/api/admin/users", () => HttpResponse.json([maria, operator])),
+    http.get("/api/admin/stores", () => HttpResponse.json([roma])),
+    http.patch("/api/admin/users/2", async () => {
+      requestCount += 1;
+      if (requestCount === 1) {
+        const response = await new Promise<HttpResponse<DefaultBodyType>>((resolve) => { resolveFirst = resolve; });
+        markFirstResponded();
+        return response;
+      }
+      return new Promise<HttpResponse<DefaultBodyType>>((resolve) => { resolveSecond = resolve; });
     }),
   );
   renderPanel();
-  fireEvent.click(await screen.findByRole("button", { name: "停用用户 operator" }));
-  await screen.findByRole("button", { name: "启用用户 operator" });
+  await userEvent.click(await screen.findByRole("button", { name: /maria/ }));
+  await userEvent.type(screen.getByLabelText("重置密码（可选）"), "first-pass-123");
+  await userEvent.click(screen.getByRole("button", { name: "保存用户" }));
+  await waitFor(() => expect(resolveFirst).toBeDefined());
+  await userEvent.click(screen.getByRole("button", { name: /operator/ }));
+  await userEvent.click(screen.getByRole("button", { name: "放弃修改" }));
+  await userEvent.click(screen.getByRole("button", { name: /maria/ }));
+  const currentPassword = screen.getByLabelText("重置密码（可选）");
+  await userEvent.type(currentPassword, "second-pass-456");
+  await userEvent.click(screen.getByRole("button", { name: "保存用户" }));
+  await waitFor(() => expect(resolveSecond).toBeDefined());
 
-  fireEvent.click(screen.getByRole("button", { name: "编辑用户 operator" }));
-  fireEvent.click(screen.getByLabelText("operator 可访问 Milano"));
-  fireEvent.click(screen.getByRole("button", { name: "保存用户 operator" }));
+  await act(async () => resolveSecond(HttpResponse.json(maria)));
+  await waitFor(() => expect(currentPassword).toHaveValue(""));
+  await act(async () => {
+    resolveFirst(HttpResponse.json({ detail: "stale failure" }, { status: 409 }));
+    await firstResponded;
+  });
 
-  await waitFor(() => expect(patches.at(-1)).toMatchObject({ is_active: false, store_ids: [9, 10] }));
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(currentPassword).toHaveValue("");
+  await userEvent.click(screen.getByRole("button", { name: /operator/ }));
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
 });
 
-it("shows truthful loading and error states for accessible stores", async () => {
-  let resolveStores!: (response: HttpResponse<null>) => void;
+it("reconciles a stale successful delete when the newer edit fails", async () => {
+  let deleted = false;
+  let userFetches = 0;
+  let resolveDelete!: () => void;
+  let resolvePatch!: () => void;
+  let markDeleteResponded!: () => void;
+  let markPatchResponded!: () => void;
+  const deleteResponded = new Promise<void>((resolve) => { markDeleteResponded = resolve; });
+  const patchResponded = new Promise<void>((resolve) => { markPatchResponded = resolve; });
   server.use(
-    http.get("/api/admin/users", () => HttpResponse.json([{ id: 2, username: "operator", role: "user", is_active: true, store_ids: [] }])),
-    http.get("/api/admin/stores", () => new Promise<HttpResponse<null>>((resolve) => { resolveStores = resolve; })),
-  );
-  const first = renderPanel();
-  await screen.findByText("operator");
-  expect(screen.getByText(/可访问门店：加载中/)).toBeInTheDocument();
-  first.unmount();
-  resolveStores(new HttpResponse(null, { status: 499 }));
-
-  server.use(
-    http.get("/api/admin/users", () => HttpResponse.json([{ id: 2, username: "operator", role: "user", is_active: true, store_ids: [] }])),
-    http.get("/api/admin/stores", () => HttpResponse.json({ detail: "failed" }, { status: 500 })),
-  );
-  renderPanel();
-  await screen.findByText("operator");
-  expect(await screen.findByText(/可访问门店：暂时无法获取/)).toBeInTheDocument();
-  expect(screen.queryByText(/可访问门店：未分配门店/)).not.toBeInTheDocument();
-});
-
-it("marks inactive assignments but does not offer them in the editor", async () => {
-  server.use(
-    http.get("/api/admin/users", () => HttpResponse.json([{ id: 2, username: "operator", role: "user", is_active: true, store_ids: [10] }])),
-    http.get("/api/admin/stores", () => HttpResponse.json([
-      { id: 9, name: "Roma", address: "Via", latitude: "41", longitude: "12", timezone: "Europe/Rome", is_active: true },
-      { id: 10, name: "Closed", address: "Via", latitude: "45", longitude: "9", timezone: "Europe/Rome", is_active: false },
-    ])),
+    http.get("/api/admin/users", () => {
+      userFetches += 1;
+      return HttpResponse.json(deleted ? [operator] : [maria, operator]);
+    }),
+    http.get("/api/admin/stores", () => HttpResponse.json([roma])),
+    http.delete("/api/admin/users/2", async () => {
+      await new Promise<void>((resolve) => { resolveDelete = resolve; });
+      deleted = true;
+      markDeleteResponded();
+      return new HttpResponse(null, { status: 204 });
+    }),
+    http.patch("/api/admin/users/2", async () => {
+      await new Promise<void>((resolve) => { resolvePatch = resolve; });
+      markPatchResponded();
+      return HttpResponse.json({ detail: "user no longer exists" }, { status: 409 });
+    }),
   );
   renderPanel();
-  await screen.findByText(/可访问门店：Closed（已停用）/);
-  fireEvent.click(screen.getByRole("button", { name: "编辑用户 operator" }));
-  expect(screen.queryByLabelText("operator 可访问 Closed")).not.toBeInTheDocument();
+  await userEvent.click(await screen.findByRole("button", { name: /maria/ }));
+  await userEvent.click(screen.getByRole("button", { name: "永久删除" }));
+  await userEvent.click(screen.getByRole("button", { name: "确认删除" }));
+  await waitFor(() => expect(resolveDelete).toBeDefined());
+  await userEvent.click(screen.getByRole("button", { name: /operator/ }));
+  await userEvent.click(screen.getByRole("button", { name: /maria/ }));
+  await userEvent.type(screen.getByLabelText("重置密码（可选）"), "newer-edit-123");
+  await userEvent.click(screen.getByRole("button", { name: "保存用户" }));
+  await waitFor(() => expect(resolvePatch).toBeDefined());
+
+  await act(async () => {
+    resolveDelete();
+    await deleteResponded;
+  });
+  await act(async () => {
+    resolvePatch();
+    await patchResponded;
+  });
+
+  await waitFor(() => expect(userFetches).toBe(2));
+  expect(screen.queryByRole("button", { name: /maria/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("main")).toHaveTextContent("请选择用户");
+  await userEvent.click(screen.getByRole("button", { name: /operator/ }));
+  expect(screen.getByRole("heading", { name: "编辑 operator" })).toBeInTheDocument();
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
 });
