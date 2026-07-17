@@ -19,8 +19,12 @@
 - Keep database history/rollback behavior and system-status data semantics unchanged.
 - Admin tabs are exactly `门店与收入`, `用户与权限`, `系统状态`, in that order; `门店与收入` is the default.
 - Store details and income configuration save independently. Income configuration retains versioned publish behavior.
+- On desktop, store details use one compact row: name, location summary, `修改位置`, and `保存`; narrow screens may wrap naturally.
+- The primary button text in both the store-details card and income-items card is exactly `保存`; income `保存` still publishes a version.
+- User deletion is the rightmost action in the editor footer; do not render a separate danger card or persistent deletion guidance. Keep confirmation and show deactivation guidance only after a history-reference rejection.
 - Never auto-save or silently discard a user, store, or income draft.
 - Backend database tests require `AUTOLAVA_DATABASE_URL` to point to the dedicated MySQL database named exactly `autolava_test`.
+- Keep all implementation commits on `codex/management-center-optimization`. Before final integration, merge the latest `feature/phase-1-foundation` into this branch, resolve overlapping edits deliberately, rerun full verification, then use a normal merge back; never force-reset or copy this branch over Phase 1.
 
 ## File Structure
 
@@ -38,18 +42,18 @@
 
 - Modify `frontend/src/api/types.ts`: add an `AuthenticatedUser` subtype with `is_owner` without changing `AdminUser`.
 - Modify `frontend/src/auth/AuthProvider.tsx`: use `AuthenticatedUser` for session and login state.
-- Create `frontend/src/admin/UserEditor.tsx`: one create/edit form for role, status, memberships, and the single password field.
+- Create `frontend/src/admin/UserEditor.tsx`: one create/edit form for role, status, memberships, the single password field, footer save, and right-aligned delete.
 - Rewrite `frontend/src/admin/UsersPanel.tsx`: user master-detail selection, read-only administrator view, mutations, deletion, and dirty-transition coordination.
 - Rewrite `frontend/src/admin/UsersPanel.test.tsx`: new workspace, hierarchy, removed duplicate UI, errors, and unsaved switching.
-- Create `frontend/src/admin/StoreDetailsCard.tsx`: controlled create/edit form and store danger zone.
+- Create `frontend/src/admin/StoreDetailsCard.tsx`: compact controlled create/edit row plus the existing store lifecycle actions.
 - Create `frontend/src/admin/StoreWorkspace.tsx`: shared store selection, responsive master-detail layout, and aggregate dirty state.
 - Modify `frontend/src/admin/IncomeItemsPanel.tsx`: accept one store ID, remove its store query/selector, and report dirty state upward.
 - Modify `frontend/src/admin/IncomeItemsPanel.test.tsx`: controlled-store contract and dirty notifications.
 - Replace `frontend/src/admin/StoreSettingsPanel.test.tsx` with `frontend/src/admin/StoreWorkspace.test.tsx`: merged layout, separate saves, and switch guard.
 - Delete `frontend/src/admin/StoreSettingsPanel.tsx` after its behavior is moved into `StoreDetailsCard.tsx` and `StoreWorkspace.tsx`.
-- Modify `frontend/src/admin/AdminLayout.tsx`: three tabs and the approved visual shell.
-- Modify `frontend/src/pages/AdminPage.tsx`: render the two workspaces and guard tab changes.
-- Modify `frontend/src/pages/AdminPage.test.tsx`: integrated tab order, defaults, removed endpoints, and responsive behavior.
+- Modify `frontend/src/admin/AdminLayout.tsx`: integrate the three tabs as part of the store-workspace task so every task remains buildable.
+- Modify `frontend/src/pages/AdminPage.tsx`: first remove obsolete user props in Task 3, then render the merged store workspace and guard tab changes in Task 4.
+- Modify `frontend/src/pages/AdminPage.test.tsx`: repair the user harness in Task 3, then cover tab order, defaults, removed endpoints, and responsive behavior in Task 4.
 - Modify `frontend/src/admin/SystemStatusPanel.tsx`: visual-only card hierarchy adjustment.
 - Modify `frontend/src/admin/SystemStatusPanel.test.tsx`: assert the new semantic regions while retaining all status truthfulness tests.
 - Modify `frontend/src/auth/AuthProvider.test.tsx` and `frontend/src/App.test.tsx`: include and preserve `is_owner` in auth fixtures.
@@ -113,7 +117,7 @@ async def test_non_owner_auth_payload_is_explicitly_false(
 Run from `backend` with the dedicated test database configured:
 
 ```powershell
-uv run pytest tests/api/test_auth.py::test_login_and_me_report_configured_owner tests/api/test_auth.py::test_non_owner_auth_payload_is_explicitly_false -q
+.\.venv\Scripts\python.exe -m pytest tests/api/test_auth.py::test_login_and_me_report_configured_owner tests/api/test_auth.py::test_non_owner_auth_payload_is_explicitly_false -q
 ```
 
 Expected: FAIL because login and `/auth/me` do not return `is_owner`.
@@ -168,7 +172,7 @@ return authenticated_user_payload(user)
 - [ ] **Step 4: Run owner tests and the complete auth module**
 
 ```powershell
-uv run pytest tests/api/test_auth.py -q
+.\.venv\Scripts\python.exe -m pytest tests/api/test_auth.py -q
 ```
 
 Expected: PASS with both owner tests and all existing authentication tests green.
@@ -176,7 +180,7 @@ Expected: PASS with both owner tests and all existing authentication tests green
 - [ ] **Step 5: Lint and commit the owner identity foundation**
 
 ```powershell
-uv run ruff check app/core/config.py app/services/owner.py app/api/routes/auth.py tests/api/test_auth.py
+.\.venv\Scripts\python.exe -m ruff check app/core/config.py app/services/owner.py app/api/routes/auth.py tests/api/test_auth.py
 git add backend/app/core/config.py backend/app/services/owner.py backend/app/api/routes/auth.py backend/tests/api/test_auth.py
 git commit -m "feat: expose configured owner identity"
 ```
@@ -319,7 +323,7 @@ Update existing assertions that conflict with the new hierarchy: the owner-backe
 - [ ] **Step 2: Run the new admin tests and verify they fail**
 
 ```powershell
-uv run pytest tests/api/test_admin.py -k "configured_owner or non_owner or owner_can_manage" -q
+.\.venv\Scripts\python.exe -m pytest tests/api/test_admin.py -k "configured_owner or non_owner or owner_can_manage" -q
 ```
 
 Expected: FAIL because the owner remains listed and current routes allow administrator creation or mutation.
@@ -387,7 +391,7 @@ Return `_managed_user_payload(user, next_store_ids)` from creation and include `
 - [ ] **Step 4: Run admin API tests**
 
 ```powershell
-uv run pytest tests/api/test_admin.py -q
+.\.venv\Scripts\python.exe -m pytest tests/api/test_admin.py -q
 ```
 
 Expected: PASS. Forbidden requests return 403 without database changes; existing 409 business conflicts remain 409.
@@ -395,8 +399,8 @@ Expected: PASS. Forbidden requests return 403 without database changes; existing
 - [ ] **Step 5: Run backend regression and commit hierarchy enforcement**
 
 ```powershell
-uv run ruff check app tests
-uv run pytest -q
+.\.venv\Scripts\python.exe -m ruff check app tests
+.\.venv\Scripts\python.exe -m pytest -q
 git add backend/app/schemas/admin.py backend/app/api/routes/admin.py backend/tests/api/test_admin.py
 git commit -m "feat: enforce administrator hierarchy"
 ```
@@ -415,6 +419,9 @@ Expected: Ruff and pytest pass against `autolava_test`; commit includes only the
 - Rewrite: `frontend/src/admin/UsersPanel.test.tsx`
 - Modify: `frontend/src/auth/AuthProvider.test.tsx`
 - Modify: `frontend/src/App.test.tsx`
+- Modify: `frontend/src/pages/DatabasePage.test.tsx`
+- Modify: `frontend/src/pages/AdminPage.tsx`
+- Modify: `frontend/src/pages/AdminPage.test.tsx`
 
 **Interfaces:**
 - Consumes: auth JSON `is_owner`, `useAuth()`, `useUnsavedChanges()`, `AdminUser.store_ids`, `AdminStore[]`.
@@ -477,6 +484,11 @@ it("lets the owner edit another administrator", async () => {
   expect(screen.getByRole("heading", { name: "编辑 other-admin" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "保存用户" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "永久删除" })).toBeInTheDocument();
+  expect(screen.queryByLabelText("危险操作")).not.toBeInTheDocument();
+  expect(screen.queryByText(/有历史记录.*只能停用/)).not.toBeInTheDocument();
+  const footer = screen.getByTestId("user-editor-actions");
+  expect(within(footer).getAllByRole("button").map((button) => button.textContent))
+    .toEqual(["保存用户", "永久删除"]);
 });
 
 it("does not offer administrator creation to a non-owner", async () => {
@@ -550,6 +562,8 @@ function mockUsers(
 
 Import `AdminUser` and let MSW's `onUnhandledRequest: "error"` prove that `/members` and `/operations` are never called.
 
+Add regressions for inactive or unknown memberships: render every ID already present in `AdminUser.store_ids`, label unavailable entries, require explicit removal before save, and never silently filter them. Add deferred-request tests proving that controls are locked while their submitted draft is pending, user A state cannot initialize user B, stale errors cannot replace a newer result, and every successful backend mutation invalidates authoritative user data even when its request is superseded.
+
 - [ ] **Step 2: Run user workspace tests and verify they fail**
 
 ```powershell
@@ -606,6 +620,7 @@ export interface UserEditorProps {
   isOwner: boolean;
   pending: boolean;
   error: Error | null;
+  successVersion: number;
   onDirtyChange(dirty: boolean): void;
   onSubmit(draft: UserDraft): void;
   onDelete?(): void;
@@ -620,9 +635,9 @@ const createDraft: UserDraft = {
 };
 ```
 
-Render username as editable only in create mode; show the administrator role option only when `isOwner`; show active-store checkboxes only when `draft.role === "user"`; label the only password input `初始密码` in create mode and `重置密码（可选）` in edit mode. On submit, validate the required create-only fields and call `onSubmit(draft)`; API payload construction belongs to `UsersPanel`.
+Render username as editable only in create mode; show the administrator role option only when `isOwner`; show active-store checkboxes only when `draft.role === "user"`; label the only password input `初始密码` in create mode and `重置密码（可选）` in edit mode. On submit, validate the required create-only fields and call `onSubmit(draft)`; API payload construction belongs to `UsersPanel`. Key each editor by selection and reset its clean baseline only when `successVersion` advances for that mounted editor. Disable every input and handler while `pending` so post-submit edits cannot be marked clean without being sent.
 
-Place permanent deletion in a separate `aria-label="危险操作"` section and use the existing Radix `AlertDialog` for confirmation.
+Render one footer row with `data-testid="user-editor-actions"`: `保存用户` on the left and `永久删除` on the right. Do not render a separate danger section or persistent deletion guidance. Use the existing Radix `AlertDialog` for confirmation; show the friendly deactivation guidance inside the editor only after a history-reference 409 response.
 
 - [ ] **Step 5: Rewrite UsersPanel as selection and data coordinator**
 
@@ -667,6 +682,37 @@ function submitEdit(draft: UserDraft) {
 }
 ```
 
+Define request and success bookkeeping in `UsersPanel` before creating the mutations:
+
+```tsx
+const requestIds = useRef(new Map<string, number>());
+const [successVersions, setSuccessVersions] = useState<Record<string, number>>({});
+
+function beginRequest(target: string) {
+  const requestId = (requestIds.current.get(target) ?? 0) + 1;
+  requestIds.current.set(target, requestId);
+  return requestId;
+}
+
+function isLatest(target: string, requestId: number) {
+  return requestIds.current.get(target) === requestId;
+}
+
+function recordSuccess(target: string) {
+  setSuccessVersions((current) => ({
+    ...current,
+    [target]: (current[target] ?? 0) + 1,
+  }));
+}
+
+const createSuccessVersion = successVersions.new ?? 0;
+const editSuccessVersion = typeof selection === "number"
+  ? successVersions[String(selection)] ?? 0
+  : 0;
+```
+
+Scope mutation state by both selection and a monotonic request ID. Every successful create, patch, or delete must invalidate/refetch authoritative user and accessible-store data even if a newer request superseded it. After invalidation, only the latest request for that selection may clear dirty state, advance `successVersion`, display an error, or change selection. A refreshed list that no longer contains the selected numeric user must clear that selection and its dirty state.
+
 The left rail is `hidden md:block`; the mobile `<select aria-label="用户">` is `md:hidden`. Each list item is a button with username, role badge, active state, and store count. The right side renders:
 
 ```tsx
@@ -677,6 +723,7 @@ if (selection === "new") return <UserEditor
   isOwner={actor?.is_owner === true}
   pending={createUser.isPending}
   error={createUser.error}
+  successVersion={createSuccessVersion}
   onDirtyChange={markDirty}
   onSubmit={submitCreate}
 />;
@@ -694,6 +741,7 @@ return <UserEditor
   isOwner={actor?.is_owner === true}
   pending={patchUser.isPending || deleteUser.isPending}
   error={patchUser.error ?? deleteError}
+  successVersion={editSuccessVersion}
   onDirtyChange={markDirty}
   onSubmit={submitEdit}
   onDelete={() => deleteUser.mutate(selectedUser.id)}
@@ -702,10 +750,12 @@ return <UserEditor
 
 Keep only `GET /admin/users`, `GET /admin/stores`, `POST /admin/users`, `PATCH /admin/users/{id}`, and `DELETE /admin/users/{id}`. On successful create/patch/delete, invalidate `usersKey`; invalidate `accessibleStoresKey` when `store_ids`, role, or active state may have changed. Preserve the friendly 409 deletion message. Call `markDirty` from `UserEditor.onDirtyChange`, clear it after successful submit/delete, and clear it on unmount.
 
+Update `AdminPage.tsx` to call `<UsersPanel />` without the obsolete store-selection props so this task builds independently. Update only the user-related `AdminPage.test.tsx` harness/assertions to provide `AuthProvider` and `UnsavedChangesProvider`; keep the four-tab information architecture unchanged until Task 4. Set generic administrator fixtures in `App.test.tsx` and `DatabasePage.test.tsx` to `is_owner: false`; only explicit configured-owner scenarios use `true`.
+
 - [ ] **Step 6: Run user and auth tests, then build**
 
 ```powershell
-npm test -- --run src/admin/UsersPanel.test.tsx src/auth/AuthProvider.test.tsx src/App.test.tsx
+npm test -- --run src/admin/UsersPanel.test.tsx src/auth/AuthProvider.test.tsx src/App.test.tsx src/pages/DatabasePage.test.tsx src/pages/AdminPage.test.tsx
 npm run build
 ```
 
@@ -714,7 +764,7 @@ Expected: selected-user editing, owner role options, non-owner read-only adminis
 - [ ] **Step 7: Commit the user workspace**
 
 ```powershell
-git add frontend/src/api/types.ts frontend/src/auth/AuthProvider.tsx frontend/src/admin/UserEditor.tsx frontend/src/admin/UsersPanel.tsx frontend/src/admin/UsersPanel.test.tsx frontend/src/auth/AuthProvider.test.tsx frontend/src/App.test.tsx
+git add frontend/src/api/types.ts frontend/src/auth/AuthProvider.tsx frontend/src/admin/UserEditor.tsx frontend/src/admin/UsersPanel.tsx frontend/src/admin/UsersPanel.test.tsx frontend/src/auth/AuthProvider.test.tsx frontend/src/App.test.tsx frontend/src/pages/DatabasePage.test.tsx frontend/src/pages/AdminPage.tsx frontend/src/pages/AdminPage.test.tsx
 git commit -m "feat: rebuild user administration workspace"
 ```
 
@@ -730,6 +780,9 @@ Expected: one commit containing the authenticated owner type and the complete us
 - Create: `frontend/src/admin/StoreWorkspace.test.tsx`
 - Modify: `frontend/src/admin/IncomeItemsPanel.tsx`
 - Modify: `frontend/src/admin/IncomeItemsPanel.test.tsx`
+- Modify: `frontend/src/admin/AdminLayout.tsx`
+- Modify: `frontend/src/pages/AdminPage.tsx`
+- Modify: `frontend/src/pages/AdminPage.test.tsx`
 - Delete: `frontend/src/admin/StoreSettingsPanel.tsx`
 - Delete: `frontend/src/admin/StoreSettingsPanel.test.tsx`
 
@@ -749,7 +802,8 @@ render(<QueryClientProvider client={client}>
 expect(screen.queryByLabelText("收入项目门店")).not.toBeInTheDocument();
 await user.click(await screen.findByRole("checkbox", { name: "计入营业额 其他" }));
 expect(dirty).toHaveBeenLastCalledWith(true);
-await user.click(screen.getByRole("button", { name: "保存并发布" }));
+await user.click(within(screen.getByRole("region", { name: "收入项目" }))
+  .getByRole("button", { name: "保存" }));
 await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(false));
 ```
 
@@ -763,8 +817,10 @@ it("uses one store selection for independent details and income cards", async ()
 
   expect(screen.getByRole("heading", { name: "门店资料" })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "收入项目" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "保存门店资料" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "保存并发布" })).toBeInTheDocument();
+  expect(within(screen.getByRole("region", { name: "门店资料" }))
+    .getByRole("button", { name: "保存" })).toBeInTheDocument();
+  expect(within(screen.getByRole("region", { name: "收入项目" }))
+    .getByRole("button", { name: "保存" })).toBeInTheDocument();
   expect(screen.getAllByLabelText("门店")).toHaveLength(1);
 });
 
@@ -805,14 +861,18 @@ it("keeps store and income saves independent when one request fails", async () =
   });
   renderWorkspace();
   await userEvent.click(await screen.findByRole("button", { name: /Roma/ }));
-  await userEvent.click(screen.getByRole("button", { name: "保存门店资料" }));
+  await userEvent.click(within(screen.getByRole("region", { name: "门店资料" }))
+    .getByRole("button", { name: "保存" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("门店保存失败");
 
-  await userEvent.click(screen.getByRole("button", { name: "保存并发布" }));
+  await userEvent.click(within(screen.getByRole("region", { name: "收入项目" }))
+    .getByRole("button", { name: "保存" }));
   await waitFor(() => expect(incomePublished).toBe(true));
   expect(screen.getByRole("alert")).toHaveTextContent("门店保存失败");
 });
 ```
+
+Add a deferred-response regression: start a Roma details save, explicitly discard the dirty draft and switch to Milano, then resolve the Roma save. Assert the Roma store query is refreshed, but Milano remains selected and its details/income drafts are unchanged. Add the inverse failure case and assert a stale Roma error is not rendered in the Milano cards.
 
 Implement `mockStoreWorkspace` with optional handler callbacks matching the two functions shown in the test. Wrap `renderWorkspace()` with `UnsavedChangesProvider`. Mock exact responses for `/admin/stores`, `/income-config/{id}/current`, and `/admin/income-categories?store_id={id}`.
 
@@ -849,7 +909,7 @@ useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
 
 Replace the current root `<div className="space-y-4">` with `<section className="space-y-4 rounded-lg border bg-card p-4" aria-labelledby="income-items-title">`, insert `<h2 id="income-items-title" className="font-medium">收入项目</h2>` before the error/content nodes, and close with `</section>`. Keep the enabled toggle, preview, editable list, archive area, and publish button inside that section.
 
-Do not change version publication, archive/restore/delete, or per-store query invalidation.
+Change the publish button's visible text from `保存并发布` to exactly `保存`; do not change version publication, archive/restore/delete, or per-store query invalidation. Every successful lifecycle or publish request still invalidates its captured store ID even after selection changes. Only a still-mounted request whose captured `storeId` matches the mounted prop may replace draft items, clear dirty state, or display an error.
 
 - [ ] **Step 4: Extract the controlled store details card**
 
@@ -876,7 +936,9 @@ const initial = store ? {
 const dirty = name !== initial.name || JSON.stringify(location) !== JSON.stringify(initial.location);
 ```
 
-The card heading is `新建门店` or `门店资料`; the save button is `添加门店` or `保存门店资料`. Keep deactivate and permanent delete in `aria-label="危险操作"`; successful save calls `onDirtyChange(false)` and `onSaved(response)`.
+The card heading is `新建门店` or `门店资料`. Give the card `role="region"` through `aria-labelledby`. In edit mode, render one compact desktop row in this exact order: name input, location summary, `修改位置`, `保存`; allow the row to wrap naturally on narrow screens. The edit button text is exactly `保存`; create mode keeps `添加门店`. Keep deactivate and permanent delete in the store lifecycle area.
+
+Track a monotonic request ID and mounted flag inside the card. Every successful create/patch/delete invalidates `['admin','stores']` and accessible stores even if the component unmounted or the request was superseded. Only a still-mounted latest request may call `onDirtyChange(false)`, `onSaved(response)`, `onDeleted(id)`, or display an error. Disable all card controls while its request is pending.
 
 - [ ] **Step 5: Create StoreWorkspace and aggregate dirty sources**
 
@@ -913,45 +975,11 @@ Desktop uses `md:grid md:grid-cols-[14rem_minmax(0,1fr)]`; its store rail is `hi
 
 On store create, invalidate `['admin','stores']` and accessible stores, then select the returned ID. On deletion, select the first remaining store after refetch. Do not let a details save clear `incomeDirty`, or an income publish clear `detailsDirty`.
 
-- [ ] **Step 6: Remove the old store panel and run component tests**
+Render both child cards with `key={selection}`. A child success callback must verify that the captured store ID still equals the current numeric selection before changing selection or card state; authoritative invalidation is never skipped. Scope visible errors to the store ID and operation that produced them so switching stores cannot carry an error into the new workspace.
 
-Delete `StoreSettingsPanel.tsx` and its obsolete test after every behavior is represented in `StoreDetailsCard`/`StoreWorkspace` tests.
+- [ ] **Step 6: Integrate the three-tab shell in the same buildable task**
 
-```powershell
-npm test -- --run src/admin/IncomeItemsPanel.test.tsx src/admin/StoreWorkspace.test.tsx
-npm run build
-```
-
-Expected: controlled income tests, merged layout, independent saving, dirty aggregation, responsive selectors, store lifecycle, and TypeScript build pass.
-
-- [ ] **Step 7: Commit the merged store workspace**
-
-```powershell
-git add frontend/src/admin/IncomeItemsPanel.tsx frontend/src/admin/IncomeItemsPanel.test.tsx frontend/src/admin/StoreDetailsCard.tsx frontend/src/admin/StoreWorkspace.tsx frontend/src/admin/StoreWorkspace.test.tsx frontend/src/admin/StoreSettingsPanel.tsx frontend/src/admin/StoreSettingsPanel.test.tsx
-git commit -m "feat: merge store and income administration"
-```
-
-Expected: the deleted paths are recorded and both new workspace files are tracked.
-
----
-
-### Task 5: Integrate the Three-Tab Admin Center and Complete Acceptance Coverage
-
-**Files:**
-- Modify: `frontend/src/admin/AdminLayout.tsx`
-- Modify: `frontend/src/pages/AdminPage.tsx`
-- Modify: `frontend/src/pages/AdminPage.test.tsx`
-- Modify: `frontend/src/admin/SystemStatusPanel.tsx`
-- Modify: `frontend/src/admin/SystemStatusPanel.test.tsx`
-- Modify: `frontend/tests/admin-flow.spec.ts`
-
-**Interfaces:**
-- Consumes: `StoreWorkspace`, `UsersPanel`, `SystemStatusPanel`, and `useUnsavedChanges()`.
-- Produces: `AdminTab = "stores" | "users" | "status"`; query-string navigation with guarded tab transitions; final responsive admin acceptance flow.
-
-- [ ] **Step 1: Replace integrated tests with the approved information architecture**
-
-Update the first `AdminPage.test.tsx` assertions:
+Update `AdminPage.test.tsx` before implementation:
 
 ```tsx
 expect((await screen.findAllByRole("tab")).map((tab) => tab.textContent)).toEqual([
@@ -961,34 +989,7 @@ expect(screen.getByRole("tab", { name: "门店与收入" }))
   .toHaveAttribute("aria-selected", "true");
 ```
 
-Add an integrated dirty-tab test:
-
-```tsx
-it("guards tab changes while the active workspace is dirty", async () => {
-  mockAdminWorkspace();
-  renderAdmin();
-  await userEvent.click(await screen.findByRole("button", { name: /Roma/ }));
-  await userEvent.clear(screen.getByLabelText("门店名称 Roma"));
-  await userEvent.type(screen.getByLabelText("门店名称 Roma"), "Roma Centro");
-  await userEvent.click(screen.getByRole("tab", { name: "系统状态" }));
-
-  expect(screen.getByRole("alertdialog", { name: "放弃未保存的修改？" })).toBeInTheDocument();
-  await userEvent.click(screen.getByRole("button", { name: "继续编辑" }));
-  expect(screen.getByRole("tab", { name: "门店与收入" })).toHaveAttribute("aria-selected", "true");
-});
-```
-
-Delete integrated tests for `/admin/stores/{id}/members`, external password reset, and `/admin/users/{id}/operations`; their absence is covered by Task 3.
-
-- [ ] **Step 2: Run AdminPage tests and verify the four-tab shell fails**
-
-```powershell
-npm test -- --run src/pages/AdminPage.test.tsx
-```
-
-Expected: FAIL because the old tab values and four-panel composition remain.
-
-- [ ] **Step 3: Implement the three-tab shell and guarded query changes**
+Add a dirty-tab test that edits the selected store name, clicks `系统状态`, cancels the `放弃未保存的修改？` dialog, and verifies `门店与收入` remains selected. Run `npm test -- --run src/pages/AdminPage.test.tsx` and expect the old four-tab shell to fail.
 
 Replace the tab contract in `AdminLayout.tsx`:
 
@@ -1002,36 +1003,50 @@ export const orderedAdminTabs: { value: AdminTab; label: string }[] = [
 ];
 ```
 
-Retain the heading `系统管理`, but change the subtitle to `管理门店、收入项目、用户权限与运行状态。` Use `bg-card`, border, and rounded classes consistently with the approved mockup.
-
-Rewrite `AdminPage.tsx` composition:
+In `AdminPage.tsx`, default invalid or missing query state to `stores`, call `requestTransition()` before changing the query string, and render exactly:
 
 ```tsx
-export function AdminPage() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const { requestTransition } = useUnsavedChanges();
-  const requestedTab = searchParams.get("tab");
-  const tab: AdminTab = isAdminTab(requestedTab) ? requestedTab : "stores";
-
-  function selectTab(next: AdminTab) {
-    requestTransition(() => {
-      const params = new URLSearchParams(searchParams);
-      if (next === "stores") params.delete("tab"); else params.set("tab", next);
-      setSearchParams(params, { replace: true });
-    });
-  }
-
-  return <AdminLayout tab={tab} onTabChange={selectTab} panels={{
-    stores: <StoreWorkspace />,
-    users: <UsersPanel />,
-    status: <SystemStatusPanel />,
-  }} />;
-}
+<AdminLayout tab={tab} onTabChange={selectTab} panels={{
+  stores: <StoreWorkspace />,
+  users: <UsersPanel />,
+  status: <SystemStatusPanel />,
+}} />
 ```
 
-Update the AdminPage test renderer to wrap the page with `UnsavedChangesProvider`.
+Delete `StoreSettingsPanel.tsx` and its obsolete test only after their lifecycle assertions exist in `StoreWorkspace.test.tsx`. This task owns the shell integration because deleting the old panel and changing the controlled income interface would otherwise leave `AdminPage` uncompilable between tasks.
 
-- [ ] **Step 4: Apply visual-only status-card polish**
+- [ ] **Step 7: Run store, shell, and build verification**
+
+```powershell
+npm test -- --run src/admin/IncomeItemsPanel.test.tsx src/admin/StoreWorkspace.test.tsx src/pages/AdminPage.test.tsx
+npm run build
+```
+
+Expected: controlled income tests, compact store details, both `保存` buttons, merged layout, independent saving, dirty aggregation, responsive selectors, store lifecycle, three-tab shell, guarded tab transitions, and TypeScript build pass.
+
+- [ ] **Step 8: Commit the merged store workspace and shell**
+
+```powershell
+git add frontend/src/admin/IncomeItemsPanel.tsx frontend/src/admin/IncomeItemsPanel.test.tsx frontend/src/admin/StoreDetailsCard.tsx frontend/src/admin/StoreWorkspace.tsx frontend/src/admin/StoreWorkspace.test.tsx frontend/src/admin/StoreSettingsPanel.tsx frontend/src/admin/StoreSettingsPanel.test.tsx frontend/src/admin/AdminLayout.tsx frontend/src/pages/AdminPage.tsx frontend/src/pages/AdminPage.test.tsx
+git commit -m "feat: merge store and income administration"
+```
+
+Expected: the deleted paths, new workspace files, and final three-tab shell are recorded in one independently buildable commit.
+
+---
+
+### Task 5: Polish System Status and Complete Acceptance Coverage
+
+**Files:**
+- Modify: `frontend/src/admin/SystemStatusPanel.tsx`
+- Modify: `frontend/src/admin/SystemStatusPanel.test.tsx`
+- Modify: `frontend/tests/admin-flow.spec.ts`
+
+**Interfaces:**
+- Consumes: the final `StoreWorkspace`, `UsersPanel`, three-tab `AdminPage`, and existing `SystemStatusPanel` semantics.
+- Produces: visual-only status hierarchy, final browser acceptance flow, and full release evidence.
+
+- [ ] **Step 1: Apply visual-only status-card polish**
 
 Do not alter any query, timestamp, completeness, or alert logic in `SystemStatusPanel.tsx`. Only make the regions match the approved visual hierarchy:
 
@@ -1039,7 +1054,7 @@ Use `grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.7fr)]` on the existin
 
 Add assertions in `SystemStatusPanel.test.tsx` that `运行状态` and `未解决告警` remain named regions; retain every existing truthfulness, UTC, partial, error, and multi-store assertion unchanged.
 
-- [ ] **Step 5: Update the browser acceptance flow**
+- [ ] **Step 2: Update the browser acceptance flow**
 
 In `frontend/tests/admin-flow.spec.ts`:
 
@@ -1049,6 +1064,8 @@ In `frontend/tests/admin-flow.spec.ts`:
 - Open `用户与权限`, click `新建用户`, select the Roma membership, and submit the right-side form; expect `{ username: "operator", password: "operator-123", role: "user", store_ids: [1] }`.
 - Return to `门店与收入`, click `新建门店`, and complete the existing map flow.
 - Assert there are zero visible texts matching `门店成员`, `用户操作历史`, or `普通用户看不到管理中心`.
+- Within the `门店资料` and `收入项目` regions, expect the primary button text `保存`; assert `保存门店资料` and `保存并发布` are absent.
+- In the selected user editor, assert `保存用户` precedes `永久删除` in the same footer, `永久删除` is the rightmost action, and no separate `危险操作` region or persistent history-deletion guidance exists.
 
 Use these key assertions:
 
@@ -1062,7 +1079,7 @@ await expect(page.getByText("门店成员")).toHaveCount(0);
 await expect(page.getByText("用户操作历史")).toHaveCount(0);
 ```
 
-- [ ] **Step 6: Run frontend unit, build, and browser acceptance**
+- [ ] **Step 3: Run frontend unit, build, and browser acceptance**
 
 ```powershell
 npm test -- --run
@@ -1072,13 +1089,13 @@ npx playwright test tests/admin-flow.spec.ts
 
 Expected: 22 or more Vitest files pass, production TypeScript/Vite build succeeds, and the admin browser flow passes at desktop viewport.
 
-- [ ] **Step 7: Run full release verification**
+- [ ] **Step 4: Run full release verification**
 
 From `backend` with `AUTOLAVA_DATABASE_URL` targeting `autolava_test`:
 
 ```powershell
-uv run ruff check .
-uv run pytest --cov=app --cov-report=term-missing
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m pytest --cov=app --cov-report=term-missing
 ```
 
 From `frontend`:
@@ -1091,21 +1108,23 @@ npx playwright test
 
 Expected: backend lint/tests/coverage, all frontend unit tests, production build, and the complete Playwright suite pass. Confirm `git status --short` shows only intended implementation changes before the final commit.
 
-- [ ] **Step 8: Commit final admin-center integration**
+- [ ] **Step 5: Commit status polish and acceptance coverage**
 
 ```powershell
-git add frontend/src/admin/AdminLayout.tsx frontend/src/pages/AdminPage.tsx frontend/src/pages/AdminPage.test.tsx frontend/src/admin/SystemStatusPanel.tsx frontend/src/admin/SystemStatusPanel.test.tsx frontend/tests/admin-flow.spec.ts
-git commit -m "feat: integrate optimized management center"
+git add frontend/src/admin/SystemStatusPanel.tsx frontend/src/admin/SystemStatusPanel.test.tsx frontend/tests/admin-flow.spec.ts
+git commit -m "test: complete management center acceptance"
 ```
 
-Expected: final integration commit contains only shell, status styling, integrated tests, and the acceptance flow.
+Expected: final task commit contains only status styling/tests and the acceptance flow; the three-tab shell was already integrated in Task 4.
 
 ## Final Acceptance Checklist
 
 - [ ] `Nuru_Banmian` appears nowhere in production application modules; it exists only as deployment configuration, documentation, and test fixture data.
 - [ ] Owner APIs and non-owner administrator restrictions are enforced server-side with 403 responses and no audit mutation.
 - [ ] User management has one password field, one membership editor, no member panel, no history panel, no summary card, and no admin-visibility reminder.
+- [ ] User deletion is the rightmost editor-footer action; there is no separate danger card or persistent deletion guidance, while confirmation and history-conflict guidance still work.
 - [ ] Store details and income items share one selection but retain separate save buttons and separate error states.
+- [ ] Store details are one compact desktop row, and both store and income primary buttons read `保存`; income still publishes a version.
 - [ ] User, store, income, and tab switches cannot silently discard dirty state.
 - [ ] Mobile uses top selectors; desktop uses left rails.
 - [ ] System status and database history behavior remain semantically unchanged.
