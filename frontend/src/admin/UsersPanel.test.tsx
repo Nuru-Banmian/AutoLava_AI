@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
-import { useState } from "react";
+import { StrictMode, useState } from "react";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 
 import { UsersPanel } from "@/admin/UsersPanel";
@@ -48,6 +48,22 @@ function renderPanel() {
     <QueryClientProvider client={client}>
       <UnsavedChangesProvider><UsersPanel /></UnsavedChangesProvider>
     </QueryClientProvider>,
+  );
+  return { ...result, client };
+}
+
+function renderStrictPanel(items: AdminUser[]) {
+  const client = new QueryClient({ defaultOptions: {
+    queries: { retry: false }, mutations: { retry: false },
+  } });
+  client.setQueryData(["admin", "users"], items);
+  client.setQueryData(["admin", "stores"], [roma]);
+  const result = render(
+    <StrictMode>
+      <QueryClientProvider client={client}>
+        <UnsavedChangesProvider><UsersPanel /></UnsavedChangesProvider>
+      </QueryClientProvider>
+    </StrictMode>,
   );
   return { ...result, client };
 }
@@ -105,6 +121,21 @@ it("selects the first user and exposes only existing users in the selector", asy
   expect(within(selector).getAllByRole("option").map((option) => option.textContent))
     .toEqual(["maria", "operator"]);
   expect(screen.queryByText("请选择用户", { selector: "p" })).not.toBeInTheDocument();
+});
+
+it("clears an auto-selected user's form and dirty navigation state after a Strict Mode save", async () => {
+  mockUsers([maria]);
+  server.use(http.patch("/api/admin/users/2", () => HttpResponse.json(maria)));
+  renderStrictPanel([maria]);
+  await screen.findByRole("heading", { name: "编辑 maria" });
+  await userEvent.type(screen.getByLabelText("重置密码（可选）"), "replacement123");
+  await userEvent.click(screen.getByRole("button", { name: "保存用户" }));
+
+  await waitFor(() => expect(screen.getByRole("button", { name: "保存用户" })).toBeEnabled());
+  expect(screen.getByLabelText("重置密码（可选）")).toHaveValue("");
+  await userEvent.click(screen.getByRole("button", { name: "新建用户" }));
+  expect(screen.queryByRole("alertdialog", { name: "放弃未保存的修改？" })).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "新建用户" })).toBeInTheDocument();
 });
 
 it("keeps user controls on one row and leaves the selector blank in create mode", async () => {

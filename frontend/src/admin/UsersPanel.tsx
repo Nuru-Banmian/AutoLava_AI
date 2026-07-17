@@ -174,7 +174,6 @@ export function UsersPanel() {
     return () => {
       mountedRef.current = false;
       lifecycleGeneration.current += 1;
-      selectionRef.current = null;
       markDirty(false);
     };
   }, [markDirty]);
