@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { HttpResponse, http } from "msw";
+import { type DefaultBodyType, HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 
@@ -236,4 +236,107 @@ it("resets the saved draft after a prior delete error", async () => {
 
   await waitFor(() => expect(password).toHaveValue(""));
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("keeps the next user's draft after saving a different user", async () => {
+  const alpha = { id: 4, username: "alpha-admin", role: "admin" as const, is_active: true, store_ids: [] };
+  const beta = { id: 5, username: "beta", role: "user" as const, is_active: false, store_ids: [10] };
+  const milano = { ...roma, id: 10, name: "Milano" };
+  server.use(
+    http.get("/api/admin/users", () => HttpResponse.json([alpha, beta])),
+    http.get("/api/admin/stores", () => HttpResponse.json([roma, milano])),
+    http.patch("/api/admin/users/4", () => HttpResponse.json(alpha)),
+  );
+  renderPanel();
+  await userEvent.click(await screen.findByRole("button", { name: /alpha-admin/ }));
+  const alphaPassword = screen.getByLabelText("重置密码（可选）");
+  await userEvent.type(alphaPassword, "replacement123");
+  await userEvent.click(screen.getByRole("button", { name: "保存用户" }));
+  await waitFor(() => expect(alphaPassword).toHaveValue(""));
+
+  await userEvent.click(screen.getByRole("button", { name: /beta/ }));
+
+  expect(screen.getByRole("heading", { name: "编辑 beta" })).toBeInTheDocument();
+  expect(screen.getByLabelText("角色")).toHaveValue("user");
+  expect(screen.getByRole("checkbox", { name: "账号启用" })).not.toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Milano" })).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Roma" })).not.toBeChecked();
+});
+
+it("locks the submitted draft while a save is pending", async () => {
+  let resolvePatch!: (response: HttpResponse<DefaultBodyType>) => void;
+  server.use(
+    http.get("/api/admin/users", () => HttpResponse.json([maria, operator])),
+    http.get("/api/admin/stores", () => HttpResponse.json([roma])),
+    http.patch("/api/admin/users/2", () => new Promise<HttpResponse<DefaultBodyType>>((resolve) => { resolvePatch = resolve; })),
+  );
+  renderPanel();
+  await userEvent.click(await screen.findByRole("button", { name: /maria/ }));
+  const password = screen.getByLabelText("重置密码（可选）") as HTMLInputElement;
+  const role = screen.getByLabelText("角色") as HTMLSelectElement;
+  const active = screen.getByRole("checkbox", { name: "账号启用" }) as HTMLInputElement;
+  const store = screen.getByRole("checkbox", { name: "Roma" }) as HTMLInputElement;
+  await userEvent.type(password, "submitted123");
+  await userEvent.click(screen.getByRole("button", { name: "保存用户" }));
+  const saving = await screen.findByRole("button", { name: "保存中…" });
+
+  const pendingState = {
+    ariaBusy: saving.closest("form")?.getAttribute("aria-busy"),
+    disabled: [password.disabled, role.disabled, active.disabled, store.disabled],
+  };
+  fireEvent.change(password, { target: { value: "not-sent-456" } });
+  fireEvent.click(active);
+  const attemptedState = { password: password.value, active: active.checked };
+  await act(async () => resolvePatch(HttpResponse.json(maria)));
+  await waitFor(() => expect(password).toHaveValue(""));
+
+  expect(pendingState).toEqual({ ariaBusy: "true", disabled: [true, true, true, true] });
+  expect(attemptedState).toEqual({ password: "submitted123", active: true });
+  await userEvent.click(screen.getByRole("button", { name: /operator/ }));
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+});
+
+it("ignores an older callback after a newer save for the same user", async () => {
+  let requestCount = 0;
+  let resolveFirst!: (response: HttpResponse<DefaultBodyType>) => void;
+  let resolveSecond!: (response: HttpResponse<DefaultBodyType>) => void;
+  let markFirstResponded!: () => void;
+  const firstResponded = new Promise<void>((resolve) => { markFirstResponded = resolve; });
+  server.use(
+    http.get("/api/admin/users", () => HttpResponse.json([maria, operator])),
+    http.get("/api/admin/stores", () => HttpResponse.json([roma])),
+    http.patch("/api/admin/users/2", async () => {
+      requestCount += 1;
+      if (requestCount === 1) {
+        const response = await new Promise<HttpResponse<DefaultBodyType>>((resolve) => { resolveFirst = resolve; });
+        markFirstResponded();
+        return response;
+      }
+      return new Promise<HttpResponse<DefaultBodyType>>((resolve) => { resolveSecond = resolve; });
+    }),
+  );
+  renderPanel();
+  await userEvent.click(await screen.findByRole("button", { name: /maria/ }));
+  await userEvent.type(screen.getByLabelText("重置密码（可选）"), "first-pass-123");
+  await userEvent.click(screen.getByRole("button", { name: "保存用户" }));
+  await waitFor(() => expect(resolveFirst).toBeDefined());
+  await userEvent.click(screen.getByRole("button", { name: /operator/ }));
+  await userEvent.click(screen.getByRole("button", { name: "放弃修改" }));
+  await userEvent.click(screen.getByRole("button", { name: /maria/ }));
+  const currentPassword = screen.getByLabelText("重置密码（可选）");
+  await userEvent.type(currentPassword, "second-pass-456");
+  await userEvent.click(screen.getByRole("button", { name: "保存用户" }));
+  await waitFor(() => expect(resolveSecond).toBeDefined());
+
+  await act(async () => resolveSecond(HttpResponse.json(maria)));
+  await waitFor(() => expect(currentPassword).toHaveValue(""));
+  await act(async () => {
+    resolveFirst(HttpResponse.json({ detail: "stale failure" }, { status: 409 }));
+    await firstResponded;
+  });
+
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(currentPassword).toHaveValue("");
+  await userEvent.click(screen.getByRole("button", { name: /operator/ }));
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
 });

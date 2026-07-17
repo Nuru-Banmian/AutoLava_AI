@@ -92,6 +92,7 @@ export function UserEditor({ mode, user, stores, isOwner, pending, error, succes
   }, [draft, mode, onDirtyChange, successVersion]);
 
   function update(next: UserDraft) {
+    if (pending) return;
     const normalized = { ...next, store_ids: [...next.store_ids].sort((a, b) => a - b) };
     setDraft(normalized);
     onDirtyChange(!sameDraft(normalized, baseline.current));
@@ -99,6 +100,7 @@ export function UserEditor({ mode, user, stores, isOwner, pending, error, succes
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (pending) return;
     if (mode === "create" && (!draft.username.trim() || !draft.password)) return;
     if (unavailableAssignments.length > 0) return;
     onSubmit(draft);
@@ -117,22 +119,22 @@ export function UserEditor({ mode, user, stores, isOwner, pending, error, succes
 
   return <section className="space-y-5 rounded-lg border bg-card p-4">
     <h2 className="text-lg font-semibold">{mode === "create" ? "新建用户" : `编辑 ${user?.username ?? ""}`}</h2>
-    <form className="space-y-4" onSubmit={submit}>
+    <form aria-busy={pending} className="space-y-4" onSubmit={submit}>
       {mode === "create" ? <div className="space-y-1">
         <label htmlFor="user-username">用户名</label>
-        <Input id="user-username" minLength={3} required value={draft.username} onChange={(event) => update({ ...draft, username: event.target.value })} />
+        <Input disabled={pending} id="user-username" minLength={3} required value={draft.username} onChange={(event) => update({ ...draft, username: event.target.value })} />
       </div> : <p className="text-sm"><span className="text-muted-foreground">用户名：</span>{draft.username}</p>}
 
       <div className="space-y-1">
         <label htmlFor="user-role">角色</label>
-        <select id="user-role" className="h-9 w-full rounded-md border border-input bg-background px-3" value={draft.role} onChange={(event) => update({ ...draft, role: event.target.value as UserRole })}>
+        <select disabled={pending} id="user-role" className="h-9 w-full rounded-md border border-input bg-background px-3" value={draft.role} onChange={(event) => update({ ...draft, role: event.target.value as UserRole })}>
           <option value="user">普通用户</option>
           {isOwner && <option value="admin">管理员</option>}
         </select>
       </div>
 
       {mode === "edit" && <label className="flex items-center gap-2">
-        <input checked={draft.is_active} type="checkbox" onChange={(event) => update({ ...draft, is_active: event.target.checked })} />
+        <input checked={draft.is_active} disabled={pending} type="checkbox" onChange={(event) => update({ ...draft, is_active: event.target.checked })} />
         账号启用
       </label>}
 
@@ -142,6 +144,7 @@ export function UserEditor({ mode, user, stores, isOwner, pending, error, succes
         {activeStores.map((store) => <label className="flex items-center gap-2" key={store.id}>
           <input
             checked={draft.store_ids.includes(store.id)}
+            disabled={pending}
             type="checkbox"
             onChange={(event) => update({
               ...draft,
@@ -157,7 +160,7 @@ export function UserEditor({ mode, user, stores, isOwner, pending, error, succes
           <ul className="space-y-2">
             {unavailableAssignments.map((assignment) => <li className="flex items-center justify-between gap-3 text-sm" key={assignment.id}>
               <span>{assignment.label}</span>
-              <Button aria-label={`移除 ${assignment.label}`} size="sm" type="button" variant="outline" onClick={() => update({
+              <Button aria-label={`移除 ${assignment.label}`} disabled={pending} size="sm" type="button" variant="outline" onClick={() => update({
                 ...draft,
                 store_ids: draft.store_ids.filter((id) => id !== assignment.id),
               })}>移除</Button>
@@ -168,7 +171,7 @@ export function UserEditor({ mode, user, stores, isOwner, pending, error, succes
 
       <div className="space-y-1">
         <label htmlFor="user-password">{mode === "create" ? "初始密码" : "重置密码（可选）"}</label>
-        <Input id="user-password" minLength={8} required={mode === "create"} type="password" value={draft.password} onChange={(event) => update({ ...draft, password: event.target.value })} />
+        <Input disabled={pending} id="user-password" minLength={8} required={mode === "create"} type="password" value={draft.password} onChange={(event) => update({ ...draft, password: event.target.value })} />
       </div>
 
       {error && <p role="alert" className="text-sm text-destructive">{error.message || "请求失败"}</p>}

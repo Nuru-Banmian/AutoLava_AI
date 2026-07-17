@@ -12,8 +12,13 @@ import { accessibleStoresKey } from "@/stores/StoreProvider";
 const usersKey = ["admin", "users"] as const;
 const storesKey = ["admin", "stores"] as const;
 type UserSelection = number | "new" | null;
+type UserTarget = Exclude<UserSelection, null>;
+type CreateUserBody = { username: string; password: string; role: UserRole; store_ids: number[] };
 type UserPatchBody = { password?: string; role: UserRole; is_active: boolean; store_ids: number[] };
-type EditorFailure = { selection: Exclude<UserSelection, null>; error: Error };
+type EditorFailure = { selection: UserTarget; error: Error };
+type CreateVariables = { body: CreateUserBody; requestId: number };
+type PatchVariables = { userId: number; body: UserPatchBody; requestId: number };
+type DeleteVariables = { userId: number; requestId: number };
 
 function ErrorMessage({ error }: { error: Error | null }) {
   if (!error) return null;
@@ -24,6 +29,8 @@ export function UsersPanel() {
   const queryClient = useQueryClient();
   const [selection, setSelection] = useState<UserSelection>(null);
   const selectionRef = useRef<UserSelection>(selection);
+  const requestSequence = useRef(0);
+  const latestRequests = useRef<Record<string, number>>({});
   const [editorFailure, setEditorFailure] = useState<EditorFailure | null>(null);
   const [successVersions, setSuccessVersions] = useState<Record<string, number>>({});
   const { user: actor } = useAuth();
@@ -41,9 +48,19 @@ export function UsersPanel() {
     ]);
   }
 
-  function recordSuccess(target: Exclude<UserSelection, null>) {
+  function recordSuccess(target: UserTarget) {
     const key = String(target);
     setSuccessVersions((current) => ({ ...current, [key]: (current[key] ?? 0) + 1 }));
+  }
+
+  function beginRequest(target: UserTarget) {
+    requestSequence.current += 1;
+    latestRequests.current[String(target)] = requestSequence.current;
+    return requestSequence.current;
+  }
+
+  function isLatestRequest(target: UserTarget, requestId: number) {
+    return latestRequests.current[String(target)] === requestId;
   }
 
   function deletionError(error: Error) {
@@ -53,37 +70,49 @@ export function UsersPanel() {
   }
 
   const createUser = useMutation({
-    mutationFn: (input: { username: string; password: string; role: UserRole; store_ids: number[] }) =>
-      api<AdminUser>("/admin/users", { method: "POST", body: JSON.stringify(input) }),
+    mutationFn: ({ body }: CreateVariables) =>
+      api<AdminUser>("/admin/users", { method: "POST", body: JSON.stringify(body) }),
     onMutate: () => setEditorFailure(null),
-    onError: (error) => setEditorFailure({ selection: "new", error }),
-    onSuccess: async () => {
+    onError: (error, { requestId }) => {
+      if (isLatestRequest("new", requestId)) setEditorFailure({ selection: "new", error });
+    },
+    onSuccess: async (_data, { requestId }) => {
+      if (!isLatestRequest("new", requestId)) return;
       await invalidateUserData();
+      if (!isLatestRequest("new", requestId)) return;
       recordSuccess("new");
       if (selectionRef.current === "new") markDirty(false);
     },
   });
   const patchUser = useMutation({
-    mutationFn: ({ userId, body }: { userId: number; body: UserPatchBody }) =>
+    mutationFn: ({ userId, body }: PatchVariables) =>
       api<AdminUser>(`/admin/users/${userId}`, { method: "PATCH", body: JSON.stringify(body) }),
     onMutate: () => setEditorFailure(null),
-    onError: (error, { userId }) => setEditorFailure({ selection: userId, error }),
-    onSuccess: async (_data, { userId }) => {
+    onError: (error, { userId, requestId }) => {
+      if (isLatestRequest(userId, requestId)) setEditorFailure({ selection: userId, error });
+    },
+    onSuccess: async (_data, { userId, requestId }) => {
+      if (!isLatestRequest(userId, requestId)) return;
       await invalidateUserData();
+      if (!isLatestRequest(userId, requestId)) return;
       recordSuccess(userId);
       if (selectionRef.current === userId) markDirty(false);
     },
   });
   const deleteUser = useMutation({
-    mutationFn: (userId: number) => api<void>(`/admin/users/${userId}`, { method: "DELETE" }),
+    mutationFn: ({ userId }: DeleteVariables) => api<void>(`/admin/users/${userId}`, { method: "DELETE" }),
     onMutate: () => setEditorFailure(null),
-    onError: (error, userId) => setEditorFailure({ selection: userId, error: deletionError(error) }),
-    onSuccess: async (_data, userId) => {
+    onError: (error, { userId, requestId }) => {
+      if (isLatestRequest(userId, requestId)) setEditorFailure({ selection: userId, error: deletionError(error) });
+    },
+    onSuccess: async (_data, { userId, requestId }) => {
+      if (!isLatestRequest(userId, requestId)) return;
+      await invalidateUserData();
+      if (!isLatestRequest(userId, requestId)) return;
       if (selectionRef.current === userId) {
         markDirty(false);
         setSelection(null);
       }
-      await invalidateUserData();
     },
   });
 
@@ -103,10 +132,13 @@ export function UsersPanel() {
 
   function submitCreate(draft: UserDraft) {
     createUser.mutate({
-      username: draft.username.trim(),
-      password: draft.password,
-      role: draft.role,
-      store_ids: draft.role === "user" ? draft.store_ids : [],
+      requestId: beginRequest("new"),
+      body: {
+        username: draft.username.trim(),
+        password: draft.password,
+        role: draft.role,
+        store_ids: draft.role === "user" ? draft.store_ids : [],
+      },
     });
   }
 
@@ -114,6 +146,7 @@ export function UsersPanel() {
     if (typeof selection !== "number") return;
     patchUser.mutate({
       userId: selection,
+      requestId: beginRequest(selection),
       body: {
         role: draft.role,
         is_active: draft.is_active,
@@ -123,13 +156,20 @@ export function UsersPanel() {
     });
   }
 
+  function submitDelete(userId: number) {
+    deleteUser.mutate({ userId, requestId: beginRequest(userId) });
+  }
+
   function editor() {
     if (selection === "new") return <UserEditor
+      key="new"
       mode="create"
       user={null}
       stores={stores.data ?? []}
       isOwner={actor?.is_owner === true}
-      pending={createUser.isPending && selection === "new"}
+      pending={createUser.isPending && selection === "new"
+        && createUser.variables !== undefined
+        && isLatestRequest("new", createUser.variables.requestId)}
       error={editorFailure?.selection === "new" ? editorFailure.error : null}
       successVersion={successVersions.new ?? 0}
       onDirtyChange={markDirty}
@@ -143,17 +183,22 @@ export function UsersPanel() {
       </section>;
     }
     return <UserEditor
+      key={selectedUser.id}
       mode="edit"
       user={selectedUser}
       stores={stores.data ?? []}
       isOwner={actor?.is_owner === true}
-      pending={(patchUser.isPending && patchUser.variables?.userId === selectedUser.id)
-        || (deleteUser.isPending && deleteUser.variables === selectedUser.id)}
+      pending={(patchUser.isPending
+        && patchUser.variables?.userId === selectedUser.id
+        && isLatestRequest(selectedUser.id, patchUser.variables.requestId))
+        || (deleteUser.isPending
+          && deleteUser.variables?.userId === selectedUser.id
+          && isLatestRequest(selectedUser.id, deleteUser.variables.requestId))}
       error={editorFailure?.selection === selectedUser.id ? editorFailure.error : null}
       successVersion={successVersions[String(selectedUser.id)] ?? 0}
       onDirtyChange={markDirty}
       onSubmit={submitEdit}
-      onDelete={() => deleteUser.mutate(selectedUser.id)}
+      onDelete={() => submitDelete(selectedUser.id)}
     />;
   }
 
