@@ -70,3 +70,22 @@
 - Task 5: pending.
 - Task 6: pending.
 - Task 7: pending.
+
+## Merged Business Records Replan SDD
+
+- Branch: `codex/replan-merged-business-records`
+- Worktree: `D:\work\myself\AI-try\AutoLava-AI\.worktrees\replan-merged-business-records`
+- Plan commit: `8e39840`
+- Baseline: backend 291 passed; frontend 185 passed.
+- Preflight plan scan: complete; no user-decision conflicts found. Preserve both histories if Task 1 merges a progress-ledger conflict.
+- Task 1: pending.
+- Task 2: pending.
+- Task 3: pending.
+- Task 4: pending.
+- Task 5: pending.
+- Task 6: pending.
+- Task 7: pending.
+- Task 8: pending.
+- Task 9: pending.
+- Task 10: pending.
+- Task 11: pending.
