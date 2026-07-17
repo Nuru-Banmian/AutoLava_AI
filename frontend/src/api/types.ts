@@ -134,8 +134,18 @@ export interface BriefingCard {
   timestamp_status: "utc" | "legacy_unknown";
 }
 export interface WeatherResponse { weather: string | null; weather_code: number | null; temperature_max: number | null; temperature_min: number | null; precipitation: number | null }
+export type ChartBucket = "day" | "month";
+export interface CategoryComposition { category_id: number; category_name: string; amount: string }
+export interface ChartComparisonKpis { start: string; end: string; total_revenue: string; open_days: number; average_revenue: string }
 export interface ChartsResponse {
-  kpis: { total_revenue: string; record_days: number; open_days: number; average_revenue: string; primary_categories: { category_id: number; category_name: string; amount: string }[]; total_wash_count: number | null; average_ticket: string | null };
-  daily: { date: string; revenue: string }[]; categories: { category_id: number; category_name: string; amount: string }[];
-  monthly: { month: string; revenue: string }[]; weather: { weather: string; average_revenue: string }[]; weekday: { weekday: number; average_revenue: string }[];
+  kpis: { total_revenue: string; record_days: number; open_days: number; average_revenue: string; primary_categories: CategoryComposition[]; total_wash_count: number | null; average_ticket: string | null };
+  range: { start: string; end: string; bucket: ChartBucket };
+  comparison_kpis: ChartComparisonKpis | null;
+  classified_included_total: string;
+  daily: { date: string; revenue: string }[];
+  categories: CategoryComposition[];
+  excluded_categories: CategoryComposition[];
+  monthly: { month: string; revenue: string }[];
+  weather: { weather: string; average_revenue: string }[];
+  weekday: { weekday: number; average_revenue: string }[];
 }
