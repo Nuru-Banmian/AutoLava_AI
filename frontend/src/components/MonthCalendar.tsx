@@ -69,6 +69,7 @@ export function MonthCalendar({ month, selected, today, recordedDates, onSelect 
                   aria-pressed={iso === selected}
                   tabIndex={iso === focusedDate ? 0 : -1}
                   data-recorded={recorded || undefined}
+                  data-empty={inMonth && iso <= today && !recorded || undefined}
                   data-outside={!inMonth || undefined}
                   disabled={iso > today}
                   onClick={() => onSelect(iso)}
@@ -86,6 +87,7 @@ export function MonthCalendar({ month, selected, today, recordedDates, onSelect 
                 >
                   {format(day, "d")}
                   {recorded && <span aria-hidden="true" className={cn("absolute bottom-1 size-1 rounded-full", iso === selected ? "bg-primary-foreground" : "bg-primary")} />}
+                  {!recorded && inMonth && iso <= today && <span aria-hidden="true" className={cn("absolute bottom-1 text-[9px]", iso === selected ? "text-primary-foreground" : "text-muted-foreground")}>空</span>}
                 </button>
               </div>
             );

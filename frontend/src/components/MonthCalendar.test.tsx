@@ -22,6 +22,7 @@ describe("MonthCalendar", () => {
     );
 
     const recorded = screen.getByRole("button", { name: "2026年7月14日，已有记录" });
+    expect(screen.getByRole("button", { name: "2026年7月13日" })).toHaveAttribute("data-empty", "true");
     expect(recorded).toBeEnabled();
     expect(recorded).toHaveAttribute("data-recorded", "true");
     expect(screen.getByRole("button", { name: "2026年7月15日" })).toHaveAttribute("aria-pressed", "true");
