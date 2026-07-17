@@ -48,6 +48,7 @@ export interface UserEditorProps {
   isOwner: boolean;
   pending: boolean;
   error: Error | null;
+  successVersion: number;
   onDirtyChange(dirty: boolean): void;
   onSubmit(draft: UserDraft): void;
   onDelete?(): void;
@@ -66,35 +67,29 @@ function sameDraft(left: UserDraft, right: UserDraft) {
     && left.store_ids.every((id, index) => id === right.store_ids[index]);
 }
 
-export function UserEditor({ mode, user, stores, isOwner, pending, error, onDirtyChange, onSubmit, onDelete }: UserEditorProps) {
+export function UserEditor({ mode, user, stores, isOwner, pending, error, successVersion, onDirtyChange, onSubmit, onDelete }: UserEditorProps) {
   const [draft, setDraft] = useState<UserDraft>(() => initialDraft(mode, user));
   const baseline = useRef(initialDraft(mode, user));
-  const submitted = useRef(false);
-  const wasPending = useRef(false);
+  const appliedSuccessVersion = useRef(successVersion);
   const identity = mode === "edit" ? user?.id : "new";
 
   useEffect(() => {
     const next = initialDraft(mode, user);
     baseline.current = next;
     setDraft(next);
-    submitted.current = false;
-    wasPending.current = false;
     onDirtyChange(false);
   }, [identity, mode, onDirtyChange]);
 
   useEffect(() => {
-    if (pending) wasPending.current = true;
-    if (!pending && wasPending.current && submitted.current && !error) {
-      const next = mode === "create"
-        ? { ...createDraft }
-        : { ...draft, password: "" };
-      baseline.current = next;
-      setDraft(next);
-      submitted.current = false;
-      wasPending.current = false;
-      onDirtyChange(false);
-    }
-  }, [draft, error, mode, onDirtyChange, pending]);
+    if (appliedSuccessVersion.current === successVersion) return;
+    appliedSuccessVersion.current = successVersion;
+    const next = mode === "create"
+      ? { ...createDraft }
+      : { ...draft, password: "" };
+    baseline.current = next;
+    setDraft(next);
+    onDirtyChange(false);
+  }, [draft, mode, onDirtyChange, successVersion]);
 
   function update(next: UserDraft) {
     const normalized = { ...next, store_ids: [...next.store_ids].sort((a, b) => a - b) };
@@ -105,11 +100,20 @@ export function UserEditor({ mode, user, stores, isOwner, pending, error, onDirt
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (mode === "create" && (!draft.username.trim() || !draft.password)) return;
-    submitted.current = true;
+    if (unavailableAssignments.length > 0) return;
     onSubmit(draft);
   }
 
   const activeStores = stores.filter((store) => store.is_active);
+  const activeStoreIds = new Set(activeStores.map((store) => store.id));
+  const unavailableAssignments = draft.role === "user"
+    ? draft.store_ids
+      .filter((id) => !activeStoreIds.has(id))
+      .map((id) => {
+        const store = stores.find((candidate) => candidate.id === id);
+        return { id, label: store ? `${store.name}（已停用）` : `门店 #${id}（不可用）` };
+      })
+    : [];
 
   return <section className="space-y-5 rounded-lg border bg-card p-4">
     <h2 className="text-lg font-semibold">{mode === "create" ? "新建用户" : `编辑 ${user?.username ?? ""}`}</h2>
@@ -148,6 +152,18 @@ export function UserEditor({ mode, user, stores, isOwner, pending, error, onDirt
           />
           {store.name}
         </label>)}
+        {unavailableAssignments.length > 0 && <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3">
+          <p role="alert" className="text-sm text-destructive">保存前请移除不可用的门店分配。</p>
+          <ul className="space-y-2">
+            {unavailableAssignments.map((assignment) => <li className="flex items-center justify-between gap-3 text-sm" key={assignment.id}>
+              <span>{assignment.label}</span>
+              <Button aria-label={`移除 ${assignment.label}`} size="sm" type="button" variant="outline" onClick={() => update({
+                ...draft,
+                store_ids: draft.store_ids.filter((id) => id !== assignment.id),
+              })}>移除</Button>
+            </li>)}
+          </ul>
+        </div>}
       </fieldset>}
 
       <div className="space-y-1">
@@ -156,7 +172,7 @@ export function UserEditor({ mode, user, stores, isOwner, pending, error, onDirt
       </div>
 
       {error && <p role="alert" className="text-sm text-destructive">{error.message || "请求失败"}</p>}
-      <Button disabled={pending} type="submit">{pending ? "保存中…" : mode === "create" ? "添加用户" : "保存用户"}</Button>
+      <Button disabled={pending || unavailableAssignments.length > 0} type="submit">{pending ? "保存中…" : mode === "create" ? "添加用户" : "保存用户"}</Button>
     </form>
 
     {mode === "edit" && onDelete && <section aria-label="危险操作" className="space-y-2 border-t pt-4">

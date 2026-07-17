@@ -5,6 +5,8 @@ import { setupServer } from "msw/node";
 import { MemoryRouter } from "react-router-dom";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { AuthProvider } from "@/auth/AuthProvider";
+import { UnsavedChangesProvider } from "@/navigation/UnsavedChanges";
 import { AdminPage } from "@/pages/AdminPage";
 import { accessibleStoresKeyFor } from "@/stores/StoreProvider";
 
@@ -16,7 +18,9 @@ vi.mock("@/components/StoreLocationPicker", () => ({
   ),
 }));
 
-const server = setupServer();
+const server = setupServer(
+  http.get("/api/auth/me", () => HttpResponse.json({ id: 1, username: "manager", role: "admin", is_owner: false })),
+);
 const scopedAccessibleStoresKey = accessibleStoresKeyFor(1);
 
 const emptyLists = [
@@ -35,7 +39,9 @@ function renderAdmin(initialEntry = "/admin") {
   return { client, ...render(
     <MemoryRouter initialEntries={[initialEntry]}>
       <QueryClientProvider client={client}>
-        <AdminPage />
+        <AuthProvider>
+          <UnsavedChangesProvider><AdminPage /></UnsavedChangesProvider>
+        </AuthProvider>
       </QueryClientProvider>
     </MemoryRouter>,
   ) };
@@ -78,20 +84,21 @@ describe("AdminPage", () => {
       http.get("/api/admin/task-logs", () => HttpResponse.json([])),
       http.post("/api/admin/users", async ({ request }) => {
         posted = await request.json();
-        return HttpResponse.json({ id: 3, username: "operator", role: "user", is_active: true }, { status: 201 });
+        return HttpResponse.json({ id: 3, username: "operator", role: "user", is_active: true, store_ids: [] }, { status: 201 });
       }),
     );
     renderAdmin("/admin?tab=users");
     await waitFor(() => expect(userFetches).toBe(1));
     await waitFor(() => expect(storeFetches).toBe(1));
 
-    fireEvent.change(screen.getByLabelText("新用户名"), { target: { value: "operator" } });
+    fireEvent.click(await screen.findByRole("button", { name: "新建用户" }));
+    fireEvent.change(screen.getByLabelText("用户名"), { target: { value: "operator" } });
     fireEvent.change(screen.getByLabelText("初始密码"), { target: { value: "password-123" } });
     fireEvent.click(screen.getByRole("button", { name: "添加用户" }));
 
     await waitFor(() => expect(userFetches).toBe(2));
     expect(storeFetches).toBe(1);
-    expect(posted).toEqual({ username: "operator", password: "password-123", role: "user" });
+    expect(posted).toEqual({ username: "operator", password: "password-123", role: "user", store_ids: [] });
   });
 
   it("shows an API authorization error", async () => {
@@ -101,7 +108,7 @@ describe("AdminPage", () => {
     );
     renderAdmin("/admin?tab=users");
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Admin access required");
+    expect(await screen.findByRole("alert")).toHaveTextContent("你没有权限执行这个操作");
   });
 
   it("creates a store using the backend contract and refetches the exact store list", async () => {
@@ -130,80 +137,31 @@ describe("AdminPage", () => {
     expect(posted).toEqual({ name: "Roma", address: "Via Uno", latitude: 41.9, longitude: 12.5, timezone: "Europe/Rome" });
   });
 
-  it("loads and replaces members for a selected store, then refetches that exact member list", async () => {
-    let memberFetches = 0;
-    let replaced: unknown;
+  it("edits store access in the user workspace without legacy member or history surfaces", async () => {
+    let patched: unknown;
     server.use(
       http.get("/api/admin/users", () => HttpResponse.json([
-        { id: 1, username: "admin", role: "admin", is_active: true },
-        { id: 2, username: "operator", role: "user", is_active: true },
+        { id: 2, username: "operator", role: "user", is_active: true, store_ids: [] },
       ])),
       http.get("/api/admin/stores", () => HttpResponse.json([
         { id: 9, name: "Roma", address: "Via Uno", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true },
       ])),
       http.get("/api/admin/alerts", () => HttpResponse.json([])),
       http.get("/api/admin/task-logs", () => HttpResponse.json([])),
-      http.get("/api/admin/stores/9/members", () => {
-        memberFetches += 1;
-        return HttpResponse.json([
-          { id: 1, username: "admin", role: "admin", is_active: true },
-          { id: 2, username: "operator", role: "user", is_active: true },
-        ]);
-      }),
-      http.put("/api/admin/stores/9/members", async ({ request }) => {
-        replaced = await request.json();
-        return HttpResponse.json({ store_id: 9, user_ids: [2] });
+      http.patch("/api/admin/users/2", async ({ request }) => {
+        patched = await request.json();
+        return HttpResponse.json({ id: 2, username: "operator", role: "user", is_active: true, store_ids: [9] });
       }),
     );
-    const { client } = renderAdmin("/admin?tab=users");
-    client.setQueryData(scopedAccessibleStoresKey, [{ id: 9 }]);
-    await screen.findByRole("option", { name: "Roma" });
-    fireEvent.change(await screen.findByLabelText("成员门店"), { target: { value: "9" } });
-    await waitFor(() => expect(screen.getByLabelText("operator")).toBeChecked());
-    expect(screen.queryByLabelText("admin")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "保存成员" }));
-
-    await waitFor(() => expect(memberFetches).toBe(2));
-    expect(replaced).toEqual({ user_ids: [2] });
-    expect(client.getQueryState(scopedAccessibleStoresKey)?.isInvalidated).toBe(true);
-  });
-
-  it("prevents replacing members when the current member list failed to load", async () => {
-    let puts = 0;
-    server.use(
-      http.get("/api/admin/users", () => HttpResponse.json([{ id: 1, username: "admin", role: "admin", is_active: true }])),
-      http.get("/api/admin/stores", () => HttpResponse.json([{ id: 9, name: "Roma", address: "Via Uno", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true }])),
-      http.get("/api/admin/alerts", () => HttpResponse.json([])),
-      http.get("/api/admin/task-logs", () => HttpResponse.json([])),
-      http.get("/api/admin/stores/9/members", () => HttpResponse.json({ detail: "Members unavailable" }, { status: 500 })),
-      http.put("/api/admin/stores/9/members", () => { puts += 1; return HttpResponse.json({ store_id: 9, user_ids: [] }); }),
-    );
     renderAdmin("/admin?tab=users");
-    await screen.findByRole("option", { name: "Roma" });
-    fireEvent.change(await screen.findByLabelText("成员门店"), { target: { value: "9" } });
-    expect(await screen.findByRole("alert")).toHaveTextContent("Members unavailable");
-    const save = screen.getByRole("button", { name: "保存成员" });
-    expect(save).toBeDisabled();
-    fireEvent.submit(save.closest("form")!);
-    expect(puts).toBe(0);
-  });
+    fireEvent.click(await screen.findByRole("button", { name: /operator/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Roma" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存用户" }));
 
-  it("prevents replacing members when the user list failed to load", async () => {
-    let puts = 0;
-    server.use(
-      http.get("/api/admin/users", () => HttpResponse.json({ detail: "Users unavailable" }, { status: 500 })),
-      http.get("/api/admin/stores", () => HttpResponse.json([{ id: 9, name: "Roma", address: "Via Uno", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true }])),
-      http.get("/api/admin/alerts", () => HttpResponse.json([])),
-      http.get("/api/admin/task-logs", () => HttpResponse.json([])),
-      http.get("/api/admin/stores/9/members", () => HttpResponse.json([])),
-      http.put("/api/admin/stores/9/members", () => { puts += 1; return HttpResponse.json({ store_id: 9, user_ids: [] }); }),
-    );
-    renderAdmin("/admin?tab=users");
-    await screen.findByRole("option", { name: "Roma" });
-    fireEvent.change(await screen.findByLabelText("成员门店"), { target: { value: "9" } });
-    await waitFor(() => expect(screen.getByRole("button", { name: "保存成员" })).toBeDisabled());
-    fireEvent.submit(screen.getByRole("button", { name: "保存成员" }).closest("form")!);
-    expect(puts).toBe(0);
+    await waitFor(() => expect(patched).toEqual({ role: "user", is_active: true, store_ids: [9] }));
+    expect(screen.queryByText("门店成员")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /操作历史/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("操作历史")).not.toBeInTheDocument();
   });
 
   it("loads the current income config and publishes a local draft once", async () => {
@@ -239,25 +197,22 @@ describe("AdminPage", () => {
     expect(published).toEqual({ enabled: true, items: [{ category_id: null, name: "现金", include_in_total: true, is_active: true, sort_order: 0 }] });
   });
 
-  it("edits users and exposes their operation history", async () => {
+  it("edits user status and password in the single editor", async () => {
     let patch: unknown;
     server.use(
-      http.get("/api/admin/users", () => HttpResponse.json([{ id: 2, username: "operator", role: "user", is_active: true }])),
+      http.get("/api/admin/users", () => HttpResponse.json([{ id: 2, username: "operator", role: "user", is_active: true, store_ids: [] }])),
       http.get("/api/admin/stores", () => HttpResponse.json([])),
       http.get("/api/admin/alerts", () => HttpResponse.json([])),
       http.get("/api/admin/task-logs", () => HttpResponse.json([])),
-      http.patch("/api/admin/users/2", async ({ request }) => { patch = await request.json(); return HttpResponse.json({ id: 2, username: "operator", role: "user", is_active: false }); }),
-      http.get("/api/admin/users/2/operations", () => HttpResponse.json([{ id: 7, description: "Updated ledger", operation_type: "update", created_at: "2026-07-14T10:00:00" }])),
+      http.patch("/api/admin/users/2", async ({ request }) => { patch = await request.json(); return HttpResponse.json({ id: 2, username: "operator", role: "user", is_active: false, store_ids: [] }); }),
     );
     renderAdmin("/admin?tab=users");
-    await screen.findByText("operator");
-    fireEvent.click(screen.getByRole("button", { name: "停用用户 operator" }));
-    await waitFor(() => expect(patch).toEqual({ is_active: false }));
-    fireEvent.change(screen.getByLabelText("新密码 operator"), { target: { value: "new-password" } });
-    fireEvent.click(screen.getByRole("button", { name: "修改密码 operator" }));
-    await waitFor(() => expect(patch).toEqual({ password: "new-password" }));
-    fireEvent.click(screen.getByRole("button", { name: "操作历史 operator" }));
-    expect(await screen.findByText("Updated ledger")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: /operator/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "账号启用" }));
+    fireEvent.change(screen.getByLabelText("重置密码（可选）"), { target: { value: "new-password" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存用户" }));
+    await waitFor(() => expect(patch).toEqual({ role: "user", is_active: false, store_ids: [], password: "new-password" }));
+    expect(screen.getAllByLabelText("重置密码（可选）")).toHaveLength(1);
   });
 
   it("edits stores and invalidates accessible stores", async () => {
@@ -307,17 +262,19 @@ describe("AdminPage", () => {
     let reject!: () => void;
     const delayed = new Promise<void>((resolve) => { reject = resolve; });
     server.use(
-      http.get("/api/admin/users", () => HttpResponse.json([{ id: 2, username: "operator", role: "user", is_active: true }])),
+      http.get("/api/admin/users", () => HttpResponse.json([{ id: 2, username: "operator", role: "user", is_active: true, store_ids: [] }])),
       http.get("/api/admin/stores", () => HttpResponse.json([])),
       http.get("/api/admin/alerts", () => HttpResponse.json([])),
       http.get("/api/admin/task-logs", () => HttpResponse.json([])),
       http.patch("/api/admin/users/2", async () => { await delayed; return HttpResponse.json({ detail: "Edit rejected" }, { status: 409 }); }),
     );
     renderAdmin("/admin?tab=users");
-    const toggle = await screen.findByRole("button", { name: "停用用户 operator" });
-    fireEvent.click(toggle);
-    await waitFor(() => expect(toggle).toBeDisabled());
-    expect(screen.getByRole("button", { name: "修改密码 operator" })).toBeDisabled();
+    fireEvent.click(await screen.findByRole("button", { name: /operator/ }));
+    fireEvent.change(screen.getByLabelText("重置密码（可选）"), { target: { value: "new-password" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存用户" }));
+    const saving = await screen.findByRole("button", { name: "保存中…" });
+    expect(saving).toBeDisabled();
+    expect(screen.getByRole("button", { name: "永久删除" })).toBeDisabled();
     reject();
     expect(await screen.findByRole("alert")).toHaveTextContent("Edit rejected");
   });

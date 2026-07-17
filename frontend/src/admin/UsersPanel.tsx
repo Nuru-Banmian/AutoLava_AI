@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { UserEditor, type UserDraft } from "@/admin/UserEditor";
 import { api, ApiError, friendlyApiError } from "@/api/client";
@@ -13,6 +13,7 @@ const usersKey = ["admin", "users"] as const;
 const storesKey = ["admin", "stores"] as const;
 type UserSelection = number | "new" | null;
 type UserPatchBody = { password?: string; role: UserRole; is_active: boolean; store_ids: number[] };
+type EditorFailure = { selection: Exclude<UserSelection, null>; error: Error };
 
 function ErrorMessage({ error }: { error: Error | null }) {
   if (!error) return null;
@@ -22,10 +23,14 @@ function ErrorMessage({ error }: { error: Error | null }) {
 export function UsersPanel() {
   const queryClient = useQueryClient();
   const [selection, setSelection] = useState<UserSelection>(null);
+  const selectionRef = useRef<UserSelection>(selection);
+  const [editorFailure, setEditorFailure] = useState<EditorFailure | null>(null);
+  const [successVersions, setSuccessVersions] = useState<Record<string, number>>({});
   const { user: actor } = useAuth();
   const { markDirty, requestTransition } = useUnsavedChanges();
   const users = useQuery({ queryKey: usersKey, queryFn: () => api<AdminUser[]>("/admin/users") });
   const stores = useQuery({ queryKey: storesKey, queryFn: () => api<AdminStore[]>("/admin/stores") });
+  selectionRef.current = selection;
 
   useEffect(() => () => markDirty(false), [markDirty]);
 
@@ -36,42 +41,64 @@ export function UsersPanel() {
     ]);
   }
 
+  function recordSuccess(target: Exclude<UserSelection, null>) {
+    const key = String(target);
+    setSuccessVersions((current) => ({ ...current, [key]: (current[key] ?? 0) + 1 }));
+  }
+
+  function deletionError(error: Error) {
+    return error instanceof ApiError && error.status === 409 && error.detail.includes("历史")
+      ? new ApiError(409, "该用户有历史记录，只能停用账号，不能永久删除。")
+      : error;
+  }
+
   const createUser = useMutation({
     mutationFn: (input: { username: string; password: string; role: UserRole; store_ids: number[] }) =>
       api<AdminUser>("/admin/users", { method: "POST", body: JSON.stringify(input) }),
+    onMutate: () => setEditorFailure(null),
+    onError: (error) => setEditorFailure({ selection: "new", error }),
     onSuccess: async () => {
-      markDirty(false);
       await invalidateUserData();
+      recordSuccess("new");
+      if (selectionRef.current === "new") markDirty(false);
     },
   });
   const patchUser = useMutation({
     mutationFn: ({ userId, body }: { userId: number; body: UserPatchBody }) =>
       api<AdminUser>(`/admin/users/${userId}`, { method: "PATCH", body: JSON.stringify(body) }),
-    onSuccess: async () => {
-      markDirty(false);
+    onMutate: () => setEditorFailure(null),
+    onError: (error, { userId }) => setEditorFailure({ selection: userId, error }),
+    onSuccess: async (_data, { userId }) => {
       await invalidateUserData();
+      recordSuccess(userId);
+      if (selectionRef.current === userId) markDirty(false);
     },
   });
   const deleteUser = useMutation({
     mutationFn: (userId: number) => api<void>(`/admin/users/${userId}`, { method: "DELETE" }),
-    onSuccess: async () => {
-      markDirty(false);
-      setSelection(null);
+    onMutate: () => setEditorFailure(null),
+    onError: (error, userId) => setEditorFailure({ selection: userId, error: deletionError(error) }),
+    onSuccess: async (_data, userId) => {
+      if (selectionRef.current === userId) {
+        markDirty(false);
+        setSelection(null);
+      }
       await invalidateUserData();
     },
   });
 
-  const deleteError = deleteUser.error instanceof ApiError
-    && deleteUser.error.status === 409
-    && deleteUser.error.detail.includes("历史")
-    ? new ApiError(409, "该用户有历史记录，只能停用账号，不能永久删除。")
-    : deleteUser.error;
   const selectedUser = typeof selection === "number"
     ? users.data?.find((user) => user.id === selection)
     : undefined;
 
   function select(next: UserSelection) {
-    requestTransition(() => setSelection(next));
+    requestTransition(() => {
+      setEditorFailure(null);
+      createUser.reset();
+      patchUser.reset();
+      deleteUser.reset();
+      setSelection(next);
+    });
   }
 
   function submitCreate(draft: UserDraft) {
@@ -102,8 +129,9 @@ export function UsersPanel() {
       user={null}
       stores={stores.data ?? []}
       isOwner={actor?.is_owner === true}
-      pending={createUser.isPending}
-      error={createUser.error}
+      pending={createUser.isPending && selection === "new"}
+      error={editorFailure?.selection === "new" ? editorFailure.error : null}
+      successVersion={successVersions.new ?? 0}
       onDirtyChange={markDirty}
       onSubmit={submitCreate}
     />;
@@ -119,8 +147,10 @@ export function UsersPanel() {
       user={selectedUser}
       stores={stores.data ?? []}
       isOwner={actor?.is_owner === true}
-      pending={patchUser.isPending || deleteUser.isPending}
-      error={patchUser.error ?? deleteError}
+      pending={(patchUser.isPending && patchUser.variables?.userId === selectedUser.id)
+        || (deleteUser.isPending && deleteUser.variables === selectedUser.id)}
+      error={editorFailure?.selection === selectedUser.id ? editorFailure.error : null}
+      successVersion={successVersions[String(selectedUser.id)] ?? 0}
       onDirtyChange={markDirty}
       onSubmit={submitEdit}
       onDelete={() => deleteUser.mutate(selectedUser.id)}

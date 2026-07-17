@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
@@ -89,6 +89,8 @@ it("selects a user into one editor and removes duplicate management surfaces", a
   expect(screen.getAllByLabelText("重置密码（可选）")).toHaveLength(1);
   expect(screen.queryByText("门店成员")).not.toBeInTheDocument();
   expect(screen.queryByText("用户操作历史")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /操作历史/ })).not.toBeInTheDocument();
+  expect(screen.queryByText("操作历史")).not.toBeInTheDocument();
   expect(screen.queryByText(/普通用户看不到管理中心/)).not.toBeInTheDocument();
   expect(screen.queryByText(/可访问 Roma/)).not.toBeInTheDocument();
 });
@@ -155,4 +157,83 @@ it("creates a user with store access in the right-hand workspace", async () => {
     role: "user",
     store_ids: [9],
   }));
+});
+
+it("requires explicit removal of inactive and unavailable memberships before saving", async () => {
+  let patched: unknown;
+  server.use(
+    http.get("/api/admin/users", () => HttpResponse.json([{ ...maria, store_ids: [9, 99] }])),
+    http.get("/api/admin/stores", () => HttpResponse.json([
+      { ...roma, is_active: false },
+      { ...roma, id: 10, name: "Milano" },
+    ])),
+    http.patch("/api/admin/users/2", async ({ request }) => {
+      patched = await request.json();
+      return HttpResponse.json({ ...maria, store_ids: [] });
+    }),
+  );
+  renderPanel();
+  await userEvent.click(await screen.findByRole("button", { name: /maria/ }));
+
+  expect(screen.getByRole("alert")).toHaveTextContent("保存前请移除不可用的门店分配");
+  expect(screen.getByText("Roma（已停用）")).toBeInTheDocument();
+  expect(screen.getByText("门店 #99（不可用）")).toBeInTheDocument();
+  const save = screen.getByRole("button", { name: "保存用户" });
+  expect(save).toBeDisabled();
+  fireEvent.submit(save.closest("form")!);
+  expect(patched).toBeUndefined();
+
+  await userEvent.click(screen.getByRole("button", { name: "移除 Roma（已停用）" }));
+  await userEvent.click(screen.getByRole("button", { name: "移除 门店 #99（不可用）" }));
+  expect(save).toBeEnabled();
+  await userEvent.click(save);
+
+  await waitFor(() => expect(patched).toEqual({
+    role: "user",
+    is_active: true,
+    store_ids: [],
+  }));
+});
+
+it("does not carry a failed edit error to another user", async () => {
+  server.use(
+    http.get("/api/admin/users", () => HttpResponse.json([maria, operator])),
+    http.get("/api/admin/stores", () => HttpResponse.json([roma])),
+    http.patch("/api/admin/users/2", () => HttpResponse.json({ detail: "Maria edit rejected" }, { status: 409 })),
+  );
+  renderPanel();
+  await userEvent.click(await screen.findByRole("button", { name: /maria/ }));
+  await userEvent.type(screen.getByLabelText("重置密码（可选）"), "replacement123");
+  await userEvent.click(screen.getByRole("button", { name: "保存用户" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Maria edit rejected");
+
+  await userEvent.click(screen.getByRole("button", { name: /operator/ }));
+  await userEvent.click(screen.getByRole("button", { name: "放弃修改" }));
+
+  expect(screen.getByRole("heading", { name: "编辑 operator" })).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("resets the saved draft after a prior delete error", async () => {
+  server.use(
+    http.get("/api/admin/users", () => HttpResponse.json([maria])),
+    http.get("/api/admin/stores", () => HttpResponse.json([roma])),
+    http.delete("/api/admin/users/2", () => HttpResponse.json({ detail: "该用户已有历史记录，不能永久删除；请停用账号" }, { status: 409 })),
+    http.patch("/api/admin/users/2", async ({ request }) => HttpResponse.json({
+      ...maria,
+      ...(await request.json() as object),
+    })),
+  );
+  renderPanel();
+  await userEvent.click(await screen.findByRole("button", { name: /maria/ }));
+  await userEvent.click(screen.getByRole("button", { name: "永久删除" }));
+  await userEvent.click(screen.getByRole("button", { name: "确认删除" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("只能停用账号");
+
+  const password = screen.getByLabelText("重置密码（可选）");
+  await userEvent.type(password, "replacement123");
+  await userEvent.click(screen.getByRole("button", { name: "保存用户" }));
+
+  await waitFor(() => expect(password).toHaveValue(""));
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
