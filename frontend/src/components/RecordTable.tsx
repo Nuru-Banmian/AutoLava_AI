@@ -4,8 +4,10 @@ import type { KeyboardEvent } from "react";
 import type { RecordSnapshot } from "@/api/types";
 import { formatMoney } from "@/lib/user-api";
 
+export type RecordTableRow = RecordSnapshot | { id: null; date: string };
+
 interface RecordTableProps {
-  records: RecordSnapshot[];
+  records: RecordTableRow[];
   selectedId: number | null;
   loading: boolean;
   error: Error | null;
@@ -33,6 +35,7 @@ export function RecordTable({ records, selectedId, loading, error, onSelect, onR
         <tbody>
           {records.map((record) => {
             const dateLabel = format(parseISO(record.date), "yyyy年M月d日");
+            if (record.id === null) return <tr key={record.date} className="border-l-4 border-transparent text-muted-foreground"><td className="px-3 py-3">{dateLabel}</td><td className="px-3 py-3">未录入</td><td className="px-3 py-3">—</td><td className="px-3 py-3">—</td></tr>;
             const selected = record.id === selectedId;
             return (
               <tr

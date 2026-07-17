@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { eachDayOfInterval, format, parseISO } from "date-fns";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -12,7 +13,7 @@ import { RecordDetailPanel } from "@/components/RecordDetailPanel";
 import { RecordFilters } from "@/components/RecordFilters";
 import { RecordManagementDialogs } from "@/components/RecordManagementDialogs";
 import { RecordPagination } from "@/components/RecordPagination";
-import { RecordTable } from "@/components/RecordTable";
+import { RecordTable, type RecordTableRow } from "@/components/RecordTable";
 import type { DateRange, RecordRangeMode } from "@/lib/business-record-ranges";
 import { recordRange } from "@/lib/business-record-ranges";
 import { downloadBusinessRecords } from "@/lib/business-record-export";
@@ -20,6 +21,7 @@ import { databaseKey, storeLocalToday } from "@/lib/user-api";
 import { useStore } from "@/stores/StoreProvider";
 
 const PAGE_SIZE = 15 as const;
+const FETCH_SIZE = 200 as const;
 
 export function BusinessRecordsPage() {
   const { selected } = useStore();
@@ -61,9 +63,9 @@ export function BusinessRecordsPage() {
   const recordQueryString = useMemo(() => new URLSearchParams({
     start: range.start,
     end: range.end,
-    page: String(page),
-    page_size: String(PAGE_SIZE),
-  }).toString(), [page, range.end, range.start]);
+    page: "1",
+    page_size: String(FETCH_SIZE),
+  }).toString(), [range.end, range.start]);
   const recordStateReady = selected !== null && recordStoreId === selected.id;
   const records = useQuery({
     queryKey: recordStateReady ? databaseKey(selected.id, recordQueryString) : ["database", "records", "pending", selected?.id ?? null],
@@ -96,6 +98,14 @@ export function BusinessRecordsPage() {
   }
   const selectedRecord = selectedRecordRef.current;
   const visibleRecords = records.data?.items.filter((item) => item.store_id === selected?.id) ?? [];
+  const tableRows = useMemo<RecordTableRow[]>(() => {
+    const byDate = new Map(visibleRecords.map((record) => [record.date, record]));
+    const tableEnd = range.end > today ? today : range.end;
+    return eachDayOfInterval({ start: parseISO(range.start), end: parseISO(tableEnd) })
+      .map((day) => byDate.get(format(day, "yyyy-MM-dd")) ?? { id: null, date: format(day, "yyyy-MM-dd") })
+      .reverse();
+  }, [range.end, range.start, today, visibleRecords]);
+  const pagedTableRows = tableRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const exportMutation = useMutation({
     mutationFn: ({ storeId, requestedRange }: { storeId: number; requestedRange: DateRange }) => (
       downloadBusinessRecords(storeId, requestedRange)
@@ -138,7 +148,7 @@ export function BusinessRecordsPage() {
         <div className="min-w-0 overflow-x-hidden">
           <div className="hidden lg:block">
             <RecordTable
-              records={visibleRecords}
+              records={pagedTableRows}
               selectedId={selectedRecordId}
               loading={records.isLoading}
               error={records.error}
@@ -165,7 +175,7 @@ export function BusinessRecordsPage() {
           </div>
           <RecordPagination
             page={page}
-            total={records.data?.total ?? 0}
+            total={tableRows.length}
             pageSize={PAGE_SIZE}
             onPageChange={handlePageChange}
           />
