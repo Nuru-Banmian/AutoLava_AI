@@ -55,6 +55,7 @@ export function DatabasePage() {
   const [adminOpen, setAdminOpen] = useState(false);
   const [auditTarget, setAuditTarget] = useState<AuditTarget | null>(null);
   const [deleting, setDeleting] = useState<RecordSnapshot | null>(null);
+  const [deleteConflict, setDeleteConflict] = useState(false);
   const [rolling, setRolling] = useState<AuditEntry | null>(null);
   const [message, setMessage] = useState("");
 
@@ -64,6 +65,7 @@ export function DatabasePage() {
     setAdminOpen(false);
     setAuditTarget(null);
     setDeleting(null);
+    setDeleteConflict(false);
     setRolling(null);
     setMessage("");
   }, [selected?.id, today]);
@@ -94,6 +96,7 @@ export function DatabasePage() {
     if (selectedIdRef.current === storeId) {
       setMessage("操作成功");
       setDeleting(null);
+      setDeleteConflict(false);
       setRolling(null);
     }
     await invalidateUserData(client, storeId);
@@ -104,8 +107,12 @@ export function DatabasePage() {
     onSuccess: (_data, variables) => finish(variables.storeId),
     onError: (error, variables) => {
       if (selectedIdRef.current === variables.storeId) {
-        setDeleting(null);
-        setAdminOpen(false);
+        const isConflict = error instanceof ApiError && error.status === 409;
+        setDeleteConflict(isConflict);
+        if (!isConflict) {
+          setDeleting(null);
+          setAdminOpen(false);
+        }
         setMessage(friendlyApiError(error, "删除失败，请重试"));
       }
     },
@@ -131,6 +138,15 @@ export function DatabasePage() {
     if (date.slice(0, 7) !== month) setMonth(date.slice(0, 7));
     setAdminOpen(false);
     setAuditTarget(null);
+  };
+  const reloadDeleteRecord = async () => {
+    if (!deleting) return;
+    const refreshed = await records.refetch();
+    const current = refreshed.data?.items.find((record) => record.date === deleting.date) ?? null;
+    setDeleting(current);
+    setDeleteConflict(false);
+    setMessage("");
+    await history.refetch();
   };
 
   return (
@@ -167,7 +183,7 @@ export function DatabasePage() {
         <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>管理 {auditTarget?.date ?? selectedDate} 记录</DialogTitle></DialogHeader>
           <div className="grid gap-4">
-            {selectedRecord && selectedRecord.date === auditTarget?.date && <Button type="button" variant="destructive" className="w-fit" onClick={() => setDeleting(selectedRecord)}>删除这天记录</Button>}
+            {selectedRecord && selectedRecord.date === auditTarget?.date && <Button type="button" variant="destructive" className="w-fit" onClick={() => { setDeleteConflict(false); setDeleting(selectedRecord); }}>删除这天记录</Button>}
             <div><h3 className="font-medium">修改历史</h3>
               {history.isLoading ? <p role="status">加载修改历史…</p> : history.error ? <div role="alert"><span>{history.error.message}</span><button className="ml-2 underline" onClick={() => void history.refetch()}>重试历史记录</button></div> : selectedHistory.length ? selectedHistory.map((entry) => (
                 <div key={entry.id} className="flex items-center justify-between gap-2 border-b py-2 text-sm"><span>{entry.operation_type} · {entry.operator_username}</span>{entry.rollbackable !== false ? <Button size="sm" variant="outline" onClick={() => setRolling(entry)}>回滚 #{entry.id}</Button> : <span className="text-muted-foreground">不可回滚</span>}</div>
@@ -177,7 +193,7 @@ export function DatabasePage() {
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={Boolean(deleting)} onOpenChange={(open) => { if (!open) setDeleting(null); }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认删除记录？</AlertDialogTitle><AlertDialogDescription>删除后可通过历史记录回滚。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction onClick={() => deleting && remove.mutate({ storeId: selected.id, date: deleting.date, expectedVersion: deleting.row_version })}>确认删除</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+      <AlertDialog open={Boolean(deleting)} onOpenChange={(open) => { if (!open) { setDeleting(null); setDeleteConflict(false); } }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认删除记录？</AlertDialogTitle><AlertDialogDescription role={deleteConflict ? "alert" : undefined}>{deleteConflict ? "数据已经发生变化，请刷新后重试。重新加载后请确认最新内容。" : "删除后可通过历史记录回滚。"}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel>{deleteConflict && <Button type="button" variant="outline" onClick={() => void reloadDeleteRecord()}>重新加载记录</Button>}<Button type="button" variant="destructive" onClick={() => deleting && remove.mutate({ storeId: selected.id, date: deleting.date, expectedVersion: deleting.row_version })}>确认删除</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
       <AlertDialog open={Boolean(rolling)} onOpenChange={(open) => { if (!open) setRolling(null); }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认回滚记录？</AlertDialogTitle><AlertDialogDescription>记录将恢复到该历史版本。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction onClick={() => rolling && rollback.mutate({ storeId: selected.id, auditId: rolling.id })}>确认回滚</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
       {message && <p role={message === "操作成功" ? "status" : "alert"}>{message}</p>}
     </section>

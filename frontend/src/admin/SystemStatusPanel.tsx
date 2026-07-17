@@ -53,7 +53,7 @@ export function SystemStatusPanel() {
   const dashboardCards = dashboardQueries.flatMap((query) => query.data ?? []);
   const dashboardGeneratedAt = latestTimestamp(dashboardStates.map((state) => state.latest?.value));
   const dashboardIssue = dashboardStates.some((state) => state.issue === "legacy") ? "legacy" : dashboardStates.some((state) => state.issue === "invalid") ? "invalid" : null;
-  const weatherTasks = (taskLogs.data ?? []).filter((task) => task.task_type.toLowerCase().includes("weather"));
+  const weatherTasks = (taskLogs.data ?? []).filter((task) => task.task_type === "weather_refresh");
   const weatherTaskTimes = weatherTasks.filter((task) => task.timestamp_status === "utc").map((task) => ({
     task,
     raw: task.finished_at ?? task.started_at ?? task.created_at,

@@ -141,6 +141,18 @@ describe("SystemStatusPanel", () => {
     expect(screen.queryByText("运行正常")).not.toBeInTheDocument();
   });
 
+  it("does not let a newer weather backfill hide a failed weather refresh", async () => {
+    mockStatus({ taskLogs: [
+      { ...weatherTask[0], status: "failed", finished_at: "2026-07-16T08:05:00Z" },
+      { ...weatherTask[0], id: 2, task_type: "weather_backfill", status: "success", finished_at: "2026-07-16T09:05:00Z" },
+    ] });
+    renderStatus();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("最近天气任务未成功");
+    expect(screen.queryByText("运行正常")).not.toBeInTheDocument();
+    expect(screen.getByText(/最近天气更新/).parentElement).toHaveTextContent(/08:05/);
+  });
+
   it("keeps store-to-dashboard completeness and treats one empty store as partial", async () => {
     const stores = [
       { id: 1, name: "Roma", address: "Roma", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true },

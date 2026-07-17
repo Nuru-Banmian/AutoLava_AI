@@ -181,7 +181,11 @@ describe("DatabasePage", () => {
 
   it("keeps the selected record and explains a stale delete conflict", async () => {
     let deleteUrl = "";
-    renderPage();
+    let recordRequests = 0;
+    renderPage({ recordsProvider: () => {
+      recordRequests += 1;
+      return [{ ...record, row_version: recordRequests > 1 ? 2 : 1 }];
+    } });
     server.use(
       http.delete("/api/ledger/1/2026-07-14", ({ request }) => {
         deleteUrl = request.url;
@@ -196,6 +200,13 @@ describe("DatabasePage", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("数据已经发生变化，请刷新后重试");
     expect(new URL(deleteUrl).search).toBe("?expected_version=1");
+    expect(screen.getByRole("heading", { name: "确认删除记录？" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重新加载记录" }));
+    await waitFor(() => expect(recordRequests).toBeGreaterThan(1));
+    fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
+    await waitFor(() => expect(new URL(deleteUrl).search).toBe("?expected_version=2"));
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(screen.getByRole("heading", { name: "2026年7月14日" })).toBeInTheDocument();
   });
 

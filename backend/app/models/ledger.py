@@ -7,6 +7,7 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     ForeignKey,
+    Index,
     Numeric,
     String,
     Text,
@@ -81,4 +82,7 @@ class DailyIncomeItem(Base):
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
-    __table_args__ = (UniqueConstraint("record_id", "category_id"),)
+    __table_args__ = (
+        UniqueConstraint("record_id", "category_id"),
+        Index("ix_daily_income_items_record_sort", "record_id", "sort_order"),
+    )

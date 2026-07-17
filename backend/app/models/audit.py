@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import Boolean, Date, ForeignKey, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, Date, ForeignKey, Index, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -9,7 +9,15 @@ from app.models.base import Base
 
 class AuditLog(Base):
     __tablename__ = "audit_log"
-    __table_args__ = (UniqueConstraint("rollback_of_audit_id"),)
+    __table_args__ = (
+        UniqueConstraint("rollback_of_audit_id"),
+        Index(
+            "ix_audit_domain_record_created",
+            "operation_domain",
+            "record_id",
+            "created_at",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     operation_domain: Mapped[str] = mapped_column(String(30))
