@@ -21,7 +21,7 @@ export function AdminPage() {
 
   return <AdminLayout tab={tab} onTabChange={selectTab} panels={{
     income: <IncomeItemsPanel selectedStoreId={selectedStoreId} onSelectedStoreChange={setSelectedStoreId} />,
-    users: <UsersPanel selectedStoreId={selectedStoreId} onSelectedStoreChange={setSelectedStoreId} />,
+    users: <UsersPanel />,
     stores: <StoreSettingsPanel />,
     status: <SystemStatusPanel />,
   }} />;

@@ -12,7 +12,7 @@ import { createAppRouter } from "./router";
 const applicationStyles = readFileSync(resolve(process.cwd(), "src/index.css"), "utf8");
 
 const server = setupServer(
-  http.get("/api/auth/me", () => HttpResponse.json({ id: 1, username: "admin", role: "admin" })),
+  http.get("/api/auth/me", () => HttpResponse.json({ id: 1, username: "admin", role: "admin", is_owner: true })),
   http.get("/api/stores/accessible", () => HttpResponse.json([])),
 );
 
@@ -22,7 +22,12 @@ afterAll(() => server.close());
 
 function renderApplication(path: string, options: { role?: "admin" | "user" } = {}) {
   if (options.role) {
-    server.use(http.get("/api/auth/me", () => HttpResponse.json({ id: 1, username: options.role, role: options.role })));
+    server.use(http.get("/api/auth/me", () => HttpResponse.json({
+      id: 1,
+      username: options.role,
+      role: options.role,
+      is_owner: options.role === "admin",
+    })));
   }
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(<Application queryClient={queryClient} router={createAppRouter([path])} />);

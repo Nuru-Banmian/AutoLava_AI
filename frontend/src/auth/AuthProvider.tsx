@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createContext, type PropsWithChildren, useContext } from "react";
 
 import { api, ApiError } from "@/api/client";
-import type { User } from "@/api/types";
+import type { AuthenticatedUser } from "@/api/types";
 
 export const authQueryKey = ["auth", "me"] as const;
 
@@ -13,10 +13,10 @@ interface LoginInput {
 }
 
 interface AuthContextValue {
-  user: User | null;
+  user: AuthenticatedUser | null;
   isLoading: boolean;
   error: Error | null;
-  login(input: LoginInput): Promise<User>;
+  login(input: LoginInput): Promise<AuthenticatedUser>;
   logout(): Promise<void>;
   isLoggingIn: boolean;
   isLoggingOut: boolean;
@@ -36,7 +36,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
     queryKey: authQueryKey,
     queryFn: async () => {
       try {
-        return await api<User>("/auth/me");
+        return await api<AuthenticatedUser>("/auth/me");
       } catch (error) {
         if (error instanceof ApiError && error.status === 401) return null;
         throw error;
@@ -47,7 +47,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const loginMutation = useMutation({
     onMutate: () => queryClient.cancelQueries({ queryKey: authQueryKey, exact: true }),
     mutationFn: (input: LoginInput) =>
-      api<User>("/auth/login", { method: "POST", body: JSON.stringify(input) }),
+      api<AuthenticatedUser>("/auth/login", { method: "POST", body: JSON.stringify(input) }),
     onSuccess: async (user) => {
       await removeUserQueries();
       queryClient.setQueryData(authQueryKey, user);

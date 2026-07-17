@@ -6,6 +6,10 @@ export interface User {
   role: UserRole;
 }
 
+export interface AuthenticatedUser extends User {
+  is_owner: boolean;
+}
+
 export interface AdminUser extends User {
   is_active: boolean;
   store_ids: number[];

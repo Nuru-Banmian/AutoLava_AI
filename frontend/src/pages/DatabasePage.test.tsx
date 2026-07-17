@@ -43,7 +43,7 @@ const record: RecordSnapshot = {
 
 function renderPage({ records = [record], recordsProvider, recordsDelay, recordsError = false, role = "admin", history = [], onHistoryRequest }: { records?: RecordSnapshot[]; recordsProvider?: () => RecordSnapshot[]; recordsDelay?: Promise<void>; recordsError?: boolean; role?: UserRole; history?: object[]; onHistoryRequest?: (url: URL) => void } = {}) {
   vi.mocked(useAuth).mockReturnValue({
-    user: { id: role === "admin" ? 1 : 2, username: role, role },
+    user: { id: role === "admin" ? 1 : 2, username: role, role, is_owner: role === "admin" },
     isLoading: false,
     error: null,
     login: vi.fn(),
