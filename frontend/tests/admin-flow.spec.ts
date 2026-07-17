@@ -96,7 +96,7 @@ test("owner configures shared-store income, a user membership, and a mapped stor
   await expect.poll(() => capture.createdUser).toEqual({ username: "operator", password: "operator-123", role: "user", store_ids: [1] });
   await expect(page.getByRole("heading", { name: "编辑 operator" })).toBeVisible();
   const userActions = page.getByTestId("user-editor-actions");
-  await expect(userActions.getByRole("button")).toHaveText(["保存用户", "永久删除"]);
+  await expect(userActions.getByRole("button")).toHaveText(["永久删除", "保存用户"]);
   await expect(userActions.getByRole("button", { name: "永久删除" })).toBeVisible();
   const actionPositions = await userActions.getByRole("button").evaluateAll((buttons) => buttons.map((button) => button.getBoundingClientRect().left));
   expect(actionPositions[1]).toBeGreaterThan(actionPositions[0]);
