@@ -28,7 +28,7 @@ export function HomePage() {
   const today = dateInTimezone(selected.timezone);
   return <section className="grid gap-4"><header><h1 className="text-2xl font-semibold">仪表盘</h1></header>
     {query.isLoading && !query.data ? <p role="status">加载简报…</p> : query.error && !query.data ? <p role="alert">{query.error.message}</p> : <BriefingCards cards={query.data ?? []} yesterdayHref={`/ledger?date=${addDays(today, -1)}`} />}
-    <div className="flex flex-wrap gap-2"><a className={buttonVariants()} href={`/ledger?date=${today}`}>立即记账</a><Button variant="outline" disabled={refresh.isPending} onClick={() => refresh.mutate(selected.id)}>刷新简报</Button></div>
+    {selected.is_active !== false ? <div className="flex flex-wrap gap-2"><a className={buttonVariants()} href={`/ledger?date=${today}`}>立即记账</a><Button variant="outline" disabled={refresh.isPending} onClick={() => refresh.mutate(selected.id)}>刷新简报</Button></div> : <p role="status">该门店已归档，仅可查看历史数据和经营分析。</p>}
     {refresh.error && refresh.variables === selected.id && <p role="alert">{refresh.error instanceof ApiError ? refresh.error.detail : "刷新失败"}</p>}
   </section>;
 }

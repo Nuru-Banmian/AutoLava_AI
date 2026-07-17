@@ -60,3 +60,17 @@ async def require_store_access(store_id: int, user: CurrentUser, session: Sessio
     if not allowed:
         raise HTTPException(404, "Store not found")
     return StoreAccess(store=store, user=user)
+
+
+async def require_store_read_access(
+    store_id: int, user: CurrentUser, session: Session
+) -> StoreAccess:
+    store = await session.get(Store, store_id)
+    if store is None or (not store.is_active and user.role != "admin"):
+        raise HTTPException(404, "Store not found")
+    allowed = user.role == "admin" or await session.scalar(
+        select(exists().where(StoreMember.store_id == store_id, StoreMember.user_id == user.id))
+    )
+    if not allowed:
+        raise HTTPException(404, "Store not found")
+    return StoreAccess(store=store, user=user)

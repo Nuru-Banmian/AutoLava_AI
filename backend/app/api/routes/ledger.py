@@ -7,7 +7,7 @@ import asyncio
 from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse
 
-from app.api.deps import Session, StoreAccess, require_capability, require_store_access
+from app.api.deps import Session, StoreAccess, require_capability, require_store_access, require_store_read_access
 from app.api.routes.dashboard import get_weather_service
 from app.schemas.ledger import LedgerBody
 from app.services.audit import record_snapshot
@@ -65,7 +65,7 @@ async def recent_records(
     store_id: int,
     session: Session,
     days: Annotated[int, Query(ge=1)] = 7,
-    access: StoreAccess = Depends(require_store_access),
+    access: StoreAccess = Depends(require_store_read_access),
 ) -> list[dict]:
     records = await LedgerService(session).recent(store=access.store, days=days)
     return [record_snapshot(record) for record in records]
@@ -79,7 +79,7 @@ async def get_record_by_query(
     store_id: int,
     session: Session,
     record_date: Annotated[date, Query(alias="date")],
-    access: StoreAccess = Depends(require_store_access),
+    access: StoreAccess = Depends(require_store_read_access),
 ) -> dict:
     record = await LedgerService(session).get(store=access.store, record_date=record_date)
     return record_snapshot(record)
@@ -93,7 +93,7 @@ async def get_record_by_path(
     store_id: int,
     record_date: date,
     session: Session,
-    access: StoreAccess = Depends(require_store_access),
+    access: StoreAccess = Depends(require_store_read_access),
 ) -> dict:
     record = await LedgerService(session).get(store=access.store, record_date=record_date)
     return record_snapshot(record)
@@ -107,7 +107,7 @@ async def get_form_config(
     store_id: int,
     record_date: date,
     session: Session,
-    access: StoreAccess = Depends(require_store_access),
+    access: StoreAccess = Depends(require_store_read_access),
 ) -> dict:
     return await LedgerService(session).form_config(
         store=access.store, record_date=record_date

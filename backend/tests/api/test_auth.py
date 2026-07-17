@@ -523,11 +523,13 @@ async def test_assigned_store_is_exposed(client, user_factory, store_factory, db
     response = await client.get("/api/stores/accessible")
     assert response.status_code == 200
     assert response.json() == [
-        {"id": assigned.id, "name": assigned.name, "timezone": assigned.timezone}
+        {"id": assigned.id, "name": assigned.name, "timezone": assigned.timezone, "is_active": True}
     ]
 
 
-async def test_admin_sees_every_active_store(client, user_factory, store_factory) -> None:
+async def test_admin_sees_active_and_archived_stores_but_regular_users_do_not(
+    client, user_factory, store_factory, db_session
+) -> None:
     admin = await user_factory(username="admin", password="secret", role="admin")
     active = await store_factory(name="Active")
     inactive = await store_factory(name="Inactive", is_active=False)
@@ -540,7 +542,14 @@ async def test_admin_sees_every_active_store(client, user_factory, store_factory
     assert response.status_code == 200
     visible_ids = {store["id"] for store in response.json()}
     assert active.id in visible_ids
-    assert inactive.id not in visible_ids
+    assert inactive.id in visible_ids
+
+    member = await user_factory(username="member", password="secret")
+    db_session.add(StoreMember(store_id=inactive.id, user_id=member.id))
+    await db_session.flush()
+    await client.post("/api/auth/login", json={"username": member.username, "password": "secret", "remember": False})
+    response = await client.get("/api/stores/accessible")
+    assert inactive.id not in {store["id"] for store in response.json()}
 
 
 async def test_store_dependency_hides_unassigned_store(

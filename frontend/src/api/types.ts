@@ -19,6 +19,7 @@ export interface AccessibleStore {
   id: number;
   name: string;
   timezone: string;
+  is_active?: boolean;
 }
 
 export interface AdminStore extends AccessibleStore {

@@ -590,7 +590,7 @@ async def test_user_cannot_be_assigned_an_inactive_store(
     )
 
     assert response.status_code == 409
-    assert response.json()["detail"] == "停用门店不能分配给用户"
+    assert response.json()["detail"] == "归档门店不能分配给用户"
     assert await db_session.scalar(
         select(func.count()).select_from(StoreMember).where(StoreMember.user_id == user.id)
     ) == 0
@@ -1018,7 +1018,7 @@ async def test_referenced_store_cannot_be_deleted(
     response = await admin_client.delete(f"/api/admin/stores/{store.id}")
 
     assert response.status_code == 409
-    assert response.json()["detail"] == "该门店已有业务或历史记录，请停用门店而不是删除"
+    assert response.json()["detail"] == "该门店已有业务或历史记录，请归档门店而不是删除"
     assert await db_session.get(Store, store.id) is not None
 
 
@@ -1170,7 +1170,7 @@ async def test_inactive_store_members_cannot_be_replaced(
     )
 
     assert response.status_code == 409
-    assert response.json()["detail"] == "停用门店不能分配用户"
+    assert response.json()["detail"] == "归档门店不能分配用户"
 
 
 async def test_admin_can_create_list_and_patch_income_categories(
