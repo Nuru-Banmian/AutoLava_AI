@@ -278,7 +278,7 @@ export function IncomeItemsPanel({ storeId, onDirtyChange }: IncomeItemsPanelPro
           </div>
         </li>)}
       </ol>}
-      <Button disabled={operationPending || currentConfig.isLoading || draftStoreId !== storeId || items.some((item) => !item.name.trim())} type="button" onClick={() => void publishDraft()}>{operationPending ? "保存中…" : "保存"}</Button>
+      <Button aria-busy={operationPending || undefined} disabled={operationPending || currentConfig.isLoading || draftStoreId !== storeId || items.some((item) => !item.name.trim())} type="button" onClick={() => void publishDraft()}>保存</Button>
       {archived.length > 0 && <section className="space-y-2 rounded-lg border p-4" aria-label="已归档收入项目">
         <h2 className="font-medium">已归档项目</h2>
         <ul className="space-y-2">{archived.map((category) => <li className="flex flex-wrap items-center justify-between gap-2" key={category.id}>

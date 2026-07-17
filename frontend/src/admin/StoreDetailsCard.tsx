@@ -16,6 +16,7 @@ export interface StoreDetailsCardProps {
   store: AdminStore | null;
   onDirtyChange(dirty: boolean): void;
   onSaved(store: AdminStore): void;
+  onDeleteRequested(deleteStore: () => void): void;
   onDeleted(storeId: number): void;
 }
 
@@ -48,7 +49,7 @@ function ErrorMessage({ error, deletion }: { error: unknown; deletion: boolean }
   return <p role="alert" className="text-sm text-destructive">{error instanceof ApiError ? error.detail : "请求失败"}</p>;
 }
 
-export function StoreDetailsCard({ mode, store, onDirtyChange, onSaved, onDeleted }: StoreDetailsCardProps) {
+export function StoreDetailsCard({ mode, store, onDirtyChange, onSaved, onDeleteRequested, onDeleted }: StoreDetailsCardProps) {
   const queryClient = useQueryClient();
   const initialRef = useRef(draftFor(store));
   const [name, setName] = useState(initialRef.current.name);
@@ -129,15 +130,13 @@ export function StoreDetailsCard({ mode, store, onDirtyChange, onSaved, onDelete
     if (!store) return;
     const requestId = beginRequest();
     try {
-      const saved = await api<AdminStore>(`/admin/stores/${store.id}`, {
+      await api<AdminStore>(`/admin/stores/${store.id}`, {
         method: "PATCH",
         body: JSON.stringify({ is_active: !store.is_active }),
       });
       void invalidateStores();
       if (!isCurrent(requestId)) return;
       setPending(false);
-      onDirtyChange(false);
-      onSaved(saved);
     } catch (reason) {
       if (!isCurrent(requestId)) return;
       setPending(false);
@@ -148,6 +147,11 @@ export function StoreDetailsCard({ mode, store, onDirtyChange, onSaved, onDelete
 
   async function remove() {
     if (!store || !window.confirm(`确定永久删除门店“${store.name}”吗？只有从未使用的门店可以删除。`)) return;
+    onDeleteRequested(() => void deleteStore());
+  }
+
+  async function deleteStore() {
+    if (!store) return;
     const requestId = beginRequest();
     try {
       await api<void>(`/admin/stores/${store.id}`, { method: "DELETE" });
@@ -184,7 +188,7 @@ export function StoreDetailsCard({ mode, store, onDirtyChange, onSaved, onDelete
             <p className="truncate text-sm text-muted-foreground">{location?.label ?? store?.address}</p>
           </div>
           <StoreLocationPicker buttonLabel="修改位置" onConfirm={setLocation} value={location} />
-          <Button disabled={!location || !name.trim()} type="submit">{pending ? "保存中…" : "保存"}</Button>
+          <Button aria-busy={pending || undefined} disabled={!location || !name.trim()} type="submit">保存</Button>
         </> : <>
           <div className="space-y-2">
             <p className="text-sm font-medium">门店位置</p>

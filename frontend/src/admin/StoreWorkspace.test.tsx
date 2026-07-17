@@ -207,6 +207,58 @@ it("does not render a stale Roma save error in the Milano cards", async () => {
   expect(screen.getByLabelText("门店名称 Milano")).toBeInTheDocument();
 });
 
+it("keeps an unsaved details draft guarded after changing store activity", async () => {
+  let lifecycleCalls = 0;
+  mockStoreWorkspace({
+    stores: [roma, milano],
+    patchStore: () => {
+      lifecycleCalls += 1;
+      return HttpResponse.json({ ...roma, is_active: false });
+    },
+  });
+  renderWorkspace();
+  await userEvent.click(await screen.findByRole("button", { name: /Roma/ }));
+  const name = screen.getByLabelText("门店名称 Roma");
+  await userEvent.clear(name);
+  await userEvent.type(name, "Roma Draft");
+  await userEvent.click(screen.getByRole("button", { name: "修改位置" }));
+  await userEvent.click(screen.getByRole("button", { name: "停用门店 Roma" }));
+  await waitFor(() => expect(lifecycleCalls).toBe(1));
+
+  await userEvent.click(screen.getByRole("button", { name: /Milano/ }));
+
+  expect(screen.getByRole("alertdialog", { name: "放弃未保存的修改？" })).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "继续编辑" }));
+  expect(screen.getByDisplayValue("Roma Draft")).toBeInTheDocument();
+  expect(screen.getByText("Via Nuova")).toBeInTheDocument();
+});
+
+it("keeps both card save labels exact while their requests are pending", async () => {
+  const detailsPending = deferredResponse();
+  const incomePending = deferredResponse();
+  mockStoreWorkspace({
+    patchStore: () => detailsPending.promise,
+    publishIncome: () => incomePending.promise,
+  });
+  renderWorkspace();
+  await userEvent.click(await screen.findByRole("button", { name: /Roma/ }));
+  const details = screen.getByRole("region", { name: "门店资料" });
+  const income = screen.getByRole("region", { name: "收入项目" });
+
+  await userEvent.click(within(details).getByRole("button", { name: "保存" }));
+  await userEvent.click(within(income).getByRole("button", { name: "保存" }));
+
+  expect(within(details).getByRole("button", { name: "保存" })).toBeDisabled();
+  expect(within(income).getByRole("button", { name: "保存" })).toBeDisabled();
+  expect(within(details).queryByRole("button", { name: "保存中…" })).not.toBeInTheDocument();
+  expect(within(income).queryByRole("button", { name: "保存中…" })).not.toBeInTheDocument();
+
+  detailsPending.resolve(HttpResponse.json(roma));
+  incomePending.resolve(HttpResponse.json(publishedIncomeConfig));
+  await waitFor(() => expect(within(details).getByRole("button", { name: "保存" })).not.toBeDisabled());
+  await waitFor(() => expect(within(income).getByRole("button", { name: "保存" })).not.toBeDisabled());
+});
+
 it("keeps lifecycle controls and explains a referenced-store delete conflict", async () => {
   vi.spyOn(window, "confirm").mockReturnValue(true);
   mockStoreWorkspace({ deleteStore: () => HttpResponse.json({ detail: "已有历史记录" }, { status: 409 }) });
@@ -240,4 +292,37 @@ it("invalidates store lists and selects the first remaining store after deletion
 
   expect(await screen.findByLabelText("门店名称 Milano")).toBeInTheDocument();
   expect(client.getQueryState(accessibleStoresKey)?.isInvalidated).toBe(true);
+});
+
+it("guards a dirty income draft before permanently deleting the selected store", async () => {
+  let stores = [roma, milano];
+  let deleteCalls = 0;
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  server.use(
+    http.get("/api/admin/stores", () => HttpResponse.json(stores)),
+    http.get("/api/income-config/:storeId/current", ({ params }) => HttpResponse.json(Number(params.storeId) === 9 ? romaIncome : milanoIncome)),
+    http.get("/api/admin/income-categories", () => HttpResponse.json([])),
+    http.delete("/api/admin/stores/9", () => {
+      deleteCalls += 1;
+      stores = [milano];
+      return new HttpResponse(null, { status: 204 });
+    }),
+  );
+  renderWorkspace();
+  await userEvent.click(await screen.findByRole("button", { name: /Roma/ }));
+  await userEvent.click(await screen.findByRole("checkbox", { name: "计入营业额 现金" }));
+
+  await userEvent.click(screen.getByRole("button", { name: "永久删除门店 Roma" }));
+
+  expect(screen.getByRole("alertdialog", { name: "放弃未保存的修改？" })).toBeInTheDocument();
+  expect(deleteCalls).toBe(0);
+  await userEvent.click(screen.getByRole("button", { name: "继续编辑" }));
+  expect(screen.getByLabelText("门店名称 Roma")).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "计入营业额 现金" })).not.toBeChecked();
+  expect(deleteCalls).toBe(0);
+
+  await userEvent.click(screen.getByRole("button", { name: "永久删除门店 Roma" }));
+  await userEvent.click(screen.getByRole("button", { name: "放弃修改" }));
+  expect(await screen.findByLabelText("门店名称 Milano")).toBeInTheDocument();
+  expect(deleteCalls).toBe(1);
 });

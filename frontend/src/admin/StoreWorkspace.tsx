@@ -43,13 +43,18 @@ export function StoreWorkspace() {
     commitSelection(store.id);
   }
 
-  async function deleted(storeId: number) {
+  async function finishDeleted(storeId: number) {
     if (selectionRef.current !== storeId) return;
     const result = await stores.refetch();
     if (selectionRef.current !== storeId) return;
     setDetailsDirty(false);
     setIncomeDirty(false);
     commitSelection(result.data?.find((store) => store.id !== storeId)?.id ?? null);
+  }
+
+  function deleted(storeId: number) {
+    if (selectionRef.current !== storeId) return;
+    void finishDeleted(storeId);
   }
 
   const selectedStore = typeof selection === "number"
@@ -62,6 +67,7 @@ export function StoreWorkspace() {
       key={selection}
       mode="create"
       onDeleted={() => undefined}
+      onDeleteRequested={() => undefined}
       onDirtyChange={setDetailsDirty}
       onSaved={created}
       store={null}
@@ -73,7 +79,13 @@ export function StoreWorkspace() {
         key={`details-${selection}`}
         mode="edit"
         onDeleted={(storeId) => {
-          if (selectionRef.current === capturedStoreId) void deleted(storeId);
+          if (selectionRef.current === capturedStoreId) deleted(storeId);
+        }}
+        onDeleteRequested={(deleteStore) => {
+          if (selectionRef.current !== capturedStoreId) return;
+          requestTransition(() => {
+            if (selectionRef.current === capturedStoreId) deleteStore();
+          });
         }}
         onDirtyChange={setDetailsDirty}
         onSaved={() => {
