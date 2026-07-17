@@ -243,6 +243,7 @@ async def record_history(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
     record_id: int | None = None,
+    record_date: date | None = None,
     access: StoreAccess = Depends(require_store_access),
 ) -> dict:
     del access
@@ -252,6 +253,8 @@ async def record_history(
     ]
     if record_id is not None:
         conditions.append(AuditLog.record_id == record_id)
+    if record_date is not None:
+        conditions.append(AuditLog.record_date == record_date)
     total = await session.scalar(
         select(func.count()).select_from(AuditLog).where(*conditions)
     )

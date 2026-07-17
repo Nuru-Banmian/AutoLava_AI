@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta
 from io import BytesIO
 
 import pytest
@@ -407,6 +407,71 @@ async def test_history_is_ledger_only_store_isolated_and_newest_first(
     )
     assert second_page.status_code == 200
     assert [item["description"] for item in second_page.json()["items"]] == ["first"]
+
+
+async def test_history_filters_by_record_date_before_pagination(
+    auth_client: AsyncClient,
+    database_context: DatabaseContext,
+    db_session: AsyncSession,
+) -> None:
+    await grant_authenticated_admin(db_session)
+    target_date = date(2026, 6, 1)
+    target = AuditLog(
+        operation_domain="ledger",
+        store_id=database_context.id,
+        record_id=None,
+        record_date=target_date,
+        operation_type="delete",
+        operation_source="manual",
+        operator_user_id=database_context.user.id,
+        before_json={"date": target_date.isoformat()},
+        after_json=None,
+        description="old deleted record",
+        requires_approval=False,
+        approved=True,
+        created_at=datetime(2026, 6, 1, 8),
+    )
+    newer = [
+        AuditLog(
+            operation_domain="ledger",
+            store_id=database_context.id,
+            record_id=None,
+            record_date=date(2026, 7, 1),
+            operation_type="delete",
+            operation_source="manual",
+            operator_user_id=database_context.user.id,
+            before_json={"sequence": index},
+            after_json=None,
+            description=f"newer audit {index}",
+            requires_approval=False,
+            approved=True,
+            created_at=datetime(2026, 7, 1, 8) + timedelta(minutes=index),
+        )
+        for index in range(101)
+    ]
+    db_session.add_all([target, *newer])
+    await db_session.flush()
+
+    response = await auth_client.get(
+        f"/api/database/{database_context.id}/history",
+        params={"record_date": target_date.isoformat(), "page_size": 100},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert [item["description"] for item in response.json()["items"]] == [
+        "old deleted record"
+    ]
+
+    combined = await auth_client.get(
+        f"/api/database/{database_context.id}/history",
+        params={
+            "record_date": target_date.isoformat(),
+            "record_id": database_context.records[0].id,
+        },
+    )
+    assert combined.status_code == 200
+    assert combined.json()["total"] == 0
 
 
 async def test_rollback_route_restores_record_and_returns_canonical_snapshot(

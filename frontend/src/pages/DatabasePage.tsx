@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { api, ApiError } from "@/api/client";
+import { api, ApiError, friendlyApiError } from "@/api/client";
 import type { AuditEntry, DatabaseResponse, RecordSnapshot } from "@/api/types";
 import { useAuth } from "@/auth/AuthProvider";
 import { MonthCalendar } from "@/components/MonthCalendar";
@@ -80,7 +80,12 @@ export function DatabasePage() {
   const history = useQuery({
     queryKey: ["database", "history", selected?.id, auditTarget?.recordId, auditTarget?.date],
     enabled: Boolean(selected && auditTarget) && isAdmin && adminOpen,
-    queryFn: () => api<AuditPageResponse>(`/database/${selected!.id}/history${auditTarget!.recordId === null ? "?page_size=100" : `?record_id=${auditTarget!.recordId}`}`),
+    queryFn: () => {
+      const params = auditTarget!.recordId === null
+        ? new URLSearchParams({ record_date: auditTarget!.date, page_size: "100" })
+        : new URLSearchParams({ record_id: String(auditTarget!.recordId) });
+      return api<AuditPageResponse>(`/database/${selected!.id}/history?${params}`);
+    },
   });
 
   const selectedHistory = history.data?.items.filter((entry) => entry.record_date === auditTarget?.date) ?? [];
@@ -95,9 +100,15 @@ export function DatabasePage() {
     await client.invalidateQueries({ queryKey: ["database", "history", storeId] });
   };
   const remove = useMutation({
-    mutationFn: ({ storeId, date }: { storeId: number; date: string }) => api<void>(`/ledger/${storeId}/${date}`, { method: "DELETE" }),
+    mutationFn: ({ storeId, date, expectedVersion }: { storeId: number; date: string; expectedVersion: number }) => api<void>(`/ledger/${storeId}/${date}?expected_version=${expectedVersion}`, { method: "DELETE" }),
     onSuccess: (_data, variables) => finish(variables.storeId),
-    onError: (error, variables) => { if (selectedIdRef.current === variables.storeId) setMessage(error instanceof ApiError ? error.detail : "删除失败"); },
+    onError: (error, variables) => {
+      if (selectedIdRef.current === variables.storeId) {
+        setDeleting(null);
+        setAdminOpen(false);
+        setMessage(friendlyApiError(error, "删除失败，请重试"));
+      }
+    },
   });
   const rollback = useMutation({
     mutationFn: ({ storeId, auditId }: { storeId: number; auditId: number }) => api(`/database/${storeId}/history/${auditId}/rollback`, { method: "POST" }),
@@ -166,7 +177,7 @@ export function DatabasePage() {
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={Boolean(deleting)} onOpenChange={(open) => { if (!open) setDeleting(null); }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认删除记录？</AlertDialogTitle><AlertDialogDescription>删除后可通过历史记录回滚。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction onClick={() => deleting && remove.mutate({ storeId: selected.id, date: deleting.date })}>确认删除</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+      <AlertDialog open={Boolean(deleting)} onOpenChange={(open) => { if (!open) setDeleting(null); }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认删除记录？</AlertDialogTitle><AlertDialogDescription>删除后可通过历史记录回滚。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction onClick={() => deleting && remove.mutate({ storeId: selected.id, date: deleting.date, expectedVersion: deleting.row_version })}>确认删除</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
       <AlertDialog open={Boolean(rolling)} onOpenChange={(open) => { if (!open) setRolling(null); }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认回滚记录？</AlertDialogTitle><AlertDialogDescription>记录将恢复到该历史版本。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction onClick={() => rolling && rollback.mutate({ storeId: selected.id, auditId: rolling.id })}>确认回滚</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
       {message && <p role={message === "操作成功" ? "status" : "alert"}>{message}</p>}
     </section>
