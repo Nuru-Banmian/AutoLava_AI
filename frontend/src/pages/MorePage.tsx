@@ -12,7 +12,6 @@ export function MorePage() {
   return <section className="grid gap-4">
     <h1 className="text-2xl font-semibold">更多</h1>
     <nav aria-label="更多功能" className="grid gap-2">
-      <Link className={moreLinkClass} to="/charts">经营分析</Link>
       <div className="min-w-0 max-w-full rounded-lg border bg-background px-4 py-3"><StorePicker /></div>
       <Link className={moreLinkClass} to="/account/password">修改密码</Link>
       {user?.role === "admin" && <Link className={moreLinkClass} to="/admin">管理中心</Link>}
