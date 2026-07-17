@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 让桌面端营业记录表中的未录入日期可选中，并以与真实记录相同布局的详情卡片提供补录入口。
+**Goal:** 让营业记录的桌面表格与移动端列表中的未录入日期可选中，并以与真实记录相同布局的详情卡片提供补录入口。
 
-**Architecture:** 为表格行和详情卡片定义一个轻量的虚拟空记录联合类型，不向数据库新增或写入占位数据。页面以选中日期而不是选中真实记录 ID 驱动详情；真实记录继续使用原有详情和管理能力，空记录使用相同卡片布局、占位字段和既有每日记账链接。
+**Architecture:** 为桌面和移动列表行及详情卡片定义一个轻量的虚拟空记录联合类型，不向数据库新增或写入占位数据。页面以选中日期而不是选中真实记录 ID 驱动详情；真实记录继续使用原有详情和管理能力，空记录使用相同卡片布局、占位字段和既有每日记账链接。
 
 **Tech Stack:** React 19、TypeScript、React Router、Vitest、Testing Library、date-fns。
 
@@ -14,7 +14,7 @@
 - 空记录的“修改这天记录”链接必须是 `/ledger?date=YYYY-MM-DD`。
 - 空记录卡片与已有记录卡片复用同一组件、同一操作区位置和按钮样式。
 - 只有真实记录可显示管理员管理、删除、历史和回滚入口。
-- 历史日历仅真实记录显示蓝点；移动端列表本次保持不变。
+- 历史日历仅真实记录显示蓝点；移动端列表也显示空日期，并打开同一底部详情卡片。
 
 ---
 
@@ -172,7 +172,7 @@
   ) : null}
   ```
 
-  门店、筛选范围与分页变更时清除 `selectedDate`、移动端选择和管理状态。移动端仍传递真实记录，不把空行加入移动端列表。
+  门店、筛选范围与分页变更时清除 `selectedDate`、移动端选择和管理状态。
 
 - [ ] **Step 4: 运行页面与组件回归测试**
 
@@ -193,7 +193,54 @@
   git commit -m "feat: open unrecorded record details"
   ```
 
-### Task 4: 最终验证
+### Task 4: 在移动端列表与底部卡片中显示空日期
+
+**Files:**
+- Modify: `frontend/src/components/MobileRecordList.tsx`
+- Modify: `frontend/src/components/MobileRecordList.test.tsx`
+- Modify: `frontend/src/pages/BusinessRecordsPage.tsx`
+- Test: `frontend/src/pages/BusinessRecordsPage.test.tsx`
+
+**Interfaces:**
+- Consumes: `RecordTableRow = RecordSnapshot | { id: null; date: string }` 与 `RecordDetail`。
+- Produces: 移动端空日期行及其可编辑的底部详情卡片。
+
+- [ ] **Step 1: 写出移动端空日期的失败测试**
+
+  在 `BusinessRecordsPage.test.tsx` 使用空日期 `2026-07-17`，点击其移动端按钮，断言底部卡片显示“未录入”与 `/ledger?date=2026-07-17` 编辑链接。
+
+  ```tsx
+  fireEvent.click(screen.getByRole("button", { name: /2026年7月17日，未录入，—/ }));
+  expect(await screen.findByRole("dialog")).toHaveTextContent("未录入");
+  expect(screen.getByRole("link", { name: "修改这天记录" })).toHaveAttribute("href", "/ledger?date=2026-07-17");
+  ```
+
+- [ ] **Step 2: 运行测试确认失败**
+
+  Run: `npm test -- BusinessRecordsPage.test.tsx`
+
+  Expected: FAIL，因为移动端列表只接受 `RecordSnapshot[]`。
+
+- [ ] **Step 3: 让移动端使用日期行联合类型**
+
+  将 `MobileRecordList` 的 `records` 和 `onSelect` 改为 `RecordTableRow[]`，选择条件改为 `selectedDate`。空行渲染日期、“未录入”和“—”；真实行继续显示原有状态与营业额。
+
+  在 `BusinessRecordsPage.tsx` 将 `mobileRecord` 改为 `RecordDetail | null`，向移动列表传入当前页 `pagedTableRows`，并保留空记录在重新取数时的选择。底部卡片通过 `mobileRecord.id === null || mobileRecord.store_id === selected.id` 显示；管理操作仅在 `mobileRecord.id !== null` 时启用。
+
+- [ ] **Step 4: 运行移动端与页面回归测试**
+
+  Run: `npm test -- MobileRecordList.test.tsx MobileRecordSheet.test.tsx BusinessRecordsPage.test.tsx`
+
+  Expected: PASS，真实记录的移动端底部卡片行为不变，空日期可查看并进入每日记账页。
+
+- [ ] **Step 5: 提交移动端改动**
+
+  ```powershell
+  git add frontend/src/components/MobileRecordList.tsx frontend/src/components/MobileRecordList.test.tsx frontend/src/pages/BusinessRecordsPage.tsx frontend/src/pages/BusinessRecordsPage.test.tsx
+  git commit -m "feat: show unrecorded mobile records"
+  ```
+
+### Task 5: 最终验证
 
 **Files:**
 - Verify only: `frontend/src/components/RecordDetailPanel.tsx`
