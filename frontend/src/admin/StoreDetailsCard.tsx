@@ -17,6 +17,7 @@ export interface StoreDetailsCardProps {
   onDirtyChange(dirty: boolean): void;
   onSaved(store: AdminStore): void;
   onDeleteRequested(deleteStore: () => void): void;
+  onDeleteFailed(): void;
   onDeleted(storeId: number): void;
 }
 
@@ -49,7 +50,7 @@ function ErrorMessage({ error, deletion }: { error: unknown; deletion: boolean }
   return <p role="alert" className="text-sm text-destructive">{error instanceof ApiError ? error.detail : "请求失败"}</p>;
 }
 
-export function StoreDetailsCard({ mode, store, onDirtyChange, onSaved, onDeleteRequested, onDeleted }: StoreDetailsCardProps) {
+export function StoreDetailsCard({ mode, store, onDirtyChange, onSaved, onDeleteRequested, onDeleteFailed, onDeleted }: StoreDetailsCardProps) {
   const queryClient = useQueryClient();
   const initialRef = useRef(draftFor(store));
   const [name, setName] = useState(initialRef.current.name);
@@ -165,6 +166,7 @@ export function StoreDetailsCard({ mode, store, onDirtyChange, onSaved, onDelete
       setPending(false);
       setErrorOperation("delete");
       setError(reason);
+      onDeleteFailed();
     }
   }
 

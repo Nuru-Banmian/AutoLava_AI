@@ -67,6 +67,7 @@ export function StoreWorkspace() {
       key={selection}
       mode="create"
       onDeleted={() => undefined}
+      onDeleteFailed={() => undefined}
       onDeleteRequested={() => undefined}
       onDirtyChange={setDetailsDirty}
       onSaved={created}
@@ -86,6 +87,9 @@ export function StoreWorkspace() {
           requestTransition(() => {
             if (selectionRef.current === capturedStoreId) deleteStore();
           });
+        }}
+        onDeleteFailed={() => {
+          if (selectionRef.current === capturedStoreId && (detailsDirty || incomeDirty)) markDirty(true);
         }}
         onDirtyChange={setDetailsDirty}
         onSaved={() => {

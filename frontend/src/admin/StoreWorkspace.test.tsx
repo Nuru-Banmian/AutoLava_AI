@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
@@ -325,4 +325,56 @@ it("guards a dirty income draft before permanently deleting the selected store",
   await userEvent.click(screen.getByRole("button", { name: "放弃修改" }));
   expect(await screen.findByLabelText("门店名称 Milano")).toBeInTheDocument();
   expect(deleteCalls).toBe(1);
+});
+
+it("reasserts a dirty income draft after a current delete is rejected", async () => {
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  mockStoreWorkspace({
+    stores: [roma, milano],
+    deleteStore: () => HttpResponse.json({ detail: "已有历史记录" }, { status: 409 }),
+  });
+  renderWorkspace();
+  await userEvent.click(await screen.findByRole("button", { name: /Roma/ }));
+  await userEvent.click(await screen.findByRole("checkbox", { name: "计入营业额 现金" }));
+
+  await userEvent.click(screen.getByRole("button", { name: "永久删除门店 Roma" }));
+  await userEvent.click(screen.getByRole("button", { name: "放弃修改" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("已有经营或历史记录，只能停用门店");
+  expect(screen.getByRole("checkbox", { name: "计入营业额 现金" })).not.toBeChecked();
+  await userEvent.click(screen.getByRole("button", { name: /Milano/ }));
+
+  expect(screen.getByRole("alertdialog", { name: "放弃未保存的修改？" })).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "继续编辑" }));
+  expect(screen.getByLabelText("门店名称 Roma")).toBeInTheDocument();
+});
+
+it("does not reassert a stale rejected delete for another store selection", async () => {
+  const pending = deferredResponse();
+  let deleteStarted = false;
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  mockStoreWorkspace({
+    stores: [roma, milano],
+    deleteStore: () => {
+      deleteStarted = true;
+      return pending.promise;
+    },
+  });
+  renderWorkspace();
+  await userEvent.click(await screen.findByRole("button", { name: /Roma/ }));
+  await userEvent.click(await screen.findByRole("checkbox", { name: "计入营业额 现金" }));
+  await userEvent.click(screen.getByRole("button", { name: "永久删除门店 Roma" }));
+  await userEvent.click(screen.getByRole("button", { name: "放弃修改" }));
+  await waitFor(() => expect(deleteStarted).toBe(true));
+
+  await userEvent.click(screen.getByRole("button", { name: /Milano/ }));
+  expect(await screen.findByLabelText("门店名称 Milano")).toBeInTheDocument();
+  await act(async () => {
+    pending.resolve(HttpResponse.json({ detail: "旧门店删除失败" }, { status: 409 }));
+    await pending.promise;
+  });
+
+  await userEvent.click(screen.getByRole("button", { name: /Roma/ }));
+  expect(screen.queryByRole("alertdialog", { name: "放弃未保存的修改？" })).not.toBeInTheDocument();
+  expect(screen.getByLabelText("门店名称 Roma")).toBeInTheDocument();
 });
