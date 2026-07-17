@@ -17,6 +17,20 @@ function renderPanel(value: RecordSnapshot, canManage = false) {
 }
 
 describe("RecordDetailPanel", () => {
+  it("renders an unrecorded date with the same edit action position", () => {
+    render(
+      <MemoryRouter>
+        <RecordDetailPanel record={{ id: null, date: "2026-07-15" }} canEdit canManage onManage={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("heading", { name: "2026年7月15日" })).toBeInTheDocument();
+    expect(screen.getByText("未录入", { exact: true })).toBeInTheDocument();
+    expect(screen.getAllByText("—", { exact: true })).toHaveLength(3);
+    expect(screen.getByRole("link", { name: "修改这天记录" })).toHaveAttribute("href", "/ledger?date=2026-07-15");
+    expect(screen.queryByRole("button", { name: "管理这天记录" })).not.toBeInTheDocument();
+  });
+
   it("renders rest records without fabricating an open status", () => {
     renderPanel({ ...record, is_open: "休息", wash_count: 0, activity: "会员日" });
 
