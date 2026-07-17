@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.routes.admin import patch_user
+from app.core.config import get_settings
 from app.core.database import async_session_factory, engine
 from app.core.security import hash_password
 from app.models.base import Base
@@ -22,7 +23,11 @@ from app.schemas.admin import UserPatch
 
 
 @pytest.fixture
-async def admin_client(client, user_factory) -> AsyncClient:
+async def admin_client(
+    client, user_factory, monkeypatch: pytest.MonkeyPatch
+) -> AsyncClient:
+    monkeypatch.setenv("AUTOLAVA_BOOTSTRAP_USERNAME", "administrator")
+    get_settings.cache_clear()
     await user_factory(username="administrator", password="secret", role="admin")
     response = await client.post(
         "/api/auth/login",
@@ -234,7 +239,7 @@ async def test_admin_can_create_list_patch_and_audit_users(
 
     users = await admin_client.get("/api/admin/users")
     assert users.status_code == 200
-    assert [item["username"] for item in users.json()] == ["administrator", "zoe"]
+    assert [item["username"] for item in users.json()] == ["zoe"]
 
     audits = (
         await db_session.scalars(
@@ -250,6 +255,7 @@ async def test_admin_can_create_list_patch_and_audit_users(
         "username": "zoe",
         "role": "user",
         "is_active": True,
+        "store_ids": [],
         "password_changed": True,
     }
     assert audits[1].before_json == {
@@ -268,6 +274,267 @@ async def test_admin_can_create_list_patch_and_audit_users(
     }
     assert "hash" not in str([audit.before_json for audit in audits])
     assert "hash" not in str([audit.after_json for audit in audits])
+
+
+async def test_user_list_hides_only_the_configured_owner(
+    admin_client, user_factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AUTOLAVA_BOOTSTRAP_USERNAME", "Nuru_Banmian")
+    get_settings.cache_clear()
+    await user_factory(username="Nuru_Banmian", password="secret123", role="admin")
+    await user_factory(username="visible-admin", password="secret123", role="admin")
+    await user_factory(username="visible-user", password="secret123")
+
+    response = await admin_client.get("/api/admin/users")
+
+    assert response.status_code == 200
+    assert [item["username"] for item in response.json()] == [
+        "administrator",
+        "visible-admin",
+        "visible-user",
+    ]
+
+
+async def test_non_owner_cannot_create_promote_or_mutate_administrators(
+    admin_client,
+    user_factory,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AUTOLAVA_BOOTSTRAP_USERNAME", "Nuru_Banmian")
+    get_settings.cache_clear()
+    owner = await user_factory(username="Nuru_Banmian", password="secret123", role="admin")
+    other_admin = await user_factory(
+        username="other-admin", password="secret123", role="admin"
+    )
+    ordinary = await user_factory(username="ordinary", password="secret123")
+    actor = await db_session.scalar(select(User).where(User.username == "administrator"))
+    assert actor is not None
+    audits_before = await db_session.scalar(select(func.count()).select_from(AuditLog))
+
+    assert (
+        await admin_client.post(
+            "/api/admin/users",
+            json={
+                "username": "forbidden-admin",
+                "password": "secret123",
+                "role": "admin",
+            },
+        )
+    ).status_code == 403
+    assert (
+        await admin_client.patch(
+            f"/api/admin/users/{ordinary.id}", json={"role": "admin"}
+        )
+    ).status_code == 403
+    for target in (owner, other_admin):
+        assert (
+            await admin_client.patch(
+                f"/api/admin/users/{target.id}",
+                json={"password": "replacement123"},
+            )
+        ).status_code == 403
+        assert (
+            await admin_client.patch(
+                f"/api/admin/users/{target.id}", json={"is_active": False}
+            )
+        ).status_code == 403
+        assert (
+            await admin_client.delete(f"/api/admin/users/{target.id}")
+        ).status_code == 403
+    assert (
+        await admin_client.patch(
+            f"/api/admin/users/{actor.id}", json={"password": "replacement123"}
+        )
+    ).status_code == 403
+
+    assert await db_session.scalar(select(func.count()).select_from(AuditLog)) == audits_before
+    await db_session.refresh(ordinary)
+    await db_session.refresh(other_admin)
+    assert ordinary.role == "user"
+    assert other_admin.is_active is True
+
+
+async def test_non_owner_can_manage_ordinary_users(
+    admin_client,
+    user_factory,
+    store_factory,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AUTOLAVA_BOOTSTRAP_USERNAME", "Nuru_Banmian")
+    get_settings.cache_clear()
+    await user_factory(username="Nuru_Banmian", password="secret123", role="admin")
+    reset_target = await user_factory(username="reset-target", password="secret123")
+    inactive_target = await user_factory(username="inactive-target", password="secret123")
+    delete_target = await user_factory(username="delete-target", password="secret123")
+    store = await store_factory(name="Ordinary access")
+
+    created = await admin_client.post(
+        "/api/admin/users",
+        json={"username": "created-user", "password": "secret123", "role": "user"},
+    )
+    edited = await admin_client.patch(
+        f"/api/admin/users/{created.json()['id']}", json={"store_ids": [store.id]}
+    )
+    reset = await admin_client.patch(
+        f"/api/admin/users/{reset_target.id}",
+        json={"password": "replacement123"},
+    )
+    deactivated = await admin_client.patch(
+        f"/api/admin/users/{inactive_target.id}", json={"is_active": False}
+    )
+    deleted = await admin_client.delete(f"/api/admin/users/{delete_target.id}")
+
+    assert created.status_code == 201
+    assert edited.status_code == 200
+    assert edited.json()["store_ids"] == [store.id]
+    assert reset.status_code == 200
+    assert deactivated.status_code == 200
+    assert deactivated.json()["is_active"] is False
+    assert deleted.status_code == 204
+    assert await db_session.get(User, delete_target.id) is None
+
+
+async def test_owner_can_manage_other_admin_but_not_itself(
+    client, user_factory, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AUTOLAVA_BOOTSTRAP_USERNAME", "Nuru_Banmian")
+    get_settings.cache_clear()
+    owner = await user_factory(username="Nuru_Banmian", password="secret123", role="admin")
+    edited_target = await user_factory(
+        username="edited-admin", password="secret123", role="admin"
+    )
+    reset_target = await user_factory(
+        username="reset-admin", password="secret123", role="admin"
+    )
+    inactive_target = await user_factory(
+        username="inactive-admin", password="secret123", role="admin"
+    )
+    delete_target = await user_factory(
+        username="delete-admin", password="secret123", role="admin"
+    )
+    login = await client.post(
+        "/api/auth/login",
+        json={"username": owner.username, "password": "secret123", "remember": False},
+    )
+    assert login.status_code == 200
+
+    demoted = await client.patch(
+        f"/api/admin/users/{edited_target.id}", json={"role": "user"}
+    )
+    reset = await client.patch(
+        f"/api/admin/users/{reset_target.id}",
+        json={"password": "replacement123"},
+    )
+    deactivated = await client.patch(
+        f"/api/admin/users/{inactive_target.id}", json={"is_active": False}
+    )
+    deleted = await client.delete(f"/api/admin/users/{delete_target.id}")
+    created = await client.post(
+        "/api/admin/users",
+        json={"username": "new-admin", "password": "secret123", "role": "admin"},
+    )
+
+    assert demoted.status_code == 200
+    assert demoted.json()["role"] == "user"
+    assert reset.status_code == 200
+    assert deactivated.status_code == 200
+    assert deactivated.json()["is_active"] is False
+    assert deleted.status_code == 204
+    assert await db_session.get(User, delete_target.id) is None
+    assert created.status_code == 201
+    assert created.json()["role"] == "admin"
+    assert (
+        await client.patch(
+            f"/api/admin/users/{owner.id}", json={"password": "replacement123"}
+        )
+    ).status_code == 403
+    assert (await client.delete(f"/api/admin/users/{owner.id}")).status_code == 403
+
+
+async def test_create_ordinary_user_assigns_stores_in_the_same_request(
+    admin_client, store_factory, db_session: AsyncSession
+) -> None:
+    first = await store_factory(name="First")
+    second = await store_factory(name="Second")
+
+    created = await admin_client.post(
+        "/api/admin/users",
+        json={
+            "username": "new-operator",
+            "password": "secret123",
+            "role": "user",
+            "store_ids": [second.id, first.id, second.id],
+        },
+    )
+
+    assert created.status_code == 201
+    assert created.json()["store_ids"] == [first.id, second.id]
+    assert list(
+        await db_session.scalars(
+            select(StoreMember.store_id)
+            .where(StoreMember.user_id == created.json()["id"])
+            .order_by(StoreMember.store_id)
+        )
+    ) == [first.id, second.id]
+    audit = await db_session.scalar(
+        select(AuditLog).where(
+            AuditLog.operation_domain == "admin",
+            AuditLog.operation_type == "create",
+            AuditLog.record_id == created.json()["id"],
+        )
+    )
+    assert audit is not None
+    assert audit.after_json["store_ids"] == [first.id, second.id]
+
+
+@pytest.mark.parametrize(
+    ("username", "store_kind", "expected_status"),
+    [
+        ("inactive-store-user", "inactive", 409),
+        ("missing-store-user", "missing", 404),
+    ],
+)
+async def test_create_user_with_invalid_store_is_atomic(
+    admin_client,
+    store_factory,
+    db_session: AsyncSession,
+    username: str,
+    store_kind: str,
+    expected_status: int,
+) -> None:
+    if store_kind == "inactive":
+        store_id = (await store_factory(name="Inactive", is_active=False)).id
+    else:
+        store_id = 999999
+    memberships_before = await db_session.scalar(
+        select(func.count()).select_from(StoreMember)
+    )
+    audits_before = await db_session.scalar(select(func.count()).select_from(AuditLog))
+
+    response = await admin_client.post(
+        "/api/admin/users",
+        json={
+            "username": username,
+            "password": "secret123",
+            "role": "user",
+            "store_ids": [store_id],
+        },
+    )
+
+    assert response.status_code == expected_status
+    assert (
+        await db_session.scalar(
+            select(func.count()).select_from(User).where(User.username == username)
+        )
+        == 0
+    )
+    assert (
+        await db_session.scalar(select(func.count()).select_from(StoreMember))
+        == memberships_before
+    )
+    assert await db_session.scalar(select(func.count()).select_from(AuditLog)) == audits_before
 
 
 async def test_admin_can_assign_user_role_and_stores_in_one_audited_patch(
@@ -329,7 +596,7 @@ async def test_user_cannot_be_assigned_an_inactive_store(
     ) == 0
 
 
-async def test_last_active_admin_cannot_be_demoted(
+async def test_owner_cannot_demote_itself(
     admin_client, db_session: AsyncSession
 ) -> None:
     administrator = await db_session.scalar(
@@ -341,7 +608,7 @@ async def test_last_active_admin_cannot_be_demoted(
         f"/api/admin/users/{administrator.id}", json={"role": "user"}
     )
 
-    assert response.status_code == 409
+    assert response.status_code == 403
     await db_session.refresh(administrator)
     assert administrator.role == "admin"
 
@@ -431,7 +698,7 @@ async def test_user_with_history_cannot_be_deleted(
     assert await db_session.get(User, user.id) is not None
 
 
-async def test_admin_cannot_deactivate_current_account(
+async def test_owner_cannot_deactivate_current_account(
     admin_client, db_session: AsyncSession
 ) -> None:
     administrator = await db_session.scalar(
@@ -443,17 +710,17 @@ async def test_admin_cannot_deactivate_current_account(
         f"/api/admin/users/{administrator.id}", json={"is_active": False}
     )
 
-    assert response.status_code == 409
-    assert response.json() == {
-        "detail": "You cannot deactivate your current account"
-    }
+    assert response.status_code == 403
+    assert response.json() == {"detail": "最终管理员账号受保护"}
     await db_session.refresh(administrator)
     assert administrator.is_active is True
 
 
 async def test_concurrent_admin_deactivation_keeps_one_active_admin(
-    committed_database,
+    committed_database, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setenv("AUTOLAVA_BOOTSTRAP_USERNAME", "first-administrator")
+    get_settings.cache_clear()
     async with async_session_factory() as setup_session:
         first = User(
             username="first-administrator",
@@ -499,7 +766,7 @@ async def test_concurrent_admin_deactivation_keeps_one_active_admin(
             .where(User.role == "admin", User.is_active.is_(True))
         )
 
-    assert sorted(statuses) == [200, 409]
+    assert sorted(statuses) == [200, 403]
     assert active_admins == 1
 
 

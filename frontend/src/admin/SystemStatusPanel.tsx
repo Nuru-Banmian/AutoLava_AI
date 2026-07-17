@@ -91,8 +91,8 @@ export function SystemStatusPanel() {
   else if (latestWeatherFailed) summary = <p role="alert" className="text-destructive">最近天气任务未成功</p>;
   else summary = <p role="status" className="text-emerald-700">运行正常</p>;
 
-  return <div className="space-y-4">
-    <section className="space-y-2 rounded-lg border bg-card p-4" aria-labelledby="status-summary-title">
+  return <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.7fr)]">
+    <section className="space-y-3 rounded-xl border bg-card p-5 shadow-sm" aria-labelledby="status-summary-title">
       <h2 className="font-medium" id="status-summary-title">运行状态</h2>
       {summary}
       {!loading && !failed && <dl className="grid gap-2 text-sm sm:grid-cols-2">
@@ -101,7 +101,7 @@ export function SystemStatusPanel() {
         <div className="sm:col-span-2"><dt className="text-muted-foreground">各门店仪表盘</dt><dd><ul>{dashboardStates.map((state) => <li key={state.store.id}>{state.store.name}：{formatTimestamp(state.latest, state.issue)}</li>)}</ul></dd></div>
       </dl>}
     </section>
-    {!loading && !failed && <section className="space-y-2 rounded-lg border p-4" aria-labelledby="unresolved-alerts-title">
+    {!loading && !failed && <section className="space-y-3 rounded-xl border bg-card p-5 shadow-sm" aria-labelledby="unresolved-alerts-title">
       <h2 className="font-medium" id="unresolved-alerts-title">未解决告警（{unresolvedAlerts.length}）</h2>
       {unresolvedAlerts.length === 0
         ? <p className="text-sm text-muted-foreground">当前没有未解决告警</p>

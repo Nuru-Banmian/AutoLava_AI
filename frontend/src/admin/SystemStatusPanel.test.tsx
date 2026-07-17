@@ -134,6 +134,19 @@ describe("SystemStatusPanel", () => {
     expect(screen.getByText(/一条提醒/)).toBeInTheDocument();
   });
 
+  it("keeps named status cards in the desktop hierarchy", async () => {
+    mockStatus();
+    renderStatus();
+
+    await screen.findByText("运行正常");
+    const summary = screen.getByRole("region", { name: "运行状态" });
+    const unresolvedAlerts = screen.getByRole("region", { name: /未解决告警/ });
+
+    expect(summary.parentElement).toHaveClass("grid", "gap-4", "lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.7fr)]");
+    expect(summary).toHaveClass("space-y-3", "rounded-xl", "border", "bg-card", "p-5", "shadow-sm");
+    expect(unresolvedAlerts).toHaveClass("space-y-3", "rounded-xl", "border", "bg-card", "p-5", "shadow-sm");
+  });
+
   it("reports the production weather refresh task when its latest run failed", async () => {
     mockStatus({ taskLogs: [{ ...weatherTask[0], status: "failed", message: "天气刷新完成：共 2 个门店，成功 1 个，失败 1 个" }] });
     renderStatus();

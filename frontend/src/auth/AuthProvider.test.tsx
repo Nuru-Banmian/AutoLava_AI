@@ -8,9 +8,10 @@ import { RouterProvider } from "react-router-dom";
 
 import { StoreProvider, useStore } from "@/stores/StoreProvider";
 import { createAppRouter } from "@/router";
+import { AuthProvider, useAuth } from "@/auth/AuthProvider";
 
-const admin = { id: 1, username: "admin", role: "admin" as const };
-const member = { id: 2, username: "member", role: "user" as const };
+const admin = { id: 1, username: "admin", role: "admin" as const, is_owner: false };
+const member = { id: 2, username: "member", role: "user" as const, is_owner: false };
 
 const server = setupServer();
 
@@ -37,6 +38,12 @@ function QueryWrapper({ children }: PropsWithChildren) {
 function StoreProbe() {
   const { selected } = useStore();
   return <span>selected:{selected?.id ?? "none"}</span>;
+}
+
+function OwnerLoginProbe() {
+  const { user, login } = useAuth();
+  if (user) return <span>owner:{String(user.is_owner)}</span>;
+  return <button type="button" onClick={() => void login({ username: "owner", password: "long-password", remember: false })}>probe login</button>;
 }
 
 describe("authenticated application shell", () => {
@@ -137,6 +144,28 @@ describe("authenticated application shell", () => {
 
     expect(await screen.findByRole("heading", { name: "仪表盘" })).toBeInTheDocument();
     expect(loginBody).toEqual({ username: "admin", password: "long-password", remember: true });
+  });
+
+  it("keeps the owner flag from the login response without refetching the session", async () => {
+    let sessionFetches = 0;
+    server.use(
+      http.get("/api/auth/me", () => {
+        sessionFetches += 1;
+        return HttpResponse.json({ detail: "Authentication required" }, { status: 401 });
+      }),
+      http.post("/api/auth/login", () => HttpResponse.json({
+        id: 1,
+        username: "owner",
+        role: "admin",
+        is_owner: true,
+      })),
+    );
+    render(<QueryWrapper><AuthProvider><OwnerLoginProbe /></AuthProvider></QueryWrapper>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "probe login" }));
+
+    expect(await screen.findByText("owner:true")).toBeInTheDocument();
+    expect(sessionFetches).toBe(1);
   });
 
   it("logs out and returns to login", async () => {

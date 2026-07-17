@@ -163,13 +163,14 @@ test("admin panels stay reachable above mobile navigation at 320px", async ({ pa
   await page.goto("/admin");
 
   const tabs = page.getByRole("tab");
-  await expect(tabs).toHaveText(["收入项目", "用户与权限", "门店设置", "系统状态"]);
-  for (const name of ["收入项目", "用户与权限", "门店设置", "系统状态"]) {
+  await expect(tabs).toHaveText(["门店与收入", "用户与权限", "系统状态"]);
+  for (const name of ["门店与收入", "用户与权限", "系统状态"]) {
     await page.getByRole("tab", { name }).click();
     await expectNoHorizontalScroll(page);
   }
 
-  await page.getByRole("tab", { name: "门店设置" }).click();
+  await page.getByRole("tab", { name: "门店与收入" }).click();
+  await page.getByRole("main").getByLabel("门店", { exact: true }).selectOption("1");
   const lastAction = page.getByRole("button", { name: "永久删除门店 Berlin" });
   const bottomNavigation = page.getByRole("navigation", { name: "移动导航" });
   await lastAction.scrollIntoViewIfNeeded();
