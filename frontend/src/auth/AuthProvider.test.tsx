@@ -299,8 +299,7 @@ describe("authenticated application shell", () => {
     expect(within(desktop).getAllByRole("link").map((link) => link.textContent)).toEqual([
       "首页",
       "每日记账",
-      "历史记录",
-      "经营分析",
+      "营业记录",
       "管理中心",
     ]);
     expect(within(mobile).getAllByRole("link").map((link) => link.textContent)).toEqual([
