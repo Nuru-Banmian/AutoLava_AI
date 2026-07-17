@@ -41,7 +41,14 @@ async def _record(db_session: AsyncSession, store: Store, category: IncomeCatego
     db_session.add(record)
     await db_session.flush()
     db_session.add(
-        DailyIncomeItem(record_id=record.id, category_id=category.id, amount=Decimal("25.00"))
+        DailyIncomeItem(
+            record_id=record.id,
+            category_id=category.id,
+            category_name=category.name,
+            include_in_total=category.include_in_total,
+            sort_order=category.sort_order,
+            amount=Decimal("25.00"),
+        )
     )
     await db_session.flush()
 
@@ -140,9 +147,85 @@ async def test_charts_returns_stable_empty_result(auth_client, db_session, store
             "total_wash_count": None,
             "average_ticket": None,
         },
+        "range": {"start": "2026-07-01", "end": "2026-07-31", "bucket": "day"},
+        "comparison_kpis": None,
+        "classified_included_total": "0.00",
         "daily": [],
         "categories": [],
+        "excluded_categories": [],
         "monthly": [],
         "weather": [],
         "weekday": [],
     }
+
+
+async def test_charts_defaults_bucket_and_comparison_for_existing_callers(
+    auth_client, db_session, store_factory
+) -> None:
+    store = await _assigned_store(auth_client, db_session, store_factory)
+    response = await auth_client.get(
+        f"/api/charts/{store.id}?start=2026-07-01&end=2026-07-31"
+    )
+    assert response.status_code == 200
+    assert response.json()["range"] == {
+        "start": "2026-07-01",
+        "end": "2026-07-31",
+        "bucket": "day",
+    }
+    assert response.json()["comparison_kpis"] is None
+
+
+async def test_charts_requires_a_complete_valid_comparison_pair(
+    auth_client, db_session, store_factory
+) -> None:
+    store = await _assigned_store(auth_client, db_session, store_factory)
+    base = f"/api/charts/{store.id}?start=2026-07-01&end=2026-07-31"
+    missing_end = await auth_client.get(base + "&compare_start=2026-06-01")
+    missing_start = await auth_client.get(base + "&compare_end=2026-06-30")
+    reversed_range = await auth_client.get(
+        base + "&compare_start=2026-06-30&compare_end=2026-06-01"
+    )
+    assert [missing_end.status_code, missing_start.status_code, reversed_range.status_code] == [
+        422,
+        422,
+        422,
+    ]
+
+
+async def test_charts_accepts_month_bucket_and_returns_excluded_snapshot_items(
+    auth_client, db_session, store_factory
+) -> None:
+    store = await _assigned_store(auth_client, db_session, store_factory)
+    excluded = IncomeCategory(
+        store_id=store.id,
+        name="当前名称",
+        include_in_total=False,
+        is_active=False,
+        sort_order=3,
+    )
+    db_session.add(excluded)
+    await db_session.flush()
+    await _record(db_session, store, excluded)
+    item = await db_session.scalar(
+        select(DailyIncomeItem).where(DailyIncomeItem.category_id == excluded.id)
+    )
+    assert item is not None
+    item.category_name = "历史优惠券"
+    item.include_in_total = False
+    item.sort_order = 1
+    await db_session.flush()
+
+    response = await auth_client.get(
+        f"/api/charts/{store.id}?start=2026-07-01&end=2026-07-31&bucket=month"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["range"]["bucket"] == "month"
+    assert response.json()["categories"] == []
+    assert response.json()["excluded_categories"] == [
+        {
+            "category_id": excluded.id,
+            "category_name": "历史优惠券",
+            "amount": "25.00",
+        }
+    ]

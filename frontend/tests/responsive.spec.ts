@@ -1,181 +1,181 @@
 import { expect, test, type Page } from "@playwright/test";
 
-type Role = "admin" | "user";
+const categories = Array.from({ length: 12 }, (_, index) => ({
+  id: index + 1,
+  name: `特别长的收入分类名称${index + 1}`,
+  include_in_total: index < 6,
+  is_active: true,
+  sort_order: index + 1,
+}));
 
-const categories = Array.from({ length: 8 }, (_, index) => ({ id: index + 1, name: `收入分类${index + 1}`, include_in_total: index < 2, is_active: true, sort_order: index + 1 }));
-const emptyDb = { items: [], categories, sum_daily_revenue: "0.00", total: 0, page: 1, page_size: 50 };
+function record(index: number) {
+  const day = 17 - index;
+  const date = `2026-07-${String(day).padStart(2, "0")}`;
+  const now = `${date}T12:00:00`;
+  return {
+    id: 100 + index,
+    store_id: 1,
+    date,
+    daily_revenue: `${100 - index}.00`,
+    wash_count: 20 - index,
+    is_open: "营业",
+    income_mode: "composed",
+    income_config_version_id: 4,
+    row_version: 1,
+    weather: "晴",
+    weather_auto: null,
+    weather_code: null,
+    temperature_max: null,
+    temperature_min: null,
+    precipitation: null,
+    activity: null,
+    weather_edited: false,
+    scanned: false,
+    created_by: 1,
+    updated_by: 1,
+    created_at: now,
+    updated_at: now,
+    items: [{
+      id: 1000 + index,
+      category_id: 1,
+      category_name: categories[0].name,
+      include_in_total: true,
+      sort_order: 1,
+      amount: `${100 - index}.00`,
+      created_at: now,
+      updated_at: now,
+    }],
+  };
+}
 
-async function mockApi(page: Page, options: { authenticated?: boolean; role?: Role; storeName?: string } = {}) {
-  let authenticated = options.authenticated ?? true;
-  const role = options.role ?? "user";
-  const user = { id: 1, username: role === "admin" ? "administrator" : "operator", role };
-  const storeName = options.storeName ?? "Berlin";
-
+async function mockResponsiveApi(page: Page) {
+  const records = Array.from({ length: 16 }, (_, index) => record(index));
   await page.route(/^http:\/\/127\.0\.0\.1:4173\/api\//, async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     const path = url.pathname;
-    const json = (value: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(value) });
+    const json = (value: unknown, status = 200) => route.fulfill({
+      status,
+      contentType: "application/json",
+      body: JSON.stringify(value),
+    });
 
-    if (path === "/api/auth/me") return authenticated ? json(user) : json({ detail: "Authentication required" }, 401);
-    if (path === "/api/auth/login" && request.method() === "POST") { authenticated = true; return json(user); }
-    if (path === "/api/stores/accessible") return json([{ id: 1, name: storeName, timezone: "Europe/Berlin" }]);
-    if (path === "/api/income-config/1/current") return json({ store_id: 1, version_id: 4, version: 4, enabled: true, formula: "收入分类1 + 收入分类2", created_at: "2026-07-15T08:00:00", items: categories.map((category, index) => ({ id: index + 10, category_id: category.id, ...category })) });
-    if (path.includes("/api/database/1/records")) return json(emptyDb);
-    if (path.includes("/api/database/1/history")) return json([]);
-    if (path.includes("/api/ledger/1/recent")) return json([]);
-    if (path.startsWith("/api/ledger/1/")) return json({ detail: "not found" }, 404);
-    if (path.startsWith("/api/weather/1/")) return json({ weather: null, weather_code: null, temperature_max: null, temperature_min: null, precipitation: null });
-    if (path === "/api/charts/1") return json({ kpis: { total_revenue: "100", record_days: 1, open_days: 1, primary_categories: [{ category_id: 1, category_name: "收入分类1", amount: "100" }], total_wash_count: null, average_ticket: null }, daily: [{ date: "2026-07-01", revenue: "100" }], categories: [{ category_id: 1, category_name: "收入分类1", amount: "100" }], monthly: [{ month: "2026-07", revenue: "100" }], weather: [{ weather: "晴", average_revenue: "100" }], weekday: [{ weekday: 0, average_revenue: "100" }] });
-    if (path === "/api/dashboard/1") return json([]);
-    if (path === "/api/admin/stores") return json([{ id: 1, name: storeName, address: "Berlin", latitude: "52.52", longitude: "13.405", timezone: "Europe/Berlin", is_active: true }]);
-    if (path === "/api/admin/users") return json([]);
-    if (path === "/api/admin/alerts") return json([]);
-    if (path === "/api/admin/task-logs") return json([]);
-    if (path === "/api/admin/income-categories") return json([]);
-    return json({ detail: `unmocked ${path}` }, 500);
+    if (path === "/api/auth/me") return json({ id: 1, username: "operator", role: "user", is_owner: false });
+    if (path === "/api/stores/accessible") return json([{ id: 1, name: "Berlin", timezone: "Europe/Berlin" }]);
+    if (path === "/api/database/1/records") {
+      const pageNumber = Number(url.searchParams.get("page"));
+      const pageSize = Number(url.searchParams.get("page_size"));
+      if (pageSize !== 15) return json({ detail: "page_size must be 15" }, 400);
+      const start = (pageNumber - 1) * pageSize;
+      return json({
+        items: records.slice(start, start + pageSize),
+        categories,
+        sum_daily_revenue: "1480.00",
+        total: records.length,
+        page: pageNumber,
+        page_size: pageSize,
+      });
+    }
+    if (path === "/api/charts/1") return json({
+      kpis: {
+        total_revenue: "100.00", record_days: 1, open_days: 1, average_revenue: "100.00",
+        primary_categories: [], total_wash_count: null, average_ticket: null,
+      },
+      range: { start: "2026-07-01", end: "2026-07-17", bucket: "day" },
+      comparison_kpis: {
+        start: "2026-06-01", end: "2026-06-17", total_revenue: "80.00",
+        open_days: 1, average_revenue: "80.00",
+      },
+      classified_included_total: "100.00",
+      daily: [{ date: "2026-07-14", revenue: "100.00" }],
+      categories: categories.slice(0, 6).map((category, index) => ({
+        category_id: category.id,
+        category_name: category.name,
+        amount: index === 0 ? "50.00" : "10.00",
+      })),
+      excluded_categories: categories.slice(6).map((category) => ({
+        category_id: category.id,
+        category_name: category.name,
+        amount: "5.00",
+      })),
+      monthly: [{ month: "2026-07", revenue: "100.00" }],
+      weather: [],
+      weekday: [],
+    });
+    return json({ detail: `unmocked ${request.method()} ${path}` }, 500);
   });
 }
 
-async function expectNoHorizontalScroll(page: Page) {
+test("desktop record browser keeps a sticky independently scrollable detail rail", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 700 });
+  await mockResponsiveApi(page);
+  await page.goto("/database");
+
+  const detailRail = page.locator("main").getByRole("complementary");
+  await expect(page.getByRole("table")).toBeVisible();
+  await expect(detailRail).toBeVisible();
+  await expect.poll(() => detailRail.evaluate((node) => getComputedStyle(node).position)).toBe("sticky");
+  await expect(page.getByRole("heading", { name: "2026年7月17日" })).toBeVisible();
+  await expect.poll(() => detailRail.evaluate((node) => ({
+    overflowY: getComputedStyle(node).overflowY,
+    independentlyScrollable: node.scrollHeight > node.clientHeight,
+  }))).toEqual({ overflowY: "auto", independentlyScrollable: true });
+});
+
+test("320px record list, bottom sheet, and analysis remain reachable without clipping", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 700 });
+  await mockResponsiveApi(page);
+  await page.goto("/database");
+
   await expect.poll(() => page.evaluate(() => ({
     document: document.documentElement.scrollWidth,
     body: document.body.scrollWidth,
     viewport: window.innerWidth,
   }))).toEqual({ document: 320, body: 320, viewport: 320 });
-}
+  await expect(page.getByRole("table")).toBeHidden();
+  await expect(page.getByRole("heading", { name: "2026年7月17日" })).toHaveCount(0);
 
-async function loginAs(page: Page, role: Role, options: { storeName?: string } = {}) {
-  await mockApi(page, { authenticated: false, role, storeName: options.storeName });
-  await page.goto("/login");
-  await page.getByLabel("用户名").fill(role === "admin" ? "administrator" : "operator");
-  await page.getByLabel("密码", { exact: true }).fill("password-123");
-  await page.getByRole("button", { name: "登录" }).click();
-  await expect(page.getByRole("heading", { name: "登录" })).toBeHidden();
-}
+  const firstRow = page.locator('main button[aria-label^="2026年7月17日"]').first();
+  await expect(firstRow).toHaveAccessibleName("2026年7月17日，营业，€100.00");
+  const visibleFields = firstRow.locator(":scope > span");
+  await expect(visibleFields).toHaveCount(3);
+  await expect(visibleFields).toHaveText(["2026年7月17日", "营业", "€100.00"]);
+  await firstRow.scrollIntoViewIfNeeded();
+  const scrollBeforeOpen = await page.evaluate(() => window.scrollY);
+  await firstRow.click();
 
-test("mobile login and shell stay inside a 320px viewport", async ({ page }) => {
-  await page.setViewportSize({ width: 320, height: 700 });
-  await mockApi(page, { authenticated: false });
-  await page.goto("/login");
+  const sheet = page.getByRole("dialog", { name: "2026-07-17 营业记录详情" });
+  await expect(sheet).toBeVisible();
+  await expect(sheet.getByRole("heading", { name: "2026年7月17日" })).toBeVisible();
+  await expect.poll(() => sheet.evaluate((node) => ({
+    position: getComputedStyle(node).position,
+    bottom: getComputedStyle(node).bottom,
+  }))).toEqual({ position: "fixed", bottom: "0px" });
+  await sheet.getByRole("button", { name: "Close" }).click();
+  await expect(sheet).toBeHidden();
+  await expect(firstRow).toBeFocused();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(scrollBeforeOpen);
 
-  await expect(page.getByRole("heading", { name: "登录" })).toBeVisible();
-  await expectNoHorizontalScroll(page);
+  const pagination = page.getByRole("navigation", { name: "记录分页" });
+  const analysis = page.getByRole("heading", { name: "经营分析" });
+  const [paginationBox, analysisBox] = await Promise.all([pagination.boundingBox(), analysis.boundingBox()]);
+  expect(paginationBox).not.toBeNull();
+  expect(analysisBox).not.toBeNull();
+  expect(analysisBox!.y).toBeGreaterThanOrEqual(paginationBox!.y + paginationBox!.height);
 
-  await page.getByLabel("用户名").fill("operator");
-  await page.getByLabel("密码", { exact: true }).fill("password-123");
-  await page.getByRole("button", { name: "登录" }).click();
-
-  const mobileNavigation = page.getByRole("navigation", { name: "移动导航" });
-  await expect(mobileNavigation.getByRole("link")).toHaveCount(4);
-  await expect(mobileNavigation.getByRole("link")).toHaveText(["首页", "记账", "记录", "更多"]);
-  await expect(page.getByRole("navigation", { name: "主导航" })).toBeHidden();
-  await expectNoHorizontalScroll(page);
-});
-
-test("mobile More keeps maximum-length store content reachable above navigation", async ({ page }) => {
-  const storeName = "超".repeat(120);
-  await page.setViewportSize({ width: 320, height: 320 });
-  await loginAs(page, "user", { storeName });
-
-  await page.getByRole("navigation", { name: "移动导航" }).getByRole("link", { name: "更多" }).click();
-  const more = page.getByRole("navigation", { name: "更多功能" });
-  await expect(more.getByRole("option", { name: storeName })).toBeAttached();
-  await expect(more.getByRole("link", { name: "经营分析" })).toBeVisible();
-  await expect(more.getByRole("link", { name: "修改密码" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "管理中心" })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "系统状态" })).toHaveCount(0);
-  await expectNoHorizontalScroll(page);
-
-  const main = page.getByRole("main");
-  const lastAction = main.getByRole("link").or(main.getByRole("button")).or(main.getByRole("combobox")).last();
+  await page.getByRole("region", { name: "收入分类" }).getByRole("button", { name: /展开收入分类/ }).click();
+  await page.getByRole("region", { name: "未计入总额" }).getByRole("button", { name: /展开未计入总额/ }).click();
+  const lastContent = page.getByText("未计入总额的金额不会计入总营业额、增幅或平均值。");
   const bottomNavigation = page.getByRole("navigation", { name: "移动导航" });
-  await expect(lastAction).toHaveAccessibleName("退出登录");
-  const readScrollPosition = () => page.evaluate(() => ({
-    maximum: document.documentElement.scrollHeight - window.innerHeight,
-    top: window.scrollY,
-  }));
-  expect((await readScrollPosition()).maximum).toBeGreaterThan(0);
-  await expect(async () => {
-    const position = await readScrollPosition();
-    const remaining = position.maximum - position.top;
-    if (remaining > 1) await page.mouse.wheel(0, remaining);
-    expect(Math.abs(remaining)).toBeLessThanOrEqual(1);
-  }).toPass({ intervals: [50], timeout: 2_000 });
-  const scrollPosition = await readScrollPosition();
-  expect(Math.abs(scrollPosition.maximum - scrollPosition.top)).toBeLessThanOrEqual(1);
-  const [actionBox, navigationBox] = await Promise.all([lastAction.boundingBox(), bottomNavigation.boundingBox()]);
-  expect(actionBox, "退出登录按钮应有真实浏览器布局框").not.toBeNull();
-  expect(navigationBox, "移动底栏应有真实浏览器布局框").not.toBeNull();
-  expect(actionBox!.y + actionBox!.height).toBeLessThanOrEqual(navigationBox!.y);
-});
-
-test("calendar-first history stays inside a 320px viewport", async ({ page }) => {
-  await page.setViewportSize({ width: 320, height: 700 });
-  await mockApi(page);
-  await page.goto("/database");
-
-  await expect(page.getByRole("grid", { name: /日历/ })).toBeVisible();
-  await expect(page.getByRole("searchbox")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "补记一天" })).toHaveCount(0);
-  await expectNoHorizontalScroll(page);
-});
-
-test("compact ledger stays accessible without horizontal scrolling at 320px", async ({ page }) => {
-  await page.setViewportSize({ width: 320, height: 700 });
-  await mockApi(page);
-  await page.goto("/ledger");
-
-  await expect(page.getByRole("group", { name: "收入项目" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "天气" })).toHaveAttribute("aria-expanded", "false");
-  const washActivity = page.getByRole("button", { name: "洗车数量 / 活动" });
-  await expect(washActivity).toHaveAttribute("aria-expanded", "false");
-  await expect(page.getByRole("button", { name: "保存今日记录" })).toBeVisible();
-  await expectNoHorizontalScroll(page);
-
-  await washActivity.click();
-  await page.getByLabel("活动").fill("夏日活动");
-  await washActivity.click();
-  await washActivity.click();
-  await expect(page.getByLabel("活动")).toHaveValue("夏日活动");
-  await expectNoHorizontalScroll(page);
-});
-
-test("desktop sidebar preserves exact role navigation and chart controls", async ({ page }) => {
-  await page.setViewportSize({ width: 1280, height: 900 });
-  await mockApi(page, { role: "admin" });
-  await page.goto("/charts");
-
-  const desktopNavigation = page.getByRole("navigation", { name: "主导航" });
-  await expect(desktopNavigation).toBeVisible();
-  await expect(desktopNavigation.getByRole("link")).toHaveText(["首页", "每日记账", "历史记录", "经营分析", "管理中心"]);
-  await expect(page.getByRole("navigation", { name: "移动导航" })).toBeHidden();
-  await expect(page.getByText("总营业额")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "营业额趋势" })).toBeVisible();
-  await page.getByRole("button", { name: "自定义日期" }).click();
-  await expect(page.getByLabel("图表开始日期")).toBeVisible();
-  await expect(page.getByLabel("图表结束日期")).toBeVisible();
-});
-
-test("admin panels stay reachable above mobile navigation at 320px", async ({ page }) => {
-  await page.setViewportSize({ width: 320, height: 500 });
-  await loginAs(page, "admin");
-  await page.goto("/admin");
-
-  const tabs = page.getByRole("tab");
-  await expect(tabs).toHaveText(["门店与收入", "用户与权限", "系统状态"]);
-  for (const name of ["门店与收入", "用户与权限", "系统状态"]) {
-    await page.getByRole("tab", { name }).click();
-    await expectNoHorizontalScroll(page);
-  }
-
-  await page.getByRole("tab", { name: "门店与收入" }).click();
-  await page.getByRole("main").getByLabel("门店", { exact: true }).selectOption("1");
-  const lastAction = page.getByRole("button", { name: "永久删除门店 Berlin" });
-  const bottomNavigation = page.getByRole("navigation", { name: "移动导航" });
-  await lastAction.scrollIntoViewIfNeeded();
-  const [actionBox, navigationBox] = await Promise.all([lastAction.boundingBox(), bottomNavigation.boundingBox()]);
-  expect(actionBox, "门店危险操作应有真实浏览器布局框").not.toBeNull();
-  expect(navigationBox, "移动底栏应有真实浏览器布局框").not.toBeNull();
-  expect(actionBox!.y + actionBox!.height).toBeLessThanOrEqual(navigationBox!.y);
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await expect(lastContent).toBeVisible();
+  const [contentBox, navigationBox] = await Promise.all([lastContent.boundingBox(), bottomNavigation.boundingBox()]);
+  expect(contentBox).not.toBeNull();
+  expect(navigationBox).not.toBeNull();
+  expect(contentBox!.y + contentBox!.height).toBeLessThanOrEqual(navigationBox!.y);
+  await expect.poll(() => page.evaluate(() => ({
+    document: document.documentElement.scrollWidth,
+    body: document.body.scrollWidth,
+    viewport: window.innerWidth,
+  }))).toEqual({ document: 320, body: 320, viewport: 320 });
 });

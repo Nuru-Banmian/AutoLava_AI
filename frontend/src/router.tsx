@@ -7,8 +7,7 @@ import { LoginPage } from "@/pages/LoginPage";
 import { HomePage } from "@/pages/HomePage";
 import { LedgerPage } from "@/pages/LedgerPage";
 import { MorePage } from "@/pages/MorePage";
-import { DatabasePage } from "@/pages/DatabasePage";
-import { ChartsPage } from "@/pages/ChartsPage";
+import { BusinessRecordsPage } from "@/pages/BusinessRecordsPage";
 import { AccountPasswordPage } from "@/pages/AccountPasswordPage";
 import { StoreProvider } from "@/stores/StoreProvider";
 
@@ -46,8 +45,7 @@ const routes: RouteObject[] = [{
     { element: <ProtectedShell />, children: [
       { index: true, element: <HomePage /> },
       { path: "ledger", element: <LedgerPage /> },
-      { path: "database", element: <DatabasePage /> },
-      { path: "charts", element: <ChartsPage /> },
+      { path: "database", element: <BusinessRecordsPage /> },
       { path: "more", element: <MoreRoute /> },
       { path: "account/password", element: <AccountPasswordPage /> },
       { path: "workers", element: <Placeholder title="员工管理（Phase 2）" /> },

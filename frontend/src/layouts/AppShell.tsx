@@ -1,4 +1,4 @@
-import { BarChart3, BookOpen, Database, Home, LogOut, Menu, Settings } from "lucide-react";
+import { BookOpen, Database, Home, LogOut, Menu, Settings } from "lucide-react";
 import type { ComponentType, SVGProps } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 
@@ -15,7 +15,6 @@ const icons: Record<string, Icon> = {
   "/": Home,
   "/ledger": BookOpen,
   "/database": Database,
-  "/charts": BarChart3,
   "/admin": Settings,
   "/more": Menu,
 };
