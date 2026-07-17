@@ -28,14 +28,14 @@ async function mockAdminApi(page: Page, capture: Capture) {
     const path = url.pathname;
     const json = (value: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(value) });
 
-    if (path === "/api/auth/me") return authenticated ? json({ id: 1, username: "administrator", role: "admin" }) : json({ detail: "Authentication required" }, 401);
-    if (path === "/api/auth/login" && request.method() === "POST") { authenticated = true; return json({ id: 1, username: "administrator", role: "admin" }); }
+    if (path === "/api/auth/me") return authenticated ? json({ id: 1, username: "administrator", role: "admin", is_owner: true }) : json({ detail: "Authentication required" }, 401);
+    if (path === "/api/auth/login" && request.method() === "POST") { authenticated = true; return json({ id: 1, username: "administrator", role: "admin", is_owner: true }); }
     if (path === "/api/stores/accessible") return json([store]);
     if (path === "/api/admin/stores" && request.method() === "GET") return json([store]);
     if (path === "/api/admin/users" && request.method() === "GET") return json(users);
     if (path === "/api/admin/users" && request.method() === "POST") {
       capture.createdUser = request.postDataJSON();
-      users = [{ id: 2, ...(capture.createdUser as object), is_active: true, store_ids: [] }];
+      users = [{ id: 2, ...(capture.createdUser as object), is_active: true }];
       return json(users[0], 201);
     }
     if (path === "/api/admin/alerts") return json([]);
@@ -60,32 +60,53 @@ async function mockAdminApi(page: Page, capture: Capture) {
   });
 }
 
-test("admin configures income, user, and mapped store without coordinate fields", async ({ page }) => {
+test("owner configures shared-store income, a user membership, and a mapped store", async ({ page }) => {
   const capture: Capture = {};
   await mockAdminApi(page, capture);
+  await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/login");
   await page.getByLabel("用户名").fill("administrator");
   await page.getByLabel("密码", { exact: true }).fill("password-123");
   await page.getByRole("button", { name: "登录" }).click();
   await page.goto("/admin");
 
-  const tabs = page.getByRole("tab");
-  await expect(tabs).toHaveText(["收入项目", "用户与权限", "门店设置", "系统状态"]);
-  await expect(page.getByRole("tab", { name: "收入项目" })).toHaveAttribute("aria-selected", "true");
-  await page.getByLabel("收入项目门店").selectOption("1");
+  await expect(page.getByRole("tab")).toHaveText([
+    "门店与收入", "用户与权限", "系统状态",
+  ]);
+  await expect(page.getByRole("tab", { name: "门店与收入" })).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("button", { name: "Roma Roma, Italia", exact: true }).click();
+  const storeDetails = page.getByRole("region", { name: "门店资料" });
+  const incomeItems = page.getByRole("region", { name: "收入项目" });
+  await expect(storeDetails.getByRole("button", { name: "保存", exact: true })).toBeVisible();
+  await expect(incomeItems.getByRole("button", { name: "保存", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "保存门店资料" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "保存并发布" })).toHaveCount(0);
   await page.getByLabel("新收入项目名称").fill("其他");
   await page.getByRole("button", { name: "添加收入项目" }).click();
-  await page.getByRole("button", { name: "保存并发布" }).click();
+  await incomeItems.getByRole("button", { name: "保存", exact: true }).click();
   await expect.poll(() => capture.incomePublish).toMatchObject({ enabled: true, items: [{ name: "现金" }, { name: "其他" }] });
 
   await page.getByRole("tab", { name: "用户与权限" }).click();
   await page.getByRole("button", { name: "新建用户" }).click();
-  await page.getByLabel("新用户名").fill("operator");
-  await page.getByLabel("初始密码").fill("operator-123");
-  await page.getByRole("button", { name: "添加用户" }).click();
-  await expect.poll(() => capture.createdUser).toEqual({ username: "operator", password: "operator-123", role: "user" });
+  const newUserEditor = page.getByRole("heading", { name: "新建用户" }).locator("..");
+  await newUserEditor.getByLabel("用户名").fill("operator");
+  await newUserEditor.getByLabel("初始密码").fill("operator-123");
+  await newUserEditor.getByLabel("Roma").check();
+  await newUserEditor.getByRole("button", { name: "添加用户" }).click();
+  await expect.poll(() => capture.createdUser).toEqual({ username: "operator", password: "operator-123", role: "user", store_ids: [1] });
+  await expect(page.getByRole("heading", { name: "编辑 operator" })).toBeVisible();
+  const userActions = page.getByTestId("user-editor-actions");
+  await expect(userActions.getByRole("button")).toHaveText(["永久删除", "保存用户"]);
+  await expect(userActions.getByRole("button", { name: "永久删除" })).toBeVisible();
+  const actionPositions = await userActions.getByRole("button").evaluateAll((buttons) => buttons.map((button) => button.getBoundingClientRect().left));
+  expect(actionPositions[1]).toBeGreaterThan(actionPositions[0]);
+  await expect(page.getByText("门店成员", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("用户操作历史", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("普通用户看不到管理中心", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "危险操作" })).toHaveCount(0);
+  await expect(page.getByText(/该用户有历史记录.*永久删除/)).toHaveCount(0);
 
-  await page.getByRole("tab", { name: "门店设置" }).click();
+  await page.getByRole("tab", { name: "门店与收入" }).click();
   await expect(page.getByLabel("纬度")).toHaveCount(0);
   await expect(page.getByLabel("经度")).toHaveCount(0);
   await page.getByRole("button", { name: "新建门店" }).click();
