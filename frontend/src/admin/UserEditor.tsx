@@ -213,9 +213,6 @@ export function UserEditor({
       </p>}
 
       <div className="flex items-center justify-between gap-3" data-testid="user-editor-actions">
-        <Button disabled={pending} type="submit">
-          {mode === "create" ? "添加用户" : "保存用户"}
-        </Button>
         {mode === "edit" && onDelete && <AlertDialog>
           <AlertDialogTrigger asChild>
             <Button disabled={pending} type="button" variant="destructive">永久删除</Button>
@@ -231,6 +228,9 @@ export function UserEditor({
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>}
+        <Button disabled={pending} type="submit">
+          {mode === "create" ? "添加用户" : "保存用户"}
+        </Button>
       </div>
     </form>
   </section>;

@@ -33,6 +33,7 @@ export function UsersPanel() {
   const { markDirty, requestTransition } = useUnsavedChanges();
   const [selection, setSelection] = useState<UserSelection>(null);
   const selectionRef = useRef<UserSelection>(selection);
+  const initializedSelectionRef = useRef(false);
   const mountedRef = useRef(false);
   const lifecycleGeneration = useRef(0);
   const requestIds = useRef(new Map<string, number>());
@@ -154,6 +155,12 @@ export function UsersPanel() {
   const mountedRequest = mountedTarget ? requestStates[mountedTarget] : undefined;
 
   useEffect(() => {
+    if (!users.isSuccess || initializedSelectionRef.current) return;
+    initializedSelectionRef.current = true;
+    if (selectionRef.current === null && users.data[0]) commitSelection(users.data[0].id);
+  }, [users.data, users.isSuccess]);
+
+  useEffect(() => {
     if (typeof selection !== "number" || !users.isSuccess) return;
     if (users.data.some((user) => user.id === selection)) return;
     selectionRef.current = null;
@@ -229,7 +236,7 @@ export function UsersPanel() {
       user={null}
     />;
   } else if (!selectedUser) {
-    editor = <p className="text-sm text-muted-foreground">请选择用户</p>;
+    editor = null;
   } else if (selectedUser.role === "admin" && !actor?.is_owner) {
     editor = <section className="rounded-lg border bg-card p-4">
       <h2 className="font-medium">{selectedUser.username}</h2>
@@ -254,22 +261,25 @@ export function UsersPanel() {
   return <div className="space-y-4">
     <ErrorMessage error={users.error} />
     <ErrorMessage error={stores.error} />
-    <div className="flex justify-end">
-      <Button onClick={() => select("new")} type="button">新建用户</Button>
+    <div className="flex items-center gap-2" data-testid="user-panel-controls">
+      <label className="min-w-0 flex-1 md:hidden">
+        <span className="sr-only">用户</span>
+        <select
+          aria-label="用户"
+          className="h-9 w-full rounded-md border bg-background px-2"
+          onChange={(event) => {
+            if (event.target.value) select(Number(event.target.value));
+          }}
+          value={typeof selection === "number" ? selection : ""}
+        >
+          <option hidden value="" />
+          {list.map((user) => <option key={user.id} value={user.id}>{user.username}</option>)}
+        </select>
+      </label>
+      <Button className="ml-auto" onClick={() => select("new")} type="button">
+        新建用户
+      </Button>
     </div>
-    <label className="md:hidden">
-      <span className="sr-only">用户</span>
-      <select
-        aria-label="用户"
-        className="h-9 w-full rounded-md border bg-background px-2"
-        onChange={(event) => select(event.target.value === "new" ? "new" : event.target.value ? Number(event.target.value) : null)}
-        value={selection ?? ""}
-      >
-        <option value="">请选择用户</option>
-        <option value="new">新建用户</option>
-        {list.map((user) => <option key={user.id} value={user.id}>{user.username}</option>)}
-      </select>
-    </label>
     <div className="grid gap-4 md:grid-cols-[minmax(13rem,18rem)_minmax(0,1fr)]">
       <aside className="hidden md:block">
         <ul className="divide-y rounded-lg border bg-card">

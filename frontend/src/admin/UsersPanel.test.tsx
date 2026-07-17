@@ -95,6 +95,71 @@ function mockUsers(
   );
 }
 
+it("selects the first user and exposes only existing users in the selector", async () => {
+  mockUsers([maria, operator]);
+  renderPanel();
+
+  expect(await screen.findByRole("heading", { name: "编辑 maria" })).toBeInTheDocument();
+  const selector = screen.getByRole("combobox", { name: "用户" });
+  expect(selector).toHaveValue("2");
+  expect(within(selector).getAllByRole("option").map((option) => option.textContent))
+    .toEqual(["maria", "operator"]);
+  expect(screen.queryByText("请选择用户", { selector: "p" })).not.toBeInTheDocument();
+});
+
+it("keeps user controls on one row and leaves the selector blank in create mode", async () => {
+  mockUsers([maria]);
+  renderPanel();
+  await screen.findByRole("heading", { name: "编辑 maria" });
+
+  const controls = screen.getByTestId("user-panel-controls");
+  expect(controls).toHaveClass("flex", "items-center");
+  expect(within(controls).getByRole("combobox", { name: "用户" })).toBeInTheDocument();
+  await userEvent.click(within(controls).getByRole("button", { name: "新建用户" }));
+
+  const selector = within(controls).getByRole("combobox", { name: "用户" });
+  expect(selector).toHaveValue("");
+  expect(within(selector).queryByRole("option", { name: "新建用户" }))
+    .not.toBeInTheDocument();
+  expect(within(selector).queryByRole("option", { name: "请选择用户" }))
+    .not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "添加用户" })).toBeInTheDocument();
+});
+
+it("does not invent a user selection for an empty list", async () => {
+  mockUsers([]);
+  renderPanel();
+
+  const selector = await screen.findByRole("combobox", { name: "用户" });
+  expect(selector).toHaveValue("");
+  expect(screen.queryByText("请选择用户", { selector: "p" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: /^编辑 / })).not.toBeInTheDocument();
+});
+
+it("selects a newly created user", async () => {
+  const created = { id: 10, username: "new-operator", role: "user" as const,
+    is_active: true, store_ids: [9] };
+  let users = [maria];
+  server.use(
+    http.get("/api/admin/users", () => HttpResponse.json(users)),
+    http.get("/api/admin/stores", () => HttpResponse.json([roma])),
+    http.post("/api/admin/users", () => {
+      users = [maria, created];
+      return HttpResponse.json(created, { status: 201 });
+    }),
+  );
+  renderPanel();
+  await screen.findByRole("heading", { name: "编辑 maria" });
+  await userEvent.click(screen.getByRole("button", { name: "新建用户" }));
+  await userEvent.type(screen.getByLabelText("用户名"), "new-operator");
+  await userEvent.type(screen.getByLabelText("初始密码"), "operator123");
+  await userEvent.click(screen.getByRole("checkbox", { name: "Roma" }));
+  await userEvent.click(screen.getByRole("button", { name: "添加用户" }));
+
+  expect(await screen.findByRole("heading", { name: "编辑 new-operator" })).toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: "用户" })).toHaveValue("10");
+});
+
 it("selects a user into one editor and removes duplicate management surfaces", async () => {
   mockUsers([
     { id: 2, username: "maria", role: "user", is_active: true, store_ids: [9] },
@@ -134,7 +199,7 @@ it("lets the owner edit another administrator", async () => {
   expect(screen.queryByText(/有历史记录.*只能停用/)).not.toBeInTheDocument();
   const footer = screen.getByTestId("user-editor-actions");
   expect(within(footer).getAllByRole("button").map((button) => button.textContent))
-    .toEqual(["保存用户", "永久删除"]);
+    .toEqual(["永久删除", "保存用户"]);
 });
 
 it("does not offer administrator creation to a non-owner", async () => {
@@ -351,7 +416,10 @@ it("clears a dirty selection when the authoritative refetch removes it", async (
   await userEvent.type(screen.getByLabelText("重置密码（可选）"), "replacement123");
   await userEvent.click(screen.getByRole("button", { name: "保存用户" }));
 
-  expect(await screen.findByText("请选择用户", { selector: "p" })).toBeInTheDocument();
+  await waitFor(() => {
+    expect(screen.queryByRole("heading", { name: "编辑 maria" })).not.toBeInTheDocument();
+  });
+  expect(screen.queryByText("请选择用户", { selector: "p" })).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "新建用户" }));
   expect(screen.queryByRole("alertdialog", { name: "放弃未保存的修改？" })).not.toBeInTheDocument();
 });
