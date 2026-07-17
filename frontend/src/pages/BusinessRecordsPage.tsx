@@ -9,7 +9,7 @@ import { useAuth } from "@/auth/AuthProvider";
 import { BusinessAnalysisCard } from "@/components/BusinessAnalysisCard";
 import { MobileRecordList } from "@/components/MobileRecordList";
 import { MobileRecordSheet } from "@/components/MobileRecordSheet";
-import { RecordDetailPanel } from "@/components/RecordDetailPanel";
+import { RecordDetailPanel, type RecordDetail } from "@/components/RecordDetailPanel";
 import { RecordFilters } from "@/components/RecordFilters";
 import { RecordManagementDialogs } from "@/components/RecordManagementDialogs";
 import { RecordPagination } from "@/components/RecordPagination";
@@ -32,7 +32,7 @@ export function BusinessRecordsPage() {
   const [range, setRange] = useState<DateRange>(() => recordRange("current-month", today));
   const [page, setPage] = useState(1);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
-  const [mobileRecord, setMobileRecord] = useState<RecordSnapshot | null>(null);
+  const [mobileRecord, setMobileRecord] = useState<RecordDetail | null>(null);
   const [returnFocusTo, setReturnFocusTo] = useState<HTMLButtonElement | null>(null);
   const [managementOpen, setManagementOpen] = useState(false);
   const [managementDate, setManagementDate] = useState<string | null>(null);
@@ -79,6 +79,7 @@ export function BusinessRecordsPage() {
     setSelectedDate((current) => current ?? items[0]?.date ?? null);
     setMobileRecord((current) => {
       if (!current) return null;
+      if (current.id === null) return current;
       return items.find((item) => item.id === current.id) ?? null;
     });
   }, [records.data, records.isSuccess, selected?.id]);
@@ -159,8 +160,8 @@ export function BusinessRecordsPage() {
           </div>
           <div className="lg:hidden">
             <MobileRecordList
-              records={visibleRecords}
-              selectedId={selectedRecord?.id ?? null}
+              records={pagedTableRows}
+              selectedDate={selectedDate}
               onSelect={(nextRecord, trigger) => {
                 setSelectedDate(nextRecord.date);
                 setMobileRecord(nextRecord);
@@ -206,17 +207,18 @@ export function BusinessRecordsPage() {
           <BusinessAnalysisCard key={selected.id} storeId={selected.id} today={today} />
         </aside>
       </div>
-      {mobileRecord && mobileRecord.store_id === selected.id && (
+      {mobileRecord && (mobileRecord.id === null || mobileRecord.store_id === selected.id) && (
         <MobileRecordSheet
           open
           record={mobileRecord}
           canEdit
-          canManage={isAdmin}
+          canManage={isAdmin && mobileRecord.id !== null}
           returnFocusTo={returnFocusTo}
           onOpenChange={(open) => {
             if (!open) setMobileRecord(null);
           }}
           onManage={() => {
+            if (mobileRecord.id === null) return;
             setManagementDate(mobileRecord.date);
             setManagementOpen(true);
           }}

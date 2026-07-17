@@ -14,7 +14,7 @@ const record: RecordSnapshot = {
 
 describe("MobileRecordList", () => {
   it("uses an accessible three-column trigger without extra record fields", () => {
-    render(<MobileRecordList records={[record]} selectedId={null} onSelect={vi.fn()} />);
+    render(<MobileRecordList records={[record]} selectedDate={null} onSelect={vi.fn()} />);
 
     expect(screen.getByRole("button", { name: /2026年7月14日，休息，€100.00/ })).toBeInTheDocument();
     expect(screen.queryByText("晴")).not.toBeInTheDocument();

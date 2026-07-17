@@ -155,6 +155,22 @@ describe("BusinessRecordsPage", () => {
     expect(within(detailCard!).queryByRole("button", { name: "管理这天记录" })).not.toBeInTheDocument();
   });
 
+  it("opens an editable mobile sheet for an unrecorded date", async () => {
+    server.use(
+      http.get("/api/database/1/records", () => HttpResponse.json(databaseResponse([record]))),
+      http.get("/api/charts/1", () => HttpResponse.json(chartsPayload)),
+    );
+    renderPage();
+    await screen.findByRole("heading", { name: "2026年7月14日" });
+
+    fireEvent.click(screen.getByRole("button", { name: "2026年7月17日，未录入，—" }));
+
+    const sheet = await screen.findByRole("dialog");
+    expect(within(sheet).getByText("未录入", { exact: true })).toBeInTheDocument();
+    expect(within(sheet).getByRole("link", { name: "修改这天记录" })).toHaveAttribute("href", "/ledger?date=2026-07-17");
+    expect(within(sheet).queryByRole("button", { name: "管理这天记录" })).not.toBeInTheDocument();
+  });
+
   it("selects the new page or range's first record while analysis and record controls stay independent", async () => {
     const recordRequests: URL[] = [];
     const chartRequests: URL[] = [];
