@@ -55,3 +55,18 @@
 - Local launcher Task 4: tracked changes complete (commits `991591b..5eba911`, re-review approved with no findings). Root-only Windows acceptance passed: first launch installed dependencies, migrated MySQL, created the configured administrator, returned direct/proxied health 200, authenticated as admin, and released both ports on Ctrl+C; second launch skipped both dependency installs, kept the administrator unchanged, returned health 200, and again released both ports. Full backend gate: Ruff clean, 204 passed, 88% coverage; frontend: 64 tests, build, Playwright 3/3.
 - Local launcher final security review: initial Important found backend secrets persisted in the launcher process and were inherited by dependency tools/Vite/browser. Fixed in `874234d` with dependency preparation before injection and snapshot/temporary backend setup/finally restore; blank/short settings validation, username normalization, route-associated proxy tests, and dynamic PowerShell failure/success environment restoration coverage were added. Final independent re-review: no Critical, Important, or Minor findings; Ready to merge Yes. Fixed administrator password leak scans across tracked files, SDD artifacts, and acceptance logs returned zero matches.
 - Local runtime database note: the existing MySQL `autolava_test` account cannot create a separate `autolava` database (MySQL 1044), and local root authentication is unavailable. The launcher remains usable with `autolava_test`, but a future full backend test run resets demo data; create a dedicated database when database-administrator credentials are available.
+
+## Merged Business Records SDD
+
+- Branch: `codex/merge-analysis-history`
+- Plan: `docs/superpowers/plans/2026-07-17-merged-business-records.md`
+- Preflight plan scan: complete; API compatibility wording and exact six-month comparison dates reconciled in commit `4e94f50`.
+- Integration prerequisite: waiting for `codex/management-center-optimization` Tasks 3-5 and final review to complete; its worktree currently contains uncommitted product changes.
+- Worktree setup: pending user choice because this branch is checked out in the normal repository checkout, not a linked worktree.
+- Task 1: pending.
+- Task 2: pending.
+- Task 3: pending.
+- Task 4: pending.
+- Task 5: pending.
+- Task 6: pending.
+- Task 7: pending.
