@@ -172,6 +172,56 @@ describe("LedgerPage", () => {
     expect(screen.getByText("编辑已有记录")).toBeInTheDocument();
   });
 
+  it("autofills a calendar-selected saved record and preserves untouched fields on modification", async () => {
+    const historicalRecord = {
+      ...recordSnapshot("88.50", "周末促销", "小雨"),
+      date: "2026-07-14",
+      is_open: "天气停业" as const,
+      wash_count: 17,
+      items: [
+        { id: 21, category_id: 1, category_name: "现金", include_in_total: true, sort_order: 1, amount: "88.50", created_at: "2026-07-14T08:00:00", updated_at: "2026-07-14T08:00:00" },
+        { id: 22, category_id: 2, category_name: "刷卡", include_in_total: true, sort_order: 2, amount: "12.30", created_at: "2026-07-14T08:00:00", updated_at: "2026-07-14T08:00:00" },
+        { id: 23, category_id: 3, category_name: "暗钱", include_in_total: false, sort_order: 3, amount: "4.50", created_at: "2026-07-14T08:00:00", updated_at: "2026-07-14T08:00:00" },
+      ],
+    };
+    let submitted: unknown;
+    renderLedger([
+      http.get("/api/database/1/records", ({ request }) => {
+        if (new URL(request.url).searchParams.get("page_size") === "200") return HttpResponse.json({ items: [{ id: 9, date: "2026-07-14" }], categories: [], sum_daily_revenue: "105.30", total: 1, page: 1, page_size: 200 });
+        return HttpResponse.json({ items: [], categories: [], sum_daily_revenue: "0.00", total: 0, page: 1, page_size: 1 });
+      }),
+      http.get("/api/ledger/1/:date", ({ params }) => {
+        if (params.date === "recent") return HttpResponse.json([]);
+        return params.date === "2026-07-14" ? HttpResponse.json(historicalRecord) : HttpResponse.json({ detail: "not found" }, { status: 404 });
+      }),
+      http.put("/api/ledger/1/2026-07-14", async ({ request }) => {
+        submitted = await request.json();
+        return HttpResponse.json(historicalRecord);
+      }),
+    ]);
+
+    fireEvent.click(await screen.findByRole("button", { name: "选择台账日期：2026年7月15日" }));
+    fireEvent.click(await screen.findByRole("button", { name: "2026年7月14日，已有记录" }));
+
+    expect(await screen.findByRole("button", { name: "保存修改" })).toBeEnabled();
+    expect(screen.getByLabelText("状态")).toHaveValue("天气停业");
+    expect(screen.getByLabelText("现金")).toHaveValue("88.50");
+    expect(screen.getByLabelText("刷卡")).toHaveValue("12.30");
+    fireEvent.click(screen.getByRole("button", { name: "天气" }));
+    expect(screen.getByLabelText("天气")).toHaveValue("小雨");
+    fireEvent.click(screen.getByRole("button", { name: "洗车数量 / 活动" }));
+    expect(screen.getByLabelText("洗车数量")).toHaveValue(17);
+    expect(screen.getByLabelText("活动")).toHaveValue("周末促销");
+
+    fireEvent.change(screen.getByLabelText("现金"), { target: { value: "99.9" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+    await waitFor(() => expect(submitted).toEqual({
+      is_open: "天气停业", daily_revenue: null, config_version_id: 4, expected_version: 2,
+      wash_count: 17, weather: "小雨", weather_edited: false, activity: "周末促销",
+      items: [{ category_id: 1, amount: "99.90" }, { category_id: 2, amount: "12.30" }, { category_id: 3, amount: "4.50" }],
+    }));
+  });
+
   it("loads markers for the calendar month currently being viewed", async () => {
     renderLedger([
       http.get("/api/database/1/records", ({ request }) => {
