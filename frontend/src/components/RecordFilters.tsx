@@ -43,7 +43,7 @@ export function RecordFilters({ mode, range, today, exporting, exportError, onCh
             type="button"
             aria-pressed={mode === preset.mode}
             onClick={() => choosePreset(preset.mode)}
-            className="rounded-md border border-border px-3 py-2 text-sm aria-pressed:bg-primary aria-pressed:text-primary-foreground"
+            className="min-h-11 rounded-md border border-border px-3 py-2 text-sm aria-pressed:bg-primary aria-pressed:text-primary-foreground"
           >
             {preset.label}
           </button>
@@ -54,7 +54,7 @@ export function RecordFilters({ mode, range, today, exporting, exportError, onCh
           onClick={() => {
             if (customRangeIsValid(customDraft)) onChange("custom", customDraft);
           }}
-          className="rounded-md border border-border px-3 py-2 text-sm aria-pressed:bg-primary aria-pressed:text-primary-foreground"
+          className="min-h-11 rounded-md border border-border px-3 py-2 text-sm aria-pressed:bg-primary aria-pressed:text-primary-foreground"
         >
           自定义
         </button>
@@ -65,7 +65,7 @@ export function RecordFilters({ mode, range, today, exporting, exportError, onCh
       <label className="grid gap-1 text-sm">结束日期
         <NativeDateInput aria-label="结束日期" max={today} value={customDraft.end} onChange={(event) => updateCustom({ end: event.target.value })} />
       </label>
-      <button type="button" disabled={exporting} onClick={onExport} className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:cursor-not-allowed disabled:opacity-60">
+      <button type="button" disabled={exporting} onClick={onExport} className="min-h-11 rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:cursor-not-allowed disabled:opacity-60">
         导出当前范围
       </button>
       {exportError && <p role="alert" className="basis-full text-sm text-destructive">{exportError}</p>}

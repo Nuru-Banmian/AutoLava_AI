@@ -10,6 +10,9 @@ describe("RecordFilters", () => {
 
     render(<RecordFilters mode="current-month" range={{ start: "2026-07-01", end: "2026-07-31" }} today="2026-07-17" exporting={false} exportError="" onChange={onChange} onExport={onExport} />);
 
+    for (const name of ["本月", "上月", "自定义", "导出当前范围"]) {
+      expect(screen.getByRole("button", { name })).toHaveClass("min-h-11");
+    }
     expect(screen.getByRole("button", { name: "本月" })).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(screen.getByRole("button", { name: "上月" }));
     expect(onChange).toHaveBeenCalledWith("previous-month", { start: "2026-06-01", end: "2026-06-30" });
