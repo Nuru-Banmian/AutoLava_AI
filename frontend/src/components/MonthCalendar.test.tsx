@@ -8,27 +8,31 @@ import { MonthCalendar } from "@/components/MonthCalendar";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("MonthCalendar", () => {
-  it("marks recorded dates and blocks future dates", () => {
+  it("marks non-selected recorded dates without marking the selected record", () => {
     const onSelect = vi.fn();
 
     render(
       <MonthCalendar
-        month="2026-07"
-        selected="2026-07-15"
-        today="2026-07-15"
-        recordedDates={new Set(["2026-07-14"])}
+        month="2026-04"
+        selected="2026-04-30"
+        today="2026-07-18"
+        recordedDates={new Set(["2026-04-26", "2026-04-27", "2026-04-28", "2026-04-30"])}
         onSelect={onSelect}
       />,
     );
 
-    const recorded = screen.getByRole("button", { name: "2026年7月14日，已有记录" });
-    expect(recorded).toBeEnabled();
-    expect(recorded).toHaveAttribute("data-recorded", "true");
-    expect(screen.getByRole("button", { name: "2026年7月15日" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: "2026年7月16日" })).toBeDisabled();
+    for (const day of [26, 27, 28]) {
+      const button = screen.getByRole("button", { name: `2026年4月${day}日，已有记录` });
+      expect(button).toHaveAttribute("data-recorded", "true");
+      expect(button.querySelector('[data-testid="recorded-date-dot"]')).toHaveClass("bg-primary");
+    }
+    const selected = screen.getByRole("button", { name: "2026年4月30日，已有记录" });
+    expect(selected).toHaveAttribute("data-recorded", "true");
+    expect(selected).toHaveAttribute("aria-pressed", "true");
+    expect(selected.querySelector('[data-testid="recorded-date-dot"]')).toBeNull();
 
-    fireEvent.click(recorded);
-    expect(onSelect).toHaveBeenCalledWith("2026-07-14");
+    fireEvent.click(screen.getByRole("button", { name: "2026年4月26日，已有记录" }));
+    expect(onSelect).toHaveBeenCalledWith("2026-04-26");
   });
 
   it("starts weeks on Monday and marks dates across month boundaries", () => {

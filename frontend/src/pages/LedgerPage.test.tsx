@@ -222,14 +222,19 @@ describe("LedgerPage", () => {
     }));
   });
 
-  it("loads markers for the calendar month currently being viewed", async () => {
+  it("loads all recorded dates for the calendar month currently being viewed", async () => {
     renderLedger([
       http.get("/api/database/1/records", ({ request }) => {
         const url = new URL(request.url);
-        if (url.searchParams.get("start") === "2026-06-01") {
-          expect(url.searchParams.get("end")).toBe("2026-06-30");
+        if (url.searchParams.get("start") === "2026-04-01") {
+          expect(url.searchParams.get("end")).toBe("2026-04-30");
           expect(url.searchParams.get("page_size")).toBe("200");
-          return HttpResponse.json({ items: [{ id: 7, date: "2026-06-04" }], categories: [], sum_daily_revenue: "0.00", total: 1, page: 1, page_size: 200 });
+          return HttpResponse.json({ items: [
+            { id: 7, date: "2026-04-26" },
+            { id: 8, date: "2026-04-27" },
+            { id: 9, date: "2026-04-28" },
+            { id: 10, date: "2026-04-30" },
+          ], categories: [], sum_daily_revenue: "0.00", total: 4, page: 1, page_size: 200 });
         }
         return HttpResponse.json({ items: [], categories: [], sum_daily_revenue: "0.00", total: 0, page: 1, page_size: 1 });
       }),
@@ -237,8 +242,12 @@ describe("LedgerPage", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "选择台账日期：2026年7月15日" }));
     fireEvent.click(screen.getByRole("button", { name: "上个月" }));
+    fireEvent.click(screen.getByRole("button", { name: "上个月" }));
+    fireEvent.click(screen.getByRole("button", { name: "上个月" }));
 
-    expect(await screen.findByRole("button", { name: "2026年6月4日，已有记录" })).toBeEnabled();
+    for (const day of [26, 27, 28, 30]) {
+      expect(await screen.findByRole("button", { name: `2026年4月${day}日，已有记录` })).toBeEnabled();
+    }
   });
 
   it("reopens the picker with only the selected date month marker request", async () => {

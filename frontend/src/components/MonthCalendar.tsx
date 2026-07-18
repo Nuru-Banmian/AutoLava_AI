@@ -85,7 +85,13 @@ export function MonthCalendar({ month, selected, today, recordedDates, onSelect 
                   )}
                 >
                   {format(day, "d")}
-                  {recorded && <span aria-hidden="true" className={cn("absolute bottom-1 size-1 rounded-full", iso === selected ? "bg-primary-foreground" : "bg-primary")} />}
+                  {recorded && iso !== selected && (
+                    <span
+                      aria-hidden="true"
+                      data-testid="recorded-date-dot"
+                      className="absolute bottom-1 size-1 rounded-full bg-primary"
+                    />
+                  )}
                 </button>
               </div>
             );
