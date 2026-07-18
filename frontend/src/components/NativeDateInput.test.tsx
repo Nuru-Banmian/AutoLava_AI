@@ -12,7 +12,7 @@ describe("NativeDateInput", () => {
     const trigger = screen.getByRole("button", { name: "打开开始日期日历" });
     expect(input).toHaveAttribute("type", "date");
     expect(input).toHaveAttribute("max", "2026-07-17");
-    expect(input).toHaveClass("h-10", "pr-10");
+    expect(input).toHaveClass("h-10", "min-w-0", "pr-10");
     expect(trigger).toHaveClass("size-10");
   });
 

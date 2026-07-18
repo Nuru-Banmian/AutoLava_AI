@@ -60,10 +60,10 @@ export function RecordFilters({ mode, range, today, exporting, exportError, onCh
         </button>
       </div>
       <div className="grid grid-cols-2 gap-2" data-testid="record-filter-dates">
-        <label className="grid gap-1 text-sm">开始日期
+        <label className="grid min-w-0 gap-1 text-sm">开始日期
           <NativeDateInput aria-label="开始日期" max={today} value={customDraft.start} onChange={(event) => updateCustom({ start: event.target.value })} />
         </label>
-        <label className="grid gap-1 text-sm">结束日期
+        <label className="grid min-w-0 gap-1 text-sm">结束日期
           <NativeDateInput aria-label="结束日期" max={today} value={customDraft.end} onChange={(event) => updateCustom({ end: event.target.value })} />
         </label>
       </div>

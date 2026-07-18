@@ -7,6 +7,7 @@ const categories = Array.from({ length: 12 }, (_, index) => ({
   is_active: true,
   sort_order: index + 1,
 }));
+const longStoreName = "特别特别特别特别特别特别特别特别特别特别特别特别特别特别特别特别长的门店名称";
 
 function record(index: number) {
   const day = 17 - index;
@@ -61,7 +62,7 @@ async function mockResponsiveApi(page: Page) {
     });
 
     if (path === "/api/auth/me") return json({ id: 1, username: "operator", role: "user", is_owner: false });
-    if (path === "/api/stores/accessible") return json([{ id: 1, name: "Berlin", timezone: "Europe/Berlin" }]);
+    if (path === "/api/stores/accessible") return json([{ id: 1, name: longStoreName, timezone: "Europe/Berlin" }]);
     if (path === "/api/database/1/records") {
       const pageNumber = Number(url.searchParams.get("page"));
       const pageSize = Number(url.searchParams.get("page_size"));
@@ -115,7 +116,7 @@ async function expectNativeDateInput(input: ReturnType<Page["getByLabel"]>, expe
   if (expected.min === null) await expect(input).not.toHaveAttribute("min");
   else await expect(input).toHaveAttribute("min", expected.min);
   await expect(input).toHaveAttribute("max", expected.max);
-  await expect.poll(() => input.evaluate((node) => node.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
+  await expect.poll(() => input.evaluate((node) => node.getBoundingClientRect().height)).toBe(40);
 }
 
 async function expectCalendarTrigger(page: Page, name: string) {
@@ -124,7 +125,7 @@ async function expectCalendarTrigger(page: Page, name: string) {
   await expect.poll(() => trigger.evaluate((node) => {
     const { height, width } = node.getBoundingClientRect();
     return { height, width };
-  })).toEqual({ height: 44, width: 44 });
+  })).toEqual({ height: 40, width: 40 });
 }
 
 test("desktop record browser keeps a sticky independently scrollable detail rail", async ({ page }) => {
@@ -142,6 +143,33 @@ test("desktop record browser keeps a sticky independently scrollable detail rail
     overflowY: getComputedStyle(node).overflowY,
     independentlyScrollable: node.scrollHeight > node.clientHeight,
   }))).toEqual({ overflowY: "auto", independentlyScrollable: true });
+});
+
+test("global store picker switches cleanly between mobile and desktop without header overflow", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
+  await mockResponsiveApi(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/database");
+
+  await expect(page.getByTestId("mobile-store-picker").getByRole("combobox", { name: "门店" })).toBeVisible();
+  await expect(page.getByTestId("desktop-store-picker")).toBeHidden();
+  const presets = page.getByLabel("日期范围预设").getByRole("button");
+  await expect(presets).toHaveCount(3);
+  for (const control of await presets.all()) {
+    expect((await control.boundingBox())?.height).toBe(40);
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const desktopPicker = page.getByTestId("desktop-store-picker");
+  const brand = page.getByText("AutoLava AI", { exact: true });
+  await expect(desktopPicker.getByRole("combobox", { name: "门店" })).toBeVisible();
+  await expect(page.getByTestId("mobile-store-picker")).toBeHidden();
+  const [pickerBox, brandBox] = await Promise.all([desktopPicker.boundingBox(), brand.boundingBox()]);
+  expect(pickerBox).not.toBeNull();
+  expect(brandBox).not.toBeNull();
+  expect(pickerBox!.y).toBeGreaterThan(brandBox!.y + brandBox!.height);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(1280);
 });
 
 test("320px record list, bottom sheet, and analysis remain reachable without clipping", async ({ page }) => {

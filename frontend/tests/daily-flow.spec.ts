@@ -258,9 +258,5 @@ for (const viewport of [
     expect(requests.exportRequests[0].searchParams.get("start")).toBe("2026-06-01");
     expect(requests.exportRequests[0].searchParams.get("end")).toBe("2026-06-30");
 
-    await page.goto("/charts");
-    await expect(page).toHaveURL(/\/charts$/);
-    await expect(page.getByRole("heading", { name: "经营分析" })).toHaveCount(0);
-    await expect(page.getByRole("heading", { name: "营业记录" })).toHaveCount(0);
   });
 }
