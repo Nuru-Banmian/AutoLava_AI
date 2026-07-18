@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import type { CategoryDescriptor, IncomeConfigResponse, LedgerBody, LedgerStatus, RecordSnapshot, WeatherResponse } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { amountToCents, canonicalAmount, centsToMoney } from "@/lib/user-api";
@@ -10,6 +10,7 @@ export interface LedgerFormProps {
   weather?: WeatherResponse;
   onSave(body: LedgerBody): void;
   onDirtyChange?(dirty: boolean): void;
+  onSavedSubmissionApplied?(revision: number): void;
   saving?: boolean;
   submitLabel?: string;
   savedSubmission?: { revision: number; body: LedgerBody; canonicalReady?: boolean };
@@ -21,7 +22,7 @@ function semanticAmount(value: string) {
   return "value" in result ? result.value : `invalid:${value}`;
 }
 
-export function LedgerForm({ categories, config, record, weather, onSave, onDirtyChange, saving = false, submitLabel = "保存", savedSubmission, recordRevision }: LedgerFormProps) {
+export function LedgerForm({ categories, config, record, weather, onSave, onDirtyChange, onSavedSubmissionApplied, saving = false, submitLabel = "保存", savedSubmission, recordRevision }: LedgerFormProps) {
   const resolvedConfig = useMemo(() => config ?? ({
     store_id: record?.store_id ?? 0,
     version_id: record?.income_config_version_id ?? null,
@@ -97,7 +98,13 @@ export function LedgerForm({ categories, config, record, weather, onSave, onDirt
     setBaselineSignature(loadedSemanticSignature);
     if (canonicalSavedRecordReady) setConsumedSubmissionRevision(pendingSavedSubmission!.revision);
   }, [appliedIncomingSignature, canonicalSavedRecordReady, currentSignature, effectiveBaselineSignature, incomingSignature, loadedAmounts, loadedSemanticSignature, pendingSavedSubmission, record, weather?.weather]);
-  useEffect(() => { onDirtyChange?.(currentSignature !== effectiveBaselineSignature); }, [currentSignature, effectiveBaselineSignature, onDirtyChange]);
+  useLayoutEffect(() => {
+    const dirty = currentSignature !== effectiveBaselineSignature;
+    onDirtyChange?.(dirty);
+    if (!dirty && pendingSavedSubmission) {
+      onSavedSubmissionApplied?.(pendingSavedSubmission.revision);
+    }
+  }, [currentSignature, effectiveBaselineSignature, onDirtyChange, onSavedSubmissionApplied, pendingSavedSubmission]);
   const includedCents = active.filter((category) => category.include_in_total).map((category) => amountToCents(amounts[category.id] ?? "0"));
   const total = includedCents.every((value): value is bigint => value !== null) ? includedCents.reduce<bigint>((sum, value) => sum + value, 0n) : null;
   function changeStatus(next: LedgerStatus) {

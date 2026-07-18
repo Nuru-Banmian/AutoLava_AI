@@ -415,6 +415,26 @@ describe("LedgerPage", () => {
     expect(screen.getByLabelText("活动")).toHaveValue("夏日活动");
   });
 
+  it("accepts a saved submission only after the form is clean", async () => {
+    const events: string[] = [];
+    const props = {
+      config: { store_id: 1, version_id: null, version: 0, enabled: false, formula: "", created_at: null, items: [] },
+      categories: [],
+      onSave: vi.fn(),
+      onDirtyChange: (dirty: boolean) => events.push(`dirty:${dirty}`),
+      onSavedSubmissionApplied: (revision: number) => events.push(`saved:${revision}`),
+    };
+    const view = render(<LedgerForm {...props} />);
+    fireEvent.change(screen.getByLabelText("当日营业额"), { target: { value: "66" } });
+    view.rerender(<LedgerForm {...props} savedSubmission={{ revision: 1, body: {
+      is_open: "营业", daily_revenue: "66.00", config_version_id: null,
+      expected_version: null, wash_count: null, weather: null,
+      weather_edited: false, activity: null, items: [],
+    } }} />);
+
+    await waitFor(() => expect(events.slice(-2)).toEqual(["dirty:false", "saved:1"]));
+  });
+
   it("keeps a manually edited weather value when delayed automatic weather arrives", () => {
     const props = { config: { store_id: 1, version_id: 4, version: 4, enabled: true, formula: "现金", created_at: "2026-07-15T08:00:00", items: [{ id: 11, category_id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }] }, categories: [{ id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }], onSave: () => undefined };
     const view = render(<LedgerForm {...props} />);
@@ -493,6 +513,22 @@ describe("LedgerPage", () => {
     window.dispatchEvent(savedEvent);
     expect(savedEvent.defaultPrevented).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: /2026-07-13/ }));
+    expect(screen.queryByRole("alertdialog", { name: "放弃未保存的修改？" })).not.toBeInTheDocument();
+  });
+
+  it("changes date without a warning after the saved baseline is applied", async () => {
+    renderLedger([
+      http.get("/api/database/1/records", ({ request }) =>
+        new URL(request.url).searchParams.get("page_size") === "200"
+          ? HttpResponse.json({ items: [{ id: 8, date: "2026-07-13" }], categories: [], sum_daily_revenue: "0.00", total: 1, page: 1, page_size: 200 })
+          : HttpResponse.json({ items: [], categories: [], sum_daily_revenue: "0.00", total: 0, page: 1, page_size: 1 })),
+      http.put("/api/ledger/1/:date", () => HttpResponse.json(recordSnapshot("66.00"))),
+    ]);
+    fireEvent.change(await screen.findByLabelText("现金"), { target: { value: "66" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存今日记录" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("保存成功");
+    fireEvent.click(screen.getByRole("button", { name: "选择台账日期：2026年7月15日" }));
+    fireEvent.click(await screen.findByRole("button", { name: "2026年7月13日，已有记录" }));
     expect(screen.queryByRole("alertdialog", { name: "放弃未保存的修改？" })).not.toBeInTheDocument();
   });
 
@@ -626,6 +662,7 @@ describe("LedgerPage", () => {
     const delayed = new Promise<void>((resolve) => { release = resolve; });
     let saved = false;
     renderLedger([
+      http.get("/api/ledger/1/recent", () => HttpResponse.json([{ id: 8, date: "2026-07-13", is_open: "营业" }])),
       http.get("/api/ledger/1/:date", ({ params }) => params.date === "recent" ? HttpResponse.json([]) : saved ? HttpResponse.json(recordSnapshot("10.00")) : HttpResponse.json({ detail: "not found" }, { status: 404 })),
       http.put("/api/ledger/1/:date", async () => { await delayed; saved = true; return HttpResponse.json(recordSnapshot("10.00")); }),
     ]);
@@ -633,12 +670,14 @@ describe("LedgerPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存今日记录" }));
     fireEvent.change(screen.getByLabelText("现金"), { target: { value: "20" } });
     release();
-    expect(await screen.findByRole("status")).toHaveTextContent("保存成功");
+    await waitFor(() => expect(saved).toBe(true));
     await waitFor(() => expect(screen.getByLabelText("现金")).toHaveValue("20"));
 
     const event = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: /2026-07-13/ }));
+    expect(await screen.findByRole("alertdialog", { name: "放弃未保存的修改？" })).toBeInTheDocument();
   });
 
   it("binds overwrite and invalidation to the original store and date across a store switch", async () => {
