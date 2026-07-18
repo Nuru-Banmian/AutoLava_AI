@@ -129,6 +129,19 @@ def test_web_image_embeds_release_revision() -> None:
     )
 
 
+def test_prebuilt_web_image_is_runtime_only_and_versioned() -> None:
+    dockerfile = (ROOT / "frontend" / "Dockerfile.prebuilt").read_text(encoding="utf-8")
+
+    assert dockerfile.startswith("FROM docker.m.daocloud.io/library/nginx:1.27-alpine")
+    assert "ARG AUTOLAVA_GIT_SHA=unknown" in dockerfile
+    assert "LABEL org.opencontainers.image.revision=$AUTOLAVA_GIT_SHA" in dockerfile
+    assert "COPY nginx.conf /etc/nginx/conf.d/default.conf" in dockerfile
+    assert "COPY dist /usr/share/nginx/html" in dockerfile
+    assert "node:" not in dockerfile
+    assert "npm" not in dockerfile
+    assert "vite" not in dockerfile.lower()
+
+
 def test_ci_runs_backend_frontend_browser_and_container_release_gates() -> None:
     ci_text = read(".github/workflows/ci.yml")
     workflow = yaml.safe_load(ci_text)

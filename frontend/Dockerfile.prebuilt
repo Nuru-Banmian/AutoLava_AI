@@ -1,0 +1,6 @@
+FROM docker.m.daocloud.io/library/nginx:1.27-alpine
+ARG AUTOLAVA_GIT_SHA=unknown
+LABEL org.opencontainers.image.revision=$AUTOLAVA_GIT_SHA
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY dist /usr/share/nginx/html
+EXPOSE 80
