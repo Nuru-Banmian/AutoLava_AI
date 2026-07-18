@@ -105,6 +105,19 @@ async function mockResponsiveApi(page: Page) {
   });
 }
 
+async function expectNativeDateInput(input: ReturnType<Page["getByLabel"]>, expected: {
+  ariaLabel: string;
+  min: string | null;
+  max: string;
+}) {
+  await expect(input).toHaveAttribute("type", "date");
+  await expect(input).toHaveAttribute("aria-label", expected.ariaLabel);
+  if (expected.min === null) await expect(input).not.toHaveAttribute("min");
+  else await expect(input).toHaveAttribute("min", expected.min);
+  await expect(input).toHaveAttribute("max", expected.max);
+  await expect.poll(() => input.evaluate((node) => node.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
+}
+
 test("desktop record browser keeps a sticky independently scrollable detail rail", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
   await page.setViewportSize({ width: 1280, height: 700 });
@@ -179,4 +192,52 @@ test("320px record list, bottom sheet, and analysis remain reachable without cli
     body: document.body.scrollWidth,
     viewport: window.innerWidth,
   }))).toEqual({ document: 320, body: 320, viewport: 320 });
+});
+
+test("database desktop keeps the wide analysis rail, compact trend, and accessible custom dates", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await mockResponsiveApi(page);
+  await page.goto("/database");
+
+  const analysisRail = page.locator("main > section > div > aside");
+  await expect(analysisRail).toHaveCount(1);
+  const trend = page.getByTestId("chart-panel-plot");
+  await expect(analysisRail).toBeVisible();
+  await expect(trend).toBeVisible();
+  await expect.poll(() => analysisRail.evaluate((node) => node.getBoundingClientRect().width)).toBeGreaterThanOrEqual(480);
+  await expect.poll(() => analysisRail.evaluate((node) => node.getBoundingClientRect().width)).toBeLessThanOrEqual(512);
+  await expect.poll(() => trend.evaluate((node) => node.getBoundingClientRect().height)).toBe(256);
+
+  const recordFilters = page.getByRole("region", { name: "记录筛选" });
+  await recordFilters.getByRole("button", { name: "自定义" }).click();
+  await analysisRail.getByRole("button", { name: "自定义" }).click();
+
+  await expectNativeDateInput(page.getByLabel("开始日期", { exact: true }), { ariaLabel: "开始日期", min: null, max: "2026-07-17" });
+  await expectNativeDateInput(page.getByLabel("结束日期", { exact: true }), { ariaLabel: "结束日期", min: null, max: "2026-07-17" });
+  await expectNativeDateInput(page.getByLabel("分析开始日期", { exact: true }), { ariaLabel: "分析开始日期", min: null, max: "2026-07-17" });
+  await expectNativeDateInput(page.getByLabel("分析结束日期", { exact: true }), { ariaLabel: "分析结束日期", min: "2026-07-01", max: "2026-07-17" });
+});
+
+test("database at 390px exposes all custom date inputs without horizontal overflow", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockResponsiveApi(page);
+  await page.goto("/database");
+
+  const recordFilters = page.getByRole("region", { name: "记录筛选" });
+  const analysisRail = page.locator("main > section > div > aside");
+  await expect(analysisRail).toHaveCount(1);
+  await recordFilters.getByRole("button", { name: "自定义" }).click();
+  await analysisRail.getByRole("button", { name: "自定义" }).scrollIntoViewIfNeeded();
+  await analysisRail.getByRole("button", { name: "自定义" }).click();
+
+  await expectNativeDateInput(page.getByLabel("开始日期", { exact: true }), { ariaLabel: "开始日期", min: null, max: "2026-07-17" });
+  await expectNativeDateInput(page.getByLabel("结束日期", { exact: true }), { ariaLabel: "结束日期", min: null, max: "2026-07-17" });
+  await expectNativeDateInput(page.getByLabel("分析开始日期", { exact: true }), { ariaLabel: "分析开始日期", min: null, max: "2026-07-17" });
+  await expectNativeDateInput(page.getByLabel("分析结束日期", { exact: true }), { ariaLabel: "分析结束日期", min: "2026-07-01", max: "2026-07-17" });
+  await expect.poll(() => page.evaluate(() => ({
+    document: document.documentElement.scrollWidth,
+    viewport: window.innerWidth,
+  }))).toEqual({ document: 390, viewport: 390 });
 });
