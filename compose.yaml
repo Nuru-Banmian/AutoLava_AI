@@ -12,7 +12,10 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
   autolava-web:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        AUTOLAVA_GIT_SHA: ${AUTOLAVA_GIT_SHA:-unknown}
     restart: unless-stopped
     ports:
       - "${AUTOLAVA_WEB_HOST_PORT:-127.0.0.1:80}:80"

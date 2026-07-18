@@ -116,6 +116,19 @@ def test_container_builds_use_china_package_mirrors() -> None:
     assert "docker.m.daocloud.io/library/mysql:8.4" in temporary_compose
 
 
+def test_web_image_embeds_release_revision() -> None:
+    dockerfile = (ROOT / "frontend" / "Dockerfile").read_text(encoding="utf-8")
+    compose = yaml.safe_load((ROOT / "compose.yaml").read_text(encoding="utf-8"))
+
+    assert "ARG AUTOLAVA_GIT_SHA=unknown" in dockerfile
+    assert "org.opencontainers.image.revision" in dockerfile
+    assert "/app/dist/version.json" in dockerfile
+    assert (
+        compose["services"]["autolava-web"]["build"]["args"]["AUTOLAVA_GIT_SHA"]
+        == "${AUTOLAVA_GIT_SHA:-unknown}"
+    )
+
+
 def test_ci_runs_backend_frontend_browser_and_container_release_gates() -> None:
     ci_text = read(".github/workflows/ci.yml")
     workflow = yaml.safe_load(ci_text)
