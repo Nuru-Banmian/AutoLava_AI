@@ -9,10 +9,13 @@ type Capture = {
 };
 
 const store = { id: 1, name: "Roma", address: "Roma, Italia", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true };
+const alternateStore = { id: 2, name: "Milano Nord", address: "Milano, Italia", latitude: "45.4642", longitude: "9.19", timezone: "Europe/Rome", is_active: true };
 
 async function mockAdminApi(page: Page, capture: Capture) {
   let authenticated = false;
   let users: unknown[] = [];
+  let accessibleStoresFailed = false;
+  let accessibleStoreFailures = 0;
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "geolocation", {
       configurable: true,
@@ -32,7 +35,13 @@ async function mockAdminApi(page: Page, capture: Capture) {
 
     if (path === "/api/auth/me") return authenticated ? json({ id: 1, username: "administrator", role: "admin", is_owner: true }) : json({ detail: "Authentication required" }, 401);
     if (path === "/api/auth/login" && request.method() === "POST") { authenticated = true; return json({ id: 1, username: "administrator", role: "admin", is_owner: true }); }
-    if (path === "/api/stores/accessible") return json([store]);
+    if (path === "/api/stores/accessible") {
+      if (accessibleStoresFailed) {
+        accessibleStoreFailures += 1;
+        return json({ detail: "Stores unavailable" }, 500);
+      }
+      return json([store, alternateStore]);
+    }
     if (path === "/api/admin/stores" && request.method() === "GET") return json([store]);
     if (path === "/api/admin/users" && request.method() === "GET") return json(users);
     if (path === "/api/admin/users" && request.method() === "POST") {
@@ -47,7 +56,7 @@ async function mockAdminApi(page: Page, capture: Capture) {
     }
     if (path === "/api/admin/alerts") return json([]);
     if (path === "/api/admin/task-logs") return json([{ id: 1, store_id: 1, task_type: "weather", status: "success", message: null, retry_count: 0, started_at: "2026-07-16T08:00:00Z", finished_at: "2026-07-16T08:05:00Z", created_at: "2026-07-16T08:00:00Z" }]);
-    if (path === "/api/dashboard/1") return json([{ card_type: "today", state: "recorded", revenue: "100.00", weather: "晴", weekday: null, temperature_max: null, temperature_min: null, precipitation: null, hint: null, generated_at: "2026-07-16T08:30:00Z" }]);
+    if (/^\/api\/dashboard\/\d+$/.test(path)) return json([{ card_type: "today", state: "recorded", revenue: "100.00", weather: "晴", weekday: null, temperature_max: null, temperature_min: null, precipitation: null, hint: null, generated_at: "2026-07-16T08:30:00Z" }]);
     if (path === "/api/income-config/1/current") return json({ store_id: 1, version_id: 1, version: 1, enabled: true, formula: "营业额 = 现金", created_at: "2026-07-16T08:00:00Z", items: [{ id: 1, category_id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 0 }] });
     if (path === "/api/admin/income-categories") return json([{ id: 1, store_id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 0, archived_at: null }]);
     if (path === "/api/admin/stores/1/income-config" && request.method() === "PUT") {
@@ -69,6 +78,10 @@ async function mockAdminApi(page: Page, capture: Capture) {
     }
     return json({ detail: `unmocked ${request.method()} ${path}` }, 500);
   });
+  return {
+    failAccessibleStores: () => { accessibleStoresFailed = true; },
+    accessibleStoreFailures: () => accessibleStoreFailures,
+  };
 }
 
 test("owner configures shared-store income, a user membership, and a mapped store", async ({ page }) => {
@@ -79,6 +92,11 @@ test("owner configures shared-store income, a user membership, and a mapped stor
   await page.getByLabel("用户名").fill("administrator");
   await page.getByLabel("密码", { exact: true }).fill("password-123");
   await page.getByRole("button", { name: "登录" }).click();
+  await page.goto("/");
+  const preAdminStorePicker = page.getByTestId("desktop-store-picker").getByRole("combobox", { name: "门店" });
+  await expect(preAdminStorePicker).toHaveValue("1");
+  await preAdminStorePicker.selectOption("2");
+  await expect(preAdminStorePicker).toHaveValue("2");
   await page.goto("/admin");
 
   await expect(page.getByRole("combobox", { name: "门店" })).toHaveCount(0);
@@ -156,5 +174,26 @@ test("owner configures shared-store income, a user membership, and a mapped stor
   await page.goto("/");
   const globalStorePicker = page.getByTestId("desktop-store-picker").getByRole("combobox", { name: "门店" });
   await expect(globalStorePicker).toBeVisible();
-  await expect(globalStorePicker.locator("option:checked")).toHaveText("Roma");
+  await expect(globalStorePicker.locator("option:checked")).toHaveText("Milano Nord");
+});
+
+test("admin keeps a failed global store load hidden until the user leaves", async ({ page }) => {
+  const api = await mockAdminApi(page, {});
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto("/login");
+  await page.getByLabel("用户名").fill("administrator");
+  await page.getByLabel("密码", { exact: true }).fill("password-123");
+  await page.getByRole("button", { name: "登录" }).click();
+  await page.goto("/admin");
+
+  api.failAccessibleStores();
+  await page.reload();
+  await expect.poll(api.accessibleStoreFailures, { timeout: 15_000 }).toBe(4);
+  await expect(page.getByRole("heading", { name: "系统管理" })).toBeVisible();
+  await expect(page.getByText("门店加载失败，请重试")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "重试门店" })).toHaveCount(0);
+
+  await page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "首页" }).click();
+  await expect(page.getByText("门店加载失败，请重试")).toBeVisible();
+  await expect(page.getByRole("button", { name: "重试门店" })).toBeVisible();
 });

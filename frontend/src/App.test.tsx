@@ -71,6 +71,16 @@ describe("App", () => {
     expect(await screen.findByText("AutoLava AI")).toBeInTheDocument();
   });
 
+  it("keeps the retired charts route unmatched without mounting either legacy page", () => {
+    const router = createAppRouter(["/charts"]);
+
+    expect(router.state.errors).toBeDefined();
+    expect(Object.values(router.state.errors ?? {})).toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: 404, statusText: "Not Found" }),
+    ]));
+    expect(router.state.matches.map((match) => match.route.path)).not.toContain("charts");
+  });
+
   it("shows four mobile entries and hides management from regular users", async () => {
     renderApplication("/more", { role: "user" });
     const nav = await screen.findByRole("navigation", { name: "移动导航" });
