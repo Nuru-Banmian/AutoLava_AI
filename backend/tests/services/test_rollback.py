@@ -18,6 +18,7 @@ from app.main import create_app
 from app.models.audit import AuditLog
 from app.models.base import Base
 from app.models.identity import Store, StoreMember, User
+from app.models.income_config import IncomeConfigVersion, IncomeConfigVersionItem
 from app.models.ledger import IncomeCategory, StoreDailyRecord
 from app.services.audit import record_snapshot
 from app.services.ledger import LedgerService
@@ -30,6 +31,7 @@ class RollbackContext:
     store: Store
     cash: IncomeCategory
     card: IncomeCategory
+    config: IncomeConfigVersion
 
 
 @pytest.fixture
@@ -52,7 +54,25 @@ async def rollback_context(db_session, user_factory, store_factory) -> RollbackC
     )
     db_session.add_all([cash, card])
     await db_session.flush()
-    return RollbackContext(user=user, store=store, cash=cash, card=card)
+    config = IncomeConfigVersion(
+        store_id=store.id,
+        version=1,
+        enabled=True,
+        created_by=user.id,
+        items=[
+            IncomeConfigVersionItem(
+                category_id=category.id,
+                name=category.name,
+                include_in_total=True,
+                is_active=True,
+                sort_order=category.sort_order,
+            )
+            for category in (cash, card)
+        ],
+    )
+    db_session.add(config)
+    await db_session.flush()
+    return RollbackContext(user=user, store=store, cash=cash, card=card, config=config)
 
 
 @pytest.fixture
@@ -71,6 +91,7 @@ def payload(context: RollbackContext, cash: str, card: str) -> dict:
         "weather": "晴",
         "weather_edited": True,
         "activity": "rollback test",
+        "config_version_id": context.config.id,
         "items": [
             {"category_id": context.cash.id, "amount": cash},
             {"category_id": context.card.id, "amount": card},
@@ -100,7 +121,7 @@ async def make_update(
     await ledger.upsert(
         store=context.store,
         record_date=local_today(context),
-        payload=payload(context, "1.23", "4.56"),
+        payload=payload(context, "1.23", "4.56") | {"expected_version": 1},
         actor=context.user,
         overwrite=True,
     )
@@ -114,11 +135,15 @@ async def test_rollback_update_restores_exact_canonical_before_snapshot(
 ) -> None:
     _, update_audit = await make_update(db_session, rollback_context)
     expected = deepcopy(update_audit.before_json)
+    expected["row_version"] = 3
 
     restored = await rollback_service.rollback(update_audit.id, actor_id=rollback_context.user.id)
 
     assert restored is not None
     assert record_snapshot(restored) == expected
+    assert rollback_service.last_event is not None
+    assert rollback_service.last_event.operation == "rolled_back"
+    assert rollback_service.last_event.row_version == 3
     rollback_audit = await latest_audit(db_session, operation_type="rollback")
     assert rollback_audit.store_id == rollback_context.store.id
     assert rollback_audit.record_id == restored.id
@@ -146,10 +171,12 @@ async def test_rollback_delete_recreates_record_items_ids_and_timestamps(
         actor=rollback_context.user,
     )
     expected = record_snapshot(record)
+    expected["row_version"] = 2
     await ledger.delete(
         store=rollback_context.store,
         record_date=record.date,
         actor=rollback_context.user,
+        expected_version=1,
     )
     delete_audit = await latest_audit(db_session, operation_type="delete")
 
@@ -223,7 +250,8 @@ async def test_rollback_refuses_to_overwrite_a_later_change_without_partial_writ
     later, _ = await LedgerService(db_session).upsert(
         store=rollback_context.store,
         record_date=record.date,
-        payload=payload(rollback_context, "333.33", "0.00"),
+        payload=payload(rollback_context, "333.33", "0.00")
+        | {"expected_version": 2},
         actor=rollback_context.user,
         overwrite=True,
     )
@@ -260,6 +288,7 @@ async def test_rollback_audit_can_be_reversed_as_a_chain_but_not_reused(
 ) -> None:
     _, update_audit = await make_update(db_session, rollback_context)
     updated_snapshot = deepcopy(update_audit.after_json)
+    updated_snapshot["row_version"] = 4
     await rollback_service.rollback(update_audit.id, actor_id=rollback_context.user.id)
     first_rollback = await latest_audit(db_session, operation_type="rollback")
 
@@ -331,7 +360,7 @@ async def test_rollback_explicitly_restores_equal_parent_updated_at(
     )
 
     assert restored is not None
-    assert record_snapshot(restored) == before
+    assert record_snapshot(restored) == before | {"row_version": 2}
 
 
 async def test_rollback_chain_explicitly_restores_equal_parent_updated_at(
@@ -368,7 +397,7 @@ async def test_rollback_chain_explicitly_restores_equal_parent_updated_at(
     )
 
     assert restored is not None
-    assert record_snapshot(restored) == after
+    assert record_snapshot(restored) == after | {"row_version": 2}
 
 
 async def test_missing_or_non_ledger_audit_is_not_rollbackable(
@@ -444,15 +473,37 @@ async def _committed_update_fixture() -> tuple[int, int, int, int, int, dict]:
         )
         session.add_all([cash, card])
         await session.flush()
-        context = RollbackContext(user=user, store=store, cash=cash, card=card)
+        config = IncomeConfigVersion(
+            store_id=store.id,
+            version=1,
+            enabled=True,
+            created_by=user.id,
+            items=[
+                IncomeConfigVersionItem(
+                    category_id=category.id,
+                    name=category.name,
+                    include_in_total=True,
+                    is_active=True,
+                    sort_order=category.sort_order,
+                )
+                for category in (cash, card)
+            ],
+        )
+        session.add(config)
+        await session.flush()
+        context = RollbackContext(
+            user=user, store=store, cash=cash, card=card, config=config
+        )
         _, update_audit = await make_update(session, context)
+        expected = deepcopy(update_audit.before_json)
+        expected["row_version"] = 3
         return (
             user.id,
             store.id,
             cash.id,
             card.id,
             update_audit.id,
-            deepcopy(update_audit.before_json),
+            expected,
         )
 
 
@@ -528,8 +579,16 @@ async def test_different_audit_rollbacks_do_not_lock_each_others_target_rows() -
             user = await setup_session.get(User, user_id)
             cash = await setup_session.get(IncomeCategory, cash_id)
             card = await setup_session.get(IncomeCategory, card_id)
+            config = await setup_session.scalar(
+                select(IncomeConfigVersion).where(
+                    IncomeConfigVersion.store_id == store_id
+                )
+            )
             assert store is not None and user is not None and cash is not None and card is not None
-            context = RollbackContext(user=user, store=store, cash=cash, card=card)
+            assert config is not None
+            context = RollbackContext(
+                user=user, store=store, cash=cash, card=card, config=config
+            )
             second_date = local_today(context) - timedelta(days=1)
             await LedgerService(setup_session).upsert(
                 store=store,
@@ -540,7 +599,8 @@ async def test_different_audit_rollbacks_do_not_lock_each_others_target_rows() -
             await LedgerService(setup_session).upsert(
                 store=store,
                 record_date=second_date,
-                payload=payload(context, "70.00", "10.00"),
+                    payload=payload(context, "70.00", "10.00")
+                    | {"expected_version": 1},
                 actor=user,
                 overwrite=True,
             )
@@ -601,15 +661,27 @@ async def test_concurrent_later_update_is_never_lost_inside_rollback_window() ->
                 user = await session.get(User, user_id)
                 cash = await session.get(IncomeCategory, cash_id)
                 card = await session.get(IncomeCategory, card_id)
-                assert (
-                    store is not None and user is not None and cash is not None and card is not None
+                config = await session.scalar(
+                    select(IncomeConfigVersion).where(
+                        IncomeConfigVersion.store_id == store_id
+                    )
                 )
-                context = RollbackContext(user=user, store=store, cash=cash, card=card)
+                assert (
+                    store is not None
+                    and user is not None
+                    and cash is not None
+                    and card is not None
+                    and config is not None
+                )
+                context = RollbackContext(
+                    user=user, store=store, cash=cash, card=card, config=config
+                )
                 await start.wait()
                 return await LedgerService(session).upsert(
                     store=store,
                     record_date=local_today(context),
-                    payload=payload(context, "333.33", "0.00"),
+                    payload=payload(context, "333.33", "0.00")
+                    | {"expected_version": 3},
                     actor=user,
                     overwrite=True,
                 )
@@ -648,6 +720,9 @@ async def test_api_rollback_sees_marker_committed_after_its_dependency_snapshot(
     try:
         user_id, store_id, _, _, audit_id, _ = await _committed_update_fixture()
         async with maker() as setup_session:
+            user = await setup_session.get(User, user_id)
+            assert user is not None
+            user.role = "admin"
             setup_session.add(StoreMember(store_id=store_id, user_id=user_id))
             await setup_session.commit()
 

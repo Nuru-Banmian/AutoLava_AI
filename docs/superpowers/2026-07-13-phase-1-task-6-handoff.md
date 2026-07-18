@@ -1,7 +1,7 @@
 # AutoLava AI Phase 1 continuation handoff
 
-Date: 2026-07-13  
-Current stopping point: Task 6 implementation and two review-fix waves are committed and pushed; the final independent re-review of the last fix is still pending. Task 7 has not started.
+Last updated: 2026-07-14
+Current stopping point: Tasks 1-6 are implementation-complete, independently reviewed, and freshly verified. Task 7 has not started.
 
 ## Repository and Git state
 
@@ -9,7 +9,9 @@ Current stopping point: Task 6 implementation and two review-fix waves are commi
 - Isolated worktree: `D:\work\myself\AI-try\AutoLava-AI\.worktrees\phase-1-foundation`
 - Branch: `feature/phase-1-foundation`
 - Remote branch: `origin/feature/phase-1-foundation`
-- Current implementation head before this handoff document commit: `166e2ac`
+- Final Task 6 implementation head: `166e2ac`
+- Original handoff-document commit: `00f80b8`
+- MySQL RSA runtime-dependency commit: `b1ca108`
 - Branch base on `dev`: `b969544 docs: add phased implementation plans`
 - `main` was not used for implementation.
 - The implementation branch was pushed after `5ffc328` and again after `166e2ac`.
@@ -29,6 +31,8 @@ Important commits, in order:
 10. `04941d3 feat: add ledger search rollback and export`
 11. `5ffc328 fix: align database routes and rollback locking`
 12. `166e2ac fix: make rollback serialization structural`
+13. `00f80b8 docs: add phase one continuation handoff`
+14. `b1ca108 build: add MySQL RSA authentication dependency`
 
 ## Environment and safety constraints
 
@@ -50,7 +54,6 @@ $entry = (Get-Content -LiteralPath 'D:\work\myself\AI-try\AutoLava-AI\.autolava-
 if (-not $entry.StartsWith('AUTOLAVA_DATABASE_URL=')) { throw 'Database environment entry is malformed' }
 $env:AUTOLAVA_DATABASE_URL = $entry.Substring('AUTOLAVA_DATABASE_URL='.Length)
 ```
-
 - Keep the pre-connection MySQL/`autolava_test` guard in the backend test fixtures.
 - A temporary obsolete password was exposed in an earlier local MySQL error, but that account creation did not execute. The current credential is different, valid, ignored by Git, and has not been exposed.
 
@@ -177,9 +180,19 @@ Commit `166e2ac` addresses both:
   - ordinary fixed historical timestamp rollback;
   - rollback-chain fixed historical timestamp reversal.
 
-Important: `166e2ac` has implementation/self-review/test evidence but has not yet received the required final independent re-review. Therefore Task 6 must remain `in_progress` until that re-review returns Spec Compliant and Task Quality Approved with no Critical/Important findings.
+The final independent review of `09e5300..166e2ac` returned Spec Compliant and Task Quality Approved. It found no Critical or Important issues. Task 6 is complete.
 
-## Latest verification evidence
+The only new Minor finding was that `test_schema.py` checks the structural rollback field, unique constraint, and FK target but does not explicitly assert `foreign_key.ondelete == "CASCADE"`. The migration/model agree and Alembic drift checks are clean; keep this test-strengthening item for the final whole-branch review.
+
+## Final review and verification evidence
+
+Final independent Task 6 review on 2026-07-14:
+
+- Spec Compliance: Approved.
+- Task Quality: Approved.
+- Critical findings: none.
+- Important findings: none.
+- Minor finding: add an explicit schema-test assertion for `rollback_of_audit_id` FK `ON DELETE CASCADE`.
 
 Evidence reported for `166e2ac`:
 
@@ -201,7 +214,19 @@ Earlier independent controller verification at `5ffc328` also produced:
 - Ruff and Alembic: clean.
 - Local and remote heads matched before the final structural rollback commit.
 
-The final continuation must independently rerun current verification after the final re-review; do not treat these historical results as fresh completion evidence.
+Fresh controller verification after final review on 2026-07-14:
+
+- The current MySQL `caching_sha2_password` handshake exposed that the project environment and `pyproject.toml` lacked the RSA runtime dependency `cryptography`.
+- The scoped `autolava_test` account password was immediately rotated because the driver traceback included the previous credential. The new credential exists only in the ignored `.autolava-db.env` file and was verified with the MySQL client.
+- `cryptography` was added to backend runtime dependencies and installed only in the project `.conda` environment; no global package was installed.
+- Backend: `105 passed, 1 warning in 35.12s`.
+- Ruff lint: clean.
+- Ruff format: `42 files already formatted`.
+- Alembic current/head: `6f7c8d9e0a1b (head)`.
+- Alembic check: `No new upgrade operations detected.`
+- Frontend Vitest: `1 passed`.
+- Frontend TypeScript/Vite production build: successful.
+- Git diff checks are clean after the handoff whitespace correction is committed.
 
 ## Known deferred non-blocking findings
 
@@ -213,10 +238,13 @@ These were recorded for final whole-branch review:
 4. Task 5 broadly translates insert `IntegrityError` to overwrite confirmation rather than matching only the store/date uniqueness violation.
 5. Extremely large XLSX exports remain memory-bound while ORM rows and response bytes are generated, although the workbook itself uses write-only mode.
 6. The backend suite emits a Starlette `TestClient` / httpx deprecation warning from installed third-party compatibility code.
+7. Task 6 schema regression does not explicitly assert `rollback_of_audit_id` FK `ondelete == "CASCADE"`; migration/model and drift checks currently agree.
 
 Do not silently discard these. The final whole-branch reviewer must receive this list and decide which should be fixed before merge.
 
-## Exact next steps when quota renews
+## Historical Task 6 completion procedure
+
+The Task 6 review/package/verification procedure below has now been executed successfully. It is retained as an audit trail; do not dispatch Task 6 again unless later code changes affect it.
 
 ### 1. Restore and verify Git state
 
@@ -321,11 +349,11 @@ git push origin feature/phase-1-foundation
 
 Confirm `git rev-parse HEAD` matches `git rev-parse origin/feature/phase-1-foundation`.
 
-## Starting Task 7 after Task 6 is approved
+## Next step: start Task 7
 
 Task 7 title: `Add non-blocking Open-Meteo lookup and basic briefing generation`.
 
-Do not start it before the Task 6 review gate and fresh verification above are complete.
+The Task 6 review gate and fresh verification are complete. Record the current tracked HEAD as the Task 7 base before dispatching its implementer.
 
 Follow the same subagent-driven workflow:
 
@@ -354,11 +382,10 @@ Use this prompt when the weekly quota renews:
 ```text
 Continue the AutoLava AI Phase 1 plan from the tracked handoff document
 docs/superpowers/2026-07-13-phase-1-task-6-handoff.md.
-First verify the feature/phase-1-foundation worktree and remote branch, read the local
-.superpowers/sdd/progress.md ledger, then perform the final independent Task 6 re-review for
-09e5300..166e2ac. Do not reimplement Tasks 1-5. If Task 6 is approved, run fresh backend,
-frontend, Ruff, Alembic, and Git verification, push the checkpoint, then start Task 7 using
-subagent-driven development and the project Conda environment. Only use autolava_test and never
-print the ignored database URL.
+Tasks 1-6 are complete, independently reviewed, and verified; do not reimplement or redispatch
+them. First verify the feature/phase-1-foundation worktree and remote branch and read the local
+.superpowers/sdd/progress.md ledger. Then extract only Task 7, record the exact Task 7 base commit,
+and start Task 7 using a fresh implementer plus independent reviewer under the subagent-driven
+workflow. Use only the project Conda environment and autolava_test, and never print the ignored
+database URL.
 ```
-

@@ -2,16 +2,17 @@ from datetime import date
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import Session, StoreAccess, require_store_access
+from app.api.deps import Session, StoreAccess, require_capability, require_store_access, require_store_read_access
+from app.api.routes.ledger import _safely_refresh_briefing
 from app.models.audit import AuditLog
 from app.models.identity import User
 from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
-from app.schemas.database import DatabaseFilters, DatabasePage, RollbackResult
+from app.schemas.database import AuditPage, DatabaseFilters, DatabasePage, RollbackResult
 from app.services.audit import record_snapshot
 from app.services.export import build_ledger_workbook
 from app.services.rollback import RollbackService
@@ -155,28 +156,50 @@ def _audit_payload(audit: AuditLog, username: str) -> dict:
         "description": audit.description,
         "requires_approval": audit.requires_approval,
         "approved": audit.approved,
+        "rollbackable": audit.rollbackable,
         "created_at": audit.created_at,
     }
 
 
-@router.post("/{store_id}/history/{audit_id}/rollback", response_model=RollbackResult)
+@router.post(
+    "/{store_id}/history/{audit_id}/rollback",
+    response_model=RollbackResult,
+    dependencies=[
+        Depends(require_capability("audit.view")),
+        Depends(require_capability("ledger.edit")),
+    ],
+)
 async def rollback_record(
     store_id: int,
     audit_id: int,
     session: Session,
+    request: Request,
     access: StoreAccess = Depends(require_store_access),
 ) -> dict:
     audit = await session.get(AuditLog, audit_id)
     if audit is None or audit.operation_domain != "ledger" or audit.store_id != store_id:
         raise HTTPException(404, "Audit entry not found")
-    restored = await RollbackService(session).rollback(audit_id, actor_id=access.user.id)
+    if not audit.rollbackable:
+        raise HTTPException(409, "Audit entry is not rollbackable")
+    service = RollbackService(session)
+    restored = await service.rollback(audit_id, actor_id=access.user.id)
+    if service.last_event is not None:
+        await _safely_refresh_briefing(
+            request,
+            session,
+            access.store,
+            service.last_event.record_date,
+        )
     return {
         "audit_id": audit_id,
         "record": None if restored is None else record_snapshot(restored),
     }
 
 
-@router.get("/{store_id}/export.xlsx")
+@router.get(
+    "/{store_id}/export.xlsx",
+    dependencies=[Depends(require_capability("analytics.view"))],
+)
 async def export_records(
     store_id: int,
     session: Session,
@@ -186,7 +209,7 @@ async def export_records(
     weather: Annotated[str | None, Query(max_length=50)] = None,
     activity_query: Annotated[str | None, Query(max_length=2000)] = None,
     missing_wash_count: bool = False,
-    access: StoreAccess = Depends(require_store_access),
+    access: StoreAccess = Depends(require_store_read_access),
 ) -> Response:
     filters = _filters(start, end, status, weather, activity_query, missing_wash_count)
     record_query = build_record_query(store_id, filters)
@@ -209,27 +232,55 @@ async def export_records(
     )
 
 
-@router.get("/{store_id}/history")
+@router.get(
+    "/{store_id}/history",
+    response_model=AuditPage,
+    dependencies=[Depends(require_capability("audit.view"))],
+)
 async def record_history(
     store_id: int,
     session: Session,
-    limit: Annotated[int, Query(ge=1, le=500)] = 100,
-    access: StoreAccess = Depends(require_store_access),
-) -> list[dict]:
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+    record_id: int | None = None,
+    record_date: date | None = None,
+    access: StoreAccess = Depends(require_store_read_access),
+) -> dict:
     del access
+    conditions = [
+        AuditLog.operation_domain == "ledger",
+        AuditLog.store_id == store_id,
+    ]
+    if record_id is not None:
+        conditions.append(AuditLog.record_id == record_id)
+    if record_date is not None:
+        conditions.append(AuditLog.record_date == record_date)
+    total = await session.scalar(
+        select(func.count()).select_from(AuditLog).where(*conditions)
+    )
     rows = (
         await session.execute(
             select(AuditLog, User.username)
             .join(User, User.id == AuditLog.operator_user_id)
-            .where(AuditLog.operation_domain == "ledger", AuditLog.store_id == store_id)
+            .where(*conditions)
             .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
-            .limit(limit)
+            .offset((page - 1) * page_size)
+            .limit(page_size)
         )
     ).all()
-    return [_audit_payload(audit, username) for audit, username in rows]
+    return {
+        "items": [_audit_payload(audit, username) for audit, username in rows],
+        "total": total or 0,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
-@router.get("/{store_id}/records", response_model=DatabasePage)
+@router.get(
+    "/{store_id}/records",
+    response_model=DatabasePage,
+    dependencies=[Depends(require_capability("analytics.view"))],
+)
 async def record_page(
     store_id: int,
     session: Session,
@@ -241,7 +292,7 @@ async def record_page(
     missing_wash_count: bool = False,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=200)] = 50,
-    access: StoreAccess = Depends(require_store_access),
+    access: StoreAccess = Depends(require_store_read_access),
 ) -> dict:
     del access
     filters = _filters(start, end, status, weather, activity_query, missing_wash_count)

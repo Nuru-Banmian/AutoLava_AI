@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+import httpx
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import func, select
@@ -9,7 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import AuditLog
 from app.models.identity import Store, StoreMember, User
+from app.models.income_config import IncomeConfigVersion, IncomeConfigVersionItem
 from app.models.ledger import IncomeCategory, StoreDailyRecord
+from app.models.operations import DailyBriefing
 
 
 @dataclass
@@ -17,10 +20,19 @@ class AssignedStore:
     store: Store
     cash: IncomeCategory
     excluded: IncomeCategory
+    config: IncomeConfigVersion
 
     @property
     def id(self) -> int:
         return self.store.id
+
+
+async def grant_authenticated_admin(db_session: AsyncSession) -> User:
+    user = await db_session.scalar(select(User).where(User.username == "authenticated"))
+    assert user is not None
+    user.role = "admin"
+    await db_session.flush()
+    return user
 
 
 @pytest.fixture
@@ -46,7 +58,25 @@ async def assigned_store(
     )
     db_session.add_all([StoreMember(store_id=store.id, user_id=user.id), cash, excluded])
     await db_session.flush()
-    return AssignedStore(store=store, cash=cash, excluded=excluded)
+    config = IncomeConfigVersion(
+        store_id=store.id,
+        version=1,
+        enabled=True,
+        created_by=user.id,
+        items=[
+            IncomeConfigVersionItem(
+                category_id=category.id,
+                name=category.name,
+                include_in_total=category.include_in_total,
+                is_active=True,
+                sort_order=category.sort_order,
+            )
+            for category in (cash, excluded)
+        ],
+    )
+    db_session.add(config)
+    await db_session.flush()
+    return AssignedStore(store=store, cash=cash, excluded=excluded, config=config)
 
 
 @pytest.fixture
@@ -57,7 +87,7 @@ def ledger_payload(assigned_store: AssignedStore) -> dict:
         "weather": "晴",
         "weather_edited": True,
         "activity": None,
-        "daily_revenue": "999999.00",
+        "config_version_id": assigned_store.config.id,
         "items": [
             {"category_id": assigned_store.cash.id, "amount": "200.00"},
             {"category_id": assigned_store.excluded.id, "amount": "80.00"},
@@ -69,6 +99,315 @@ def today_for(assigned_store: AssignedStore) -> date:
     return datetime.now(ZoneInfo(assigned_store.store.timezone)).date()
 
 
+async def test_composed_write_requires_and_accepts_current_config_version(
+    auth_client: AsyncClient,
+    assigned_store: AssignedStore,
+    ledger_payload: dict,
+) -> None:
+    ledger_payload["items"] = [
+        {"category_id": assigned_store.cash.id, "amount": "12.00"},
+        {"category_id": assigned_store.excluded.id, "amount": "0.00"},
+    ]
+    path = f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}"
+
+    missing = await auth_client.put(path, json=ledger_payload | {"config_version_id": None})
+    wrong = await auth_client.put(
+        path, json=ledger_payload | {"config_version_id": assigned_store.config.id + 999}
+    )
+
+    assert missing.status_code == 409
+    assert missing.json()["detail"] == "Income configuration version does not match"
+    assert wrong.status_code == 409
+    assert wrong.json()["detail"] == "Income configuration version does not match"
+
+    response = await auth_client.put(path, json=ledger_payload)
+
+    assert response.status_code == 201
+    assert response.json()["daily_revenue"] == "12.00"
+
+
+async def test_non_conflict_field_validation_remains_422(
+    auth_client: AsyncClient,
+    assigned_store: AssignedStore,
+    ledger_payload: dict,
+) -> None:
+    response = await auth_client.put(
+        f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}",
+        json=ledger_payload | {"wash_count": -1},
+    )
+
+    assert response.status_code == 422
+
+
+async def test_disabled_config_creates_fetches_and_edits_legacy_total_with_version(
+    auth_client: AsyncClient,
+    assigned_store: AssignedStore,
+    db_session: AsyncSession,
+) -> None:
+    assigned_store.config.enabled = False
+    await db_session.flush()
+    record_date = today_for(assigned_store)
+    path = f"/api/ledger/{assigned_store.id}/{record_date.isoformat()}"
+    payload = {
+        "is_open": "营业",
+        "daily_revenue": "125.50",
+        "config_version_id": None,
+        "wash_count": 4,
+        "weather": None,
+        "weather_edited": False,
+        "activity": None,
+        "items": [],
+    }
+
+    created = await auth_client.put(path, json=payload)
+    assert created.status_code == 201
+
+    fetched = await auth_client.get(path)
+    assert fetched.status_code == 200
+    assert fetched.json()["income_mode"] == "legacy_total"
+    assert fetched.json()["income_config_version_id"] == assigned_store.config.id
+    assert fetched.json()["daily_revenue"] == "125.50"
+    assert fetched.json()["items"] == []
+
+    edited = await auth_client.put(
+        path + "?overwrite=true",
+        json=payload | {"daily_revenue": "130.00", "expected_version": 1},
+    )
+    assert edited.status_code == 200
+    assert edited.json()["daily_revenue"] == "130.00"
+
+
+async def test_standard_put_does_not_attempt_external_weather_http(
+    auth_client: AsyncClient,
+    assigned_store: AssignedStore,
+    ledger_payload: dict,
+    weather_stub,
+    respx_mock,
+) -> None:
+    record_date = today_for(assigned_store)
+    external = respx_mock.get("https://api.open-meteo.com/v1/forecast").mock(
+        side_effect=AssertionError("ordinary ledger test attempted external weather")
+    )
+
+    response = await auth_client.put(
+        f"/api/ledger/{assigned_store.id}/{record_date.isoformat()}", json=ledger_payload
+    )
+
+    assert response.status_code == 201
+    assert external.called is False
+    assert weather_stub.daily_calls == [(assigned_store.id, record_date)]
+
+
+async def test_stale_expected_version_cannot_overwrite(
+    auth_client: AsyncClient, assigned_store: AssignedStore, ledger_payload: dict
+) -> None:
+    record_date = today_for(assigned_store)
+    path = f"/api/ledger/{assigned_store.id}/{record_date.isoformat()}"
+    created = await auth_client.put(path, json=ledger_payload)
+    assert created.status_code == 201
+    assert created.json()["row_version"] == 1
+
+    updated = await auth_client.put(
+        path + "?overwrite=true",
+        json=ledger_payload | {"expected_version": 1},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["row_version"] == 2
+
+    stale = await auth_client.put(
+        path + "?overwrite=true",
+        json=ledger_payload | {"expected_version": 1},
+    )
+    assert stale.status_code == 409
+    assert stale.json()["detail"] == "Record changed; reload before saving"
+
+
+async def test_stale_expected_version_cannot_delete(
+    auth_client: AsyncClient,
+    assigned_store: AssignedStore,
+    ledger_payload: dict,
+    db_session: AsyncSession,
+) -> None:
+    await grant_authenticated_admin(db_session)
+    record_date = today_for(assigned_store)
+    path = f"/api/ledger/{assigned_store.id}/{record_date.isoformat()}"
+    assert (await auth_client.put(path, json=ledger_payload)).status_code == 201
+
+    stale = await auth_client.delete(path, params={"expected_version": 2})
+    assert stale.status_code == 409
+    assert stale.json()["detail"] == "Record changed; reload before saving"
+    assert (await auth_client.get(path)).status_code == 200
+
+
+async def test_form_config_uses_current_config_then_record_snapshot(
+    auth_client: AsyncClient, assigned_store: AssignedStore, ledger_payload: dict
+) -> None:
+    record_date = today_for(assigned_store)
+    path = f"/api/ledger/{assigned_store.id}/{record_date.isoformat()}"
+    before = await auth_client.get(path + "/form-config")
+    assert before.status_code == 200
+    assert before.json()["version_id"] == assigned_store.config.id
+    assert [item["name"] for item in before.json()["items"]] == ["Cash", "Excluded"]
+
+    assert (await auth_client.put(path, json=ledger_payload)).status_code == 201
+    assigned_store.cash.name = "Renamed later"
+    after = await auth_client.get(path + "/form-config")
+    assert after.status_code == 200
+    assert [item["name"] for item in after.json()["items"]] == ["Cash", "Excluded"]
+
+
+async def test_put_injects_trusted_weather_and_preserves_manual_weather(
+    auth_client: AsyncClient,
+    assigned_store: AssignedStore,
+    ledger_payload: dict,
+    open_meteo_app,
+    respx_mock,
+) -> None:
+    record_date = today_for(assigned_store)
+    respx_mock.get("https://api.open-meteo.com/v1/forecast").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "daily": {
+                    "time": [record_date.isoformat()],
+                    "weather_code": [2],
+                    "temperature_2m_max": [27.5],
+                    "temperature_2m_min": [18.1],
+                    "precipitation_sum": [0.2],
+                }
+            },
+        )
+    )
+    forged = ledger_payload | {
+        "weather_auto": "伪造",
+        "weather_code": 999,
+        "temperature_max": 99,
+        "precipitation": 99,
+    }
+
+    created = await auth_client.put(
+        f"/api/ledger/{assigned_store.id}/{record_date.isoformat()}", json=forged
+    )
+    assert created.status_code == 201
+    record = await auth_client.get(
+        f"/api/ledger/{assigned_store.id}", params={"date": record_date.isoformat()}
+    )
+    assert record.json()["weather"] == "晴"
+    assert record.json()["weather_auto"] == "多云"
+    assert record.json()["weather_code"] == 2
+    assert record.json()["temperature_max"] == "27.50"
+    assert record.json()["precipitation"] == "0.20"
+
+
+async def test_put_still_saves_when_weather_lookup_fails(
+    auth_client: AsyncClient,
+    assigned_store: AssignedStore,
+    ledger_payload: dict,
+    open_meteo_app,
+    respx_mock,
+) -> None:
+    record_date = today_for(assigned_store)
+    respx_mock.get("https://api.open-meteo.com/v1/forecast").mock(
+        side_effect=httpx.TimeoutException("slow")
+    )
+
+    response = await auth_client.put(
+        f"/api/ledger/{assigned_store.id}/{record_date.isoformat()}", json=ledger_payload
+    )
+
+    assert response.status_code == 201
+
+
+async def test_create_update_and_delete_refresh_persisted_today_briefing(
+    auth_client: AsyncClient,
+    assigned_store: AssignedStore,
+    ledger_payload: dict,
+    db_session: AsyncSession,
+) -> None:
+    await grant_authenticated_admin(db_session)
+    record_date = today_for(assigned_store)
+    path = f"/api/ledger/{assigned_store.id}/{record_date.isoformat()}"
+
+    created = await auth_client.put(path, json=ledger_payload)
+    assert created.status_code == 201
+    cards = (await auth_client.get(f"/api/dashboard/{assigned_store.id}")).json()
+    today = next(card for card in cards if card["card_type"] == "today")
+    assert today["state"] == "recorded"
+    assert today["revenue"] == "200.00"
+    assert today["weather"] == "天气暂时不可用"
+
+    updated = await auth_client.put(
+        path + "?overwrite=true",
+        json=ledger_payload | {"expected_version": 1, "items": [
+            {"category_id": assigned_store.cash.id, "amount": "321.00"},
+            {"category_id": assigned_store.excluded.id, "amount": "80.00"},
+        ]},
+    )
+    assert updated.status_code == 200
+    cards = (await auth_client.get(f"/api/dashboard/{assigned_store.id}")).json()
+    today = next(card for card in cards if card["card_type"] == "today")
+    assert today["state"] == "recorded"
+    assert today["revenue"] == "321.00"
+
+    deleted = await auth_client.delete(path, params={"expected_version": 2})
+    assert deleted.status_code == 204
+    cards = (await auth_client.get(f"/api/dashboard/{assigned_store.id}")).json()
+    today = next(card for card in cards if card["card_type"] == "today")
+    assert today["state"] == "missing"
+    assert today["revenue"] is None
+
+
+async def test_briefing_refresh_failure_does_not_undo_committed_ledger(
+    auth_client: AsyncClient,
+    assigned_store: AssignedStore,
+    ledger_payload: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fail_refresh(*_args, **_kwargs):
+        raise RuntimeError("briefing storage unavailable")
+
+    monkeypatch.setattr("app.api.routes.ledger._refresh_briefing_after_commit", fail_refresh)
+    record_date = today_for(assigned_store)
+    response = await auth_client.put(
+        f"/api/ledger/{assigned_store.id}/{record_date.isoformat()}", json=ledger_payload
+    )
+    assert response.status_code == 201
+    stored = await auth_client.get(
+        f"/api/ledger/{assigned_store.id}/{record_date.isoformat()}"
+    )
+    assert stored.status_code == 200
+
+
+async def test_briefing_sql_then_failure_keeps_normal_put_response_and_commit(
+    auth_client: AsyncClient,
+    assigned_store: AssignedStore,
+    ledger_payload: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def sql_then_fail(service, *_args, **_kwargs):
+        await service.session.scalar(select(func.count()).select_from(DailyBriefing))
+        raise RuntimeError("briefing failed after SQL")
+
+    monkeypatch.setattr("app.services.briefing.BriefingService.regenerate", sql_then_fail)
+    record_date = today_for(assigned_store)
+    store_id = assigned_store.id
+    response = await auth_client.put(
+        f"/api/ledger/{store_id}/{record_date.isoformat()}", json=ledger_payload
+    )
+    assert response.status_code == 201
+    assert response.json() == {
+        "id": response.json()["id"],
+        "date": record_date.isoformat(),
+            "daily_revenue": "200.00",
+            "row_version": 1,
+    }
+    stored = await auth_client.get(
+        f"/api/ledger/{store_id}/{record_date.isoformat()}"
+    )
+    assert stored.status_code == 200
+    assert stored.json()["daily_revenue"] == "200.00"
+
+
 async def test_same_date_requires_overwrite_flag(
     auth_client: AsyncClient, assigned_store: AssignedStore, ledger_payload: dict
 ) -> None:
@@ -77,7 +416,11 @@ async def test_same_date_requires_overwrite_flag(
     response = await auth_client.put(path, json=ledger_payload)
     assert response.status_code == 409
     assert response.json()["detail"] == "Record exists; confirm overwrite"
-    assert (await auth_client.put(path + "?overwrite=true", json=ledger_payload)).status_code == 200
+    assert (
+        await auth_client.put(
+            path + "?overwrite=true", json=ledger_payload | {"expected_version": 1}
+        )
+    ).status_code == 200
 
 
 async def test_put_recomputes_revenue_and_get_by_query_returns_full_record(
@@ -231,7 +574,9 @@ async def test_category_from_another_store_is_rejected(
     )
 
     assert response.status_code == 422
-    assert response.json() == {"detail": "Income category does not belong to this store"}
+    assert response.json() == {
+        "detail": "Every active income item must be provided exactly once"
+    }
 
 
 @pytest.mark.parametrize(
@@ -267,12 +612,13 @@ async def test_delete_returns_204_and_writes_delete_audit(
     ledger_payload: dict,
     db_session: AsyncSession,
 ) -> None:
+    await grant_authenticated_admin(db_session)
     record_date = today_for(assigned_store)
     path = f"/api/ledger/{assigned_store.id}/{record_date.isoformat()}"
     created = await auth_client.put(path, json=ledger_payload)
     assert created.status_code == 201
 
-    deleted = await auth_client.delete(path)
+    deleted = await auth_client.delete(path, params={"expected_version": 1})
 
     assert deleted.status_code == 204
     assert deleted.content == b""
@@ -341,8 +687,10 @@ async def test_unassigned_store_is_uniformly_invisible(
         method, path, params=params, json=payload if method == "put" else None
     )
 
-    assert response.status_code == 404
-    assert response.json() == {"detail": "Store not found"}
+    assert response.status_code == (403 if method == "delete" else 404)
+    assert response.json() == {
+        "detail": "Insufficient permissions" if method == "delete" else "Store not found"
+    }
 
 
 async def test_missing_and_inactive_stores_are_indistinguishable(

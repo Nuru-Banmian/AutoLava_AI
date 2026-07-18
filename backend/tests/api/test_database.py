@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta
 from io import BytesIO
 
 import pytest
@@ -29,6 +29,14 @@ class DatabaseContext:
     @property
     def id(self) -> int:
         return self.store.id
+
+
+async def grant_authenticated_admin(db_session: AsyncSession) -> User:
+    user = await db_session.scalar(select(User).where(User.username == "authenticated"))
+    assert user is not None
+    user.role = "admin"
+    await db_session.flush()
+    return user
 
 
 def test_database_router_uses_canonical_record_and_rollback_paths() -> None:
@@ -316,6 +324,7 @@ async def test_history_is_ledger_only_store_isolated_and_newest_first(
     db_session: AsyncSession,
     store_factory,
 ) -> None:
+    await grant_authenticated_admin(db_session)
     first_record = database_context.records[0]
     other_store = await store_factory(name="Other history store")
     db_session.add_all(
@@ -383,10 +392,86 @@ async def test_history_is_ledger_only_store_isolated_and_newest_first(
     response = await auth_client.get(f"/api/database/{database_context.id}/history")
 
     assert response.status_code == 200
-    assert [entry["description"] for entry in response.json()] == ["second", "first"]
-    assert response.json()[0]["operator_username"] == "database-editor"
-    assert response.json()[0]["before"] == {"version": 1}
-    assert response.json()[0]["after"] == {"version": 2}
+    payload = response.json()
+    assert payload["total"] == 2
+    assert payload["page"] == 1
+    assert payload["page_size"] == 20
+    assert [entry["description"] for entry in payload["items"]] == ["second", "first"]
+    assert payload["items"][0]["operator_username"] == "database-editor"
+    assert payload["items"][0]["before"] == {"version": 1}
+    assert payload["items"][0]["after"] == {"version": 2}
+
+    second_page = await auth_client.get(
+        f"/api/database/{database_context.id}/history",
+        params={"page": 2, "page_size": 1, "record_id": first_record.id},
+    )
+    assert second_page.status_code == 200
+    assert [item["description"] for item in second_page.json()["items"]] == ["first"]
+
+
+async def test_history_filters_by_record_date_before_pagination(
+    auth_client: AsyncClient,
+    database_context: DatabaseContext,
+    db_session: AsyncSession,
+) -> None:
+    await grant_authenticated_admin(db_session)
+    target_date = date(2026, 6, 1)
+    target = AuditLog(
+        operation_domain="ledger",
+        store_id=database_context.id,
+        record_id=None,
+        record_date=target_date,
+        operation_type="delete",
+        operation_source="manual",
+        operator_user_id=database_context.user.id,
+        before_json={"date": target_date.isoformat()},
+        after_json=None,
+        description="old deleted record",
+        requires_approval=False,
+        approved=True,
+        created_at=datetime(2026, 6, 1, 8),
+    )
+    newer = [
+        AuditLog(
+            operation_domain="ledger",
+            store_id=database_context.id,
+            record_id=None,
+            record_date=date(2026, 7, 1),
+            operation_type="delete",
+            operation_source="manual",
+            operator_user_id=database_context.user.id,
+            before_json={"sequence": index},
+            after_json=None,
+            description=f"newer audit {index}",
+            requires_approval=False,
+            approved=True,
+            created_at=datetime(2026, 7, 1, 8) + timedelta(minutes=index),
+        )
+        for index in range(101)
+    ]
+    db_session.add_all([target, *newer])
+    await db_session.flush()
+
+    response = await auth_client.get(
+        f"/api/database/{database_context.id}/history",
+        params={"record_date": target_date.isoformat(), "page_size": 100},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert [item["description"] for item in response.json()["items"]] == [
+        "old deleted record"
+    ]
+
+    combined = await auth_client.get(
+        f"/api/database/{database_context.id}/history",
+        params={
+            "record_date": target_date.isoformat(),
+            "record_id": database_context.records[0].id,
+        },
+    )
+    assert combined.status_code == 200
+    assert combined.json()["total"] == 0
 
 
 async def test_rollback_route_restores_record_and_returns_canonical_snapshot(
@@ -394,9 +479,13 @@ async def test_rollback_route_restores_record_and_returns_canonical_snapshot(
     database_context: DatabaseContext,
     db_session: AsyncSession,
 ) -> None:
+    await grant_authenticated_admin(db_session)
     record = database_context.records[0]
+    record.income_mode = "composed"
+    await db_session.flush()
     await db_session.refresh(record, attribute_names=["created_at", "updated_at", "items"])
     expected = record_snapshot(record)
+    expected["row_version"] = record.row_version + 2
     await LedgerService(db_session).upsert(
         store=database_context.store,
         record_date=record.date,
@@ -406,6 +495,8 @@ async def test_rollback_route_restores_record_and_returns_canonical_snapshot(
             "weather": "雨",
             "weather_edited": True,
             "activity": "changed",
+            "config_version_id": None,
+            "expected_version": record.row_version,
             "items": [
                 {"category_id": database_context.cash.id, "amount": "999.99"},
                 {"category_id": database_context.card.id, "amount": "1.00"},
@@ -436,6 +527,7 @@ async def test_rollback_route_checks_path_store_against_audit_store(
     db_session: AsyncSession,
     store_factory,
 ) -> None:
+    actor = await grant_authenticated_admin(db_session)
     other = await store_factory(name="Other rollback store")
     audit = AuditLog(
         operation_domain="ledger",
@@ -457,12 +549,49 @@ async def test_rollback_route_checks_path_store_against_audit_store(
     mismatch = await auth_client.post(
         f"/api/database/{database_context.id}/history/{audit.id}/rollback"
     )
+    actor.role = "user"
+    await db_session.flush()
     inaccessible = await auth_client.post(f"/api/database/{other.id}/history/{audit.id}/rollback")
 
     assert mismatch.status_code == 404
     assert mismatch.json() == {"detail": "Audit entry not found"}
-    assert inaccessible.status_code == 404
-    assert inaccessible.json() == {"detail": "Store not found"}
+    assert inaccessible.status_code == 403
+    assert inaccessible.json() == {"detail": "Insufficient permissions"}
+
+
+async def test_regular_user_cannot_delete_or_rollback(
+    auth_client: AsyncClient,
+    database_context: DatabaseContext,
+    db_session: AsyncSession,
+) -> None:
+    record = database_context.records[0]
+    audit = AuditLog(
+        operation_domain="ledger",
+        store_id=database_context.id,
+        record_id=record.id,
+        record_date=record.date,
+        operation_type="update",
+        operation_source="manual",
+        operator_user_id=database_context.user.id,
+        before_json={"version": 1},
+        after_json={"version": 2},
+        description="regular user must not roll this back",
+        requires_approval=False,
+        approved=True,
+    )
+    db_session.add(audit)
+    await db_session.flush()
+
+    deleted = await auth_client.delete(
+        f"/api/ledger/{database_context.id}/{record.date}",
+        params={"expected_version": record.row_version},
+    )
+    rolled_back = await auth_client.post(
+        f"/api/database/{database_context.id}/history/{audit.id}/rollback"
+    )
+
+    assert deleted.status_code == 403
+    assert rolled_back.status_code == 403
 
 
 @pytest.mark.parametrize("suffix", ["/records", "/history", "/export.xlsx"])
@@ -473,5 +602,7 @@ async def test_database_routes_hide_unassigned_store(
 
     response = await auth_client.get(f"/api/database/{other.id}{suffix}")
 
-    assert response.status_code == 404
-    assert response.json() == {"detail": "Store not found"}
+    assert response.status_code == (403 if suffix == "/history" else 404)
+    assert response.json() == {
+        "detail": "Insufficient permissions" if suffix == "/history" else "Store not found"
+    }
