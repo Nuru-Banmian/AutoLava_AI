@@ -178,6 +178,29 @@ test("320px record list, bottom sheet, and analysis remain reachable without cli
   await mockResponsiveApi(page);
   await page.goto("/database");
 
+  const recordFilters = page.getByRole("region", { name: "记录筛选" });
+  await expect(recordFilters.getByTestId("record-filter-dates")).toHaveCount(0);
+  await expect(recordFilters.getByLabel("开始日期", { exact: true })).toHaveCount(0);
+  await expect(recordFilters.getByLabel("结束日期", { exact: true })).toHaveCount(0);
+  await recordFilters.getByRole("button", { name: "自定义" }).click();
+  const dates = recordFilters.getByTestId("record-filter-dates");
+  const exportButton = recordFilters.getByRole("button", { name: "导出当前范围" });
+  const [filterBox, datesBox, exportBox, startBox, endBox] = await Promise.all([
+    recordFilters.boundingBox(), dates.boundingBox(), exportButton.boundingBox(),
+    recordFilters.getByLabel("开始日期", { exact: true }).boundingBox(),
+    recordFilters.getByLabel("结束日期", { exact: true }).boundingBox(),
+  ]);
+  expect(filterBox).not.toBeNull();
+  expect(datesBox).not.toBeNull();
+  expect(exportBox).not.toBeNull();
+  expect(startBox).not.toBeNull();
+  expect(endBox).not.toBeNull();
+  expect(startBox!.y).toBe(endBox!.y);
+  expect(startBox!.height).toBe(40);
+  expect(endBox!.height).toBe(40);
+  expect(exportBox!.y).toBeGreaterThanOrEqual(datesBox!.y + datesBox!.height + 8);
+  expect(exportBox!.width).toBe(filterBox!.width);
+
   await expect.poll(() => page.evaluate(() => ({
     document: document.documentElement.scrollWidth,
     body: document.body.scrollWidth,
@@ -269,7 +292,27 @@ test("database at 390px exposes all custom date inputs without horizontal overfl
   const recordFilters = page.getByRole("region", { name: "记录筛选" });
   const analysisRail = page.locator("main > section > div > aside");
   await expect(analysisRail).toHaveCount(1);
+  await expect(recordFilters.getByTestId("record-filter-dates")).toHaveCount(0);
+  await expect(recordFilters.getByLabel("开始日期", { exact: true })).toHaveCount(0);
+  await expect(recordFilters.getByLabel("结束日期", { exact: true })).toHaveCount(0);
   await recordFilters.getByRole("button", { name: "自定义" }).click();
+  const dates = recordFilters.getByTestId("record-filter-dates");
+  const exportButton = recordFilters.getByRole("button", { name: "导出当前范围" });
+  const [filterBox, datesBox, exportBox, startBox, endBox] = await Promise.all([
+    recordFilters.boundingBox(), dates.boundingBox(), exportButton.boundingBox(),
+    recordFilters.getByLabel("开始日期", { exact: true }).boundingBox(),
+    recordFilters.getByLabel("结束日期", { exact: true }).boundingBox(),
+  ]);
+  expect(filterBox).not.toBeNull();
+  expect(datesBox).not.toBeNull();
+  expect(exportBox).not.toBeNull();
+  expect(startBox).not.toBeNull();
+  expect(endBox).not.toBeNull();
+  expect(startBox!.y).toBe(endBox!.y);
+  expect(startBox!.height).toBe(40);
+  expect(endBox!.height).toBe(40);
+  expect(exportBox!.y).toBeGreaterThanOrEqual(datesBox!.y + datesBox!.height + 8);
+  expect(exportBox!.width).toBe(filterBox!.width);
   await analysisRail.getByRole("button", { name: "自定义" }).scrollIntoViewIfNeeded();
   await analysisRail.getByRole("button", { name: "自定义" }).click();
 
