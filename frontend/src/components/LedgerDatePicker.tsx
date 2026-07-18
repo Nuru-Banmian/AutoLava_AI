@@ -11,6 +11,7 @@ export interface LedgerDatePickerProps {
   today: string;
   recordedDates: ReadonlySet<string>;
   onChange(date: string): void;
+  onMonthChange?(month: string): void;
 }
 
 function useDesktopPicker() {
@@ -71,12 +72,15 @@ function PickerPanel({ value, today, recordedDates, month, setMonth, select }: L
   );
 }
 
-export function LedgerDatePicker({ value, today, recordedDates, onChange }: LedgerDatePickerProps) {
+export function LedgerDatePicker({ value, today, recordedDates, onChange, onMonthChange }: LedgerDatePickerProps) {
   const [open, setOpen] = useState(false);
   const [month, setMonth] = useState(value.slice(0, 7));
   const desktop = useDesktopPicker();
 
   useEffect(() => setMonth(value.slice(0, 7)), [value]);
+  useEffect(() => {
+    if (open) onMonthChange?.(month);
+  }, [month, onMonthChange, open]);
   const select = (date: string) => {
     onChange(date);
     setOpen(false);
