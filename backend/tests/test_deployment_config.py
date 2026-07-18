@@ -103,6 +103,14 @@ def test_images_and_nginx_define_the_release_boundaries() -> None:
     assert "try_files $uri /index.html;" in nginx
 
 
+def test_container_builds_use_china_package_mirrors() -> None:
+    backend = read("backend/Dockerfile")
+    frontend = read("frontend/Dockerfile")
+
+    assert "mirrors.aliyun.com/pypi/simple" in backend
+    assert "registry.npmmirror.com" in frontend
+
+
 def test_ci_runs_backend_frontend_browser_and_container_release_gates() -> None:
     ci_text = read(".github/workflows/ci.yml")
     workflow = yaml.safe_load(ci_text)
