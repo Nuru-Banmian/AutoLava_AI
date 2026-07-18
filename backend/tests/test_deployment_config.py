@@ -106,9 +106,14 @@ def test_images_and_nginx_define_the_release_boundaries() -> None:
 def test_container_builds_use_china_package_mirrors() -> None:
     backend = read("backend/Dockerfile")
     frontend = read("frontend/Dockerfile")
+    temporary_compose = read("compose.temporary.yaml")
 
     assert "mirrors.aliyun.com/pypi/simple" in backend
     assert "registry.npmmirror.com" in frontend
+    assert "docker.m.daocloud.io/library/python:3.12-slim" in backend
+    assert "docker.m.daocloud.io/library/node:22-alpine" in frontend
+    assert "docker.m.daocloud.io/library/nginx:1.27-alpine" in frontend
+    assert "docker.m.daocloud.io/library/mysql:8.4" in temporary_compose
 
 
 def test_ci_runs_backend_frontend_browser_and_container_release_gates() -> None:
