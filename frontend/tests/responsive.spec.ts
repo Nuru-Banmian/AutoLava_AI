@@ -65,15 +65,14 @@ async function mockResponsiveApi(page: Page) {
     if (path === "/api/database/1/records") {
       const pageNumber = Number(url.searchParams.get("page"));
       const pageSize = Number(url.searchParams.get("page_size"));
-      if (pageSize !== 15) return json({ detail: "page_size must be 15" }, 400);
-      const start = (pageNumber - 1) * pageSize;
+      if (pageNumber !== 1 || pageSize !== 200) return json({ detail: "page_size must be 200" }, 400);
       return json({
-        items: records.slice(start, start + pageSize),
+        items: records,
         categories,
         sum_daily_revenue: "1480.00",
         total: records.length,
-        page: pageNumber,
-        page_size: pageSize,
+        page: 1,
+        page_size: 200,
       });
     }
     if (path === "/api/charts/1") return json({
@@ -107,6 +106,7 @@ async function mockResponsiveApi(page: Page) {
 }
 
 test("desktop record browser keeps a sticky independently scrollable detail rail", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
   await page.setViewportSize({ width: 1280, height: 700 });
   await mockResponsiveApi(page);
   await page.goto("/database");
@@ -123,6 +123,7 @@ test("desktop record browser keeps a sticky independently scrollable detail rail
 });
 
 test("320px record list, bottom sheet, and analysis remain reachable without clipping", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
   await page.setViewportSize({ width: 320, height: 700 });
   await mockResponsiveApi(page);
   await page.goto("/database");

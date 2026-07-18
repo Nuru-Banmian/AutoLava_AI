@@ -116,15 +116,14 @@ async function mockMergedFlow(page: Page) {
         });
       }
       databaseRequests.push(url);
-      if (!Number.isInteger(pageNumber) || pageSize !== 15) return json({ detail: "invalid paging contract" }, 400);
-      const items = filtered.slice((pageNumber - 1) * pageSize, pageNumber * pageSize);
+      if (pageNumber !== 1 || pageSize !== 200) return json({ detail: "invalid paging contract" }, 400);
       return json({
-        items,
+        items: filtered,
         categories,
         sum_daily_revenue: filtered.reduce((sum, record) => sum + Number(record.daily_revenue), 0).toFixed(2),
         total: filtered.length,
-        page: pageNumber,
-        page_size: pageSize,
+        page: 1,
+        page_size: 200,
       });
     }
     if (path === "/api/database/1/export.xlsx") {
@@ -185,6 +184,7 @@ for (const viewport of [
 ]) {
   test(`${viewport.name}: merged record and analysis workflow`, async ({ page }) => {
     const mobile = viewport.width === 320;
+    await page.clock.install({ time: new Date(`${today}T12:00:00Z`) });
     await page.setViewportSize(viewport);
     const requests = await mockMergedFlow(page);
 
@@ -213,8 +213,10 @@ for (const viewport of [
     await expect(page.getByText("第 2 / 2 页")).toBeVisible();
     const pageTwoFirst = recordRows(page, mobile).first();
     await expect(pageTwoFirst).toContainText("2026年7月2日");
+    await pageTwoFirst.click();
     if (mobile) {
       await expect(pageTwoFirst).toHaveAttribute("aria-pressed", "true");
+      await page.getByRole("button", { name: "Close" }).click();
     } else {
       await expect(page.getByRole("heading", { name: "2026年7月2日" })).toBeVisible();
     }
@@ -222,17 +224,19 @@ for (const viewport of [
     await page.getByRole("button", { name: "上月", exact: true }).first().click();
     await expect(page.getByText("第 1 / 2 页")).toBeVisible();
     const previousMonthFirst = recordRows(page, mobile).first();
-    await expect(previousMonthFirst).toContainText("2026年6月18日");
+    await expect(previousMonthFirst).toContainText("2026年6月30日");
+    await previousMonthFirst.click();
     if (mobile) {
       await expect(previousMonthFirst).toHaveAttribute("aria-pressed", "true");
+      await page.getByRole("button", { name: "Close" }).click();
     } else {
-      await expect(page.getByRole("heading", { name: "2026年6月18日" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "2026年6月30日" })).toBeVisible();
     }
 
     await page.getByRole("button", { name: "近 6 月" }).click();
     await expect(page.getByRole("button", { name: "近 6 月" })).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByText("第 1 / 2 页")).toBeVisible();
-    await expect(recordRows(page, mobile).first()).toContainText("2026年6月18日");
+    await expect(recordRows(page, mobile).first()).toContainText("2026年6月30日");
     await expect.poll(() => requests.chartRequests.at(-1)?.searchParams.get("bucket")).toBe("month");
     await expect.poll(() => requests.databaseRequests.at(-1)?.searchParams.get("start")).toBe("2026-06-01");
 
