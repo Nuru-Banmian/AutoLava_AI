@@ -191,6 +191,31 @@ describe("LedgerPage", () => {
     expect(await screen.findByRole("button", { name: "2026年6月4日，已有记录" })).toBeEnabled();
   });
 
+  it("refreshes visible-month markers after saving a ledger record", async () => {
+    let saved = false;
+    let monthRequests = 0;
+    renderLedger([
+      http.get("/api/database/1/records", ({ request }) => {
+        if (new URL(request.url).searchParams.get("page_size") === "200") {
+          monthRequests += 1;
+          return HttpResponse.json({ items: saved ? [{ id: 7, date: "2026-07-14" }] : [], categories: [], sum_daily_revenue: "0.00", total: saved ? 1 : 0, page: 1, page_size: 200 });
+        }
+        return HttpResponse.json({ items: [], categories: [], sum_daily_revenue: "0.00", total: 0, page: 1, page_size: 1 });
+      }),
+      http.put("/api/ledger/1/:date", () => {
+        saved = true;
+        return HttpResponse.json({ id: 9, date: "2026-07-15" });
+      }),
+    ]);
+
+    fireEvent.click(await screen.findByRole("button", { name: "保存今日记录" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("保存成功");
+    await waitFor(() => expect(monthRequests).toBe(2));
+
+    fireEvent.click(screen.getByRole("button", { name: "选择台账日期：2026年7月15日" }));
+    expect(await screen.findByRole("button", { name: "2026年7月14日，已有记录" })).toBeEnabled();
+  });
+
   it("loads the current income configuration for direct-total mode", async () => {
     let requested = "";
     renderLedger([

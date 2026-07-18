@@ -42,6 +42,7 @@ export function storeLocalToday(store: AccessibleStore, now = new Date()): strin
 export async function invalidateUserData(client: QueryClient, storeId: number) {
   await client.invalidateQueries({ predicate: ({ queryKey }) => {
     if (queryKey[0] === "ledger" || queryKey[0] === "database") return queryKey[2] === storeId;
+    if (queryKey[0] === "ledgerMonth") return queryKey[1] === storeId;
     if (queryKey[0] === "charts" || queryKey[0] === "dashboard" || queryKey[0] === "categoryCatalog") return queryKey[1] === storeId;
     return false;
   } });
