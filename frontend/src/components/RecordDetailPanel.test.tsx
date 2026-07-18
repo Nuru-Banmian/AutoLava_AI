@@ -34,7 +34,11 @@ describe("RecordDetailPanel", () => {
   it("renders rest records without fabricating an open status", () => {
     renderPanel({ ...record, is_open: "休息", wash_count: 0, activity: "会员日" });
 
-    expect(screen.getByText("休息", { exact: true })).toBeInTheDocument();
+    const statusText = screen.getByText("休息", { exact: true });
+    expect(statusText).toBeInTheDocument();
+    const statusValue = statusText.closest("p");
+    expect(statusValue).not.toBeNull();
+    expect(statusValue?.querySelector('[aria-hidden="true"]')).toBeNull();
     expect(screen.queryByText("营业", { exact: true })).not.toBeInTheDocument();
     expect(screen.getByText("洗车数量 0")).toBeInTheDocument();
     expect(screen.getByText(/会员日/)).toBeInTheDocument();
