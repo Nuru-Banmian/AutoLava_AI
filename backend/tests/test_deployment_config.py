@@ -85,6 +85,7 @@ def test_production_backup_exports_the_full_database_and_keeps_seven_days() -> N
 
     assert "mysqldump" in script
     assert '"$MYSQL_DATABASE"' in script
+    assert "--no-tablespaces" in script
     assert "gzip -c" in script
     assert "-mtime +6 -delete" in script
 
@@ -114,6 +115,26 @@ def test_container_builds_use_china_package_mirrors() -> None:
     assert "docker.m.daocloud.io/library/node:22-alpine" in frontend
     assert "docker.m.daocloud.io/library/nginx:1.27-alpine" in frontend
     assert "docker.m.daocloud.io/library/mysql:8.4" in temporary_compose
+
+
+def test_domain_http_template_keeps_acme_challenge_reachable() -> None:
+    config = read("deploy/nginx/d-washpilot.http.conf")
+
+    assert "server_name d-washpilot.tech www.d-washpilot.tech;" in config
+    assert "location ^~ /.well-known/acme-challenge/" in config
+    assert "root /var/www/certbot;" in config
+    assert "return 301 https://$host$request_uri;" in config
+
+
+def test_domain_https_template_uses_tls_and_replaces_forwarded_client_ip() -> None:
+    config = read("deploy/nginx/d-washpilot.https.conf")
+
+    assert "listen 443 ssl;" in config
+    assert "ssl_certificate /root/autolava-cert/d-washpilot.tech.pem;" in config
+    assert "ssl_certificate_key /root/autolava-cert/d-washpilot.tech.key;" in config
+    assert "proxy_set_header X-Forwarded-For $remote_addr;" in config
+    assert "proxy_set_header X-Forwarded-Proto https;" in config
+    assert "proxy_pass http://127.0.0.1:8080;" in config
 
 
 def test_ci_runs_backend_frontend_browser_and_container_release_gates() -> None:
