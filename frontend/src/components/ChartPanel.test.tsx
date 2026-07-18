@@ -14,6 +14,20 @@ it("uses theme variables for chart series", () => {
   ]);
 });
 
+it("uses the default plot height and accepts a height override", () => {
+  const { rerender } = render(
+    <ChartPanel title="趋势" kind="line" data={[{ label: "7月", revenue: 10 }]} xKey="label" valueKey="revenue" />,
+  );
+
+  expect(screen.getByTestId("chart-panel-plot")).toHaveClass("h-72", "min-h-72");
+
+  rerender(
+    <ChartPanel title="趋势" kind="line" data={[{ label: "7月", revenue: 10 }]} xKey="label" valueKey="revenue" heightClassName="h-64 min-h-64" />,
+  );
+
+  expect(screen.getByTestId("chart-panel-plot")).toHaveClass("h-64", "min-h-64");
+});
+
 it("renders embedded charts without a card wrapper", () => {
   render(
     <ChartPanel

@@ -63,6 +63,7 @@ describe("BusinessAnalysisCard", () => {
     renderCard();
 
     await screen.findByText("现金收入");
+    expect(screen.getByTestId("chart-panel-plot")).toHaveClass("h-64", "min-h-64");
     expect(requests[0].pathname + requests[0].search).toBe("/api/charts/1?start=2026-07-01&end=2026-07-17&bucket=day&compare_start=2026-06-01&compare_end=2026-06-17");
     expect(screen.getByText("比较区间：2026-06-01 至 2026-06-17")).toBeInTheDocument();
     expect(screen.getByText(/按日/)).toBeInTheDocument();

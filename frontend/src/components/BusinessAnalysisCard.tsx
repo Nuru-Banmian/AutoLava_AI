@@ -95,7 +95,7 @@ export function BusinessAnalysisCard({ storeId, today }: BusinessAnalysisCardPro
           {comparisonText(data) && <p>{comparisonText(data)}</p>}
         </div>
         {!hasBusinessData && <p>该范围暂无经营数据</p>}
-        <ChartPanel embedded title="营业额趋势" kind="line" data={trend} xKey="label" valueKey="revenue" emptyMessage="暂无趋势数据" />
+        <ChartPanel embedded title="营业额趋势" kind="line" data={trend} xKey="label" valueKey="revenue" emptyMessage="暂无趋势数据" heightClassName="h-64 min-h-64" />
         <IncomeComposition included={data.categories} excluded={data.excluded_categories} classifiedIncludedTotal={data.classified_included_total} totalRevenue={data.kpis.total_revenue} />
       </>}
     </CardContent>

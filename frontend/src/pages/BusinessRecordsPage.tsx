@@ -146,7 +146,7 @@ export function BusinessRecordsPage() {
         onChange={handleRecordRangeChange}
         onExport={() => exportMutation.mutate({ storeId: selected.id, requestedRange: range })}
       />
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(22rem,24rem)] lg:items-start">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(30rem,32rem)] lg:items-start">
         <div className="min-w-0 overflow-x-hidden">
           <div className="hidden lg:block">
             <RecordTable
