@@ -1,6 +1,6 @@
 import { addMonths, format, parseISO, subDays } from "date-fns";
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
-import { forwardRef, type ComponentPropsWithoutRef, useEffect, useState } from "react";
+import { forwardRef, type ComponentPropsWithoutRef, useEffect, useRef, useState } from "react";
 
 import { MonthCalendar } from "@/components/MonthCalendar";
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -76,14 +76,26 @@ function PickerPanel({ value, today, recordedDates, month, setMonth, select }: L
 export function LedgerDatePicker({ value, today, recordedDates, onChange, onMonthChange, onOpenChange }: LedgerDatePickerProps) {
   const [open, setOpen] = useState(false);
   const [month, setMonth] = useState(value.slice(0, 7));
+  const reportedMonth = useRef<string | null>(null);
   const desktop = useDesktopPicker();
 
   useEffect(() => setMonth(value.slice(0, 7)), [value]);
   useEffect(() => {
-    if (open) onMonthChange?.(month);
+    if (!open || reportedMonth.current === month) return;
+    reportedMonth.current = month;
+    onMonthChange?.(month);
   }, [month, onMonthChange, open]);
   const setPickerOpen = (nextOpen: boolean) => {
-    if (nextOpen) setMonth(value.slice(0, 7));
+    if (nextOpen) {
+      const openingMonth = value.slice(0, 7);
+      setMonth(openingMonth);
+      if (reportedMonth.current !== openingMonth) {
+        reportedMonth.current = openingMonth;
+        onMonthChange?.(openingMonth);
+      }
+    } else {
+      reportedMonth.current = null;
+    }
     setOpen(nextOpen);
     onOpenChange?.(nextOpen);
   };

@@ -241,6 +241,31 @@ describe("LedgerPage", () => {
     expect(await screen.findByRole("button", { name: "2026年6月4日，已有记录" })).toBeEnabled();
   });
 
+  it("reopens the picker with only the selected date month marker request", async () => {
+    const markerMonths: string[] = [];
+    renderLedger([
+      http.get("/api/database/1/records", ({ request }) => {
+        const url = new URL(request.url);
+        if (url.searchParams.get("page_size") === "200") markerMonths.push(url.searchParams.get("start")!);
+        return HttpResponse.json({ items: [], categories: [], sum_daily_revenue: "0.00", total: 0, page: 1, page_size: 1 });
+      }),
+    ]);
+
+    const trigger = await screen.findByRole("button", { name: "选择台账日期：2026年7月15日" });
+    fireEvent.click(trigger);
+    await waitFor(() => expect(markerMonths).toContain("2026-07-01"));
+    fireEvent.click(screen.getByRole("button", { name: "上个月" }));
+    await waitFor(() => expect(markerMonths).toContain("2026-06-01"));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "选择台账日期" })).not.toBeInTheDocument());
+
+    markerMonths.length = 0;
+    fireEvent.click(trigger);
+
+    expect(screen.getByText("2026年7月")).toBeInTheDocument();
+    await waitFor(() => expect(markerMonths).toEqual(["2026-07-01"]));
+  });
+
   it("only requests visible-month markers while the picker is open and refetches after a closed-save invalidation", async () => {
     let saved = false;
     let monthRequests = 0;
