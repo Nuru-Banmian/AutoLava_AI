@@ -118,6 +118,15 @@ async function expectNativeDateInput(input: ReturnType<Page["getByLabel"]>, expe
   await expect.poll(() => input.evaluate((node) => node.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
 }
 
+async function expectCalendarTrigger(page: Page, name: string) {
+  const trigger = page.getByRole("button", { name });
+  await expect(trigger).toBeVisible();
+  await expect.poll(() => trigger.evaluate((node) => {
+    const { height, width } = node.getBoundingClientRect();
+    return { height, width };
+  })).toEqual({ height: 44, width: 44 });
+}
+
 test("desktop record browser keeps a sticky independently scrollable detail rail", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
   await page.setViewportSize({ width: 1280, height: 700 });
@@ -217,6 +226,10 @@ test("database desktop keeps the wide analysis rail, compact trend, and accessib
   await expectNativeDateInput(page.getByLabel("结束日期", { exact: true }), { ariaLabel: "结束日期", min: null, max: "2026-07-17" });
   await expectNativeDateInput(page.getByLabel("分析开始日期", { exact: true }), { ariaLabel: "分析开始日期", min: null, max: "2026-07-17" });
   await expectNativeDateInput(page.getByLabel("分析结束日期", { exact: true }), { ariaLabel: "分析结束日期", min: "2026-07-01", max: "2026-07-17" });
+  await expectCalendarTrigger(page, "打开开始日期日历");
+  await expectCalendarTrigger(page, "打开结束日期日历");
+  await expectCalendarTrigger(page, "打开分析开始日期日历");
+  await expectCalendarTrigger(page, "打开分析结束日期日历");
 });
 
 test("database at 390px exposes all custom date inputs without horizontal overflow", async ({ page }) => {
@@ -236,6 +249,10 @@ test("database at 390px exposes all custom date inputs without horizontal overfl
   await expectNativeDateInput(page.getByLabel("结束日期", { exact: true }), { ariaLabel: "结束日期", min: null, max: "2026-07-17" });
   await expectNativeDateInput(page.getByLabel("分析开始日期", { exact: true }), { ariaLabel: "分析开始日期", min: null, max: "2026-07-17" });
   await expectNativeDateInput(page.getByLabel("分析结束日期", { exact: true }), { ariaLabel: "分析结束日期", min: "2026-07-01", max: "2026-07-17" });
+  await expectCalendarTrigger(page, "打开开始日期日历");
+  await expectCalendarTrigger(page, "打开结束日期日历");
+  await expectCalendarTrigger(page, "打开分析开始日期日历");
+  await expectCalendarTrigger(page, "打开分析结束日期日历");
   await expect.poll(() => page.evaluate(() => ({
     document: document.documentElement.scrollWidth,
     viewport: window.innerWidth,
