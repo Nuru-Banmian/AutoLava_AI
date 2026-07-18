@@ -385,17 +385,16 @@ curl.exe --fail --silent --show-error https://nuru-banmian.cn/health
 
 Expected: image label and `version.json` equal `$releaseSha`; both health checks return `{ "status": "ok" }`.
 
-- [ ] **Step 7: Verify the real April markers and save guard**
+- [ ] **Step 7: Verify the real April markers without changing production data**
 
 Using the authenticated production UI:
 
 1. Select `sulmona` and open `/ledger?date=2026-04-30`.
 2. Open the calendar and assert 2026-04-26, 27, and 28 have `data-recorded="true"` plus a blue dot; 30 has the selected styling and accessible “已有记录” label.
 3. Select April 28 and confirm the saved `613.00` data autofills.
-4. Modify a non-critical field, save, wait for “保存成功”, then choose April 27 and confirm no unsaved dialog appears.
-5. Start another save, edit again before its response completes, and confirm leaving still opens the unsaved dialog.
+4. Do not edit or save any production ledger field. Rely on Task 1's automated tests for clean-save navigation and in-flight edit protection.
 
-Expected: monthly markers, autofill, clean-save navigation, and in-flight edit protection all match the approved spec.
+Expected: production monthly markers and autofill match the approved spec without writing ledger data; local automated tests prove clean-save navigation and in-flight edit protection.
 
 - [ ] **Step 8: Record final evidence**
 
