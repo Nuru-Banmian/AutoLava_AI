@@ -48,7 +48,7 @@ export function RecordFilters({ mode, range, today, exporting, exportError, onCh
             type="button"
             aria-pressed={mode === preset.mode}
             onClick={() => choosePreset(preset.mode)}
-            className="h-10 w-full rounded-md border border-border px-3 py-2 text-sm aria-pressed:bg-primary aria-pressed:text-primary-foreground md:w-auto"
+            className="min-h-11 w-full rounded-md border border-border px-3 py-2 text-sm aria-pressed:bg-primary aria-pressed:text-primary-foreground md:w-auto"
           >
             {preset.label}
           </button>
@@ -60,7 +60,7 @@ export function RecordFilters({ mode, range, today, exporting, exportError, onCh
             setCustomOpen(true);
             if (customRangeIsValid(customDraft)) onChange("custom", customDraft);
           }}
-          className="h-10 w-full rounded-md border border-border px-3 py-2 text-sm aria-pressed:bg-primary aria-pressed:text-primary-foreground md:w-auto"
+          className="min-h-11 w-full rounded-md border border-border px-3 py-2 text-sm aria-pressed:bg-primary aria-pressed:text-primary-foreground md:w-auto"
         >
           自定义
         </button>
@@ -75,7 +75,7 @@ export function RecordFilters({ mode, range, today, exporting, exportError, onCh
           </label>
         </div>
       )}
-      <button type="button" disabled={exporting} onClick={onExport} className="h-10 w-full rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:cursor-not-allowed disabled:opacity-60 md:w-auto">
+      <button type="button" disabled={exporting} onClick={onExport} className="min-h-11 w-full rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:cursor-not-allowed disabled:opacity-60 md:w-auto">
         导出当前范围
       </button>
       {exportError && <p role="alert" className="basis-full text-sm text-destructive">{exportError}</p>}

@@ -22,7 +22,7 @@ describe("RecordFilters", () => {
 
     expect(screen.getByLabelText("日期范围预设")).toHaveClass("grid", "grid-cols-3");
     for (const name of ["本月", "上月", "自定义", "导出当前范围"]) {
-      expect(screen.getByRole("button", { name })).toHaveClass("h-10");
+      expect(screen.getByRole("button", { name })).toHaveClass("min-h-11");
     }
     expect(screen.getByRole("button", { name: "导出当前范围" })).toHaveClass("w-full");
     expect(screen.getByRole("button", { name: "本月" })).toHaveAttribute("aria-pressed", "true");
