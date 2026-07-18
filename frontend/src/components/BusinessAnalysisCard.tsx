@@ -5,6 +5,7 @@ import { api } from "@/api/client";
 import type { ChartsResponse } from "@/api/types";
 import { ChartPanel } from "@/components/ChartPanel";
 import { IncomeComposition } from "@/components/IncomeComposition";
+import { NativeDateInput } from "@/components/NativeDateInput";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { analysisRange, analysisSearchParams, type AnalysisRangeMode, type DateRange } from "@/lib/business-record-ranges";
@@ -73,8 +74,8 @@ export function BusinessAnalysisCard({ storeId, today }: BusinessAnalysisCardPro
         {rangeModes.map(({ mode: nextMode, label }) => <Button key={nextMode} type="button" variant={mode === nextMode ? "default" : "outline"} size="sm" aria-pressed={mode === nextMode} onClick={() => setMode(nextMode)}>{label}</Button>)}
       </div>
       {mode === "custom" && <div className="flex flex-wrap gap-3">
-        <label className="text-sm">开始日期<input aria-label="分析开始日期" type="date" value={custom.start} max={custom.end || today} onChange={(event) => setCustom((value) => ({ ...value, start: event.target.value }))} className="ml-2 rounded border bg-background p-1" /></label>
-        <label className="text-sm">结束日期<input aria-label="分析结束日期" type="date" value={custom.end} min={custom.start} max={today} onChange={(event) => setCustom((value) => ({ ...value, end: event.target.value }))} className="ml-2 rounded border bg-background p-1" /></label>
+        <label className="grid gap-1 text-sm">开始日期<NativeDateInput aria-label="分析开始日期" value={custom.start} max={custom.end || today} onChange={(event) => setCustom((value) => ({ ...value, start: event.target.value }))} /></label>
+        <label className="grid gap-1 text-sm">结束日期<NativeDateInput aria-label="分析结束日期" value={custom.end} min={custom.start} max={today} onChange={(event) => setCustom((value) => ({ ...value, end: event.target.value }))} /></label>
       </div>}
     </CardHeader>
     <CardContent className="grid gap-5">
