@@ -1,0 +1,30 @@
+services:
+  autolava-api:
+    environment:
+      AUTOLAVA_DATABASE_URL: mysql+asyncmy://autolava:${AUTOLAVA_DB_PASSWORD}@autolava-db:3306/autolava
+    depends_on:
+      autolava-db:
+        condition: service_healthy
+
+  autolava-db:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: autolava
+      MYSQL_USER: autolava
+      MYSQL_PASSWORD: ${AUTOLAVA_DB_PASSWORD:?set a database password}
+      MYSQL_ROOT_PASSWORD: ${AUTOLAVA_DB_ROOT_PASSWORD:?set a database root password}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - autolava_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+volumes:
+  autolava_mysql_data:

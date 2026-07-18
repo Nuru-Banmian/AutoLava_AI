@@ -67,6 +67,28 @@ def test_compose_contains_only_api_and_web_with_host_database_configuration() ->
     assert "image" not in api or "mysql" not in api["image"].lower()
 
 
+def test_temporary_compose_keeps_database_private_and_exposes_only_web() -> None:
+    base = yaml.safe_load(read("compose.yaml"))
+    compose = yaml.safe_load(read("compose.temporary.yaml"))
+
+    assert set(compose["services"]) == {"autolava-api", "autolava-db"}
+    assert base["services"]["autolava-web"]["ports"] == [
+        "${AUTOLAVA_WEB_HOST_PORT:-127.0.0.1:80}:80"
+    ]
+    assert "ports" not in compose["services"]["autolava-db"]
+    assert compose["services"]["autolava-api"]["depends_on"]["autolava-db"]["condition"] == "service_healthy"
+    assert compose["services"]["autolava-db"]["volumes"] == ["autolava_mysql_data:/var/lib/mysql"]
+
+
+def test_production_backup_exports_the_full_database_and_keeps_seven_days() -> None:
+    script = read("scripts/backup-production-db.sh")
+
+    assert "mysqldump" in script
+    assert '"$MYSQL_DATABASE"' in script
+    assert "gzip -c" in script
+    assert "-mtime +6 -delete" in script
+
+
 def test_images_and_nginx_define_the_release_boundaries() -> None:
     backend = read("backend/Dockerfile")
     frontend = read("frontend/Dockerfile")
@@ -159,7 +181,9 @@ def test_nginx_enforces_a_bounded_login_rate_limit() -> None:
     assert "limit_req_zone $binary_remote_addr zone=login" in nginx
     assert "location = /api/auth/login" in nginx
     assert "limit_req zone=login" in nginx
-    assert compose["services"]["autolava-web"]["ports"] == ["127.0.0.1:80:80"]
+    assert compose["services"]["autolava-web"]["ports"] == [
+        "${AUTOLAVA_WEB_HOST_PORT:-127.0.0.1:80}:80"
+    ]
     assert "real_ip_header X-Forwarded-For;" in nginx
     assert "real_ip_recursive on;" in nginx
     assert "set_real_ip_from 127.0.0.1;" in nginx
