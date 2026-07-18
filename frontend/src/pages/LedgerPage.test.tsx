@@ -156,7 +156,11 @@ describe("LedgerPage", () => {
 
   it("opens the shared calendar and selects a recorded historical date", async () => {
     renderLedger([
-      http.get("/api/ledger/1/recent", () => HttpResponse.json([{ id: 7, date: "2026-07-14" }])),
+      http.get("/api/database/1/records", ({ request }) => {
+        const url = new URL(request.url);
+        if (url.searchParams.get("page_size") === "200") return HttpResponse.json({ items: [{ id: 7, date: "2026-07-14" }], categories: [], sum_daily_revenue: "0.00", total: 1, page: 1, page_size: 200 });
+        return HttpResponse.json({ items: [], categories: [], sum_daily_revenue: "0.00", total: 0, page: 1, page_size: 1 });
+      }),
     ]);
 
     fireEvent.click(await screen.findByRole("button", { name: "选择台账日期：2026年7月15日" }));
@@ -166,6 +170,25 @@ describe("LedgerPage", () => {
     const trigger = await screen.findByRole("button", { name: "选择台账日期：2026年7月14日" });
     fireEvent.click(trigger);
     expect(screen.getByText("编辑已有记录")).toBeInTheDocument();
+  });
+
+  it("loads markers for the calendar month currently being viewed", async () => {
+    renderLedger([
+      http.get("/api/database/1/records", ({ request }) => {
+        const url = new URL(request.url);
+        if (url.searchParams.get("start") === "2026-06-01") {
+          expect(url.searchParams.get("end")).toBe("2026-06-30");
+          expect(url.searchParams.get("page_size")).toBe("200");
+          return HttpResponse.json({ items: [{ id: 7, date: "2026-06-04" }], categories: [], sum_daily_revenue: "0.00", total: 1, page: 1, page_size: 200 });
+        }
+        return HttpResponse.json({ items: [], categories: [], sum_daily_revenue: "0.00", total: 0, page: 1, page_size: 1 });
+      }),
+    ]);
+
+    fireEvent.click(await screen.findByRole("button", { name: "选择台账日期：2026年7月15日" }));
+    fireEvent.click(screen.getByRole("button", { name: "上个月" }));
+
+    expect(await screen.findByRole("button", { name: "2026年6月4日，已有记录" })).toBeEnabled();
   });
 
   it("loads the current income configuration for direct-total mode", async () => {
@@ -192,8 +215,8 @@ describe("LedgerPage", () => {
           ? HttpResponse.json({ detail: "Internal Server Error" }, { status: 500 })
           : HttpResponse.json({ store_id: 1, version_id: null, version: 0, enabled: false, formula: "", created_at: null, items: [] });
       }),
-      http.get("/api/database/1/records", () => {
-        catalogCalls += 1;
+      http.get("/api/database/1/records", ({ request }) => {
+        if (new URL(request.url).searchParams.get("page_size") === "1") catalogCalls += 1;
         return HttpResponse.json({ items: [], categories: [], sum_daily_revenue: "0", total: 0, page: 1, page_size: 1 });
       }),
     ]);
