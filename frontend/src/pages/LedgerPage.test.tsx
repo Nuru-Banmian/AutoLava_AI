@@ -8,7 +8,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { LedgerPage } from "@/pages/LedgerPage";
 import { StoreProvider, useStore } from "@/stores/StoreProvider";
 import { LedgerForm } from "@/components/LedgerForm";
-import { incomeConfigKey, storeLocalToday } from "@/lib/user-api";
+import { incomeConfigKey, ledgerMonthKey, storeLocalToday } from "@/lib/user-api";
 
 const server = setupServer();
 function StoreControls() { const { select } = useStore(); return <><button onClick={() => select(1)}>choose1</button><button onClick={() => select(2)}>choose2</button></>; }
@@ -42,7 +42,7 @@ function renderLedger(extra: Parameters<typeof server.use> = [], initialEntry = 
     http.get("/api/ledger/1/:date", () => HttpResponse.json({ detail: "not found" }, { status: 404 })),
   );
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return render(<MemoryRouter initialEntries={[initialEntry]}><QueryClientProvider client={client}><StoreProvider><LedgerPage /></StoreProvider></QueryClientProvider></MemoryRouter>);
+  return { ...render(<MemoryRouter initialEntries={[initialEntry]}><QueryClientProvider client={client}><StoreProvider><LedgerPage /></StoreProvider></QueryClientProvider></MemoryRouter>), client };
 }
 
 function recordSnapshot(amount: string, activity: string | null = null, weather: string | null = null) {
@@ -241,14 +241,14 @@ describe("LedgerPage", () => {
     expect(await screen.findByRole("button", { name: "2026年6月4日，已有记录" })).toBeEnabled();
   });
 
-  it("refreshes visible-month markers after saving a ledger record", async () => {
+  it("only requests visible-month markers while the picker is open and refetches after a closed-save invalidation", async () => {
     let saved = false;
     let monthRequests = 0;
-    renderLedger([
+    const { client } = renderLedger([
       http.get("/api/database/1/records", ({ request }) => {
         if (new URL(request.url).searchParams.get("page_size") === "200") {
           monthRequests += 1;
-          return HttpResponse.json({ items: saved ? [{ id: 7, date: "2026-07-14" }] : [], categories: [], sum_daily_revenue: "0.00", total: saved ? 1 : 0, page: 1, page_size: 200 });
+          return HttpResponse.json({ items: saved ? [{ id: 7, date: "2026-07-15" }] : [], categories: [], sum_daily_revenue: "0.00", total: saved ? 1 : 0, page: 1, page_size: 200 });
         }
         return HttpResponse.json({ items: [], categories: [], sum_daily_revenue: "0.00", total: 0, page: 1, page_size: 1 });
       }),
@@ -258,12 +258,21 @@ describe("LedgerPage", () => {
       }),
     ]);
 
+    const trigger = await screen.findByRole("button", { name: "选择台账日期：2026年7月15日" });
+    expect(monthRequests).toBe(0);
+    fireEvent.click(trigger);
+    await waitFor(() => expect(monthRequests).toBe(1));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "选择台账日期" })).not.toBeInTheDocument());
+
     fireEvent.click(await screen.findByRole("button", { name: "保存今日记录" }));
     expect(await screen.findByRole("status")).toHaveTextContent("保存成功");
-    await waitFor(() => expect(monthRequests).toBe(2));
+    expect(client.getQueryState(ledgerMonthKey(1, "2026-07"))?.isInvalidated).toBe(true);
+    expect(monthRequests).toBe(1);
 
-    fireEvent.click(screen.getByRole("button", { name: "选择台账日期：2026年7月15日" }));
-    expect(await screen.findByRole("button", { name: "2026年7月14日，已有记录" })).toBeEnabled();
+    fireEvent.click(trigger);
+    await waitFor(() => expect(monthRequests).toBe(2));
+    expect(await screen.findByRole("button", { name: "2026年7月15日，已有记录" })).toBeEnabled();
   });
 
   it("loads the current income configuration for direct-total mode", async () => {
