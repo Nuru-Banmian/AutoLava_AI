@@ -101,6 +101,24 @@ describe("MonthCalendar", () => {
 });
 
 describe("LedgerDatePicker", () => {
+  it("reports the visible calendar month while open", () => {
+    const onMonthChange = vi.fn();
+    render(
+      <LedgerDatePicker
+        value="2026-07-14"
+        today="2026-07-15"
+        recordedDates={new Set()}
+        onChange={() => undefined}
+        onMonthChange={onMonthChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "选择台账日期：2026年7月14日" }));
+    expect(onMonthChange).toHaveBeenLastCalledWith("2026-07");
+    fireEvent.click(screen.getByRole("button", { name: "上个月" }));
+    expect(onMonthChange).toHaveBeenLastCalledWith("2026-06");
+  });
+
   it("opens from the visible date, offers shortcuts, and navigates month boundaries", () => {
     const onChange = vi.fn();
     render(
@@ -123,6 +141,34 @@ describe("LedgerDatePicker", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "昨天" }));
     expect(onChange).toHaveBeenCalledWith("2026-07-14");
+  });
+
+  it("resets to the selected date month each time it reopens", () => {
+    const onMonthChange = vi.fn();
+    const onOpenChange = vi.fn();
+    render(
+      <LedgerDatePicker
+        value="2026-07-14"
+        today="2026-07-15"
+        recordedDates={new Set()}
+        onChange={() => undefined}
+        onMonthChange={onMonthChange}
+        onOpenChange={onOpenChange}
+      />,
+    );
+
+    const trigger = screen.getByRole("button", { name: "选择台账日期：2026年7月14日" });
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("button", { name: "上个月" }));
+    expect(screen.getByText("2026年6月")).toBeInTheDocument();
+
+    fireEvent.keyDown(screen.getByRole("dialog", { name: "选择台账日期" }), { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "选择台账日期" })).not.toBeInTheDocument();
+
+    fireEvent.click(trigger);
+    expect(screen.getByText("2026年7月")).toBeInTheDocument();
+    expect(onMonthChange).toHaveBeenLastCalledWith("2026-07");
+    expect(onOpenChange).toHaveBeenLastCalledWith(true);
   });
 
   it("uses a bottom sheet on narrow screens", () => {

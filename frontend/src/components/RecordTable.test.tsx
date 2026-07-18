@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { RecordSnapshot } from "@/api/types";
@@ -38,6 +38,10 @@ describe("RecordTable", () => {
     const row = screen.getByRole("row", { name: /2026年7月14日 休息/ });
     expect(row).toHaveAttribute("aria-selected", "true");
     expect(row).toHaveTextContent("休息");
+    const statusText = within(row).getByText("休息", { exact: true });
+    const statusCell = statusText.closest("td");
+    expect(statusCell).not.toBeNull();
+    expect(statusCell?.querySelector('[aria-hidden="true"]')).toBeNull();
     fireEvent.keyDown(row, { key: "Enter" });
     expect(onSelect).toHaveBeenCalledWith(record);
   });

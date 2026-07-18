@@ -28,7 +28,7 @@ export function RecordDetailPanel({ record, canEdit, canManage, onManage }: Reco
         <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
           <div>
             <p className="text-muted-foreground">营业状态</p>
-            <p className="flex items-center gap-2 font-medium">{isUnrecorded ? "未录入" : <><span aria-hidden="true" className="inline-block size-2 rounded-full bg-current" />{record.is_open}</>}</p>
+            <p className="font-medium">{isUnrecorded ? "未录入" : record.is_open}</p>
           </div>
           <div><p className="text-muted-foreground">营业额</p><p className="font-medium">{isUnrecorded ? "—" : formatMoney(record.daily_revenue)}</p></div>
           <div><p className="text-muted-foreground">洗车数量</p><p className="font-medium">{isUnrecorded ? "—" : `洗车数量 ${record.wash_count ?? "—"}`}</p></div>

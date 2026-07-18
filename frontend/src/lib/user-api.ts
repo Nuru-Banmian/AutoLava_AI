@@ -5,6 +5,7 @@ import type { AccessibleStore, CategoryDescriptor, DatabaseResponse } from "@/ap
 export const categoryCatalogKey = (storeId: number, start: string, end = start) => ["categoryCatalog", storeId, start, end] as const;
 export const incomeConfigKey = (storeId: number) => ["income-config", storeId, "current"] as const;
 export const ledgerRecordKey = (storeId: number, date: string) => ["ledger", "record", storeId, date] as const;
+export const ledgerMonthKey = (storeId: number, month: string) => ["ledgerMonth", storeId, month] as const;
 export const recentKey = (storeId: number) => ["ledger", "recent", storeId, 7] as const;
 export const dashboardKey = (storeId: number) => ["dashboard", storeId] as const;
 export const chartsKey = (storeId: number, query: string) => ["charts", storeId, query] as const;
@@ -41,6 +42,7 @@ export function storeLocalToday(store: AccessibleStore, now = new Date()): strin
 export async function invalidateUserData(client: QueryClient, storeId: number) {
   await client.invalidateQueries({ predicate: ({ queryKey }) => {
     if (queryKey[0] === "ledger" || queryKey[0] === "database") return queryKey[2] === storeId;
+    if (queryKey[0] === "ledgerMonth") return queryKey[1] === storeId;
     if (queryKey[0] === "charts" || queryKey[0] === "dashboard" || queryKey[0] === "categoryCatalog") return queryKey[1] === storeId;
     return false;
   } });
