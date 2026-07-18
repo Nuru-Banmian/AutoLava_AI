@@ -13,7 +13,12 @@ const applicationStyles = readFileSync(resolve(process.cwd(), "src/index.css"), 
 
 const server = setupServer(
   http.get("/api/auth/me", () => HttpResponse.json({ id: 1, username: "admin", role: "admin", is_owner: false })),
-  http.get("/api/stores/accessible", () => HttpResponse.json([])),
+  http.get("/api/stores/accessible", () => HttpResponse.json([
+    { id: 1, name: "总店", timezone: "Europe/Berlin" },
+    { id: 2, name: "二店", timezone: "Europe/Berlin" },
+  ])),
+  http.get("/api/admin/stores", () => HttpResponse.json([])),
+  http.get("/api/dashboard/:storeId", () => HttpResponse.json([])),
 );
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
@@ -25,7 +30,8 @@ function renderApplication(path: string, options: { role?: "admin" | "user" } = 
     server.use(http.get("/api/auth/me", () => HttpResponse.json({ id: 1, username: options.role, role: options.role, is_owner: false })));
   }
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<Application queryClient={queryClient} router={createAppRouter([path])} />);
+  const router = createAppRouter([path]);
+  return { ...render(<Application queryClient={queryClient} router={router} />), router };
 }
 
 function themeTokens() {
@@ -65,6 +71,16 @@ describe("App", () => {
     expect(await screen.findByText("AutoLava AI")).toBeInTheDocument();
   });
 
+  it("keeps the retired charts route unmatched without mounting either legacy page", () => {
+    const router = createAppRouter(["/charts"]);
+
+    expect(router.state.errors).toBeDefined();
+    expect(Object.values(router.state.errors ?? {})).toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: 404, statusText: "Not Found" }),
+    ]));
+    expect(router.state.matches.map((match) => match.route.path)).not.toContain("charts");
+  });
+
   it("shows four mobile entries and hides management from regular users", async () => {
     renderApplication("/more", { role: "user" });
     const nav = await screen.findByRole("navigation", { name: "移动导航" });
@@ -73,26 +89,51 @@ describe("App", () => {
     expect(nav).toHaveClass("grid-cols-4");
     const more = screen.getByRole("navigation", { name: "更多功能" });
     expect(within(more).queryByRole("link", { name: "经营分析" })).not.toBeInTheDocument();
-    expect(within(more).getByRole("combobox", { name: "门店" })).toBeInTheDocument();
+    expect(within(more).queryByRole("combobox", { name: "门店" })).not.toBeInTheDocument();
     expect(within(more).getByRole("link", { name: "修改密码" })).toBeInTheDocument();
     expect(screen.queryByText("管理中心")).not.toBeInTheDocument();
     expect(screen.queryByText("系统状态")).not.toBeInTheDocument();
   });
 
-  it("lets a maximum-length store name shrink inside the More card", async () => {
+  it("lets a maximum-length store name shrink inside the shell picker", async () => {
     const storeName = "超".repeat(120);
     server.use(http.get("/api/stores/accessible", () => HttpResponse.json([
       { id: 1, name: storeName, timezone: "Europe/Berlin" },
     ])));
     renderApplication("/more", { role: "user" });
 
-    const more = await screen.findByRole("navigation", { name: "更多功能" });
-    const select = within(more).getByRole("combobox", { name: "门店" });
+    const desktopPicker = await screen.findByTestId("desktop-store-picker");
+    const select = within(desktopPicker).getByRole("combobox", { name: "门店" });
     expect(await within(select).findByRole("option", { name: storeName })).toBeInTheDocument();
     expect(select).toHaveClass("min-w-0", "max-w-full", "flex-1");
     expect(select.closest("label")).toHaveClass("min-w-0", "max-w-full");
     expect(select.closest("label")?.parentElement).toHaveClass("min-w-0", "max-w-full");
     expect(select.closest("label")?.parentElement?.parentElement).toHaveClass("min-w-0", "max-w-full");
+  });
+
+  it("moves the global store selector out of More and into the shell", async () => {
+    renderApplication("/more", { role: "user" });
+    const more = await screen.findByRole("navigation", { name: "更多功能" });
+    expect(within(more).queryByRole("combobox", { name: "门店" })).not.toBeInTheDocument();
+    expect(await screen.findAllByRole("combobox", { name: "门店" })).toHaveLength(2);
+
+    const brand = screen.getByText("AutoLava AI");
+    const desktopPicker = screen.getByTestId("desktop-store-picker");
+    const mobilePicker = screen.getByTestId("mobile-store-picker");
+    expect(brand.compareDocumentPosition(desktopPicker) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(mobilePicker.parentElement).toContain(brand);
+  });
+
+  it("hides global store context in admin and restores it after leaving", async () => {
+    const view = renderApplication("/admin", { role: "admin" });
+    await screen.findByRole("heading", { name: "系统管理" });
+    expect(screen.queryByTestId("desktop-store-picker")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("mobile-store-picker")).not.toBeInTheDocument();
+    expect(screen.queryByText("门店加载失败，请重试")).not.toBeInTheDocument();
+    await view.router.navigate("/");
+    const desktopPicker = await screen.findByTestId("desktop-store-picker");
+    expect(await within(desktopPicker).findByRole("option", { name: "总店" })).toBeInTheDocument();
+    expect(screen.getAllByRole("combobox", { name: "门店" })).toHaveLength(2);
   });
 
   it("shows management and system status in More for administrators", async () => {

@@ -76,8 +76,8 @@ describe("BusinessAnalysisCard", () => {
     expect(screen.getByText("月度排除")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "自定义" }));
-    expect(screen.getByLabelText("分析开始日期")).toHaveClass("min-h-11", "pr-11");
-    expect(screen.getByLabelText("分析结束日期")).toHaveClass("min-h-11", "pr-11");
+    expect(screen.getByLabelText("分析开始日期")).toHaveClass("h-10", "min-w-0", "pr-10");
+    expect(screen.getByLabelText("分析结束日期")).toHaveClass("h-10", "min-w-0", "pr-10");
     fireEvent.change(screen.getByLabelText("分析开始日期"), { target: { value: "2026-07-02" } });
     fireEvent.change(screen.getByLabelText("分析结束日期"), { target: { value: "2026-07-03" } });
     await screen.findByText("自定义收入");
