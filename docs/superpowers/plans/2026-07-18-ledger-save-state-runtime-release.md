@@ -17,6 +17,7 @@
 - Do not change ledger data, date disabling, store authorization, or the overall date-picker layout.
 - Preserve server `.env`, `backups/`, and the `autolava_mysql_data` volume.
 - Production verification uses `https://nuru-banmian.cn`, not public port 8080.
+- The production server may run at most one image build at a time and must not run Node/Vite inside the low-memory release build.
 
 ---
 
@@ -405,3 +406,132 @@ git rev-parse origin/test-used
 ```
 
 Expected: branch and remote revision match; unrelated pre-existing worktree changes remain untouched. Report test totals, PR URL, deployed SHA, backup filename, image label, health result, and April UI verification.
+
+---
+
+### Task 5: Add a low-memory prebuilt Web image path
+
+**Files:**
+- Create: `frontend/Dockerfile.prebuilt`
+- Modify: `backend/tests/test_deployment_config.py`
+
+**Interfaces:**
+- Consumes: locally verified `frontend/dist/`, `frontend/nginx.conf`, and build argument `AUTOLAVA_GIT_SHA`.
+- Produces: a runtime-only Nginx image with OCI label `org.opencontainers.image.revision`; it performs no Node.js dependency install or Vite build on the server.
+
+- [ ] **Step 1: Write the failing deployment-contract test**
+
+Add:
+
+```python
+def test_prebuilt_web_image_is_runtime_only_and_versioned() -> None:
+    dockerfile = (ROOT / "frontend" / "Dockerfile.prebuilt").read_text(encoding="utf-8")
+
+    assert dockerfile.startswith("FROM docker.m.daocloud.io/library/nginx:1.27-alpine")
+    assert "ARG AUTOLAVA_GIT_SHA=unknown" in dockerfile
+    assert "LABEL org.opencontainers.image.revision=$AUTOLAVA_GIT_SHA" in dockerfile
+    assert "COPY nginx.conf /etc/nginx/conf.d/default.conf" in dockerfile
+    assert "COPY dist /usr/share/nginx/html" in dockerfile
+    assert "node:" not in dockerfile
+    assert "npm" not in dockerfile
+    assert "vite" not in dockerfile.lower()
+```
+
+- [ ] **Step 2: Run the focused test and verify RED**
+
+Run from `backend/`:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_deployment_config.py -q
+```
+
+Expected: FAIL with `FileNotFoundError` for `frontend/Dockerfile.prebuilt`.
+
+- [ ] **Step 3: Add the runtime-only Dockerfile**
+
+Create `frontend/Dockerfile.prebuilt`:
+
+```dockerfile
+FROM docker.m.daocloud.io/library/nginx:1.27-alpine
+ARG AUTOLAVA_GIT_SHA=unknown
+LABEL org.opencontainers.image.revision=$AUTOLAVA_GIT_SHA
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY dist /usr/share/nginx/html
+EXPOSE 80
+```
+
+- [ ] **Step 4: Run the focused deployment tests and verify GREEN**
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_deployment_config.py -q
+```
+
+Expected: all deployment-contract tests pass. Do not claim a local Docker build when Docker CLI is unavailable.
+
+- [ ] **Step 5: Commit the low-memory packaging path**
+
+```powershell
+git add -- frontend/Dockerfile.prebuilt backend/tests/test_deployment_config.py
+git commit -m "build: add low-memory web release image"
+```
+
+---
+
+### Task 6: Retry deployment with the low-memory Web image
+
+**Files:**
+- Verify: `frontend/dist/`
+- Upload: committed release archive and locally built `frontend/dist/`
+- Deploy to: `root@116.62.112.245:/opt/autolava`
+
+**Interfaces:**
+- Consumes: Task 5 runtime-only Dockerfile, already-passed full release gate, target Git SHA, existing backup and production volumes.
+- Produces: a running Web container whose OCI label and `/version.json` match the target SHA; API and database containers remain unchanged.
+
+- [ ] **Step 1: Recheck SSH once and inspect state without starting a build**
+
+```powershell
+ssh -o BatchMode=yes -o ConnectTimeout=15 root@116.62.112.245 'set -eu; uptime; free -m; cd /opt/autolava; docker compose -f compose.yaml -f compose.temporary.yaml ps'
+```
+
+Expected: SSH responds and existing services are visible. If unavailable, stop without repeated probes.
+
+- [ ] **Step 2: Rebuild local static assets for the final target commit**
+
+From `frontend/`:
+
+```powershell
+npm run build
+$releaseSha = git -C .. rev-parse HEAD
+Set-Content -LiteralPath dist/version.json -Value ('{"git_sha":"' + $releaseSha + '"}') -Encoding utf8NoBOM
+```
+
+Expected: Vite succeeds and `dist/version.json` contains the full target SHA.
+
+- [ ] **Step 3: Upload the final committed source and prebuilt dist**
+
+Create two archives locally: tracked release files from `git archive HEAD`, and `frontend/dist` plus `frontend/nginx.conf`. Upload both to `/tmp`, then extract source into `/opt/autolava` and static assets into `/opt/autolava/frontend` while preserving `.env`, `backups/`, and volumes.
+
+Expected: `/opt/autolava/frontend/dist/version.json` matches the target SHA; no production state file is removed.
+
+- [ ] **Step 4: Build only the runtime-only Web image**
+
+```powershell
+ssh root@116.62.112.245 "set -eu; cd /opt/autolava; docker build -f frontend/Dockerfile.prebuilt --build-arg AUTOLAVA_GIT_SHA=$releaseSha -t autolava-autolava-web:latest frontend"
+```
+
+Expected: one lightweight Nginx-only build completes; no `npm`, Vite, API build, or parallel build runs.
+
+- [ ] **Step 5: Replace only the Web container**
+
+```powershell
+ssh root@116.62.112.245 'set -eu; cd /opt/autolava; docker compose -f compose.yaml -f compose.temporary.yaml up -d --no-deps --force-recreate autolava-web; docker compose -f compose.yaml -f compose.temporary.yaml ps'
+```
+
+Expected: Web is recreated from the new image; API and database container IDs remain unchanged.
+
+- [ ] **Step 6: Verify runtime version, health, and read-only UI**
+
+Verify the Web container OCI label and `/usr/share/nginx/html/version.json` both equal the target SHA. Verify `https://nuru-banmian.cn/health`. In the authenticated production UI, select `sulmona`, open April 2026, confirm April 26/27/28 have non-selected blue dots, April 30 is selected and identified as recorded, and April 28 autofills `613.00`. Do not edit or save production data.
+
+Expected: version, health, markers, and autofill all pass without any production ledger mutation.
