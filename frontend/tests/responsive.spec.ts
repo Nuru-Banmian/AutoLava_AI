@@ -198,6 +198,9 @@ test("320px record list, bottom sheet, and analysis remain reachable without cli
   expect(startBox!.y).toBe(endBox!.y);
   expect(startBox!.height).toBe(40);
   expect(endBox!.height).toBe(40);
+  expect(startBox!.width).toBe(endBox!.width);
+  expect(startBox!.x).toBeGreaterThanOrEqual(datesBox!.x);
+  expect(endBox!.x + endBox!.width).toBeLessThanOrEqual(datesBox!.x + datesBox!.width);
   expect(exportBox!.y).toBeGreaterThanOrEqual(datesBox!.y + datesBox!.height + 8);
   expect(exportBox!.width).toBe(filterBox!.width);
 
@@ -311,6 +314,9 @@ test("database at 390px exposes all custom date inputs without horizontal overfl
   expect(startBox!.y).toBe(endBox!.y);
   expect(startBox!.height).toBe(40);
   expect(endBox!.height).toBe(40);
+  expect(startBox!.width).toBe(endBox!.width);
+  expect(startBox!.x).toBeGreaterThanOrEqual(datesBox!.x);
+  expect(endBox!.x + endBox!.width).toBeLessThanOrEqual(datesBox!.x + datesBox!.width);
   expect(exportBox!.y).toBeGreaterThanOrEqual(datesBox!.y + datesBox!.height + 8);
   expect(exportBox!.width).toBe(filterBox!.width);
   await analysisRail.getByRole("button", { name: "自定义" }).scrollIntoViewIfNeeded();

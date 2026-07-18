@@ -23,10 +23,8 @@ export function RecordFilters({ mode, range, today, exporting, exportError, onCh
   const [customDraft, setCustomDraft] = useState<DateRange>(range);
   const [customOpen, setCustomOpen] = useState(mode === "custom");
 
-  useEffect(() => {
-    setCustomDraft(range);
-    setCustomOpen(mode === "custom");
-  }, [mode, range]);
+  useEffect(() => setCustomDraft(range), [range.start, range.end]);
+  useEffect(() => setCustomOpen(mode === "custom"), [mode]);
 
   const choosePreset = (next: Exclude<RecordRangeMode, "custom">) => {
     setCustomOpen(false);
