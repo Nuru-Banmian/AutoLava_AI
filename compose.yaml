@@ -15,7 +15,7 @@ services:
     build: ./frontend
     restart: unless-stopped
     ports:
-      - "127.0.0.1:80:80"
+      - "${AUTOLAVA_WEB_HOST_PORT:-127.0.0.1:80}:80"
     depends_on:
       - autolava-api
 

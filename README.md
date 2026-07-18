@@ -84,6 +84,28 @@ cookie transport security and must not be used for an internet-accessible or pro
 deployment. Compose intentionally remains a two-container package and does not add a TLS or
 database container.
 
+### 临时服务器 MySQL 与备份
+
+当域名和 HTTPS 尚未就绪时，可使用 `compose.temporary.yaml` 在同一 Docker 网络中启动专用
+MySQL 容器。将服务器 `.env` 中的 `AUTOLAVA_WEB_HOST_PORT` 设为 `0.0.0.0:8080`，并临时
+将 `AUTOLAVA_COOKIE_SECURE` 设为 `false`；数据库和 API 不发布宿主机端口。此模式仅适用于
+过渡测试，HTTP 不会加密登录信息和业务数据。
+
+部署后的完整数据库备份命令为：
+
+```sh
+/opt/autolava/scripts/backup-production-db.sh
+```
+
+备份文件位于 `/opt/autolava/backups/`，格式为压缩 SQL，每天执行一次且保留最近 7 天。恢复前先
+停止应用写入，再运行：
+
+```sh
+gunzip -c /opt/autolava/backups/<backup>.sql.gz | \
+  docker compose -f compose.yaml -f compose.temporary.yaml exec -T autolava-db \
+  sh -c 'mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"'
+```
+
 ## First administrator
 
 After the containers are healthy, create the first administrator from the values in `.env`:

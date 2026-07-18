@@ -13,10 +13,16 @@ const record: RecordSnapshot = {
 };
 
 describe("MobileRecordList", () => {
-  it("uses an accessible three-column trigger without extra record fields", () => {
-    render(<MobileRecordList records={[record]} selectedDate={null} onSelect={vi.fn()} />);
+  it("uses a compact accessible three-column trigger without extra record fields", () => {
+    const onSelect = vi.fn();
+    render(<MobileRecordList records={[record]} selectedDate={record.date} onSelect={onSelect} />);
 
-    expect(screen.getByRole("button", { name: /2026年7月14日，休息，€100.00/ })).toBeInTheDocument();
+    const row = screen.getByRole("button", { name: /2026年7月14日，休息，€100.00/ });
+    expect(row).toHaveClass("py-2");
+    expect(row).not.toHaveClass("py-3");
+    expect(row).toHaveAttribute("aria-pressed", "true");
+    row.click();
+    expect(onSelect).toHaveBeenCalledWith(record, row);
     expect(screen.queryByText("晴")).not.toBeInTheDocument();
     expect(screen.queryByText("活动")).not.toBeInTheDocument();
     expect(screen.queryByText("4")).not.toBeInTheDocument();

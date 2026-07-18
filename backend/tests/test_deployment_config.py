@@ -67,6 +67,29 @@ def test_compose_contains_only_api_and_web_with_host_database_configuration() ->
     assert "image" not in api or "mysql" not in api["image"].lower()
 
 
+def test_temporary_compose_keeps_database_private_and_exposes_only_web() -> None:
+    base = yaml.safe_load(read("compose.yaml"))
+    compose = yaml.safe_load(read("compose.temporary.yaml"))
+
+    assert set(compose["services"]) == {"autolava-api", "autolava-db"}
+    assert base["services"]["autolava-web"]["ports"] == [
+        "${AUTOLAVA_WEB_HOST_PORT:-127.0.0.1:80}:80"
+    ]
+    assert "ports" not in compose["services"]["autolava-db"]
+    assert compose["services"]["autolava-api"]["depends_on"]["autolava-db"]["condition"] == "service_healthy"
+    assert compose["services"]["autolava-db"]["volumes"] == ["autolava_mysql_data:/var/lib/mysql"]
+
+
+def test_production_backup_exports_the_full_database_and_keeps_seven_days() -> None:
+    script = read("scripts/backup-production-db.sh")
+
+    assert "mysqldump" in script
+    assert '"$MYSQL_DATABASE"' in script
+    assert "--no-tablespaces" in script
+    assert "gzip -c" in script
+    assert "-mtime +6 -delete" in script
+
+
 def test_images_and_nginx_define_the_release_boundaries() -> None:
     backend = read("backend/Dockerfile")
     frontend = read("frontend/Dockerfile")
@@ -79,6 +102,39 @@ def test_images_and_nginx_define_the_release_boundaries() -> None:
     assert "proxy_pass http://autolava-api:8000/api/;" in nginx
     assert "proxy_pass http://autolava-api:8000/health;" in nginx
     assert "try_files $uri /index.html;" in nginx
+
+
+def test_container_builds_use_china_package_mirrors() -> None:
+    backend = read("backend/Dockerfile")
+    frontend = read("frontend/Dockerfile")
+    temporary_compose = read("compose.temporary.yaml")
+
+    assert "mirrors.aliyun.com/pypi/simple" in backend
+    assert "registry.npmmirror.com" in frontend
+    assert "docker.m.daocloud.io/library/python:3.12-slim" in backend
+    assert "docker.m.daocloud.io/library/node:22-alpine" in frontend
+    assert "docker.m.daocloud.io/library/nginx:1.27-alpine" in frontend
+    assert "docker.m.daocloud.io/library/mysql:8.4" in temporary_compose
+
+
+def test_domain_http_template_keeps_acme_challenge_reachable() -> None:
+    config = read("deploy/nginx/d-washpilot.http.conf")
+
+    assert "server_name d-washpilot.tech www.d-washpilot.tech;" in config
+    assert "location ^~ /.well-known/acme-challenge/" in config
+    assert "root /var/www/certbot;" in config
+    assert "return 301 https://$host$request_uri;" in config
+
+
+def test_domain_https_template_uses_tls_and_replaces_forwarded_client_ip() -> None:
+    config = read("deploy/nginx/d-washpilot.https.conf")
+
+    assert "listen 443 ssl;" in config
+    assert "ssl_certificate /root/autolava-cert/d-washpilot.tech.pem;" in config
+    assert "ssl_certificate_key /root/autolava-cert/d-washpilot.tech.key;" in config
+    assert "proxy_set_header X-Forwarded-For $remote_addr;" in config
+    assert "proxy_set_header X-Forwarded-Proto https;" in config
+    assert "proxy_pass http://127.0.0.1:8080;" in config
 
 
 def test_ci_runs_backend_frontend_browser_and_container_release_gates() -> None:
@@ -159,7 +215,9 @@ def test_nginx_enforces_a_bounded_login_rate_limit() -> None:
     assert "limit_req_zone $binary_remote_addr zone=login" in nginx
     assert "location = /api/auth/login" in nginx
     assert "limit_req zone=login" in nginx
-    assert compose["services"]["autolava-web"]["ports"] == ["127.0.0.1:80:80"]
+    assert compose["services"]["autolava-web"]["ports"] == [
+        "${AUTOLAVA_WEB_HOST_PORT:-127.0.0.1:80}:80"
+    ]
     assert "real_ip_header X-Forwarded-For;" in nginx
     assert "real_ip_recursive on;" in nginx
     assert "set_real_ip_from 127.0.0.1;" in nginx

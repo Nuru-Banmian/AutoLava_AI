@@ -216,11 +216,13 @@ describe("authenticated application shell", () => {
         await secondStores;
         return HttpResponse.json([{ id: 8, name: "Member Store", timezone: "Europe/Rome" }]);
       }),
+      http.get("/api/dashboard/:storeId", () => HttpResponse.json([])),
       http.post("/api/auth/logout", () => new HttpResponse(null, { status: 204 })),
       http.post("/api/auth/login", () => { memberLoggedIn = true; return HttpResponse.json(member); }),
     );
     renderTestRouter("/");
-    expect(await screen.findByRole("option", { name: "Admin Store" })).toBeInTheDocument();
+    const desktopPicker = await screen.findByTestId("desktop-store-picker");
+    expect(await within(desktopPicker).findByRole("option", { name: "Admin Store" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "退出登录" }));
     fireEvent.change(await screen.findByLabelText("用户名"), { target: { value: "member" } });
@@ -228,10 +230,11 @@ describe("authenticated application shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "登录" }));
 
     await waitFor(() => expect(secondStoresRequested).toBe(true));
-    expect(screen.queryByRole("option", { name: "Admin Store" })).not.toBeInTheDocument();
-    expect(screen.getByLabelText("门店")).toHaveValue("");
+    expect(screen.queryAllByRole("option", { name: "Admin Store" })).toHaveLength(0);
+    const memberDesktopPicker = screen.getByTestId("desktop-store-picker");
+    expect(within(memberDesktopPicker).getByRole("combobox", { name: "门店" })).toHaveValue("");
     resolveSecondStores();
-    expect(await screen.findByRole("option", { name: "Member Store" })).toBeInTheDocument();
+    expect(await within(memberDesktopPicker).findByRole("option", { name: "Member Store" })).toBeInTheDocument();
   });
 
   it("automatically selects the only accessible store", async () => {
@@ -265,9 +268,10 @@ describe("authenticated application shell", () => {
     renderTestRouter("/");
 
     expect(await screen.findByRole("alert")).toHaveTextContent("门店加载失败，请重试");
-    expect(screen.getByLabelText("门店")).toBeDisabled();
+    const desktopPicker = screen.getByTestId("desktop-store-picker");
+    expect(within(desktopPicker).getByRole("combobox", { name: "门店" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "重试门店" }));
-    expect(await screen.findByRole("option", { name: "Recovered Store" })).toBeInTheDocument();
+    expect(await within(desktopPicker).findByRole("option", { name: "Recovered Store" })).toBeInTheDocument();
     expect(requests).toBe(2);
   });
 

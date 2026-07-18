@@ -1,7 +1,6 @@
 import { Link } from "react-router-dom";
 
 import { useAuth } from "@/auth/AuthProvider";
-import { StorePicker } from "@/components/StorePicker";
 import { Button } from "@/components/ui/button";
 
 const moreLinkClass = "rounded-lg border bg-background px-4 py-3 text-sm font-medium hover:bg-accent";
@@ -12,7 +11,6 @@ export function MorePage() {
   return <section className="grid gap-4">
     <h1 className="text-2xl font-semibold">更多</h1>
     <nav aria-label="更多功能" className="grid gap-2">
-      <div className="min-w-0 max-w-full rounded-lg border bg-background px-4 py-3"><StorePicker /></div>
       <Link className={moreLinkClass} to="/account/password">修改密码</Link>
       {user?.role === "admin" && <Link className={moreLinkClass} to="/admin">管理中心</Link>}
       {user?.role === "admin" && <Link className={moreLinkClass} to="/admin?tab=status">系统状态</Link>}

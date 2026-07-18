@@ -7,6 +7,7 @@ const categories = Array.from({ length: 12 }, (_, index) => ({
   is_active: true,
   sort_order: index + 1,
 }));
+const longStoreName = "特别特别特别特别特别特别特别特别特别特别特别特别特别特别特别特别长的门店名称";
 
 function record(index: number) {
   const day = 17 - index;
@@ -61,7 +62,7 @@ async function mockResponsiveApi(page: Page) {
     });
 
     if (path === "/api/auth/me") return json({ id: 1, username: "operator", role: "user", is_owner: false });
-    if (path === "/api/stores/accessible") return json([{ id: 1, name: "Berlin", timezone: "Europe/Berlin" }]);
+    if (path === "/api/stores/accessible") return json([{ id: 1, name: longStoreName, timezone: "Europe/Berlin" }]);
     if (path === "/api/database/1/records") {
       const pageNumber = Number(url.searchParams.get("page"));
       const pageSize = Number(url.searchParams.get("page_size"));
@@ -115,7 +116,7 @@ async function expectNativeDateInput(input: ReturnType<Page["getByLabel"]>, expe
   if (expected.min === null) await expect(input).not.toHaveAttribute("min");
   else await expect(input).toHaveAttribute("min", expected.min);
   await expect(input).toHaveAttribute("max", expected.max);
-  await expect.poll(() => input.evaluate((node) => node.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
+  await expect.poll(() => input.evaluate((node) => node.getBoundingClientRect().height)).toBe(40);
 }
 
 async function expectCalendarTrigger(page: Page, name: string) {
@@ -124,7 +125,7 @@ async function expectCalendarTrigger(page: Page, name: string) {
   await expect.poll(() => trigger.evaluate((node) => {
     const { height, width } = node.getBoundingClientRect();
     return { height, width };
-  })).toEqual({ height: 44, width: 44 });
+  })).toEqual({ height: 40, width: 40 });
 }
 
 test("desktop record browser keeps a sticky independently scrollable detail rail", async ({ page }) => {
@@ -144,11 +145,64 @@ test("desktop record browser keeps a sticky independently scrollable detail rail
   }))).toEqual({ overflowY: "auto", independentlyScrollable: true });
 });
 
+test("global store picker switches cleanly between mobile and desktop without header overflow", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
+  await mockResponsiveApi(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/database");
+
+  await expect(page.getByTestId("mobile-store-picker").getByRole("combobox", { name: "门店" })).toBeVisible();
+  await expect(page.getByTestId("desktop-store-picker")).toBeHidden();
+  const presets = page.getByLabel("日期范围预设").getByRole("button");
+  await expect(presets).toHaveCount(3);
+  for (const control of await presets.all()) {
+    expect((await control.boundingBox())?.height).toBe(40);
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const desktopPicker = page.getByTestId("desktop-store-picker");
+  const brand = page.getByText("AutoLava AI", { exact: true });
+  await expect(desktopPicker.getByRole("combobox", { name: "门店" })).toBeVisible();
+  await expect(page.getByTestId("mobile-store-picker")).toBeHidden();
+  const [pickerBox, brandBox] = await Promise.all([desktopPicker.boundingBox(), brand.boundingBox()]);
+  expect(pickerBox).not.toBeNull();
+  expect(brandBox).not.toBeNull();
+  expect(pickerBox!.y).toBeGreaterThan(brandBox!.y + brandBox!.height);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(1280);
+});
+
 test("320px record list, bottom sheet, and analysis remain reachable without clipping", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
   await page.setViewportSize({ width: 320, height: 700 });
   await mockResponsiveApi(page);
   await page.goto("/database");
+
+  const recordFilters = page.getByRole("region", { name: "记录筛选" });
+  await expect(recordFilters.getByTestId("record-filter-dates")).toHaveCount(0);
+  await expect(recordFilters.getByLabel("开始日期", { exact: true })).toHaveCount(0);
+  await expect(recordFilters.getByLabel("结束日期", { exact: true })).toHaveCount(0);
+  await recordFilters.getByRole("button", { name: "自定义" }).click();
+  const dates = recordFilters.getByTestId("record-filter-dates");
+  const exportButton = recordFilters.getByRole("button", { name: "导出当前范围" });
+  const [filterBox, datesBox, exportBox, startBox, endBox] = await Promise.all([
+    recordFilters.boundingBox(), dates.boundingBox(), exportButton.boundingBox(),
+    recordFilters.getByLabel("开始日期", { exact: true }).boundingBox(),
+    recordFilters.getByLabel("结束日期", { exact: true }).boundingBox(),
+  ]);
+  expect(filterBox).not.toBeNull();
+  expect(datesBox).not.toBeNull();
+  expect(exportBox).not.toBeNull();
+  expect(startBox).not.toBeNull();
+  expect(endBox).not.toBeNull();
+  expect(startBox!.y).toBe(endBox!.y);
+  expect(startBox!.height).toBe(40);
+  expect(endBox!.height).toBe(40);
+  expect(startBox!.width).toBe(endBox!.width);
+  expect(startBox!.x).toBeGreaterThanOrEqual(datesBox!.x);
+  expect(endBox!.x + endBox!.width).toBeLessThanOrEqual(datesBox!.x + datesBox!.width);
+  expect(exportBox!.y).toBeGreaterThanOrEqual(datesBox!.y + datesBox!.height + 8);
+  expect(exportBox!.width).toBe(filterBox!.width);
 
   await expect.poll(() => page.evaluate(() => ({
     document: document.documentElement.scrollWidth,
@@ -241,7 +295,30 @@ test("database at 390px exposes all custom date inputs without horizontal overfl
   const recordFilters = page.getByRole("region", { name: "记录筛选" });
   const analysisRail = page.locator("main > section > div > aside");
   await expect(analysisRail).toHaveCount(1);
+  await expect(recordFilters.getByTestId("record-filter-dates")).toHaveCount(0);
+  await expect(recordFilters.getByLabel("开始日期", { exact: true })).toHaveCount(0);
+  await expect(recordFilters.getByLabel("结束日期", { exact: true })).toHaveCount(0);
   await recordFilters.getByRole("button", { name: "自定义" }).click();
+  const dates = recordFilters.getByTestId("record-filter-dates");
+  const exportButton = recordFilters.getByRole("button", { name: "导出当前范围" });
+  const [filterBox, datesBox, exportBox, startBox, endBox] = await Promise.all([
+    recordFilters.boundingBox(), dates.boundingBox(), exportButton.boundingBox(),
+    recordFilters.getByLabel("开始日期", { exact: true }).boundingBox(),
+    recordFilters.getByLabel("结束日期", { exact: true }).boundingBox(),
+  ]);
+  expect(filterBox).not.toBeNull();
+  expect(datesBox).not.toBeNull();
+  expect(exportBox).not.toBeNull();
+  expect(startBox).not.toBeNull();
+  expect(endBox).not.toBeNull();
+  expect(startBox!.y).toBe(endBox!.y);
+  expect(startBox!.height).toBe(40);
+  expect(endBox!.height).toBe(40);
+  expect(startBox!.width).toBe(endBox!.width);
+  expect(startBox!.x).toBeGreaterThanOrEqual(datesBox!.x);
+  expect(endBox!.x + endBox!.width).toBeLessThanOrEqual(datesBox!.x + datesBox!.width);
+  expect(exportBox!.y).toBeGreaterThanOrEqual(datesBox!.y + datesBox!.height + 8);
+  expect(exportBox!.width).toBe(filterBox!.width);
   await analysisRail.getByRole("button", { name: "自定义" }).scrollIntoViewIfNeeded();
   await analysisRail.getByRole("button", { name: "自定义" }).click();
 
