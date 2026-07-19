@@ -10,7 +10,7 @@ from app.core.database import SQLITE_WRITE_LOCK, async_session_factory, engine
 from app.core.security import hash_password
 from app.main import create_app
 from app.models.base import Base
-from app.models.identity import Store, User
+from app.models.identity import Store, StoreMember, User
 from app.models.ledger import IncomeCategory
 
 
@@ -58,6 +58,8 @@ async def _setup_admin_mutation(operation: str):
             ),
         )
         session.add(category)
+        if operation == "members-replace":
+            session.add(StoreMember(store_id=store.id, user_id=target.id))
         await session.commit()
         return actor.id, target.id, store.id, category.id
 
@@ -106,6 +108,40 @@ def _request_for(
             f"/api/admin/income-categories/{category_id}",
             json={"name": "After"},
         )
+    if operation == "user-create":
+        return client.post(
+            "/api/admin/users",
+            json={
+                "username": "created-after-wait",
+                "password": "password",
+                "role": "user",
+            },
+        )
+    if operation == "user-delete":
+        return client.delete(f"/api/admin/users/{target_id}")
+    if operation == "store-create":
+        return client.post(
+            "/api/admin/stores",
+            json={
+                "name": "Created after wait",
+                "address": "Created after wait",
+                "latitude": "45",
+                "longitude": "9",
+                "timezone": "Europe/Berlin",
+            },
+        )
+    if operation == "store-patch":
+        return client.patch(
+            f"/api/admin/stores/{store_id}",
+            json={"name": "Changed after wait"},
+        )
+    if operation == "store-delete":
+        return client.delete(f"/api/admin/stores/{store_id}")
+    if operation == "members-replace":
+        return client.put(
+            f"/api/admin/stores/{store_id}/members",
+            json={"user_ids": []},
+        )
     return client.patch(
         f"/api/admin/users/{target_id}", json={"is_active": False}
     )
@@ -120,7 +156,13 @@ def _request_for(
         "delete",
         "category-create",
         "category-patch",
+        "user-create",
+        "user-delete",
         "user-patch",
+        "store-create",
+        "store-patch",
+        "store-delete",
+        "members-replace",
     ],
 )
 async def test_admin_mutation_revalidates_actor_after_lock_wait(
@@ -175,6 +217,13 @@ async def test_admin_mutation_revalidates_actor_after_lock_wait(
         assert target is not None
         assert store is not None
         assert target.is_active is True
+        assert store.name == "Admin revocation"
+        assert await verify.scalar(
+            select(func.count()).select_from(Store)
+        ) == 1
+        assert await verify.scalar(
+            select(func.count()).select_from(User)
+        ) == 2
         assert category.name == "Before"
         assert store.income_items_enabled is False
         assert await verify.scalar(
@@ -186,6 +235,15 @@ async def test_admin_mutation_revalidates_actor_after_lock_wait(
             assert category.archived_at is None
         if operation == "restore":
             assert category.archived_at is not None
+        if operation == "members-replace":
+            assert await verify.scalar(
+                select(func.count())
+                .select_from(StoreMember)
+                .where(
+                    StoreMember.store_id == store_id,
+                    StoreMember.user_id == target_id,
+                )
+            ) == 1
 
 
 async def test_income_config_replace_rejects_deactivated_actor_after_lock_wait() -> None:

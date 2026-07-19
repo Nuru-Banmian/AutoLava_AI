@@ -29,7 +29,7 @@
 - Consumes: `PUT /api/admin/stores/{store_id}/income-config`, `SQLITE_WRITE_LOCK`, and the current authenticated actor.
 - Produces: deterministic 401/no-mutation evidence when the actor is deactivated during the lock wait.
 
-- [ ] **Step 1: Add the API interleaving test**
+- [x] **Step 1: Add the API interleaving test**
 
 ```python
 async def test_income_config_replace_rejects_actor_deactivated_after_lock_wait() -> None:
@@ -40,13 +40,13 @@ async def test_income_config_replace_rejects_actor_deactivated_after_lock_wait()
     # Reload Store and IncomeCategory and assert enabled/name remain unchanged.
 ```
 
-- [ ] **Step 2: Run the Issue #10 tests**
+- [x] **Step 2: Run the Issue #10 tests**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/api/test_income_config.py tests/api/test_admin_revocation.py -q`
 
 Expected: PASS; if the new test fails, change only the affected route so `require_fresh_store_access(...)` remains inside `sqlite_short_write(...)`.
 
-- [ ] **Step 3: Commit Issue #10**
+- [x] **Step 3: Commit Issue #10**
 
 ```powershell
 git add -- backend/tests/api/test_admin_revocation.py docs/superpowers/plans/2026-07-19-sqlite-final-issues-10-12.md
@@ -63,7 +63,7 @@ git commit -m "test: verify income config current-state writes (#10)"
 - Consumes: user, store, and member mutation HTTP endpoints plus `SQLITE_WRITE_LOCK`.
 - Produces: deterministic 401/403 and no-mutation evidence across user creation/deletion, store creation/update/deletion, and member replacement.
 
-- [ ] **Step 1: Extend setup and request helpers with administrative operations**
+- [x] **Step 1: Extend setup and request helpers with administrative operations**
 
 ```python
 operations = (
@@ -78,7 +78,7 @@ operations = (
 
 For every operation, start the public HTTP request while `SQLITE_WRITE_LOCK` is held, mutate the actor to inactive or role `user` in an independent committed session, then release the lock.
 
-- [ ] **Step 2: Assert current-state rejection and atomicity**
+- [x] **Step 2: Assert current-state rejection and atomicity**
 
 ```python
 assert response.status_code in {401, 403}
@@ -88,13 +88,13 @@ assert original_member_ids_are_unchanged
 assert no_requested_user_or_store_was_created
 ```
 
-- [ ] **Step 3: Run the Issue #11 tests**
+- [x] **Step 3: Run the Issue #11 tests**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/api/test_admin.py tests/api/test_admin_revocation.py -q`
 
 Expected: PASS; any production fix must keep authorization and owner/last-admin checks inside the same `sqlite_short_write(...)` section as the mutation.
 
-- [ ] **Step 4: Commit Issue #11**
+- [x] **Step 4: Commit Issue #11**
 
 ```powershell
 git add -- backend/tests/api/test_admin_revocation.py
