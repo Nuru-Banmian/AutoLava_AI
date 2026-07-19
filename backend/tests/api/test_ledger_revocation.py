@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import delete, func, select
+from sqlalchemy.orm import selectinload
 
 from app.core.database import SQLITE_WRITE_LOCK, async_session_factory, engine
 from app.core.security import hash_password
@@ -201,3 +202,60 @@ async def test_delete_rejects_store_archived_while_waiting_for_lock() -> None:
             .select_from(StoreDailyRecord)
             .where(StoreDailyRecord.store_id == store_id)
         ) == 1
+
+
+async def test_create_uses_config_committed_during_weather_wait() -> None:
+    await _reset_database()
+    _, store_id, category_id, target = await _setup_ledger()
+    async with async_session_factory() as setup:
+        store = await setup.get(Store, store_id)
+        assert store is not None
+        store.income_items_enabled = False
+        await setup.commit()
+
+    client = await _logged_in_client("ledger-user")
+    weather = PausedWeather()
+    client._transport.app.state.weather_service = weather
+    request = asyncio.create_task(
+        client.put(
+            f"/api/ledger/{store_id}/{target.isoformat()}",
+            json=_payload(category_id, 125),
+        )
+    )
+    await weather.entered.wait()
+    async with async_session_factory() as configure:
+        store = await configure.get(Store, store_id)
+        category = await configure.get(IncomeCategory, category_id)
+        assert store is not None
+        assert category is not None
+        store.income_items_enabled = True
+        category.name = "Latest cash"
+        category.include_in_total = False
+        category.sort_order = 7
+        await configure.commit()
+    weather.release.set()
+    response = await request
+    await client.aclose()
+
+    assert response.status_code == 201
+    async with async_session_factory() as verify:
+        record = await verify.scalar(
+            select(StoreDailyRecord)
+            .where(
+                StoreDailyRecord.store_id == store_id,
+                StoreDailyRecord.date == target,
+            )
+            .options(selectinload(StoreDailyRecord.items))
+        )
+        assert record is not None
+        assert record.income_mode == "composed"
+        assert record.daily_revenue == 0
+        assert [
+            (
+                item.category_name,
+                item.include_in_total,
+                item.sort_order,
+                item.amount,
+            )
+            for item in record.items
+        ] == [("Latest cash", False, 7, 125)]
