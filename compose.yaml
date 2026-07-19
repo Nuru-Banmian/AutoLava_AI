@@ -1,18 +1,25 @@
 services:
   autolava-api:
-    build: ./backend
+    image: ${AUTOLAVA_API_IMAGE:-autolava-api:latest}
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     restart: unless-stopped
     environment:
       AUTOLAVA_ENVIRONMENT: production
-      AUTOLAVA_DATABASE_URL: ${AUTOLAVA_DATABASE_URL:?set a non-default production database URL}
+      AUTOLAVA_DATABASE_PATH: /data/autolava.sqlite3
+      AUTOLAVA_BACKUP_DIRECTORY: /data/backups
       AUTOLAVA_JWT_SECRET: ${AUTOLAVA_JWT_SECRET:?set a random production JWT secret}
       AUTOLAVA_COOKIE_SECURE: ${AUTOLAVA_COOKIE_SECURE:-true}
       AUTOLAVA_BOOTSTRAP_USERNAME: ${AUTOLAVA_BOOTSTRAP_USERNAME}
       AUTOLAVA_BOOTSTRAP_PASSWORD: ${AUTOLAVA_BOOTSTRAP_PASSWORD}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    volumes:
+      - autolava_data:/data
   autolava-web:
-    build: ./frontend
+    image: ${AUTOLAVA_WEB_IMAGE:-autolava-web:latest}
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prebuilt
     restart: unless-stopped
     ports:
       - "${AUTOLAVA_WEB_HOST_PORT:-127.0.0.1:80}:80"
@@ -25,3 +32,6 @@ networks:
       config:
         - subnet: 172.30.0.0/24
           gateway: 172.30.0.1
+
+volumes:
+  autolava_data:

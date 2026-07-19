@@ -1,5 +1,7 @@
 # 营业记录状态纯文字与发布 Implementation Plan
 
+> 历史发布记录，仅为保留决策来源。服务器数据库卷和发布命令均已废弃，不代表当前运行方式。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 移除营业记录表格和详情卡片状态文字前的圆点，保留 `test-used` 分支，将成果本地合并至 `main`、创建 PR，并无损更新临时服务器。

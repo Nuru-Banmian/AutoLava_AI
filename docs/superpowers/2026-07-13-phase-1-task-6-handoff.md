@@ -1,5 +1,8 @@
 # AutoLava AI Phase 1 continuation handoff
 
+> Historical handoff retained for provenance. Its schema notes are superseded by the current
+> SQLite implementation and do not describe the current product contract.
+
 Last updated: 2026-07-14
 Current stopping point: Tasks 1-6 are implementation-complete, independently reviewed, and freshly verified. Task 7 has not started.
 

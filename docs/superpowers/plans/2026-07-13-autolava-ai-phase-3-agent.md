@@ -1,16 +1,21 @@
 # AutoLava AI Phase 3 Agent Implementation Plan
 
+> **Future-only redesign reminder:** Do not implement this plan as written. Redesign it first
+> against the current SQLite runtime, the 2-GB server, external APIs, and measured remaining
+> memory. An optional future `compose.agent.yaml` may be considered only after measurement; no
+> overlay or Agent service is provided now.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a permission-safe AI assistant for store-scoped queries, qualitative analysis, ledger drafts, and explicit approval-gated ledger mutations with complete conversation history and audit evidence.
 
 **Architecture:** Treat the language model as an untrusted planner: it emits typed intents and proposal payloads, while backend services perform authorization, category resolution, date validation, revenue calculation, and all writes. A LangGraph workflow routes read operations directly to permission-scoped domain tools and routes writes into persisted, expiring proposals; a separate confirmation endpoint executes a proposal once. Provider selection is isolated behind an interface so DeepSeek and Qwen failures do not leak into business services.
 
-**Tech Stack:** Existing Phase 1/2 stack plus LangChain, LangGraph, OpenAI-compatible DeepSeek/Qwen clients, Pydantic structured output, React chat UI, pytest fakes, Vitest, and Playwright.
+**Tech Stack:** Historical proposal only; all libraries and process boundaries require redesign and fresh resource measurement.
 
 ## Global Constraints
 
-- Phases 1 and 2 are complete; Phase 3 does not mutate workforce or payroll data.
+- Phase 1 is the only current prerequisite; all Agent capabilities remain unimplemented.
 - DeepSeek-V3 handles normal conversation, DeepSeek-R1 handles complex reasoning, and Qwen-Plus is the fallback when DeepSeek is unavailable.
 - The model never receives database credentials, never emits executable SQL, and never bypasses backend authorization or validation.
 - Read-only answers may return immediately; create, update, and delete operations require a persisted preview plus explicit confirmation.

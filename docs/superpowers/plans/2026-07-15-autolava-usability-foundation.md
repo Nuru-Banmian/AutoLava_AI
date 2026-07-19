@@ -1,5 +1,8 @@
 # AutoLava AI Usability Foundation Implementation Plan
 
+> Historical implementation record retained for provenance. Database inspection and logical
+> backup/restore steps are superseded and are not current runtime instructions.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Deliver the approved usability redesign, versioned dual-mode revenue model, bounded rollback history, safer administration, map-style store addresses, and extension seams for later workforce, AI, and automation phases.

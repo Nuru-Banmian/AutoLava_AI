@@ -1,7 +1,6 @@
 ﻿[CmdletBinding()]
 param(
-    [switch]$NoBrowser,
-    [switch]$AllowTestDatabase
+    [switch]$NoBrowser
 )
 
 Set-StrictMode -Version Latest
@@ -11,8 +10,8 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 $BackendDir = Join-Path $RepoRoot "backend"
 $FrontendDir = Join-Path $RepoRoot "frontend"
 $StateDir = Join-Path $RepoRoot ".autolava-local"
-$DatabaseEnvFile = Join-Path $RepoRoot ".autolava-db.env"
 $LocalEnvFile = Join-Path $RepoRoot ".env"
+$LocalDatabaseFile = Join-Path $StateDir "autolava.sqlite3"
 $BackendVenv = Join-Path $BackendDir ".venv"
 $BackendPython = Join-Path $BackendVenv "Scripts\python.exe"
 
@@ -22,21 +21,6 @@ function Write-Stage([string]$Message) {
 
 function Stop-WithMessage([string]$Message) {
     throw "[AutoLava] $Message"
-}
-
-function Assert-RuntimeDatabaseUrl([string]$DatabaseUrl, [bool]$AllowTestDatabase) {
-    try {
-        $uri = [Uri]$DatabaseUrl
-        $databaseName = [Uri]::UnescapeDataString($uri.AbsolutePath.TrimStart('/'))
-    } catch {
-        Stop-WithMessage "无法解析 AUTOLAVA_DATABASE_URL 的数据库名称。"
-    }
-    if ([string]::IsNullOrWhiteSpace($databaseName)) {
-        Stop-WithMessage "AUTOLAVA_DATABASE_URL 必须包含数据库名称。"
-    }
-    if ($databaseName.EndsWith("_test", [StringComparison]::OrdinalIgnoreCase) -and -not $AllowTestDatabase) {
-        Stop-WithMessage "数据库保留给自动化测试：$databaseName。请改用本地运行数据库，或明确传入 -AllowTestDatabase。"
-    }
 }
 
 function Assert-Command([string]$Name) {
@@ -97,7 +81,7 @@ function Write-LocalEnv([hashtable]$Values) {
     [IO.File]::WriteAllLines($LocalEnvFile, $lines, [Text.UTF8Encoding]::new($false))
 }
 
-function Initialize-LocalSettings([hashtable]$DatabaseValues) {
+function Initialize-LocalSettings {
     $local = Get-EnvFileValues $LocalEnvFile
     $changed = $false
     if (-not $local.ContainsKey("AUTOLAVA_ENVIRONMENT")) {
@@ -141,13 +125,9 @@ function Initialize-LocalSettings([hashtable]$DatabaseValues) {
     }
     if ($changed) { Write-LocalEnv $local }
 
-    $merged = @{}
-    foreach ($item in $DatabaseValues.GetEnumerator()) { $merged[$item.Key] = $item.Value }
-    foreach ($item in $local.GetEnumerator()) { $merged[$item.Key] = $item.Value }
-    if (-not $merged.ContainsKey("AUTOLAVA_DATABASE_URL")) {
-        Stop-WithMessage ".autolava-db.env 或 .env 必须提供 AUTOLAVA_DATABASE_URL。"
-    }
-    return $merged
+    $local["AUTOLAVA_DATABASE_PATH"] = $LocalDatabaseFile
+    $local["AUTOLAVA_BACKUP_DIRECTORY"] = Join-Path $StateDir "backups"
+    return $local
 }
 
 function Set-AutoLavaEnvironment([hashtable]$Values) {
@@ -299,18 +279,8 @@ Assert-Command "npm"
 Assert-PortFree 8000
 Assert-PortFree 5173
 
-$databaseValues = Get-EnvFileValues $DatabaseEnvFile
-$settings = Initialize-LocalSettings $databaseValues
-$databaseUrl = [string]$settings["AUTOLAVA_DATABASE_URL"]
-Assert-RuntimeDatabaseUrl $databaseUrl $AllowTestDatabase
-if ($databaseUrl -notmatch '@(?<host>\[[^\]]+\]|[^:/]+)(:(?<port>\d+))?/') {
-    Stop-WithMessage "无法解析 AUTOLAVA_DATABASE_URL 的数据库主机。"
-}
-$databaseHost = $Matches.host.Trim('[', ']')
-$databasePort = if ($Matches.port) { [int]$Matches.port } else { 3306 }
-if (-not (Test-TcpPort $databaseHost $databasePort 1500)) {
-    Stop-WithMessage "MySQL 无法连接，请确认 MySQL80 服务正在运行。"
-}
+New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
+$settings = Initialize-LocalSettings
 $backendProcess = $null
 $frontendProcess = $null
 try {

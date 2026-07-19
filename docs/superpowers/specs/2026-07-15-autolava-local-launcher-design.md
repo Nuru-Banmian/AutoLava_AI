@@ -52,7 +52,6 @@
 
 启动器是仓库级开发入口，不绑定 Phase 1 的页面或数据表：
 
-- Phase 2 继续扩展现有 FastAPI 与 React，启动器通过依赖哈希和最新迁移自动接纳代码、依赖与 schema 变化；
 - Phase 3 的 Agent 与模型客户端仍位于 FastAPI 进程，新增密钥和模型配置通过通用 `.env` 加载；
 - Phase 4 的 APScheduler、自动化和记忆引擎仍位于单个 FastAPI 进程，随后端生命周期启动和停止；
 - 每次启动都执行 `alembic upgrade head`，因此后续阶段新增迁移不需要改脚本；
