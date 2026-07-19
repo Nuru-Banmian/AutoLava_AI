@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.database import SQLITE_WRITE_LOCK
 from app.models.identity import Store
 from app.models.ledger import StoreDailyRecord
 from app.models.operations import ScheduledTaskLog, UTC_TIMESTAMP_CONTRACT
@@ -118,33 +119,36 @@ def make_refresh_callback(
 
     async def write_store(weather: _StoreWeather) -> bool:
         async with session_factory() as session:
-            try:
-                # This query happens after all network waits, so manual edits made
-                # while weather was in flight are observed before automatic writes.
-                records = list(
-                    await session.scalars(
-                        select(StoreDailyRecord).where(
-                            StoreDailyRecord.store_id == weather.store.id,
-                            StoreDailyRecord.date.in_(weather.dates[:2]),
+            async with SQLITE_WRITE_LOCK:
+                try:
+                    # This query happens after all network waits, so manual edits made
+                    # while weather was in flight are observed before automatic writes.
+                    records = list(
+                        await session.scalars(
+                            select(StoreDailyRecord).where(
+                                StoreDailyRecord.store_id == weather.store.id,
+                                StoreDailyRecord.date.in_(weather.dates[:2]),
+                            )
                         )
                     )
-                )
-                for record in records:
-                    result = weather.results[record.date]
-                    if result is not None:
-                        apply_refreshed_weather(record, result)
-                await BriefingService(
-                    session, CachedWeatherService(weather.results)
-                ).regenerate(
-                    weather.store.id,
-                    ["yesterday", "today", "tomorrow"],
-                    local_date=weather.today,
-                )
-                await session.commit()
-                return all(result is not None for result in weather.results.values())
-            except Exception:
-                await session.rollback()
-                return False
+                    for record in records:
+                        result = weather.results[record.date]
+                        if result is not None:
+                            apply_refreshed_weather(record, result)
+                    await BriefingService(
+                        session, CachedWeatherService(weather.results)
+                    ).regenerate(
+                        weather.store.id,
+                        ["yesterday", "today", "tomorrow"],
+                        local_date=weather.today,
+                    )
+                    await session.commit()
+                    return all(
+                        result is not None for result in weather.results.values()
+                    )
+                except Exception:
+                    await session.rollback()
+                    return False
 
     async def refresh_all() -> None:
         started_at = datetime.now(UTC).replace(tzinfo=None)
@@ -183,19 +187,24 @@ def make_refresh_callback(
             )
 
         async with session_factory() as session:
-            session.add(
-                ScheduledTaskLog(
-                    store_id=None,
-                    task_type="weather_refresh",
-                    status=status,
-                    message=message,
-                    retry_count=0,
-                    started_at=started_at,
-                    finished_at=datetime.now(UTC).replace(tzinfo=None),
-                    created_at=started_at,
-                    timestamp_contract=UTC_TIMESTAMP_CONTRACT,
-                )
-            )
-            await session.commit()
+            async with SQLITE_WRITE_LOCK:
+                try:
+                    session.add(
+                        ScheduledTaskLog(
+                            store_id=None,
+                            task_type="weather_refresh",
+                            status=status,
+                            message=message,
+                            retry_count=0,
+                            started_at=started_at,
+                            finished_at=datetime.now(UTC).replace(tzinfo=None),
+                            created_at=started_at,
+                            timestamp_contract=UTC_TIMESTAMP_CONTRACT,
+                        )
+                    )
+                    await session.commit()
+                except Exception:
+                    await session.rollback()
+                    raise
 
     return refresh_all

@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.deps import Session, StoreAccess, require_capability, require_store_access, require_store_read_access
 from app.api.routes.dashboard import get_weather_service
+from app.core.database import SQLITE_WRITE_LOCK
 from app.schemas.ledger import LedgerBody
 from app.services.record_payload import record_payload
 from app.services.briefing import BriefingService
@@ -33,13 +34,30 @@ async def _refresh_briefing_after_commit(
     )
     if card_type is None:
         return
-    await BriefingService(session, get_weather_service(request)).regenerate(
-        store.id,
-        [card_type],
-        local_date=local_date,
-        weather_overrides=weather_overrides,
-    )
-    await session.commit()
+    weather_service = get_weather_service(request)
+    resolved_overrides = dict(weather_overrides or {})
+    if card_type == "today" and local_date not in resolved_overrides:
+        try:
+            weather = await asyncio.wait_for(
+                weather_service.get_daily(store, local_date), timeout=9
+            )
+        except Exception:
+            weather = None
+        resolved_overrides[local_date] = (
+            weather.weather if weather is not None else "天气暂时不可用"
+        )
+    async with SQLITE_WRITE_LOCK:
+        try:
+            await BriefingService(session, weather_service).regenerate(
+                store.id,
+                [card_type],
+                local_date=local_date,
+                weather_overrides=resolved_overrides,
+            )
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
 
 
 async def _safely_refresh_briefing(
@@ -54,7 +72,7 @@ async def _safely_refresh_briefing(
             request, session, store, record_date, weather_overrides
         )
     except Exception:
-        await session.rollback()
+        pass
 
 
 @router.get(

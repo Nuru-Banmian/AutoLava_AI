@@ -1,5 +1,5 @@
 from collections.abc import Iterable
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Annotated, Any
 from zoneinfo import ZoneInfo
@@ -9,6 +9,7 @@ from sqlalchemy import delete, exists, func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import Session, require_admin, require_capability
+from app.core.database import SQLITE_WRITE_LOCK
 from app.core.security import hash_password
 from app.models.identity import Store, StoreMember, User
 from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
@@ -516,13 +517,38 @@ async def patch_income_category(
             if local_date in record_dates:
                 card_types.append("today")
             if card_types:
+                weather_overrides = None
+                if "today" in card_types:
+                    try:
+                        result = await request.app.state.weather_service.get_daily(
+                            store, local_date
+                        )
+                    except Exception:
+                        result = None
+                    weather_overrides = {
+                        local_date: (
+                            result.weather
+                            if result is not None
+                            else "天气暂时不可用"
+                        )
+                    }
                 try:
-                    await BriefingService(
-                        session, request.app.state.weather_service
-                    ).regenerate(store.id, card_types, local_date=local_date)
-                    await session.commit()
+                    async with SQLITE_WRITE_LOCK:
+                        try:
+                            await BriefingService(
+                                session, request.app.state.weather_service
+                            ).regenerate(
+                                store.id,
+                                card_types,
+                                local_date=local_date,
+                                weather_overrides=weather_overrides,
+                            )
+                            await session.commit()
+                        except Exception:
+                            await session.rollback()
+                            raise
                 except Exception:
-                    await session.rollback()
+                    pass
     return response_payload
 
 

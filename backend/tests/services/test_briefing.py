@@ -1,14 +1,19 @@
+import asyncio
 from datetime import date, datetime
 from decimal import Decimal
+from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.routes.ledger import _refresh_briefing_after_commit
 from app.models.identity import Store
 from app.models.ledger import StoreDailyRecord
 from app.models.operations import DailyBriefing
 from app.services.briefing import BriefingService
+from app.services.ledger import LedgerService
 from app.services.weather import WeatherResult
 
 
@@ -143,3 +148,60 @@ async def test_regenerate_does_not_commit_callers_transaction(
         await db_session.scalar(select(func.count()).select_from(DailyBriefing))
         == 0
     )
+
+
+async def test_ledger_write_blocks_briefing_write_section(
+    db_session: AsyncSession,
+    store: Store,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ledger_entered = asyncio.Event()
+    release_ledger = asyncio.Event()
+    briefing_entered = asyncio.Event()
+    target = datetime.now(ZoneInfo(store.timezone)).date()
+
+    async def hold_ledger(*_args, **_kwargs):
+        ledger_entered.set()
+        await release_ledger.wait()
+        return True, 123, target
+
+    async def canonical_record(*_args, **_kwargs):
+        return SimpleNamespace(id=123, date=target)
+
+    async def regenerate(*_args, **_kwargs):
+        briefing_entered.set()
+        return []
+
+    monkeypatch.setattr(LedgerService, "_upsert_locked", hold_ledger)
+    monkeypatch.setattr(LedgerService, "_find_record", canonical_record)
+    monkeypatch.setattr(BriefingService, "regenerate", regenerate)
+    ledger_task = asyncio.create_task(
+        LedgerService(SimpleNamespace(rollback=None)).upsert(
+            store=store,
+            record_date=target,
+            payload={},
+            actor=SimpleNamespace(id=99),
+        )
+    )
+    await ledger_entered.wait()
+    briefing_task = asyncio.create_task(
+        _refresh_briefing_after_commit(
+            SimpleNamespace(
+                app=SimpleNamespace(
+                    state=SimpleNamespace(weather_service=StubWeatherService())
+                )
+            ),
+            db_session,
+            store,
+            target,
+        )
+    )
+    try:
+        await asyncio.wait_for(briefing_entered.wait(), timeout=0.05)
+        was_blocked = False
+    except TimeoutError:
+        was_blocked = True
+    release_ledger.set()
+    await asyncio.gather(ledger_task, briefing_task)
+    assert was_blocked is True
+    assert briefing_entered.is_set()

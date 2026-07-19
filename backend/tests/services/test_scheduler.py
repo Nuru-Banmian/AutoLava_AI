@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
@@ -12,11 +13,13 @@ from app.models.base import Base
 from app.models.identity import Store, User
 from app.models.ledger import StoreDailyRecord
 from app.models.operations import ScheduledTaskLog
+from app.services.briefing import BriefingService
 from app.services.scheduler import (
     BackgroundRefreshScheduler,
     apply_refreshed_weather,
     make_refresh_callback,
 )
+from app.services.ledger import LedgerService
 from app.services.weather import WeatherResult
 
 
@@ -170,3 +173,108 @@ async def test_refresh_logs_truthful_success_when_no_stores() -> None:
         assert task.status == "success"
         assert task.message == "天气刷新完成：当前没有启用门店"
     weather.assert_not_awaited()
+
+
+async def _held_ledger_write(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> tuple[asyncio.Event, asyncio.Task]:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    target = datetime.now(ZoneInfo(store.timezone)).date()
+
+    async def hold(*_args, **_kwargs):
+        entered.set()
+        await release.wait()
+        return True, 456, target
+
+    async def canonical(*_args, **_kwargs):
+        return SimpleNamespace(id=456, date=target)
+
+    monkeypatch.setattr(LedgerService, "_upsert_locked", hold)
+    monkeypatch.setattr(LedgerService, "_find_record", canonical)
+    task = asyncio.create_task(
+        LedgerService(SimpleNamespace(rollback=None)).upsert(
+            store=store,
+            record_date=target,
+            payload={},
+            actor=SimpleNamespace(id=77),
+        )
+    )
+    await entered.wait()
+    return release, task
+
+
+async def test_ledger_write_blocks_scheduler_store_write_but_not_weather_fetch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _reset_database()
+    async with async_session_factory() as setup:
+        store = Store(
+            name="Shared lock store",
+            address="Shared lock store",
+            latitude=Decimal("45"),
+            longitude=Decimal("9"),
+            timezone="Europe/Berlin",
+            is_active=True,
+        )
+        setup.add(store)
+        await setup.commit()
+
+    release_ledger, ledger_task = await _held_ledger_write(store, monkeypatch)
+    weather_entered = asyncio.Event()
+    scheduler_write_entered = asyncio.Event()
+
+    class ObservableWeather:
+        async def get_daily(self, store, target):
+            weather_entered.set()
+            return WeatherResult("晴", 0, 30.0, 20.0, 0.0)
+
+    async def observe_store_write(*_args, **_kwargs):
+        scheduler_write_entered.set()
+        return []
+
+    monkeypatch.setattr(BriefingService, "regenerate", observe_store_write)
+    refresh_task = asyncio.create_task(
+        make_refresh_callback(async_session_factory, ObservableWeather())()
+    )
+    await asyncio.wait_for(weather_entered.wait(), timeout=1)
+    try:
+        await asyncio.wait_for(scheduler_write_entered.wait(), timeout=0.05)
+        was_blocked = False
+    except TimeoutError:
+        was_blocked = True
+    release_ledger.set()
+    await asyncio.gather(ledger_task, refresh_task)
+    assert was_blocked is True
+    assert scheduler_write_entered.is_set()
+
+
+async def test_ledger_write_blocks_scheduler_task_log_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _reset_database()
+    detached_store = Store(
+        id=999,
+        name="Lock holder",
+        address="Lock holder",
+        latitude=Decimal("45"),
+        longitude=Decimal("9"),
+        timezone="Europe/Berlin",
+        is_active=False,
+    )
+    release_ledger, ledger_task = await _held_ledger_write(
+        detached_store, monkeypatch
+    )
+    refresh_task = asyncio.create_task(
+        make_refresh_callback(
+            async_session_factory,
+            AsyncMock(side_effect=AssertionError("no active stores")),
+        )()
+    )
+    await asyncio.sleep(0.05)
+    was_blocked = not refresh_task.done()
+    release_ledger.set()
+    await asyncio.gather(ledger_task, refresh_task)
+    assert was_blocked is True
+    async with async_session_factory() as verify:
+        assert await verify.scalar(select(ScheduledTaskLog.id)) is not None

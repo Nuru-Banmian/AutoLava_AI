@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -6,6 +7,10 @@ from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import get_settings
+
+
+SQLITE_WRITE_LOCK = asyncio.Lock()
+
 
 def sqlite_url(path: Path) -> URL:
     return URL.create("sqlite+aiosqlite", database=str(path.resolve()))

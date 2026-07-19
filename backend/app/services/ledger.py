@@ -1,4 +1,3 @@
-import asyncio
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -9,12 +8,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.database import SQLITE_WRITE_LOCK
 from app.events.ledger import LedgerChanged
 from app.models.identity import Store, User
 from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
 
 _MAX_MONEY = 9_999_999_999
-_LEDGER_WRITE_LOCK = asyncio.Lock()
 
 
 @dataclass(frozen=True)
@@ -260,7 +259,7 @@ class LedgerService:
     ) -> LedgerWriteResult:
         if record_date > self._local_today(store):
             raise HTTPException(422, "Future ledger dates are not allowed")
-        async with _LEDGER_WRITE_LOCK:
+        async with SQLITE_WRITE_LOCK:
             try:
                 created, record_id, canonical_date = await self._upsert_locked(
                     store=store,
@@ -294,7 +293,7 @@ class LedgerService:
         record_date: date,
         actor: User,
     ) -> LedgerChanged:
-        async with _LEDGER_WRITE_LOCK:
+        async with SQLITE_WRITE_LOCK:
             try:
                 record = await self._find_record(
                     store_id=store.id, record_date=record_date
