@@ -248,7 +248,7 @@ export function BusinessRecordsPage() {
               </div>
             )}
           </div>
-          <BusinessAnalysisCard key={selected.id} storeId={selected.id} today={today} initialViewState={analysisView} onViewStateChange={setAnalysisView} />
+          {recordStateReady && <BusinessAnalysisCard key={selected.id} storeId={selected.id} today={today} initialViewState={analysisView} onViewStateChange={setAnalysisView} />}
         </aside>
       </div>
       {mobileRecord && (mobileRecord.id === null || mobileRecord.store_id === selected.id) && (
