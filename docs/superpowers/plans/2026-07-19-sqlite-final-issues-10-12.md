@@ -111,7 +111,7 @@ git commit -m "test: verify admin current-state mutations (#11)"
 - Consumes: branch diff `git diff main...HEAD`, backend tests, Ruff, and source searches.
 - Produces: reproducible release evidence and a two-axis code review of the complete SQLite branch.
 
-- [ ] **Step 1: Run static and backend gates**
+- [x] **Step 1: Run static and backend gates**
 
 ```powershell
 .\.venv\Scripts\python.exe -m ruff check app tests
@@ -120,7 +120,7 @@ git commit -m "test: verify admin current-state mutations (#11)"
 
 Expected: Ruff PASS; all backend tests PASS; warnings contain no SQLite `ResourceWarning`.
 
-- [ ] **Step 2: Run historical export and prohibited-source checks**
+- [x] **Step 2: Run historical export and prohibited-source checks**
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/api/test_database.py -q
@@ -129,11 +129,11 @@ rg -n -i "mysql|audit|rollback endpoint|config(uration)? version|token state" ba
 
 Expected: export tests PASS; source search finds no active implementations of removed subsystems (ordinary SQLAlchemy transaction rollback calls are not audit rollback).
 
-- [ ] **Step 3: Record exact evidence and deferred release conditions**
+- [x] **Step 3: Record exact evidence and deferred release conditions**
 
 Create the evidence document with command, exit code, pass count, warnings, and explicit statements that Docker-enabled CI, production smoke testing, and memory snapshots remain later release conditions and were not claimed here.
 
-- [ ] **Step 4: Commit Issue #12 evidence**
+- [x] **Step 4: Commit Issue #12 evidence**
 
 ```powershell
 git add -- docs/superpowers/2026-07-19-sqlite-final-release-evidence.md
