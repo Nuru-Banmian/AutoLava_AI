@@ -1,17 +1,17 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { eachDayOfInterval, format, parseISO } from "date-fns";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 
 import { api, friendlyApiError } from "@/api/client";
 import type { DatabaseResponse, RecordSnapshot } from "@/api/types";
 import { useAuth } from "@/auth/AuthProvider";
 import { BusinessAnalysisCard } from "@/components/BusinessAnalysisCard";
+import { DeleteRecordDialog } from "@/components/DeleteRecordDialog";
 import { MobileRecordList } from "@/components/MobileRecordList";
 import { MobileRecordSheet } from "@/components/MobileRecordSheet";
 import { RecordDetailPanel, type RecordDetail } from "@/components/RecordDetailPanel";
 import { RecordFilters } from "@/components/RecordFilters";
-import { RecordManagementDialogs } from "@/components/RecordManagementDialogs";
 import { RecordPagination } from "@/components/RecordPagination";
 import { RecordTable, type RecordTableRow } from "@/components/RecordTable";
 import type { DateRange, RecordRangeMode } from "@/lib/business-record-ranges";
@@ -19,6 +19,7 @@ import { recordRange } from "@/lib/business-record-ranges";
 import { downloadBusinessRecords } from "@/lib/business-record-export";
 import { databaseKey, storeLocalToday } from "@/lib/user-api";
 import { useStore } from "@/stores/StoreProvider";
+import { restoredBusinessRecordsState, type BusinessAnalysisViewState, type BusinessRecordsViewState } from "@/navigation/business-records-return";
 
 const PAGE_SIZE = 15 as const;
 const FETCH_SIZE = 200 as const;
@@ -26,25 +27,38 @@ const FETCH_SIZE = 200 as const;
 export function BusinessRecordsPage() {
   const { selected } = useStore();
   const { user } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
   const today = selected ? storeLocalToday(selected) : "1970-01-01";
   const isAdmin = user?.role === "admin";
-  const [recordMode, setRecordMode] = useState<RecordRangeMode>("current-month");
-  const [range, setRange] = useState<DateRange>(() => recordRange("current-month", today));
-  const [page, setPage] = useState(1);
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const restored = useRef(restoredBusinessRecordsState(location.state, selected?.id)).current;
+  const hasRestoreEnvelope = Boolean(location.state && typeof location.state === "object" && "restoreBusinessRecords" in location.state);
+  const defaultAnalysis = (): BusinessAnalysisViewState => ({ mode: "current-month", custom: { start: `${today.slice(0, 7)}-01`, end: today } });
+  const [recordMode, setRecordMode] = useState<RecordRangeMode>(restored?.recordMode ?? "current-month");
+  const [range, setRange] = useState<DateRange>(() => restored?.range ?? recordRange("current-month", today));
+  const [page, setPage] = useState(restored?.page ?? 1);
+  const [selectedDate, setSelectedDate] = useState<string | null>(restored?.selectedDate ?? null);
+  const [analysisView, setAnalysisView] = useState<BusinessAnalysisViewState>(() => restored?.analysis ?? defaultAnalysis());
   const [mobileRecord, setMobileRecord] = useState<RecordDetail | null>(null);
   const [returnFocusTo, setReturnFocusTo] = useState<HTMLButtonElement | null>(null);
-  const [managementOpen, setManagementOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [recordStoreId, setRecordStoreId] = useState<number | null>(selected?.id ?? null);
   const selectedRecordRef = useRef<RecordSnapshot | null>(null);
+  const previousScope = useRef({ storeId: selected?.id ?? null, today });
+  const pendingMobileRestoreDate = useRef(restored?.mobileRecordDate ?? null);
+  const restoreConsumed = useRef(false);
+  const scrollRestored = useRef(false);
 
   useEffect(() => {
+    const previous = previousScope.current;
+    if (previous.storeId === (selected?.id ?? null) && previous.today === today) return;
+    previousScope.current = { storeId: selected?.id ?? null, today };
     if (!selected) {
       setRecordStoreId(null);
       setSelectedDate(null);
       setMobileRecord(null);
       setReturnFocusTo(null);
-      setManagementOpen(false);
+      setDeleteOpen(false);
       return;
     }
     setRecordStoreId(selected.id);
@@ -54,8 +68,16 @@ export function BusinessRecordsPage() {
     setSelectedDate(null);
     setMobileRecord(null);
     setReturnFocusTo(null);
-    setManagementOpen(false);
+    setDeleteOpen(false);
+    setAnalysisView(defaultAnalysis());
+    pendingMobileRestoreDate.current = null;
   }, [selected?.id, today]);
+
+  useEffect(() => {
+    if (!selected || !hasRestoreEnvelope || restoreConsumed.current) return;
+    restoreConsumed.current = true;
+    navigate(location.pathname, { replace: true, state: null });
+  }, [hasRestoreEnvelope, location.pathname, navigate, selected]);
 
   const recordQueryString = useMemo(() => new URLSearchParams({
     start: range.start,
@@ -79,7 +101,19 @@ export function BusinessRecordsPage() {
       if (current.id === null) return current;
       return items.find((item) => item.id === current.id) ?? null;
     });
+    const mobileDate = pendingMobileRestoreDate.current;
+    if (mobileDate) {
+      pendingMobileRestoreDate.current = null;
+      setMobileRecord(items.find((item) => item.date === mobileDate) ?? { id: null, date: mobileDate });
+    }
   }, [records.data, records.isSuccess, selected?.id]);
+
+  useEffect(() => {
+    if (!restored || !records.isSuccess || scrollRestored.current) return;
+    scrollRestored.current = true;
+    const frame = requestAnimationFrame(() => window.scrollTo({ top: restored.scrollY }));
+    return () => cancelAnimationFrame(frame);
+  }, [records.isSuccess, restored]);
 
   const selectedRecordFromResponse = records.data?.items.find((item) => (
     item.date === selectedDate && item.store_id === selected?.id
@@ -126,6 +160,19 @@ export function BusinessRecordsPage() {
     setSelectedDate(null);
     setMobileRecord(null);
   };
+  const editRecord = (targetDate: string) => {
+    const returnToBusinessRecords: BusinessRecordsViewState = {
+      storeId: selected!.id,
+      recordMode,
+      range,
+      page,
+      selectedDate,
+      mobileRecordDate: mobileRecord?.date ?? null,
+      analysis: analysisView,
+      scrollY: window.scrollY,
+    };
+    navigate(`/ledger?date=${targetDate}`, { state: { returnToBusinessRecords } });
+  };
 
   if (!selected) {
     return <section className="grid w-full gap-4"><h1 className="text-2xl font-semibold">营业记录</h1><p role="status">请先选择门店。</p></section>;
@@ -168,7 +215,7 @@ export function BusinessRecordsPage() {
             {records.isSuccess && visibleRecords.length === 0 && (
               <div className="grid gap-2 rounded-md border border-dashed p-4">
                 <p>暂无可查看记录</p>
-                <Link className="w-fit text-primary underline-offset-4 hover:underline" to={`/ledger?date=${today}`}>补记记录</Link>
+                <Link className="w-fit text-primary underline-offset-4 hover:underline" to={`/ledger?date=${today}`} onClick={(event) => { event.preventDefault(); editRecord(today); }}>补记记录</Link>
               </div>
             )}
           </div>
@@ -185,22 +232,23 @@ export function BusinessRecordsPage() {
               <RecordDetailPanel
                 record={selectedTableRow}
                 canEdit
-                canManage={isAdmin && selectedTableRow.id !== null}
-                onManage={() => {
+                canDelete={isAdmin && selectedTableRow.id !== null}
+                onEdit={editRecord}
+                onDelete={() => {
                   if (selectedTableRow.id === null) return;
-                  setManagementOpen(true);
+                  setDeleteOpen(true);
                 }}
               />
             ) : (
               <div className="grid gap-2 rounded-md border border-dashed p-4">
                 <p>暂无可查看记录</p>
                 {!records.isLoading && !records.error && (
-                  <Link className="w-fit text-primary underline-offset-4 hover:underline" to={`/ledger?date=${today}`}>补记记录</Link>
+                  <Link className="w-fit text-primary underline-offset-4 hover:underline" to={`/ledger?date=${today}`} onClick={(event) => { event.preventDefault(); editRecord(today); }}>补记记录</Link>
                 )}
               </div>
             )}
           </div>
-          <BusinessAnalysisCard key={selected.id} storeId={selected.id} today={today} />
+          {recordStateReady && <BusinessAnalysisCard key={selected.id} storeId={selected.id} today={today} initialViewState={analysisView} onViewStateChange={setAnalysisView} />}
         </aside>
       </div>
       {mobileRecord && (mobileRecord.id === null || mobileRecord.store_id === selected.id) && (
@@ -208,23 +256,24 @@ export function BusinessRecordsPage() {
           open
           record={mobileRecord}
           canEdit
-          canManage={isAdmin && mobileRecord.id !== null}
+          canDelete={isAdmin && mobileRecord.id !== null}
+          onEdit={editRecord}
           returnFocusTo={returnFocusTo}
           onOpenChange={(open) => {
             if (!open) setMobileRecord(null);
           }}
-          onManage={() => {
+          onDelete={() => {
             if (mobileRecord.id === null) return;
-            setManagementOpen(true);
+            setDeleteOpen(true);
           }}
         />
       )}
-      <RecordManagementDialogs
+      <DeleteRecordDialog
         key={selected.id}
         storeId={selected.id}
         record={selectedRecord}
-        open={recordStateReady && managementOpen}
-        onOpenChange={setManagementOpen}
+        open={recordStateReady && deleteOpen}
+        onOpenChange={setDeleteOpen}
         onCompleted={() => setMobileRecord(null)}
       />
     </section>

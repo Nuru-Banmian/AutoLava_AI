@@ -18,7 +18,7 @@ function ControlledSheet() {
   const [trigger, setTrigger] = useState<HTMLButtonElement | null>(null);
   return <MemoryRouter>
     <button ref={setTrigger} type="button" onClick={() => setOpen(true)}>打开记录</button>
-    <MobileRecordSheet open={open} record={record} canEdit canManage={false} onManage={vi.fn()} returnFocusTo={trigger} onOpenChange={setOpen} />
+    <MobileRecordSheet open={open} record={record} canEdit canDelete={false} onDelete={vi.fn()} returnFocusTo={trigger} onOpenChange={setOpen} />
   </MemoryRouter>;
 }
 

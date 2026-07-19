@@ -98,6 +98,7 @@ describe("BusinessAnalysisCard", () => {
 
     renderCard();
     expect(await screen.findByText("该范围暂无经营数据")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "收入构成" })).not.toBeInTheDocument();
 
     server.use(http.get("/api/charts/1", () => HttpResponse.json({ detail: "failed" }, { status: 500 })));
     const user = userEvent.setup();
