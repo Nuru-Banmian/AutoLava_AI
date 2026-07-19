@@ -128,10 +128,10 @@ def user_factory(db_session: AsyncSession) -> UserFactory:
         password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
         user = User(
             username=username,
-        password_hash=password_hash,
-        role=role,
-        is_active=is_active,
-    )
+            password_hash=password_hash,
+            role=role,
+            is_active=is_active,
+        )
         db_session.add(user)
         await db_session.flush()
         return user

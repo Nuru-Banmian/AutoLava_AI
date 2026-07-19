@@ -63,6 +63,7 @@ class StoreDailyRecord(Base):
     __table_args__ = (
         UniqueConstraint("store_id", "date", name="uq_store_daily_records_store_date"),
         CheckConstraint("is_open in ('营业','休息','天气停业')", name="open_status"),
+        CheckConstraint("daily_revenue >= 0", name="daily_revenue_nonnegative"),
     )
 
 
@@ -82,4 +83,5 @@ class DailyIncomeItem(Base):
     __table_args__ = (
         UniqueConstraint("record_id", "category_id"),
         Index("ix_daily_income_items_record_sort", "record_id", "sort_order"),
+        CheckConstraint("amount >= 0", name="amount_nonnegative"),
     )

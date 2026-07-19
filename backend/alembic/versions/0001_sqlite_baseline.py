@@ -105,6 +105,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(), server_default=sa.func.current_timestamp(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), server_default=sa.func.current_timestamp(), nullable=False),
         sa.CheckConstraint("is_open in ('营业','休息','天气停业')", name=op.f("ck_store_daily_records_open_status")),
+        sa.CheckConstraint("daily_revenue >= 0", name=op.f("ck_store_daily_records_daily_revenue_nonnegative")),
         sa.ForeignKeyConstraint(["created_by"], ["users.id"], name=op.f("fk_store_daily_records_created_by_users")),
         sa.ForeignKeyConstraint(["store_id"], ["stores.id"], name=op.f("fk_store_daily_records_store_id_stores")),
         sa.ForeignKeyConstraint(["updated_by"], ["users.id"], name=op.f("fk_store_daily_records_updated_by_users")),
@@ -149,6 +150,7 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(), server_default=sa.func.current_timestamp(), nullable=False),
         sa.ForeignKeyConstraint(["category_id"], ["income_categories.id"], name=op.f("fk_daily_income_items_category_id_income_categories")),
         sa.ForeignKeyConstraint(["record_id"], ["store_daily_records.id"], name=op.f("fk_daily_income_items_record_id_store_daily_records"), ondelete="CASCADE"),
+        sa.CheckConstraint("amount >= 0", name=op.f("ck_daily_income_items_amount_nonnegative")),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_daily_income_items")),
         sa.UniqueConstraint("record_id", "category_id", name=op.f("uq_daily_income_items_record_id")),
     )
