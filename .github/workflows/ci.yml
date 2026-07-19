@@ -68,6 +68,19 @@ jobs:
         run: |
           docker build -t autolava-api:latest backend
           docker build -t autolava-web:latest -f frontend/Dockerfile.prebuilt frontend
+      - name: Export release images
+        run: |
+          docker save autolava-api:latest | gzip -1 > autolava-api.tar.gz
+          docker save autolava-web:latest | gzip -1 > autolava-web.tar.gz
+      - name: Upload release images
+        uses: actions/upload-artifact@v4
+        with:
+          name: autolava-release-images-${{ github.sha }}
+          path: |
+            autolava-api.tar.gz
+            autolava-web.tar.gz
+          retention-days: 3
+          compression-level: 0
       - run: docker compose up -d --no-build
       - run: docker compose exec -T autolava-web nginx -t
       - name: Wait for proxied API health
