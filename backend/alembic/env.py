@@ -7,10 +7,9 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.core.config import get_settings
+from app.core.database import sqlite_url
 from app.models.base import Base
-import app.models.audit  # noqa: F401
 import app.models.identity  # noqa: F401
-import app.models.income_config  # noqa: F401
 import app.models.ledger  # noqa: F401
 import app.models.operations  # noqa: F401
 
@@ -19,7 +18,9 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))
+config.set_main_option(
+    "sqlalchemy.url", str(sqlite_url(get_settings().database_path)).replace("%", "%%")
+)
 target_metadata = Base.metadata
 
 

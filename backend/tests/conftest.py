@@ -18,11 +18,9 @@ os.environ["AUTOLAVA_DATABASE_PATH"] = str(
 
 from app.core.config import get_settings
 from app.core.database import engine, get_session
-from app.main import create_app
 from app.models.base import Base
 from app.models.identity import Store, User
 from app.services.weather import OpenMeteoProvider, WeatherService
-import app.models.audit  # noqa: F401
 import app.models.ledger  # noqa: F401
 import app.models.operations  # noqa: F401
 
@@ -93,6 +91,8 @@ def weather_stub() -> NoNetworkWeather:
 async def client(
     db_session: AsyncSession, weather_stub: NoNetworkWeather
 ) -> AsyncIterator[AsyncClient]:
+    from app.main import create_app
+
     app = create_app()
     app.state.weather_service = weather_stub
     app.state.open_meteo_provider = weather_stub
@@ -128,11 +128,10 @@ def user_factory(db_session: AsyncSession) -> UserFactory:
         password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
         user = User(
             username=username,
-            password_hash=password_hash,
-            role=role,
-            is_active=is_active,
-            remember_token=None,
-        )
+        password_hash=password_hash,
+        role=role,
+        is_active=is_active,
+    )
         db_session.add(user)
         await db_session.flush()
         return user
