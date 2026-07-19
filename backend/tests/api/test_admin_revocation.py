@@ -186,3 +186,49 @@ async def test_admin_mutation_revalidates_actor_after_lock_wait(
             assert category.archived_at is None
         if operation == "restore":
             assert category.archived_at is not None
+
+
+async def test_income_config_replace_rejects_deactivated_actor_after_lock_wait() -> None:
+    await _reset_database()
+    actor_id, target_id, store_id, category_id = await _setup_admin_mutation(
+        "replace"
+    )
+    app = create_app()
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        login = await client.post(
+            "/api/auth/login",
+            json={"username": "revoked-admin", "password": "secret"},
+        )
+        assert login.status_code == 200
+        await SQLITE_WRITE_LOCK.acquire()
+        try:
+            mutation = asyncio.create_task(
+                _request_for(
+                    client,
+                    "replace",
+                    target_id=target_id,
+                    store_id=store_id,
+                    category_id=category_id,
+                )
+            )
+            while not SQLITE_WRITE_LOCK._waiters:
+                await asyncio.sleep(0)
+            async with async_session_factory() as revoke:
+                actor = await revoke.get(User, actor_id)
+                assert actor is not None
+                actor.is_active = False
+                await revoke.commit()
+        finally:
+            SQLITE_WRITE_LOCK.release()
+        response = await mutation
+
+    assert response.status_code == 401
+    async with async_session_factory() as verify:
+        store = await verify.get(Store, store_id)
+        category = await verify.get(IncomeCategory, category_id)
+        assert store is not None
+        assert category is not None
+        assert store.income_items_enabled is False
+        assert category.name == "Before"
