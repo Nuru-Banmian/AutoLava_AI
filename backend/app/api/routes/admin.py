@@ -473,44 +473,30 @@ async def patch_income_category(
     include_changed = (
         body.include_in_total is not None and body.include_in_total != category.include_in_total
     )
-    records: list[StoreDailyRecord] = []
+    record_dates = set()
     if include_changed:
-        records = list(
+        record_dates = set(
             await session.scalars(
-                select(StoreDailyRecord)
+                select(StoreDailyRecord.date)
                 .join(DailyIncomeItem, DailyIncomeItem.record_id == StoreDailyRecord.id)
                 .where(DailyIncomeItem.category_id == category.id)
-                .order_by(StoreDailyRecord.id)
-                .with_for_update()
             )
         )
 
-    for field, value in body.model_dump(exclude_none=True).items():
-        setattr(category, field, value)
-
-    if include_changed and records:
-        await session.flush()
-        totals = {record.id: Decimal("0.00") for record in records}
-        included_amounts = await session.execute(
-            select(DailyIncomeItem.record_id, DailyIncomeItem.amount)
-            .join(IncomeCategory, IncomeCategory.id == DailyIncomeItem.category_id)
-            .where(
-                DailyIncomeItem.record_id.in_(totals),
-                IncomeCategory.include_in_total.is_(True),
-            )
-        )
-        for record_id, amount in included_amounts:
-            totals[record_id] += amount
-        for record in records:
-            record.daily_revenue = totals[record.id]
-        await session.flush()
-    response_payload = _category_payload(category)
-    await session.commit()
-    if records:
+    async with SQLITE_WRITE_LOCK:
+        try:
+            for field, value in body.model_dump(exclude_none=True).items():
+                setattr(category, field, value)
+            await session.flush()
+            response_payload = _category_payload(category)
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+    if record_dates:
         store = await session.get(Store, category.store_id)
         if store is not None:
             local_date = datetime.now(ZoneInfo(store.timezone)).date()
-            record_dates = {record.date for record in records}
             card_types = []
             if local_date - timedelta(days=1) in record_dates:
                 card_types.append("yesterday")
