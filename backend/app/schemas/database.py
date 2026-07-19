@@ -28,15 +28,3 @@ class DatabasePage(BaseModel):
     total: int
     page: int
     page_size: int
-
-
-class RollbackResult(BaseModel):
-    audit_id: int
-    record: dict | None
-
-
-class AuditPage(BaseModel):
-    items: list[dict]
-    total: int
-    page: int
-    page_size: int

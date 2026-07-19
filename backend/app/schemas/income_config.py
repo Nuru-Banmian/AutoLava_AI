@@ -18,25 +18,11 @@ class IncomeConfigPublishBody(BaseModel):
     items: list[IncomeConfigItemBody]
 
 
-class IncomeConfigItemResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    category_id: int | None
-    name: str
-    include_in_total: bool
-    is_active: bool
-    sort_order: int
-
-
 class IncomeConfigResponse(BaseModel):
     store_id: int
-    version_id: int | None
-    version: int
     enabled: bool
     formula: str
-    created_at: datetime | None = None
-    items: list[IncomeConfigItemResponse]
+    items: list["IncomeCategoryResponse"]
 
 
 class IncomeCategoryResponse(BaseModel):

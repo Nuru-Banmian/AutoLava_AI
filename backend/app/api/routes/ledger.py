@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from app.api.deps import Session, StoreAccess, require_capability, require_store_access, require_store_read_access
 from app.api.routes.dashboard import get_weather_service
 from app.schemas.ledger import LedgerBody
-from app.services.audit import record_snapshot
+from app.services.record_payload import record_payload
 from app.services.briefing import BriefingService
 from app.services.ledger import LedgerService
 from app.services.weather import WeatherService
@@ -68,7 +68,7 @@ async def recent_records(
     access: StoreAccess = Depends(require_store_read_access),
 ) -> list[dict]:
     records = await LedgerService(session).recent(store=access.store, days=days)
-    return [record_snapshot(record) for record in records]
+    return [record_payload(record) for record in records]
 
 
 @router.get(
@@ -82,7 +82,7 @@ async def get_record_by_query(
     access: StoreAccess = Depends(require_store_read_access),
 ) -> dict:
     record = await LedgerService(session).get(store=access.store, record_date=record_date)
-    return record_snapshot(record)
+    return record_payload(record)
 
 
 @router.get(
@@ -96,7 +96,7 @@ async def get_record_by_path(
     access: StoreAccess = Depends(require_store_read_access),
 ) -> dict:
     record = await LedgerService(session).get(store=access.store, record_date=record_date)
-    return record_snapshot(record)
+    return record_payload(record)
 
 
 @router.get(
@@ -160,7 +160,6 @@ async def put_record(
         "id": record.id,
         "date": record.date.isoformat(),
         "daily_revenue": str(record.daily_revenue),
-        "row_version": record.row_version,
     }
     await _safely_refresh_briefing(
         request,
@@ -185,14 +184,12 @@ async def delete_record(
     record_date: date,
     request: Request,
     session: Session,
-    expected_version: Annotated[int, Query(ge=1)],
     access: StoreAccess = Depends(require_store_access),
 ) -> Response:
     event = await LedgerService(session).delete(
         store=access.store,
         record_date=record_date,
         actor=access.user,
-        expected_version=expected_version,
     )
     await _safely_refresh_briefing(request, session, access.store, event.record_date)
     return Response(status_code=204)

@@ -12,9 +12,7 @@ from sqlalchemy.orm import contains_eager, selectinload
 
 from app.models.identity import Store, User
 from app.events.ledger import LedgerChanged
-from app.models.income_config import IncomeConfigVersion
 from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
-from app.services.audit import make_ledger_audit, record_snapshot
 
 _MONEY_QUANTUM = Decimal("0.01")
 _MONEY_MAX = Decimal("9999999999.99")
@@ -93,21 +91,9 @@ class LedgerService:
     async def form_config(self, *, store: Store, record_date: date) -> dict[str, Any]:
         record = await self._find_record(store_id=store.id, record_date=record_date)
         if record is not None:
-            version_number = 0
-            if record.income_config_version_id is not None:
-                version_number = (
-                    await self.session.scalar(
-                        select(IncomeConfigVersion.version).where(
-                            IncomeConfigVersion.id == record.income_config_version_id
-                        )
-                    )
-                    or 0
-                )
             return {
                 "store_id": store.id,
                 "enabled": record.income_mode == "composed",
-                "version_id": record.income_config_version_id,
-                "version": version_number,
                 "items": [
                     {
                         "category_id": item.category_id,
@@ -119,29 +105,28 @@ class LedgerService:
                     for item in sorted(record.items, key=lambda item: (item.sort_order, item.id))
                 ],
             }
-        config = await self.session.scalar(
-            select(IncomeConfigVersion)
-            .where(IncomeConfigVersion.store_id == store.id)
-            .options(selectinload(IncomeConfigVersion.items))
-            .order_by(IncomeConfigVersion.version.desc())
-            .limit(1)
+        categories = list(
+            await self.session.scalars(
+                select(IncomeCategory)
+                .where(
+                    IncomeCategory.store_id == store.id,
+                    IncomeCategory.archived_at.is_(None),
+                )
+                .order_by(IncomeCategory.sort_order, IncomeCategory.id)
+            )
         )
         return {
             "store_id": store.id,
-            "enabled": config is not None and config.enabled,
-            "version_id": None if config is None else config.id,
-            "version": 0 if config is None else config.version,
-            "items": []
-            if config is None
-            else [
+            "enabled": store.income_items_enabled,
+            "items": [
                 {
-                    "category_id": item.category_id,
+                    "category_id": item.id,
                     "name": item.name,
                     "include_in_total": item.include_in_total,
                     "is_active": item.is_active,
                     "sort_order": item.sort_order,
                 }
-                for item in sorted(config.items, key=lambda item: (item.sort_order, item.id))
+                for item in categories
             ],
         }
 
@@ -203,9 +188,6 @@ class LedgerService:
         payload: dict[str, Any],
         actor: User,
         overwrite: bool = False,
-        source: str = "manual",
-        requires_approval: bool = False,
-        approved: bool = True,
     ) -> LedgerWriteResult:
         if record_date > self._local_today(store):
             raise HTTPException(422, "Future ledger dates are not allowed")
@@ -216,8 +198,6 @@ class LedgerService:
         created = record is None
         if record is not None and not overwrite:
             raise HTTPException(409, "Record exists; confirm overwrite")
-        if record is not None and payload.get("expected_version") != record.row_version:
-            raise HTTPException(409, "Record changed; reload before saving")
 
         items = payload.get("items", [])
         category_id_list = [item["category_id"] for item in items]
@@ -226,16 +206,19 @@ class LedgerService:
             raise HTTPException(422, "Duplicate income categories are not allowed")
 
         rest_day = payload["is_open"] == "休息"
-        config: IncomeConfigVersion | None = None
+        config: list[IncomeCategory] = []
         if record is None:
-            config = await self.session.scalar(
-                select(IncomeConfigVersion)
-                .where(IncomeConfigVersion.store_id == store.id)
-                .options(selectinload(IncomeConfigVersion.items))
-                .order_by(IncomeConfigVersion.version.desc())
-                .limit(1)
+            config = list(
+                await self.session.scalars(
+                    select(IncomeCategory)
+                    .where(
+                        IncomeCategory.store_id == store.id,
+                        IncomeCategory.archived_at.is_(None),
+                    )
+                    .order_by(IncomeCategory.sort_order, IncomeCategory.id)
+                )
             )
-            income_mode = "composed" if config is not None and config.enabled else "legacy_total"
+            income_mode = "composed" if store.income_items_enabled else "legacy_total"
         else:
             income_mode = record.income_mode
 
@@ -250,19 +233,11 @@ class LedgerService:
         else:
             if payload.get("daily_revenue") is not None:
                 raise HTTPException(422, "Composed revenue mode does not accept daily revenue")
-            bound_version_id = (
-                config.id if record is None and config is not None else record.income_config_version_id
-            )
-            if payload.get("config_version_id") != bound_version_id:
-                raise HTTPException(409, "Income configuration version does not match")
             if record is None:
-                if config is None:
-                    raise HTTPException(409, "Income configuration version does not match")
-                expected = [item for item in config.items if item.is_active]
+                expected = [item for item in config if item.is_active]
                 snapshot_values = {
-                    item.category_id: (item.name, item.include_in_total, item.sort_order)
+                    item.id: (item.name, item.include_in_total, item.sort_order)
                     for item in expected
-                    if item.category_id is not None
                 }
             else:
                 snapshot_values = {
@@ -282,8 +257,6 @@ class LedgerService:
                     daily_revenue += amount
                     if daily_revenue > _MONEY_MAX:
                         raise HTTPException(422, "Daily revenue exceeds NUMERIC(12,2) capacity")
-        before = None if record is None else record_snapshot(record)
-
         try:
             async with self.session.begin_nested():
                 if record is None:
@@ -293,12 +266,10 @@ class LedgerService:
                         created_by=actor.id,
                         updated_by=actor.id,
                         income_mode=income_mode,
-                        income_config_version_id=None if config is None else config.id,
                     )
                     self.session.add(record)
                 else:
                     record.updated_by = actor.id
-                    record.row_version += 1
                     record.items.clear()
                     await self.session.flush()
 
@@ -336,20 +307,6 @@ class LedgerService:
                     record,
                     attribute_names=["daily_revenue", "created_at", "updated_at", "items"],
                 )
-                after = record_snapshot(record)
-                self.session.add(
-                    make_ledger_audit(
-                        record=record,
-                        operation_type="create" if created else "update",
-                        source=source,
-                        user_id=actor.id,
-                        before=before,
-                        after=after,
-                        requires_approval=requires_approval,
-                        approved=approved,
-                    )
-                )
-                await self.session.flush()
             await self.session.commit()
         except IntegrityError as exc:
             await self.session.rollback()
@@ -366,7 +323,6 @@ class LedgerService:
                 record_date=record.date,
                 operation="created" if created else "updated",
                 actor_id=actor.id,
-                row_version=record.row_version,
             ),
         )
 
@@ -376,41 +332,21 @@ class LedgerService:
         store: Store,
         record_date: date,
         actor: User,
-        expected_version: int,
-        source: str = "manual",
-        requires_approval: bool = False,
-        approved: bool = True,
     ) -> LedgerChanged:
         record = await self._find_record(
             store_id=store.id, record_date=record_date, for_update=True
         )
         if record is None:
             raise HTTPException(404, "Record not found")
-        if record.row_version != expected_version:
-            raise HTTPException(409, "Record changed; reload before saving")
-        before = record_snapshot(record)
         event = LedgerChanged(
             store_id=store.id,
             record_id=record.id,
             record_date=record.date,
             operation="deleted",
             actor_id=actor.id,
-            row_version=None,
         )
         try:
             async with self.session.begin_nested():
-                self.session.add(
-                    make_ledger_audit(
-                        record=record,
-                        operation_type="delete",
-                        source=source,
-                        user_id=actor.id,
-                        before=before,
-                        after=None,
-                        requires_approval=requires_approval,
-                        approved=approved,
-                    )
-                )
                 await self.session.delete(record)
                 await self.session.flush()
             await self.session.commit()

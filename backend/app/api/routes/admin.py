@@ -8,11 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import delete, exists, func, select
 from sqlalchemy.exc import IntegrityError
 
-from app.api.deps import Session, require_capability
+from app.api.deps import Session, require_admin, require_capability
 from app.core.security import hash_password
-from app.models.audit import AuditLog
-from app.models.identity import Store, StoreMember, StoreSetting, User
-from app.models.income_config import IncomeConfigVersion
+from app.models.identity import Store, StoreMember, User
 from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
 from app.models.operations import DailyBriefing, ScheduledTaskLog, SystemAlert
 from app.schemas.admin import (
@@ -25,7 +23,6 @@ from app.schemas.admin import (
     UserPatch,
 )
 from app.schemas.time import timestamp_status, trusted_utc
-from app.services.audit import add_admin_audit, record_snapshot
 from app.services.briefing import BriefingService
 from app.services.income_config import IncomeConfigService
 from app.services.owner import is_owner, owner_username
@@ -54,10 +51,6 @@ def _decimal(value: Decimal | None) -> str | None:
     return None if value is None else str(value)
 
 
-def _date(value: date | None) -> str | None:
-    return None if value is None else value.isoformat()
-
-
 def _user_payload(user: User) -> dict[str, Any]:
     return {
         "id": user.id,
@@ -69,17 +62,6 @@ def _user_payload(user: User) -> dict[str, Any]:
 
 def _managed_user_payload(user: User, store_ids: list[int]) -> dict[str, Any]:
     return _user_payload(user) | {"store_ids": store_ids}
-
-
-def _user_snapshot(
-    user: User, *, password_changed: bool = False, store_ids: list[int] | None = None
-) -> dict[str, Any]:
-    snapshot = _user_payload(user)
-    if store_ids is not None:
-        snapshot["store_ids"] = store_ids
-    if password_changed:
-        snapshot["password_changed"] = True
-    return snapshot
 
 
 def _store_payload(store: Store) -> dict[str, Any]:
@@ -103,24 +85,6 @@ def _category_payload(category: IncomeCategory) -> dict[str, Any]:
         "is_active": category.is_active,
         "sort_order": category.sort_order,
         "archived_at": category.archived_at,
-    }
-
-
-def _audit_payload(audit: AuditLog) -> dict[str, Any]:
-    return {
-        "id": audit.id,
-        "operation_domain": audit.operation_domain,
-        "store_id": audit.store_id,
-        "record_id": audit.record_id,
-        "record_date": _date(audit.record_date),
-        "operation_type": audit.operation_type,
-        "operation_source": audit.operation_source,
-        "before": audit.before_json,
-        "after": audit.after_json,
-        "description": audit.description,
-        "approved": audit.approved,
-        "rollbackable": audit.rollbackable,
-        "created_at": audit.created_at,
     }
 
 
@@ -151,33 +115,6 @@ def _task_log_payload(task_log: ScheduledTaskLog) -> dict[str, Any]:
         "created_at": trusted_utc(task_log.created_at, task_log.timestamp_contract),
         "timestamp_status": timestamp_status(task_log.timestamp_contract),
     }
-
-
-def _add_ledger_recalculation_audit(
-    session,
-    *,
-    actor_id: int,
-    record: StoreDailyRecord,
-    before: dict[str, Any],
-    after: dict[str, Any],
-) -> None:
-    session.add(
-        AuditLog(
-            operation_domain="ledger",
-            store_id=record.store_id,
-            record_id=record.id,
-            record_date=record.date,
-            operation_type="update",
-            operation_source="system",
-            operator_user_id=actor_id,
-            before_json=before,
-            after_json=after,
-            description="Recomputed daily revenue after income category configuration change",
-            requires_approval=False,
-            approved=True,
-            rollbackable=False,
-        )
-    )
 
 
 async def _require_store(session: Session, store_id: int) -> Store:
@@ -259,18 +196,6 @@ async def create_user(body: UserCreate, session: Session, actor: UsersManager) -
     session.add_all(
         StoreMember(store_id=store_id, user_id=user.id) for store_id in next_store_ids
     )
-    add_admin_audit(
-        session,
-        actor_id=actor.id,
-        store_id=None,
-        record_id=user.id,
-        operation_type="create",
-        description=f"Created user {user.username}",
-        before=None,
-        after=_user_snapshot(
-            user, password_changed=True, store_ids=next_store_ids
-        ),
-    )
     await session.commit()
     return _managed_user_payload(user, next_store_ids)
 
@@ -310,13 +235,7 @@ async def patch_user(
         if len(active_admins) <= 1:
             raise HTTPException(409, "At least one active administrator is required")
     previous_store_ids = await _user_store_ids(session, user.id)
-    password_changed = body.password is not None
     includes_access_change = body.role is not None or body.store_ids is not None
-    before = _user_snapshot(
-        user,
-        password_changed=password_changed,
-        store_ids=previous_store_ids if includes_access_change else None,
-    )
     if body.password is not None:
         user.password_hash = hash_password(body.password)
     if body.is_active is not None:
@@ -334,20 +253,6 @@ async def patch_user(
         session.add_all(
             StoreMember(store_id=store_id, user_id=user.id) for store_id in next_store_ids
         )
-    add_admin_audit(
-        session,
-        actor_id=actor.id,
-        store_id=None,
-        record_id=user.id,
-        operation_type="update",
-        description=f"Updated user {user.username}",
-        before=before,
-        after=_user_snapshot(
-            user,
-            password_changed=password_changed,
-            store_ids=next_store_ids if includes_access_change else None,
-        ),
-    )
     await session.commit()
     return _managed_user_payload(user, next_store_ids)
 
@@ -372,17 +277,7 @@ async def delete_unused_user(
             | (StoreDailyRecord.updated_by == user.id)
         )
     )
-    audit_references = await session.scalar(
-        select(func.count())
-        .select_from(AuditLog)
-        .where(AuditLog.operator_user_id == user.id)
-    )
-    config_references = await session.scalar(
-        select(func.count())
-        .select_from(IncomeConfigVersion)
-        .where(IncomeConfigVersion.created_by == user.id)
-    )
-    if ledger_references or audit_references or config_references:
+    if ledger_references:
         raise HTTPException(409, "该用户已有历史记录，不能永久删除；请停用账号")
     await session.execute(delete(StoreMember).where(StoreMember.user_id == user.id))
     await session.delete(user)
@@ -405,23 +300,6 @@ async def list_user_stores(user_id: int, session: Session) -> list[dict[str, Any
         )
     ).all()
     return [_store_payload(store) for store in stores]
-
-
-@router.get(
-    "/users/{user_id}/operations",
-    dependencies=[Depends(require_capability("audit.view"))],
-)
-async def list_user_operations(user_id: int, session: Session) -> list[dict[str, Any]]:
-    if await session.get(User, user_id) is None:
-        raise HTTPException(404, "User not found")
-    operations = (
-        await session.scalars(
-            select(AuditLog)
-            .where(AuditLog.operator_user_id == user_id)
-            .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
-        )
-    ).all()
-    return [_audit_payload(operation) for operation in operations]
 
 
 @router.get(
@@ -464,17 +342,6 @@ async def create_store(
     store = Store(**body.model_dump())
     session.add(store)
     await session.flush()
-    session.add(StoreSetting(store_id=store.id, standard_work_hours=8))
-    add_admin_audit(
-        session,
-        actor_id=actor.id,
-        store_id=store.id,
-        record_id=store.id,
-        operation_type="create",
-        description=f"Created store {store.name}",
-        before=None,
-        after=_store_payload(store) | {"standard_work_hours": 8},
-    )
     await session.commit()
     return _store_payload(store)
 
@@ -484,27 +351,14 @@ async def patch_store(
     store_id: int, body: StorePatch, session: Session, actor: StoresManager
 ) -> dict[str, Any]:
     store = await _require_store(session, store_id)
-    before = _store_payload(store)
     for field, value in body.model_dump(exclude_none=True).items():
         setattr(store, field, value)
-    add_admin_audit(
-        session,
-        actor_id=actor.id,
-        store_id=store.id,
-        record_id=store.id,
-        operation_type="update",
-        description=f"Updated store {store.name}",
-        before=before,
-        after=_store_payload(store),
-    )
     await session.commit()
     return _store_payload(store)
 
 
 STORE_PROTECTED_REFERENCES = (
     StoreDailyRecord.store_id,
-    IncomeCategory.store_id,
-    IncomeConfigVersion.store_id,
     DailyBriefing.store_id,
     ScheduledTaskLog.store_id,
     SystemAlert.store_id,
@@ -518,37 +372,6 @@ async def _store_has_protected_references(session: Session, store_id: int) -> bo
     return False
 
 
-def _is_initial_store_create_audit(audit: AuditLog, store_id: int) -> bool:
-    after = audit.after_json
-    return (
-        audit.operation_domain == "admin"
-        and audit.operation_type == "create"
-        and audit.record_id == store_id
-        and audit.before_json is None
-        and isinstance(after, dict)
-        and after.get("id") == store_id
-        and after.get("standard_work_hours") == 8
-    )
-
-
-async def _initial_store_create_audit_for_delete(
-    session: Session, store_id: int
-) -> AuditLog | None:
-    audits = list(
-        await session.scalars(
-            select(AuditLog)
-            .where(AuditLog.store_id == store_id)
-            .order_by(AuditLog.id)
-            .with_for_update()
-        )
-    )
-    if not audits:
-        return None
-    if len(audits) == 1 and _is_initial_store_create_audit(audits[0], store_id):
-        return audits[0]
-    raise HTTPException(409, "该门店已有业务或历史记录，请归档门店而不是删除")
-
-
 @router.delete("/stores/{store_id}", status_code=204)
 async def delete_store(store_id: int, session: Session, actor: StoresManager) -> None:
     store = await session.scalar(
@@ -558,27 +381,12 @@ async def delete_store(store_id: int, session: Session, actor: StoresManager) ->
         raise HTTPException(404, "Store not found")
     if await _store_has_protected_references(session, store_id):
         raise HTTPException(409, "该门店已有业务或历史记录，请归档门店而不是删除")
-    initial_create_audit = await _initial_store_create_audit_for_delete(session, store_id)
-
-    before = _store_payload(store)
     try:
-        if initial_create_audit is not None:
-            initial_create_audit.store_id = None
         await session.execute(delete(StoreMember).where(StoreMember.store_id == store_id))
-        await session.execute(delete(StoreSetting).where(StoreSetting.store_id == store_id))
+        await session.execute(delete(IncomeCategory).where(IncomeCategory.store_id == store_id))
         await session.delete(store)
         # Force foreign-key checks while the transaction and row lock are still held.
         await session.flush()
-        add_admin_audit(
-            session,
-            actor_id=actor.id,
-            store_id=None,
-            record_id=store_id,
-            operation_type="delete",
-            description=f"Deleted unused store {store.name}",
-            before=before,
-            after=None,
-        )
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
@@ -615,25 +423,8 @@ async def replace_members(
     users = await _require_users(session, user_ids)
     if any(user.role == "admin" for user in users):
         raise HTTPException(409, "管理员默认可访问全部门店，无需分配门店")
-    previous_ids = list(
-        await session.scalars(
-            select(StoreMember.user_id)
-            .where(StoreMember.store_id == store_id)
-            .order_by(StoreMember.user_id)
-        )
-    )
     await session.execute(delete(StoreMember).where(StoreMember.store_id == store_id))
     session.add_all(StoreMember(store_id=store_id, user_id=user_id) for user_id in user_ids)
-    add_admin_audit(
-        session,
-        actor_id=actor.id,
-        store_id=store_id,
-        record_id=store_id,
-        operation_type="update",
-        description="Replaced store members",
-        before={"store_id": store_id, "user_ids": previous_ids},
-        after={"store_id": store_id, "user_ids": user_ids},
-    )
     await session.commit()
     return {"store_id": store_id, "user_ids": user_ids}
 
@@ -662,17 +453,6 @@ async def create_income_category(
     category = IncomeCategory(**body.model_dump())
     session.add(category)
     await session.flush()
-    add_admin_audit(
-        session,
-        actor_id=actor.id,
-        store_id=category.store_id,
-        record_id=category.id,
-        operation_type="create",
-        description=f"Created income category {category.name}",
-        before=None,
-        after=_category_payload(category),
-    )
-    await IncomeConfigService(session).publish_categories(category.store_id, actor)
     response_payload = _category_payload(category)
     await session.commit()
     return response_payload
@@ -689,12 +469,10 @@ async def patch_income_category(
     category = await session.get(IncomeCategory, category_id)
     if category is None:
         raise HTTPException(404, "Category not found")
-    before_category = _category_payload(category)
     include_changed = (
         body.include_in_total is not None and body.include_in_total != category.include_in_total
     )
     records: list[StoreDailyRecord] = []
-    before_records: dict[int, dict[str, Any]] = {}
     if include_changed:
         records = list(
             await session.scalars(
@@ -705,7 +483,6 @@ async def patch_income_category(
                 .with_for_update()
             )
         )
-        before_records = {record.id: record_snapshot(record) for record in records}
 
     for field, value in body.model_dump(exclude_none=True).items():
         setattr(category, field, value)
@@ -726,27 +503,6 @@ async def patch_income_category(
         for record in records:
             record.daily_revenue = totals[record.id]
         await session.flush()
-        for record in records:
-            await session.refresh(record, attribute_names=["updated_at", "items"])
-            _add_ledger_recalculation_audit(
-                session,
-                actor_id=actor.id,
-                record=record,
-                before=before_records[record.id],
-                after=record_snapshot(record),
-            )
-
-    add_admin_audit(
-        session,
-        actor_id=actor.id,
-        store_id=category.store_id,
-        record_id=category.id,
-        operation_type="update",
-        description=f"Updated income category {category.name}",
-        before=before_category,
-        after=_category_payload(category),
-    )
-    await IncomeConfigService(session).publish_categories(category.store_id, actor)
     response_payload = _category_payload(category)
     await session.commit()
     if records:
@@ -774,11 +530,11 @@ async def patch_income_category(
 async def delete_unused_category(
     category_id: int, session: Session, actor: IncomeConfigManager
 ) -> None:
-    await IncomeConfigService(session).delete_unused(category_id, actor)
+    await IncomeConfigService(session).delete_unused(category_id)
     await session.commit()
 
 
-@router.get("/alerts", dependencies=[Depends(require_capability("audit.view"))])
+@router.get("/alerts", dependencies=[Depends(require_admin)])
 async def list_alerts(session: Session) -> list[dict[str, Any]]:
     alerts = (
         await session.scalars(
@@ -788,7 +544,7 @@ async def list_alerts(session: Session) -> list[dict[str, Any]]:
     return [_alert_payload(alert) for alert in alerts]
 
 
-@router.get("/task-logs", dependencies=[Depends(require_capability("audit.view"))])
+@router.get("/task-logs", dependencies=[Depends(require_admin)])
 async def list_task_logs(session: Session) -> list[dict[str, Any]]:
     task_logs = (
         await session.scalars(

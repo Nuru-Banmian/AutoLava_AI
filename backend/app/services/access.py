@@ -15,7 +15,6 @@ Capability = Literal[
     "income_config.manage",
     "users.manage",
     "stores.manage",
-    "audit.view",
 ]
 
 ROLE_CAPABILITIES: dict[str, frozenset[Capability]] = {

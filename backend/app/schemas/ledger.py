@@ -14,8 +14,6 @@ class LedgerBody(BaseModel):
     daily_revenue: Decimal | None = Field(
         default=None, ge=0, max_digits=12, decimal_places=2
     )
-    config_version_id: int | None = None
-    expected_version: int | None = Field(default=None, ge=1)
     wash_count: int | None = Field(default=None, ge=0)
     weather: str | None = Field(default=None, max_length=50)
     weather_edited: bool = False

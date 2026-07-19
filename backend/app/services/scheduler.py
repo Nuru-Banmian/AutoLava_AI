@@ -11,7 +11,6 @@ from app.models.identity import Store
 from app.models.ledger import StoreDailyRecord
 from app.models.operations import ScheduledTaskLog, UTC_TIMESTAMP_CONTRACT
 from app.services.briefing import BriefingService
-from app.services.retention import RetentionService
 from app.services.weather import WeatherResult, WeatherService
 
 
@@ -177,38 +176,3 @@ def make_refresh_callback(
             await session.commit()
 
     return refresh_all
-
-
-def make_retention_callback(
-    session_factory: async_sessionmaker[AsyncSession],
-) -> Callable[[], Awaitable[None]]:
-    async def cleanup() -> None:
-        started_at = datetime.now(UTC).replace(tzinfo=None)
-        async with session_factory() as session:
-            try:
-                result = await RetentionService(session).prune(now=datetime.now(UTC))
-                message = (
-                    f"Pruned {result.ledger_snapshots_pruned} ledger snapshots and "
-                    f"{result.config_versions_pruned} config versions"
-                )
-                status = "success"
-            except Exception as exc:
-                await session.rollback()
-                message = f"Retention cleanup failed: {exc}"
-                status = "failed"
-            session.add(
-                ScheduledTaskLog(
-                    store_id=None,
-                    task_type="retention_cleanup",
-                    status=status,
-                    message=message,
-                    retry_count=0,
-                    started_at=started_at,
-                    finished_at=datetime.now(UTC).replace(tzinfo=None),
-                    created_at=started_at,
-                    timestamp_contract=UTC_TIMESTAMP_CONTRACT,
-                )
-            )
-            await session.commit()
-
-    return cleanup

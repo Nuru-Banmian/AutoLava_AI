@@ -10,4 +10,3 @@ class LedgerChanged:
     record_date: date
     operation: Literal["created", "updated", "deleted", "rolled_back"]
     actor_id: int
-    row_version: int | None
