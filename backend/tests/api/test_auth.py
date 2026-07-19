@@ -154,6 +154,17 @@ async def test_login_openapi_schema_has_only_username_and_password(client) -> No
     assert set(properties) == {"username", "password"}
 
 
+async def test_login_rejects_the_removed_remember_field(client, user_factory) -> None:
+    await user_factory(username="extra-field-user", password="secret")
+
+    response = await client.post(
+        "/api/auth/login",
+        json={"username": "extra-field-user", "password": "secret", "remember": False},
+    )
+
+    assert response.status_code == 422
+
+
 @pytest.mark.parametrize("password", ["p" * 128, "界" * 30])
 def test_password_hashing_supports_long_ascii_and_unicode_passwords(password: str) -> None:
     security = load_feature_module("app.core.security")
@@ -311,7 +322,7 @@ async def test_password_change_rejects_wrong_current_password(client, user_facto
     assert "NewPassword2" not in response.text
     old_login = await client.post(
         "/api/auth/login",
-        json={"username": user.username, "password": "OldPassword1", "remember": False},
+        json={"username": user.username, "password": "OldPassword1"},
     )
     assert old_login.status_code == 200
 

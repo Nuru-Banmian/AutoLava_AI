@@ -167,7 +167,7 @@ async def auth_client(client: AsyncClient, user_factory: UserFactory) -> AsyncCl
     await user_factory(username="authenticated", password="secret")
     response = await client.post(
         "/api/auth/login",
-        json={"username": "authenticated", "password": "secret", "remember": False},
+        json={"username": "authenticated", "password": "secret"},
     )
     assert response.status_code == 200
     return client
