@@ -1,22 +1,13 @@
-import asyncio
 from importlib import import_module
 
 import bcrypt
 import jwt
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.routes import auth as auth_routes
-from app.api.routes.admin import patch_user
 from app.core.config import get_settings
-from app.core.database import async_session_factory, engine
-from app.core.security import hash_password, verify_password
-from app.models.base import Base
-from app.models.identity import StoreMember, User
-from app.schemas.admin import UserPatch
-from app.schemas.auth import PasswordChange
+from app.models.identity import StoreMember
 
 
 def load_feature_module(name: str):
@@ -26,39 +17,17 @@ def load_feature_module(name: str):
         pytest.fail(f"Required feature module {name} does not exist")
 
 
-@pytest.fixture
-async def committed_auth_database():
-    if engine.dialect.name != "mysql" or engine.url.database != "autolava_test":
-        raise RuntimeError("Password race tests require the dedicated MySQL autolava_test database")
-
-    async def clear() -> None:
-        async with engine.begin() as connection:
-            for table in reversed(Base.metadata.sorted_tables):
-                await connection.execute(table.delete())
-
-    await clear()
-    try:
-        yield
-    finally:
-        await clear()
-        await engine.dispose()
-
-
-async def test_login_sets_http_only_cookie(client, user_factory) -> None:
+async def test_login_uses_a_fixed_24_hour_http_only_cookie(client, user_factory) -> None:
     await user_factory(username="maria", password="secret", role="user")
     response = await client.post(
         "/api/auth/login",
-        json={
-            "username": "maria",
-            "password": "secret",
-            "remember": True,
-        },
+        json={"username": "maria", "password": "secret"},
     )
     assert response.status_code == 200
     assert response.json()["username"] == "maria"
     cookie = response.headers["set-cookie"]
     assert "HttpOnly" in cookie
-    assert "Max-Age=2592000" in cookie
+    assert "Max-Age=86400" in cookie
     assert "Path=/" in cookie
     assert "SameSite=lax" in cookie
 
@@ -72,11 +41,7 @@ async def test_login_and_me_report_configured_owner(
 
     login = await client.post(
         "/api/auth/login",
-        json={
-            "username": "Nuru_Banmian",
-            "password": "secret123",
-            "remember": False,
-        },
+        json={"username": "Nuru_Banmian", "password": "secret123"},
     )
     assert login.status_code == 200
     assert login.json() == {
@@ -97,29 +62,10 @@ async def test_non_owner_auth_payload_is_explicitly_false(
 
     response = await client.post(
         "/api/auth/login",
-        json={
-            "username": "secondary-admin",
-            "password": "secret123",
-            "remember": False,
-        },
+        json={"username": "secondary-admin", "password": "secret123"},
     )
     assert response.status_code == 200
     assert response.json()["is_owner"] is False
-
-
-async def test_login_sets_session_cookie_attributes(client, user_factory) -> None:
-    await user_factory(username="session-user", password="secret")
-    response = await client.post(
-        "/api/auth/login",
-        json={"username": "session-user", "password": "secret", "remember": False},
-    )
-
-    assert response.status_code == 200
-    cookie = response.headers["set-cookie"]
-    assert "HttpOnly" in cookie
-    assert "Max-Age=43200" in cookie
-    assert "Path=/" in cookie
-    assert "SameSite=lax" in cookie
 
 
 async def test_login_sets_secure_cookie_when_configured(client, user_factory, monkeypatch) -> None:
@@ -129,7 +75,7 @@ async def test_login_sets_secure_cookie_when_configured(client, user_factory, mo
 
     response = await client.post(
         "/api/auth/login",
-        json={"username": "secure-user", "password": "secret", "remember": False},
+        json={"username": "secure-user", "password": "secret"},
     )
 
     assert response.status_code == 200
@@ -140,11 +86,7 @@ async def test_disabled_user_cannot_login(client, user_factory) -> None:
     await user_factory(username="disabled", password="secret", is_active=False)
     response = await client.post(
         "/api/auth/login",
-        json={
-            "username": "disabled",
-            "password": "secret",
-            "remember": False,
-        },
+        json={"username": "disabled", "password": "secret"},
     )
     assert response.status_code == 401
 
@@ -164,7 +106,7 @@ async def test_unknown_and_inactive_logins_verify_a_password_hash(
     responses = [
         await client.post(
             "/api/auth/login",
-            json={"username": username, "password": "incorrect", "remember": False},
+            json={"username": username, "password": "incorrect"},
         )
         for username in ("missing", "missing", inactive.username)
     ]
@@ -194,13 +136,33 @@ def test_password_and_jwt_primitives() -> None:
     assert security.verify_password("secret", password_hash)
     assert not security.verify_password("incorrect", password_hash)
 
-    session_token, session_max_age = security.create_access_token(42, remember=False)
-    remember_token, remember_max_age = security.create_access_token(42, remember=True)
-    assert session_max_age == 12 * 3600
-    assert remember_max_age == 30 * 24 * 3600
-    assert jwt.get_unverified_header(session_token)["alg"] == "HS256"
-    assert security.decode_access_token(session_token) == 42
-    assert security.decode_access_token(remember_token) == 42
+    token, max_age = security.create_access_token(42)
+    assert max_age == 24 * 60 * 60
+    assert jwt.get_unverified_header(token)["alg"] == "HS256"
+    assert security.decode_access_token(token) == 42
+
+
+async def test_login_openapi_schema_has_only_username_and_password(client) -> None:
+    schema = (await client.get("/openapi.json")).json()
+    login_schema = schema["paths"]["/api/auth/login"]["post"]["requestBody"]["content"][
+        "application/json"
+    ]["schema"]
+    properties = schema["components"]["schemas"][login_schema["$ref"].rsplit("/", 1)[-1]][
+        "properties"
+    ]
+
+    assert set(properties) == {"username", "password"}
+
+
+async def test_login_rejects_the_removed_remember_field(client, user_factory) -> None:
+    await user_factory(username="extra-field-user", password="secret")
+
+    response = await client.post(
+        "/api/auth/login",
+        json={"username": "extra-field-user", "password": "secret", "remember": False},
+    )
+
+    assert response.status_code == 422
 
 
 @pytest.mark.parametrize("password", ["p" * 128, "界" * 30])
@@ -290,7 +252,7 @@ async def test_me_rejects_user_disabled_after_login(client, user_factory, db_ses
     user = await user_factory(username="later-disabled", password="secret")
     login = await client.post(
         "/api/auth/login",
-        json={"username": user.username, "password": "secret", "remember": False},
+        json={"username": user.username, "password": "secret"},
     )
     assert login.status_code == 200
 
@@ -308,12 +270,13 @@ async def test_logout_clears_cookie_and_session(auth_client) -> None:
     assert (await auth_client.get("/api/auth/me")).status_code == 401
 
 
-async def test_user_changes_own_password(client, user_factory) -> None:
-    user = await user_factory(username="password-owner", password="OldPassword1")
-    other = await user_factory(username="other-user", password="OtherPassword1")
+async def test_user_changes_own_password(client, user_factory, db_session) -> None:
+    await user_factory(username="password-owner", password="OldPassword1")
+    await user_factory(username="other-user", password="OtherPassword1")
+    await db_session.commit()
     login = await client.post(
         "/api/auth/login",
-        json={"username": user.username, "password": "OldPassword1", "remember": False},
+        json={"username": "password-owner", "password": "OldPassword1"},
     )
     assert login.status_code == 200
 
@@ -327,26 +290,29 @@ async def test_user_changes_own_password(client, user_factory) -> None:
 
     old_login = await client.post(
         "/api/auth/login",
-        json={"username": user.username, "password": "OldPassword1", "remember": False},
+        json={"username": "password-owner", "password": "OldPassword1"},
     )
     new_login = await client.post(
         "/api/auth/login",
-        json={"username": user.username, "password": "NewPassword2", "remember": False},
+        json={"username": "password-owner", "password": "NewPassword2"},
     )
     other_login = await client.post(
         "/api/auth/login",
-        json={"username": other.username, "password": "OtherPassword1", "remember": False},
+        json={"username": "other-user", "password": "OtherPassword1"},
     )
     assert old_login.status_code == 401
     assert new_login.status_code == 200
     assert other_login.status_code == 200
 
 
-async def test_password_change_rejects_wrong_current_password(client, user_factory) -> None:
-    user = await user_factory(username="password-owner", password="OldPassword1")
+async def test_password_change_rejects_wrong_current_password(
+    client, user_factory, db_session
+) -> None:
+    await user_factory(username="password-owner", password="OldPassword1")
+    await db_session.commit()
     await client.post(
         "/api/auth/login",
-        json={"username": user.username, "password": "OldPassword1", "remember": False},
+        json={"username": "password-owner", "password": "OldPassword1"},
     )
 
     response = await client.post(
@@ -360,7 +326,7 @@ async def test_password_change_rejects_wrong_current_password(client, user_facto
     assert "NewPassword2" not in response.text
     old_login = await client.post(
         "/api/auth/login",
-        json={"username": user.username, "password": "OldPassword1", "remember": False},
+        json={"username": "password-owner", "password": "OldPassword1"},
     )
     assert old_login.status_code == 200
 
@@ -377,138 +343,6 @@ async def test_password_change_requires_authentication(client) -> None:
     assert "NewPassword2" not in response.text
 
 
-async def test_concurrent_password_changes_accept_the_old_password_only_once(
-    committed_auth_database,
-) -> None:
-    async with async_session_factory() as setup_session:
-        user = User(
-            username="password-race-user",
-            password_hash=hash_password("OldPassword1"),
-            role="user",
-            is_active=True,
-            remember_token=None,
-        )
-        setup_session.add(user)
-        await setup_session.commit()
-        user_id = user.id
-
-    async with async_session_factory() as first_session, async_session_factory() as second_session:
-        first_user = await first_session.get(User, user_id)
-        second_user = await second_session.get(User, user_id)
-        assert first_user is not None and second_user is not None
-
-        async def attempt(
-            session: AsyncSession, stale_user: User, new_password: str
-        ) -> int:
-            try:
-                await auth_routes.change_password(
-                    PasswordChange(
-                        current_password="OldPassword1", new_password=new_password
-                    ),
-                    session,
-                    stale_user,
-                )
-            except HTTPException as exc:
-                await session.rollback()
-                return exc.status_code
-            return 204
-
-        statuses = await asyncio.gather(
-            attempt(first_session, first_user, "FirstPassword2"),
-            attempt(second_session, second_user, "SecondPassword3"),
-        )
-
-    async with async_session_factory() as verification_session:
-        stored_hash = await verification_session.scalar(
-            select(User.password_hash).where(User.id == user_id)
-        )
-
-    assert sorted(statuses) == [204, 422]
-    assert stored_hash is not None
-    assert sum(
-        verify_password(password, stored_hash)
-        for password in ("FirstPassword2", "SecondPassword3")
-    ) == 1
-
-
-async def test_admin_reset_cannot_be_overwritten_by_a_stale_self_service_request(
-    committed_auth_database,
-) -> None:
-    async with async_session_factory() as setup_session:
-        administrator = User(
-            username="password-race-admin",
-            password_hash=hash_password("AdminPassword1"),
-            role="admin",
-            is_active=True,
-            remember_token=None,
-        )
-        user = User(
-            username="password-reset-target",
-            password_hash=hash_password("OldPassword1"),
-            role="user",
-            is_active=True,
-            remember_token=None,
-        )
-        setup_session.add_all([administrator, user])
-        await setup_session.commit()
-        administrator_id, user_id = administrator.id, user.id
-
-    admin_has_flushed = asyncio.Event()
-    allow_admin_commit = asyncio.Event()
-
-    class PausingAdminSession(AsyncSession):
-        async def commit(self) -> None:
-            await self.flush()
-            admin_has_flushed.set()
-            await asyncio.wait_for(allow_admin_commit.wait(), timeout=5)
-            await super().commit()
-
-    admin_session_factory = async_sessionmaker(
-        engine, class_=PausingAdminSession, expire_on_commit=False
-    )
-    async with async_session_factory() as self_session, admin_session_factory() as admin_session:
-        stale_user = await self_session.get(User, user_id)
-        actor = await admin_session.get(User, administrator_id)
-        assert stale_user is not None and actor is not None
-
-        admin_reset = asyncio.create_task(
-            patch_user(
-                user_id,
-                UserPatch(password="AdministratorReset2"),
-                admin_session,
-                actor,
-            )
-        )
-        await asyncio.wait_for(admin_has_flushed.wait(), timeout=5)
-        stale_change = asyncio.create_task(
-            auth_routes.change_password(
-                PasswordChange(
-                    current_password="OldPassword1", new_password="StaleSelfChange3"
-                ),
-                self_session,
-                stale_user,
-            )
-        )
-        await asyncio.sleep(0)
-        allow_admin_commit.set()
-        await admin_reset
-
-        with pytest.raises(HTTPException) as error:
-            await stale_change
-        await self_session.rollback()
-
-    async with async_session_factory() as verification_session:
-        stored_hash = await verification_session.scalar(
-            select(User.password_hash).where(User.id == user_id)
-        )
-
-    assert error.value.status_code == 422
-    assert error.value.detail == "当前密码不正确"
-    assert stored_hash is not None
-    assert verify_password("AdministratorReset2", stored_hash)
-    assert not verify_password("StaleSelfChange3", stored_hash)
-
-
 async def test_assigned_store_is_exposed(client, user_factory, store_factory, db_session) -> None:
     user = await user_factory(username="member", password="secret")
     assigned = await store_factory(name="Assigned")
@@ -517,7 +351,7 @@ async def test_assigned_store_is_exposed(client, user_factory, store_factory, db
     await db_session.flush()
     await client.post(
         "/api/auth/login",
-        json={"username": user.username, "password": "secret", "remember": False},
+        json={"username": user.username, "password": "secret"},
     )
 
     response = await client.get("/api/stores/accessible")
@@ -535,7 +369,7 @@ async def test_admin_sees_active_and_archived_stores_but_regular_users_do_not(
     inactive = await store_factory(name="Inactive", is_active=False)
     await client.post(
         "/api/auth/login",
-        json={"username": admin.username, "password": "secret", "remember": False},
+        json={"username": admin.username, "password": "secret"},
     )
 
     response = await client.get("/api/stores/accessible")
@@ -547,7 +381,7 @@ async def test_admin_sees_active_and_archived_stores_but_regular_users_do_not(
     member = await user_factory(username="member", password="secret")
     db_session.add(StoreMember(store_id=inactive.id, user_id=member.id))
     await db_session.flush()
-    await client.post("/api/auth/login", json={"username": member.username, "password": "secret", "remember": False})
+    await client.post("/api/auth/login", json={"username": member.username, "password": "secret"})
     response = await client.get("/api/stores/accessible")
     assert inactive.id not in {store["id"] for store in response.json()}
 

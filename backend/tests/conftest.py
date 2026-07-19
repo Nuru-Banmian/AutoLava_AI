@@ -1,18 +1,26 @@
+# ruff: noqa: E402
+
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from decimal import Decimal
+import os
+from pathlib import Path
+import tempfile
 
 import bcrypt
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+_test_database_directory = tempfile.TemporaryDirectory()
+os.environ["AUTOLAVA_DATABASE_PATH"] = str(
+    Path(_test_database_directory.name) / "autolava-test.sqlite3"
+)
+
 from app.core.config import get_settings
 from app.core.database import engine, get_session
-from app.main import create_app
 from app.models.base import Base
 from app.models.identity import Store, User
 from app.services.weather import OpenMeteoProvider, WeatherService
-import app.models.audit  # noqa: F401
 import app.models.ledger  # noqa: F401
 import app.models.operations  # noqa: F401
 
@@ -42,11 +50,21 @@ def test_jwt_secret(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     get_settings.cache_clear()
 
 
+@pytest.fixture(scope="session", autouse=True)
+async def database_schema() -> AsyncIterator[None]:
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    try:
+        yield
+    finally:
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.drop_all)
+        await engine.dispose()
+        _test_database_directory.cleanup()
+
+
 @pytest.fixture
 async def db_session() -> AsyncIterator[AsyncSession]:
-    if engine.dialect.name != "mysql" or engine.url.database != "autolava_test":
-        raise RuntimeError("API tests require the dedicated MySQL autolava_test database")
-
     async with engine.connect() as connection:
         transaction = await connection.begin()
         for table in reversed(Base.metadata.sorted_tables):
@@ -63,8 +81,6 @@ async def db_session() -> AsyncIterator[AsyncSession]:
             await session.close()
             await transaction.rollback()
 
-    await engine.dispose()
-
 
 @pytest.fixture
 def weather_stub() -> NoNetworkWeather:
@@ -75,6 +91,8 @@ def weather_stub() -> NoNetworkWeather:
 async def client(
     db_session: AsyncSession, weather_stub: NoNetworkWeather
 ) -> AsyncIterator[AsyncClient]:
+    from app.main import create_app
+
     app = create_app()
     app.state.weather_service = weather_stub
     app.state.open_meteo_provider = weather_stub
@@ -113,7 +131,6 @@ def user_factory(db_session: AsyncSession) -> UserFactory:
             password_hash=password_hash,
             role=role,
             is_active=is_active,
-            remember_token=None,
         )
         db_session.add(user)
         await db_session.flush()
@@ -150,7 +167,7 @@ async def auth_client(client: AsyncClient, user_factory: UserFactory) -> AsyncCl
     await user_factory(username="authenticated", password="secret")
     response = await client.post(
         "/api/auth/login",
-        json={"username": "authenticated", "password": "secret", "remember": False},
+        json={"username": "authenticated", "password": "secret"},
     )
     assert response.status_code == 200
     return client

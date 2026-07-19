@@ -2,23 +2,20 @@ import { useState } from "react";
 
 import type { CategoryComposition } from "@/api/types";
 import { Button } from "@/components/ui/button";
-import { amountToCents, formatMoney } from "@/lib/user-api";
+import { formatWholeEuro } from "@/lib/user-api";
 
 const INITIAL_VISIBLE_ROWS = 5;
 
-export function compositionPercentage(amount: string, total: string): string {
-  const amountCents = amountToCents(amount) ?? 0n;
-  const totalCents = amountToCents(total) ?? 0n;
-  if (totalCents <= 0n) return "0.0%";
-  const tenths = (amountCents * 1000n + totalCents / 2n) / totalCents;
-  return `${tenths / 10n}.${tenths % 10n}%`;
+export function compositionPercentage(amount: number, total: number): string {
+  if (total <= 0) return "0.0%";
+  return `${(Math.round((amount * 1000) / total) / 10).toFixed(1)}%`;
 }
 
 interface IncomeCompositionProps {
   included: CategoryComposition[];
   excluded: CategoryComposition[];
-  classifiedIncludedTotal: string;
-  totalRevenue: string;
+  classifiedIncludedTotal: number;
+  totalRevenue: number;
 }
 
 interface CompositionGroupProps {
@@ -27,7 +24,7 @@ interface CompositionGroupProps {
   expanded: boolean;
   onExpandedChange: () => void;
   showProportions: boolean;
-  total: string;
+  total: number;
   toggleLabel: string;
 }
 
@@ -44,7 +41,7 @@ function CompositionGroup({ title, rows, expanded, onExpandedChange, showProport
       {visibleRows.map((row) => <div key={row.category_id} className="grid gap-1">
         <div className="flex items-center justify-between gap-3 text-sm">
           <span className="min-w-0 break-words">{row.category_name}</span>
-          <span className="shrink-0 tabular-nums">{formatMoney(row.amount)}</span>
+          <span className="shrink-0 tabular-nums">{formatWholeEuro(row.amount)}</span>
         </div>
         {showProportions && <div data-testid="composition-proportion" className="h-1.5 overflow-hidden rounded-full bg-muted" aria-label={`${row.category_name} 占比 ${compositionPercentage(row.amount, total)}`}>
           <div className="h-full rounded-full bg-primary" style={{ width: compositionPercentage(row.amount, total) }} />
@@ -59,9 +56,7 @@ function CompositionGroup({ title, rows, expanded, onExpandedChange, showProport
 export function IncomeComposition({ included, excluded, classifiedIncludedTotal, totalRevenue }: IncomeCompositionProps) {
   const [includedExpanded, setIncludedExpanded] = useState(false);
   const [excludedExpanded, setExcludedExpanded] = useState(false);
-  const classifiedCents = amountToCents(classifiedIncludedTotal) ?? 0n;
-  const totalCents = amountToCents(totalRevenue) ?? 0n;
-  const showProportions = included.length >= 2 && classifiedCents > 0n;
+  const showProportions = included.length >= 2 && classifiedIncludedTotal > 0;
 
   return <section className="grid gap-4" aria-label="收入构成">
     <CompositionGroup
@@ -80,10 +75,10 @@ export function IncomeComposition({ included, excluded, classifiedIncludedTotal,
       expanded={excludedExpanded}
       onExpandedChange={() => setExcludedExpanded((value) => !value)}
       showProportions={false}
-      total="0.00"
+      total={0}
       toggleLabel="展开未计入总额"
     />
     <p className="text-xs text-muted-foreground">未计入总额的金额不会计入总营业额、增幅或平均值。</p>
-    {classifiedCents < totalCents && <p className="text-xs text-muted-foreground">部分历史总额记录未分配到收入分类，因此分类金额低于总营业额。</p>}
+    {classifiedIncludedTotal < totalRevenue && <p className="text-xs text-muted-foreground">部分历史总额记录未分配到收入分类，因此分类金额低于总营业额。</p>}
   </section>;
 }

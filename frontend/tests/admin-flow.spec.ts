@@ -56,14 +56,14 @@ async function mockAdminApi(page: Page, capture: Capture) {
     }
     if (path === "/api/admin/alerts") return json([]);
     if (path === "/api/admin/task-logs") return json([{ id: 1, store_id: 1, task_type: "weather", status: "success", message: null, retry_count: 0, started_at: "2026-07-16T08:00:00Z", finished_at: "2026-07-16T08:05:00Z", created_at: "2026-07-16T08:00:00Z" }]);
-    if (/^\/api\/dashboard\/\d+$/.test(path)) return json([{ card_type: "today", state: "recorded", revenue: "100.00", weather: "晴", weekday: null, temperature_max: null, temperature_min: null, precipitation: null, hint: null, generated_at: "2026-07-16T08:30:00Z" }]);
-    if (path === "/api/income-config/1/current") return json({ store_id: 1, version_id: 1, version: 1, enabled: true, formula: "营业额 = 现金", created_at: "2026-07-16T08:00:00Z", items: [{ id: 1, category_id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 0 }] });
+    if (/^\/api\/dashboard\/\d+$/.test(path)) return json([{ card_type: "today", state: "recorded", revenue: 100, weather: "晴", weekday: null, temperature_max: null, temperature_min: null, precipitation: null, hint: null, generated_at: "2026-07-16T08:30:00Z" }]);
+    if (path === "/api/income-config/1/current") return json({ store_id: 1, enabled: true, formula: "营业额 = 现金", items: [{ id: 1, store_id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 0, archived_at: null }] });
     if (path === "/api/admin/income-categories") return json([{ id: 1, store_id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 0, archived_at: null }]);
     if (path === "/api/admin/stores/1/income-config" && request.method() === "PUT") {
       capture.incomePublish = request.postDataJSON();
-      return json({ store_id: 1, version_id: 2, version: 2, enabled: true, formula: "营业额 = 现金 + 其他", created_at: "2026-07-16T09:00:00Z", items: [
-        { id: 1, category_id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 0 },
-        { id: 2, category_id: 2, name: "其他", include_in_total: true, is_active: true, sort_order: 1 },
+      return json({ store_id: 1, enabled: true, formula: "营业额 = 现金 + 其他", items: [
+        { id: 1, store_id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 0, archived_at: null },
+        { id: 2, store_id: 1, name: "其他", include_in_total: true, is_active: true, sort_order: 1, archived_at: null },
       ] });
     }
     if (path === "/api/admin/stores/1" && request.method() === "PATCH") {

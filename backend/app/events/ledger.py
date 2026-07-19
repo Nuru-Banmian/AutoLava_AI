@@ -8,6 +8,5 @@ class LedgerChanged:
     store_id: int
     record_id: int
     record_date: date
-    operation: Literal["created", "updated", "deleted", "rolled_back"]
+    operation: Literal["created", "updated", "deleted"]
     actor_id: int
-    row_version: int | None

@@ -14,21 +14,25 @@ describe("MonthCalendar", () => {
     render(
       <MonthCalendar
         month="2026-07"
-        selected="2026-07-15"
-        today="2026-07-15"
-        recordedDates={new Set(["2026-07-14"])}
+        selected="2026-07-29"
+        today="2026-07-30"
+        recordedDates={new Set(["2026-07-26", "2026-07-27", "2026-07-28", "2026-07-30"])}
         onSelect={onSelect}
       />,
     );
 
-    const recorded = screen.getByRole("button", { name: "2026年7月14日，已有记录" });
+    const recorded = screen.getByRole("button", { name: "2026年7月26日，已有记录" });
     expect(recorded).toBeEnabled();
-    expect(recorded).toHaveAttribute("data-recorded", "true");
-    expect(screen.getByRole("button", { name: "2026年7月15日" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: "2026年7月16日" })).toBeDisabled();
+    for (const day of [26, 27, 28, 30]) {
+      const marker = screen.getByRole("button", { name: `2026年7月${day}日，已有记录` });
+      expect(marker).toHaveAttribute("data-recorded", "true");
+      expect(marker.querySelector(".bg-primary")).toBeInTheDocument();
+    }
+    expect(screen.getByRole("button", { name: "2026年7月29日" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "2026年7月31日" })).toBeDisabled();
 
     fireEvent.click(recorded);
-    expect(onSelect).toHaveBeenCalledWith("2026-07-14");
+    expect(onSelect).toHaveBeenCalledWith("2026-07-26");
   });
 
   it("starts weeks on Monday and marks dates across month boundaries", () => {
@@ -101,6 +105,24 @@ describe("MonthCalendar", () => {
 });
 
 describe("LedgerDatePicker", () => {
+  it("reports the visible calendar month while open", () => {
+    const onMonthChange = vi.fn();
+    render(
+      <LedgerDatePicker
+        value="2026-07-14"
+        today="2026-07-15"
+        recordedDates={new Set()}
+        onChange={() => undefined}
+        onMonthChange={onMonthChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "选择台账日期：2026年7月14日" }));
+    expect(onMonthChange).toHaveBeenLastCalledWith("2026-07");
+    fireEvent.click(screen.getByRole("button", { name: "上个月" }));
+    expect(onMonthChange).toHaveBeenLastCalledWith("2026-06");
+  });
+
   it("opens from the visible date, offers shortcuts, and navigates month boundaries", () => {
     const onChange = vi.fn();
     render(
@@ -123,6 +145,34 @@ describe("LedgerDatePicker", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "昨天" }));
     expect(onChange).toHaveBeenCalledWith("2026-07-14");
+  });
+
+  it("resets to the selected date month each time it reopens", () => {
+    const onMonthChange = vi.fn();
+    const onOpenChange = vi.fn();
+    render(
+      <LedgerDatePicker
+        value="2026-07-14"
+        today="2026-07-15"
+        recordedDates={new Set()}
+        onChange={() => undefined}
+        onMonthChange={onMonthChange}
+        onOpenChange={onOpenChange}
+      />,
+    );
+
+    const trigger = screen.getByRole("button", { name: "选择台账日期：2026年7月14日" });
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("button", { name: "上个月" }));
+    expect(screen.getByText("2026年6月")).toBeInTheDocument();
+
+    fireEvent.keyDown(screen.getByRole("dialog", { name: "选择台账日期" }), { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "选择台账日期" })).not.toBeInTheDocument();
+
+    fireEvent.click(trigger);
+    expect(screen.getByText("2026年7月")).toBeInTheDocument();
+    expect(onMonthChange).toHaveBeenLastCalledWith("2026-07");
+    expect(onOpenChange).toHaveBeenLastCalledWith(true);
   });
 
   it("uses a bottom sheet on narrow screens", () => {

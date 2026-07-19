@@ -3,7 +3,7 @@ import os
 from collections.abc import Mapping
 
 from pydantic import ValidationError
-from sqlalchemy.dialects.mysql import insert as mysql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import async_session_factory
@@ -42,15 +42,14 @@ def credentials_from_environment(environment: Mapping[str, str]) -> tuple[str, s
 async def create_admin(session: AsyncSession, username: str, password: str) -> bool:
     credentials = _validated_admin(username, password)
     result = await session.execute(
-        mysql_insert(User)
+        sqlite_insert(User)
         .values(
             username=credentials.username,
             password_hash=hash_password(credentials.password),
             role=credentials.role,
             is_active=True,
-            remember_token=None,
         )
-        .prefix_with("IGNORE")
+        .on_conflict_do_nothing(index_elements=["username"])
     )
     return result.rowcount == 1
 

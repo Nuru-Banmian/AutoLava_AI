@@ -23,7 +23,6 @@ export function LoginPage() {
       await login({
         username: String(data.get("username")),
         password: String(data.get("password")),
-        remember: data.get("remember") === "on",
       });
     } catch (caught) {
       setError(friendlyApiError(caught, "登录失败，请稍后重试"));
@@ -81,10 +80,6 @@ export function LoginPage() {
                 </Button>
               </div>
             </div>
-            <label className="flex w-fit items-center gap-2 text-sm">
-              <input className="size-4 accent-primary" name="remember" type="checkbox" />
-              记住我
-            </label>
             {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
             <Button className="h-11 w-full" disabled={isLoggingIn} type="submit">
               {isLoggingIn ? "正在登录…" : "登录"}

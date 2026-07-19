@@ -26,30 +26,21 @@ const roma = { id: 9, name: "Roma", address: "Roma Centro", latitude: "41.9", lo
 const milano = { id: 10, name: "Milano", address: "Milano Centro", latitude: "45.4", longitude: "9.2", timezone: "Europe/Rome", is_active: true };
 const romaIncome = {
   store_id: 9,
-  version_id: 3,
-  version: 3,
   enabled: true,
   formula: "营业额 = 现金",
-  created_at: "2026-07-17T07:00:00Z",
-  items: [{ id: 31, category_id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 0 }],
+  items: [{ id: 1, store_id: 9, name: "现金", include_in_total: true, is_active: true, sort_order: 0, archived_at: null }],
 };
 const milanoIncome = {
   store_id: 10,
-  version_id: 2,
-  version: 2,
   enabled: true,
   formula: "营业额 = 刷卡",
-  created_at: "2026-07-17T07:00:00Z",
-  items: [{ id: 32, category_id: 2, name: "刷卡", include_in_total: true, is_active: true, sort_order: 0 }],
+  items: [{ id: 2, store_id: 10, name: "刷卡", include_in_total: true, is_active: true, sort_order: 0, archived_at: null }],
 };
 const publishedIncomeConfig = {
   store_id: 9,
-  version_id: 4,
-  version: 4,
   enabled: true,
   formula: "营业额 = 现金",
-  created_at: "2026-07-17T08:00:00Z",
-  items: [{ id: 41, category_id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 0 }],
+  items: [{ id: 1, store_id: 9, name: "现金", include_in_total: true, is_active: true, sort_order: 0, archived_at: null }],
 };
 
 const server = setupServer();

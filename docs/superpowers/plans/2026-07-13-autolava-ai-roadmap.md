@@ -1,52 +1,38 @@
 # AutoLava AI Implementation Roadmap
 
-> **For agentic workers:** Implement the linked plans in order. Each phase produces deployable, testable software and is a prerequisite for the next phase.
+> Phase 1 is the current product. Phase 3 and Phase 4 are future-only redesign reminders, not
+> implementation-ready plans.
 
-**Goal:** Deliver the AutoLava AI system in the four increments defined by the approved design, keeping manual operations usable before AI and automation are introduced.
-
-**Source spec:** `docs/superpowers/specs/2026-07-10-autolava-ai-design.md`
+**Goal:** Keep the manual Phase 1 application deployable and preserve future AI and automation
+directions without committing the constrained server to unvalidated services.
 
 ## Plan order
 
-1. [`2026-07-13-autolava-ai-phase-1-foundation.md`](2026-07-13-autolava-ai-phase-1-foundation.md) — authentication, store access, administration, ledger, audit/rollback, export, weather, dashboard, charts, responsive web UI, and deployment.
-2. [`2026-07-13-autolava-ai-phase-2-workforce.md`](2026-07-13-autolava-ai-phase-2-workforce.md) — workers, integer-hour entry, wage calculation, payroll snapshots, reconciliation warnings, audit, export, and responsive UI.
-3. [`2026-07-13-autolava-ai-phase-3-agent.md`](2026-07-13-autolava-ai-phase-3-agent.md) — model-provider fallback, conversations, permission-scoped query/analysis, ledger drafts, approval-gated mutations, audit, and AI UI.
-4. [`2026-07-13-autolava-ai-phase-4-automation-memory.md`](2026-07-13-autolava-ai-phase-4-automation-memory.md) — store-local scheduling, weather compensation, memory extraction, memory-aware briefings, system alerts, and task-log administration.
-
-## Branch sequence
-
-- Establish `dev` from the current stable `main` before feature execution.
-- Execute each plan on `feature/phase-1-foundation`, `feature/phase-2-workforce`, `feature/phase-3-agent`, and `feature/phase-4-automation-memory`, respectively.
-- Merge a phase into `dev` only after its release gate passes; promote `dev` to `main` only for a stable deployment candidate.
+1. [`2026-07-13-autolava-ai-phase-1-foundation.md`](2026-07-13-autolava-ai-phase-1-foundation.md) — authentication, store access, administration, current-state ledger, historical business records, export, weather, dashboard, charts, responsive web UI, and deployment. Its original implementation details are superseded by the SQLite simplification plan where they differ.
+3. [`2026-07-13-autolava-ai-phase-3-agent.md`](2026-07-13-autolava-ai-phase-3-agent.md) — future AI assistant direction; redesign is required before implementation.
+4. [`2026-07-13-autolava-ai-phase-4-automation-memory.md`](2026-07-13-autolava-ai-phase-4-automation-memory.md) — future automation and memory direction; redesign is required before implementation.
 
 ## Dependency map
 
 ```text
-Phase 1: manual operations and deployable foundation
+Phase 1: current manual operations and two-service deployment
     |
-    +--> Phase 2: workforce and payroll
-    |
-    +--> Phase 3: AI assistant over stable business APIs
+    +--> Phase 3: future AI redesign
               |
-              +--> Phase 4: automation and memory using stable AI/ledger data
+              +--> Phase 4: future automation and memory redesign
 ```
 
-## Release gates
+## Release boundaries
 
-- Phase 1 is complete only when a family user can log in, record and repair store data, export it, inspect charts, and continue recording when weather is unavailable.
-- Phase 2 is complete only when a historical month can be entered, settled, changed, flagged as stale, regenerated, audited, and exported.
-- Phase 3 is complete only when reads are permission-scoped and every AI mutation requires a server-issued approval token plus explicit confirmation.
-- Phase 4 is complete only when scheduled jobs are idempotent per store-local day, failures are visible to administrators, and low-confidence memories never reach users.
+- Phase 1 remains complete only when a family user can log in, record and repair store data, export
+  it, inspect charts, and continue recording when weather is unavailable.
+- Phase 3 and Phase 4 have no active release gate. Each must first be redesigned for SQLite, the
+  2-GB server, external APIs, and measured remaining memory.
+- The current production topology remains one API/Uvicorn worker plus Nginx Web with persistent
+  SQLite `/data`.
 
-## Spec coverage map
+## Future design boundary
 
-| Design sections | Owning plan/tasks |
-|---|---|
-| Roles, store access, enable/disable, Phase 1 database core | Phase 1 Tasks 2-5 |
-| Login, home, ledger, database, charts, admin, responsive rules | Phase 1 Tasks 3-11 |
-| Open-Meteo, geocoding, weather fallback boundary, manual preservation | Phase 1 Task 7; Phase 4 Task 4 |
-| Audit and ledger rollback | Phase 1 Tasks 4-6 |
-| Workers, time entry, wages, payroll snapshots, workforce export | Phase 2 Tasks 1-6 |
-| Agent models, provider routing, queries/analysis, drafts, approvals, history | Phase 3 Tasks 1-6 |
-| Memories, daily 04:00 workflow, compensation, alerts, task logs | Phase 4 Tasks 1-6 |
-| Docker/GitHub release verification and host MySQL boundary | Phase 1 Task 11 and each later phase's release task |
+Any future Agent process must be justified by idle and normal-workflow `docker stats` snapshots.
+If isolation is justified, a future design may propose an optional `compose.agent.yaml`; this
+repository does not provide that overlay today.

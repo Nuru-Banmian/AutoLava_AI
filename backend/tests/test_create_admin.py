@@ -2,14 +2,13 @@ import asyncio
 
 import pytest
 from sqlalchemy import delete, func, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.database import async_session_factory, engine
 from app.core.security import verify_password
 from app.models.identity import User
 
 
-async def test_create_admin_hashes_password_and_is_idempotent(db_session) -> None:
+async def test_create_admin_inserts_no_token_field_and_is_idempotent(db_session) -> None:
     from app.scripts.create_admin import create_admin
 
     assert await create_admin(db_session, "first-admin", "initial-password") is True
@@ -54,7 +53,7 @@ async def test_create_admin_accepts_128_character_password_and_can_log_in(
 
     response = await client.post(
         "/api/auth/login",
-        json={"username": "long-password-admin", "password": password, "remember": False},
+        json={"username": "long-password-admin", "password": password},
     )
     assert response.status_code == 200
 
@@ -66,20 +65,8 @@ async def test_simultaneous_create_admin_attempts_are_atomic() -> None:
     async with engine.begin() as connection:
         await connection.execute(delete(User).where(User.username == username))
 
-    lookup_barrier = asyncio.Barrier(2)
-
-    class CoordinatedLookupSession(AsyncSession):
-        async def scalar(self, *args, **kwargs):
-            result = await super().scalar(*args, **kwargs)
-            await lookup_barrier.wait()
-            return result
-
-    session_factory = async_sessionmaker(
-        engine, class_=CoordinatedLookupSession, expire_on_commit=False
-    )
-
     async def attempt() -> bool:
-        async with session_factory() as session:
+        async with async_session_factory() as session:
             async with session.begin():
                 return await create_admin(session, username, "concurrent-password")
 
@@ -96,7 +83,6 @@ async def test_simultaneous_create_admin_attempts_are_atomic() -> None:
     finally:
         async with engine.begin() as connection:
             await connection.execute(delete(User).where(User.username == username))
-        await engine.dispose()
 
 
 def test_bootstrap_credentials_require_both_nonempty_environment_values() -> None:

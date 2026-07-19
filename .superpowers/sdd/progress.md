@@ -89,3 +89,23 @@
 - Task 9: pending.
 - Task 10: pending.
 - Task 11: pending.
+
+## SQLite Runtime Simplification SDD
+
+- Branch: `codex/sqlite-runtime-simplification`
+- Merge base: `64be9ca`
+- Plan commit: `aff3495`
+- Plan: `docs/superpowers/plans/2026-07-18-sqlite-runtime-simplification.md`
+- Main backup: local and remote `backup/main-before-sqlite-20260719` both point to `64be9ca`.
+- Worktree preference: current checkout, explicitly requested by the user.
+- Baseline: `tests/test_schema.py tests/test_deployment_config.py` — 24 passed.
+- Preflight plan scan: complete; no unresolved user-decision conflicts.
+- Task 1: complete — `273f641` (`refactor: establish sqlite runtime`); focused Ruff clean; SQLite foundation suite 9 passed; independent task review approved with no findings.
+- Task 2: complete — `6ba487c` + `cc341b6`; final nine-table SQLite baseline, non-negative integer CHECK constraints, and blank-file migration verified; focused gate 8 passed; re-review approved with no findings.
+- Task 3: complete — `9a28abf` + `52e88e1`; audit/rollback/version domains removed, current config replacement and record payload implemented; focused gate 16 passed; re-review approved with no findings.
+- Task 4: complete — `c9b0a0e` + `e301f22` + `4b731a0`; integer current-state ledger/reporting/export, shared SQLite write serialization, and immutable historical snapshots verified; Task 4 gate 70 passed plus adjacent 9 passed; final re-review approved with no findings.
+- Task 5: complete — `90cdbe9` + `22aa459`; exact two-field 24-hour stateless login and 1 MB/10r-m Nginx throttle implemented; backend 60 and frontend 20 focused tests passed; re-review approved with no findings.
+- Task 6: complete — `9a2e93e`; integer frontend, permanent current-state editing, multi-date markers, record autofill, dirty-baseline reset, and historical snapshot rendering implemented; focused 60, full frontend 251, production build passed; controller review approved with no findings.
+- Task 7: complete — `707ed83` + `5245898`; verified SQLite online backup, single production daily lifecycle, three-day file retention, seven-day operational retention, and missing-source protection implemented; focused 23 passed; re-review approved with no findings.
+- Task 8: complete — `5e55c8b`; SQLite-only two-service deployment, simple local launcher, CI/runtime cleanup, and Phase 2 deletion implemented; targeted 35, frontend 251, build and static checks passed; review approved with Docker runtime ⚠️ only. Host MySQL service, six MSI components, port listener, and four verified MySQL directories were removed without backup.
+- Task 9: complete — `b51ba26` + `954ef07`; full compatibility cleanup, clean backend 206/206 at 80%, frontend 251/251, build, Playwright 10/10, warning cleanup, and Docker CI login/recreation/backup gate implemented; review approved, release conditional on Docker-enabled CI execution.

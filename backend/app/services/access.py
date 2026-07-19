@@ -1,5 +1,6 @@
 from typing import Literal, get_args
 
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,7 +16,6 @@ Capability = Literal[
     "income_config.manage",
     "users.manage",
     "stores.manage",
-    "audit.view",
 ]
 
 ROLE_CAPABILITIES: dict[str, frozenset[Capability]] = {
@@ -33,6 +33,45 @@ ROLE_CAPABILITIES: dict[str, frozenset[Capability]] = {
 
 def has_capability(user: User, capability: Capability) -> bool:
     return capability in ROLE_CAPABILITIES.get(user.role, frozenset())
+
+
+async def require_fresh_user(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    capability: Capability | None = None,
+) -> User:
+    user = await session.get(User, user_id, populate_existing=True)
+    if user is None or not user.is_active:
+        raise HTTPException(401, "Authentication required")
+    if capability is not None and not has_capability(user, capability):
+        raise HTTPException(403, "Insufficient permissions")
+    return user
+
+
+async def require_fresh_store_access(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    store_id: int,
+    capability: Capability,
+) -> tuple[User, Store]:
+    user = await require_fresh_user(
+        session, user_id=user_id, capability=capability
+    )
+    store = await session.get(Store, store_id, populate_existing=True)
+    if store is None or not store.is_active:
+        raise HTTPException(404, "Store not found")
+    if user.role != "admin":
+        membership = await session.scalar(
+            select(StoreMember.id).where(
+                StoreMember.store_id == store_id,
+                StoreMember.user_id == user_id,
+            )
+        )
+        if membership is None:
+            raise HTTPException(403, "Store membership required")
+    return user, store
 
 
 async def list_accessible_stores(session: AsyncSession, user: User) -> list[Store]:

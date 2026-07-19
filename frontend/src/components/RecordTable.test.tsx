@@ -1,12 +1,12 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { RecordSnapshot } from "@/api/types";
 import { RecordTable } from "@/components/RecordTable";
 
 const record: RecordSnapshot = {
-  id: 7, store_id: 3, date: "2026-07-14", daily_revenue: "100.00", wash_count: 4, is_open: "休息",
-  income_mode: "legacy_total", income_config_version_id: null, row_version: 1, weather: "晴", weather_auto: null,
+  id: 7, store_id: 3, date: "2026-07-14", daily_revenue: 100, wash_count: 4, is_open: "休息",
+  income_mode: "legacy_total", weather: "晴", weather_auto: null,
   weather_code: null, temperature_max: null, temperature_min: null, precipitation: null, activity: "活动",
   weather_edited: false, scanned: false, created_by: 1, updated_by: 1, created_at: "2026-07-14T00:00:00Z",
   updated_at: "2026-07-14T00:00:00Z", items: [],
@@ -38,6 +38,10 @@ describe("RecordTable", () => {
     const row = screen.getByRole("row", { name: /2026年7月14日 休息/ });
     expect(row).toHaveAttribute("aria-selected", "true");
     expect(row).toHaveTextContent("休息");
+    const statusText = within(row).getByText("休息", { exact: true });
+    const statusCell = statusText.closest("td");
+    expect(statusCell).not.toBeNull();
+    expect(statusCell?.querySelector('[aria-hidden="true"]')).toBeNull();
     fireEvent.keyDown(row, { key: "Enter" });
     expect(onSelect).toHaveBeenCalledWith(record);
   });

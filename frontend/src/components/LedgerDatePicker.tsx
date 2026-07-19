@@ -1,6 +1,6 @@
 import { addMonths, format, parseISO, subDays } from "date-fns";
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
-import { forwardRef, type ComponentPropsWithoutRef, useEffect, useState } from "react";
+import { forwardRef, type ComponentPropsWithoutRef, useEffect, useRef, useState } from "react";
 
 import { MonthCalendar } from "@/components/MonthCalendar";
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -11,6 +11,8 @@ export interface LedgerDatePickerProps {
   today: string;
   recordedDates: ReadonlySet<string>;
   onChange(date: string): void;
+  onMonthChange?(month: string): void;
+  onOpenChange?(open: boolean): void;
 }
 
 function useDesktopPicker() {
@@ -71,21 +73,41 @@ function PickerPanel({ value, today, recordedDates, month, setMonth, select }: L
   );
 }
 
-export function LedgerDatePicker({ value, today, recordedDates, onChange }: LedgerDatePickerProps) {
+export function LedgerDatePicker({ value, today, recordedDates, onChange, onMonthChange, onOpenChange }: LedgerDatePickerProps) {
   const [open, setOpen] = useState(false);
   const [month, setMonth] = useState(value.slice(0, 7));
+  const reportedMonth = useRef<string | null>(null);
   const desktop = useDesktopPicker();
 
   useEffect(() => setMonth(value.slice(0, 7)), [value]);
+  useEffect(() => {
+    if (!open || reportedMonth.current === month) return;
+    reportedMonth.current = month;
+    onMonthChange?.(month);
+  }, [month, onMonthChange, open]);
+  const setPickerOpen = (nextOpen: boolean) => {
+    if (nextOpen) {
+      const openingMonth = value.slice(0, 7);
+      setMonth(openingMonth);
+      if (reportedMonth.current !== openingMonth) {
+        reportedMonth.current = openingMonth;
+        onMonthChange?.(openingMonth);
+      }
+    } else {
+      reportedMonth.current = null;
+    }
+    setOpen(nextOpen);
+    onOpenChange?.(nextOpen);
+  };
   const select = (date: string) => {
     onChange(date);
-    setOpen(false);
+    setPickerOpen(false);
   };
   const panel = <PickerPanel value={value} today={today} recordedDates={recordedDates} onChange={onChange} month={month} setMonth={setMonth} select={select} />;
 
   if (desktop) {
     return (
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={setPickerOpen}>
         <DialogTrigger asChild><DateTrigger value={value} /></DialogTrigger>
         <DialogContent className="left-auto right-6 top-24 w-[min(22rem,calc(100vw-2rem))] translate-x-0 translate-y-0 p-4">
           <DialogTitle className="sr-only">选择台账日期</DialogTitle>
@@ -96,7 +118,7 @@ export function LedgerDatePicker({ value, today, recordedDates, onChange }: Ledg
   }
 
   return (
-    <Sheet open={open} onOpenChange={setOpen}>
+    <Sheet open={open} onOpenChange={setPickerOpen}>
       <SheetTrigger asChild><DateTrigger value={value} /></SheetTrigger>
       <SheetContent side="bottom" className="max-h-[90vh] overflow-y-auto rounded-t-2xl p-4 pb-6">
         <SheetTitle className="sr-only">选择台账日期</SheetTitle>

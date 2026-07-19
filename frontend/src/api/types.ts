@@ -47,21 +47,19 @@ export interface IncomeCategory {
 
 export interface IncomeConfigResponse {
   store_id: number;
-  version_id: number | null;
-  version: number;
   enabled: boolean;
   formula: string;
-  created_at: string | null;
   items: IncomeConfigItem[];
 }
 
 export interface IncomeConfigItem {
   id: number;
-  category_id: number | null;
+  store_id: number;
   name: string;
   include_in_total: boolean;
   is_active: boolean;
   sort_order: number;
+  archived_at: string | null;
 }
 
 export interface StoreMembers {
@@ -97,34 +95,31 @@ export interface ScheduledTaskLog {
 export type LedgerStatus = "营业" | "休息" | "天气停业";
 export type IncomeMode = "legacy_total" | "composed";
 export interface CategoryDescriptor { id: number; name: string; include_in_total: boolean; is_active: boolean; sort_order: number }
-export interface IncomeItemBody { category_id: number; amount: string }
+export interface IncomeItemBody { category_id: number; amount: number }
 export interface LedgerBody {
   is_open: LedgerStatus;
-  daily_revenue: string | null;
-  config_version_id: number | null;
-  expected_version: number | null;
+  daily_revenue: number | null;
   wash_count: number | null;
   weather: string | null;
   weather_edited: boolean;
   activity: string | null;
   items: IncomeItemBody[];
 }
-export interface LedgerSaveResponse { id: number; date: string; daily_revenue: string; row_version: number }
+export interface LedgerSaveResponse { id: number; date: string; daily_revenue: number }
 export interface RecordItem extends IncomeItemBody { id: number; category_name: string; include_in_total: boolean; sort_order: number; created_at: string; updated_at: string }
 export interface RecordSnapshot {
-  id: number; store_id: number; date: string; daily_revenue: string; wash_count: number | null; is_open: LedgerStatus;
-  income_mode: IncomeMode; income_config_version_id: number | null; row_version: number;
+  id: number; store_id: number; date: string; daily_revenue: number; wash_count: number | null; is_open: LedgerStatus;
+  income_mode: IncomeMode;
   weather: string | null; weather_auto: string | null; weather_code: number | null; temperature_max: string | null;
   temperature_min: string | null; precipitation: string | null; activity: string | null; weather_edited: boolean; scanned: boolean;
   created_by: number; updated_by: number; created_at: string; updated_at: string; items: RecordItem[];
   created_by_name?: string; updated_by_name?: string;
 }
-export interface DatabaseResponse { items: RecordSnapshot[]; categories: CategoryDescriptor[]; sum_daily_revenue: string; total: number; page: number; page_size: number }
-export interface AuditEntry { id: number; record_id: number | null; record_date: string | null; operation_type: string; operation_source: string; operator_user_id: number; operator_username: string; before: RecordSnapshot | null; after: RecordSnapshot | null; description: string; requires_approval: boolean; approved: boolean; rollbackable: boolean; created_at: string }
+export interface DatabaseResponse { items: RecordSnapshot[]; categories: CategoryDescriptor[]; sum_daily_revenue: number; total: number; page: number; page_size: number }
 export interface BriefingCard {
   card_type: "yesterday" | "today" | "tomorrow";
   state: "missing" | "recorded" | "rest" | "weather_closed" | "forecast" | "unavailable";
-  revenue: string | null;
+  revenue: number | null;
   weather: string | null;
   weekday: string | null;
   temperature_max: string | null;
@@ -136,17 +131,17 @@ export interface BriefingCard {
 }
 export interface WeatherResponse { weather: string | null; weather_code: number | null; temperature_max: number | null; temperature_min: number | null; precipitation: number | null }
 export type ChartBucket = "day" | "month";
-export interface CategoryComposition { category_id: number; category_name: string; amount: string }
-export interface ChartComparisonKpis { start: string; end: string; total_revenue: string; open_days: number; average_revenue: string }
+export interface CategoryComposition { category_id: number; category_name: string; amount: number }
+export interface ChartComparisonKpis { start: string; end: string; total_revenue: number; open_days: number; average_revenue: number }
 export interface ChartsResponse {
-  kpis: { total_revenue: string; record_days: number; open_days: number; average_revenue: string; primary_categories: CategoryComposition[]; total_wash_count: number | null; average_ticket: string | null };
+  kpis: { total_revenue: number; record_days: number; open_days: number; average_revenue: number; primary_categories: CategoryComposition[]; total_wash_count: number | null; average_ticket: number | null };
   range: { start: string; end: string; bucket: ChartBucket };
   comparison_kpis: ChartComparisonKpis | null;
-  classified_included_total: string;
-  daily: { date: string; revenue: string }[];
+  classified_included_total: number;
+  daily: { date: string; revenue: number }[];
   categories: CategoryComposition[];
   excluded_categories: CategoryComposition[];
-  monthly: { month: string; revenue: string }[];
-  weather: { weather: string; average_revenue: string }[];
-  weekday: { weekday: number; average_revenue: string }[];
+  monthly: { month: string; revenue: number }[];
+  weather: { weather: string; average_revenue: number }[];
+  weekday: { weekday: number; average_revenue: number }[];
 }

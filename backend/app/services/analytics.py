@@ -10,11 +10,14 @@ from sqlalchemy.orm import selectinload
 
 from app.models.ledger import StoreDailyRecord
 
-MONEY = Decimal("0.01")
 
-
-def _money(value: Decimal) -> str:
-    return str(value.quantize(MONEY, rounding=ROUND_HALF_UP))
+def _rounded_average(total: int, count: int) -> int:
+    """Round fractional euro averages to a whole euro using ROUND_HALF_UP."""
+    if count == 0:
+        return 0
+    return int(
+        (Decimal(total) / Decimal(count)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    )
 
 
 @dataclass(frozen=True)
@@ -25,12 +28,12 @@ class CompositionKey:
     sort_order: int
 
 
-def _composition_rows(totals: dict[CompositionKey, Decimal]) -> list[dict]:
+def _composition_rows(totals: dict[CompositionKey, int]) -> list[dict]:
     return [
         {
             "category_id": key.category_id,
             "category_name": key.category_name,
-            "amount": _money(amount),
+            "amount": amount,
         }
         for key, amount in sorted(
             totals.items(),
@@ -44,13 +47,13 @@ def _composition_rows(totals: dict[CompositionKey, Decimal]) -> list[dict]:
 
 
 def _revenue_kpis(records: list[StoreDailyRecord]) -> dict:
-    total = sum((record.daily_revenue for record in records), Decimal("0.00"))
+    total = sum(record.daily_revenue for record in records)
     open_days = sum(record.is_open == "营业" for record in records)
     return {
-        "total_revenue": _money(total),
+        "total_revenue": total,
         "record_days": len(records),
         "open_days": open_days,
-        "average_revenue": _money(total / open_days) if open_days else _money(Decimal()),
+        "average_revenue": _rounded_average(total, open_days),
     }
 
 
@@ -95,12 +98,12 @@ class AnalyticsService:
             ).all()
 
         selected_ids = None if category_ids is None else set(category_ids)
-        included_totals: dict[CompositionKey, Decimal] = defaultdict(lambda: Decimal("0.00"))
-        excluded_totals: dict[CompositionKey, Decimal] = defaultdict(lambda: Decimal("0.00"))
-        selected_totals: dict[CompositionKey, Decimal] = defaultdict(lambda: Decimal("0.00"))
-        monthly_totals: dict[str, Decimal] = defaultdict(lambda: Decimal("0.00"))
-        weather_totals: dict[str, list[Decimal]] = defaultdict(list)
-        weekday_totals: dict[int, list[Decimal]] = defaultdict(list)
+        included_totals: dict[CompositionKey, int] = defaultdict(int)
+        excluded_totals: dict[CompositionKey, int] = defaultdict(int)
+        selected_totals: dict[CompositionKey, int] = defaultdict(int)
+        monthly_totals: dict[str, int] = defaultdict(int)
+        weather_totals: dict[str, list[int]] = defaultdict(list)
+        weekday_totals: dict[int, list[int]] = defaultdict(list)
         for record in records:
             for item in record.items:
                 key = CompositionKey(
@@ -119,15 +122,19 @@ class AnalyticsService:
             weather_totals[record.weather or "未记录"].append(record.daily_revenue)
             weekday_totals[record.date.weekday()].append(record.daily_revenue)
 
-        recorded_wash = [record.wash_count for record in records if record.wash_count is not None]
+        recorded_wash = [
+            record.wash_count for record in records if record.wash_count is not None
+        ]
         total_wash = sum(recorded_wash) if recorded_wash else None
         included_rows = _composition_rows(included_totals)
         excluded_rows = _composition_rows(excluded_totals)
-        compositions = included_rows if category_ids is None else _composition_rows(selected_totals)
-        classified_included_total = sum(included_totals.values(), Decimal("0.00"))
+        compositions = (
+            included_rows if category_ids is None else _composition_rows(selected_totals)
+        )
+        classified_included_total = sum(included_totals.values())
         primary_categories = sorted(
             compositions,
-            key=lambda item: (-Decimal(item["amount"]), item["category_id"]),
+            key=lambda item: (-item["amount"], item["category_id"]),
         )[:3]
         kpis = _revenue_kpis(records)
         kpis.update(
@@ -135,7 +142,7 @@ class AnalyticsService:
                 "primary_categories": primary_categories,
                 "total_wash_count": total_wash,
                 "average_ticket": (
-                    _money(Decimal(kpis["total_revenue"]) / total_wash)
+                    _rounded_average(kpis["total_revenue"], total_wash)
                     if total_wash is not None and total_wash > 0
                     else None
                 ),
@@ -154,30 +161,34 @@ class AnalyticsService:
 
         return {
             "kpis": kpis,
-            "range": {"start": start.isoformat(), "end": end.isoformat(), "bucket": bucket},
+            "range": {
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "bucket": bucket,
+            },
             "comparison_kpis": comparison_kpis,
-            "classified_included_total": _money(classified_included_total),
+            "classified_included_total": classified_included_total,
             "daily": [
-                {"date": record.date.isoformat(), "revenue": _money(record.daily_revenue)}
+                {"date": record.date.isoformat(), "revenue": record.daily_revenue}
                 for record in records
             ],
             "categories": compositions,
             "excluded_categories": excluded_rows,
             "monthly": [
-                {"month": month, "revenue": _money(revenue)}
+                {"month": month, "revenue": revenue}
                 for month, revenue in sorted(monthly_totals.items())
             ],
             "weather": [
                 {
                     "weather": weather,
-                    "average_revenue": _money(sum(values) / len(values)),
+                    "average_revenue": _rounded_average(sum(values), len(values)),
                 }
                 for weather, values in sorted(weather_totals.items())
             ],
             "weekday": [
                 {
                     "weekday": weekday,
-                    "average_revenue": _money(sum(values) / len(values)),
+                    "average_revenue": _rounded_average(sum(values), len(values)),
                 }
                 for weekday, values in sorted(weekday_totals.items())
             ],

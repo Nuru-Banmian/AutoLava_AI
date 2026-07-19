@@ -14,7 +14,7 @@ const server = setupServer();
 const dashboard = [{
   card_type: "today",
   state: "recorded",
-  revenue: "100.00",
+    revenue: 100,
   weather: "晴",
   weekday: null,
   temperature_max: null,

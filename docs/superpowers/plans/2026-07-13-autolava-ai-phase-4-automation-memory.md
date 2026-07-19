@@ -1,16 +1,21 @@
 # AutoLava AI Phase 4 Automation and Memory Implementation Plan
 
+> **Future-only redesign reminder:** Do not implement this plan as written. Redesign it first
+> against the current SQLite runtime, the 2-GB server, external APIs, and measured remaining
+> memory. An optional future `compose.agent.yaml` may be considered only after measurement; no
+> overlay, Agent service, or automation service is provided now.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Complete reliable store-local automation, retry missing weather without harming ledger entry, extract conservative per-store memories, enrich cached briefings, and expose actionable task/alert operations to administrators.
 
 **Architecture:** Keep APScheduler inside the single FastAPI process as required, but make every scheduled unit idempotent through stable run keys and database transactions. A deterministic memory engine recomputes weather, weekday, and repeated-activity patterns from authorized store data, stores qualitative direction/confidence, and exposes only confidence 50 or higher. Briefing generation always has a deterministic fallback; model polishing is optional and cannot block cards or scheduled progress.
 
-**Tech Stack:** Existing Phase 1-3 stack plus APScheduler cron/interval triggers, SQLAlchemy task locking, deterministic Decimal statistics, React Query administrator views, pytest time control, and Playwright.
+**Tech Stack:** Historical proposal only; all libraries, scheduling, and process boundaries require redesign and fresh resource measurement.
 
 ## Global Constraints
 
-- Phases 1 through 3 are complete; the scheduler remains in one FastAPI backend process until a later multi-instance design.
+- Phase 1 is the only current prerequisite; all automation and memory capabilities remain unimplemented.
 - Each active store runs its daily workflow at 04:00 in that store's configured time zone.
 - Daily order is: today's weather, tomorrow's weather, yesterday's missing weather, new-data scan, memory refresh, yesterday card, today card, tomorrow card, missing-yesterday check, task log.
 - Weather compensation never blocks ledger entry and never overwrites user-edited `weather`; it may fill `weather_auto`, code, temperatures, and precipitation.
@@ -127,7 +132,7 @@ class AgentMemory(Base):
     )
 ```
 
-Add `run_key: Mapped[str | None] = mapped_column(String(255), unique=True)` to `ScheduledTaskLog`. Existing Phase 1 rows remain null and therefore do not collide in MySQL.
+Add `run_key: Mapped[str | None] = mapped_column(String(255), unique=True)` to `ScheduledTaskLog`. Any future implementation must prove the intended uniqueness behavior on SQLite.
 
 - [ ] **Step 4: Generate/apply the migration and verify upgrade/downgrade**
 
@@ -610,4 +615,4 @@ git commit -m "feat: complete automation memory and observability"
 - Memories are store-isolated, limited to three types, ignore one-off events, and hide confidence below 50.
 - Cards store at most one relevant qualitative hint and always fall back to deterministic copy.
 - Home reads remain cache-only; administrators can filter logs, inspect retries, and resolve alerts.
-- The complete four-phase application still deploys as only API and web containers against host MySQL.
+- Any future implementation must preserve the measured memory budget and define its SQLite concurrency boundary before adding services.

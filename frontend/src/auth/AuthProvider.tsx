@@ -9,7 +9,6 @@ export const authQueryKey = ["auth", "me"] as const;
 interface LoginInput {
   username: string;
   password: string;
-  remember: boolean;
 }
 
 interface AuthContextValue {

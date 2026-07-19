@@ -10,15 +10,12 @@ import { IncomeItemsPanel } from "@/admin/IncomeItemsPanel";
 
 const current = {
   store_id: 9,
-  version_id: 3,
-  version: 3,
   enabled: true,
   formula: "总收入 = 现金 + 刷卡",
-  created_at: "2026-07-15T10:00:00",
   items: [
-    { id: 31, category_id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 0 },
-    { id: 32, category_id: 2, name: "刷卡", include_in_total: true, is_active: true, sort_order: 1 },
-    { id: 33, category_id: 3, name: "其他", include_in_total: false, is_active: true, sort_order: 2 },
+    { id: 1, store_id: 9, name: "现金", include_in_total: true, is_active: true, sort_order: 0, archived_at: null },
+    { id: 2, store_id: 9, name: "刷卡", include_in_total: true, is_active: true, sort_order: 1, archived_at: null },
+    { id: 3, store_id: 9, name: "其他", include_in_total: false, is_active: true, sort_order: 2, archived_at: null },
   ],
 };
 
@@ -124,7 +121,7 @@ describe("IncomeItemsPanel", () => {
     const loading = new Promise<void>((resolve) => { release = resolve; });
     server.use(
       http.get("/api/income-config/9/current", () => HttpResponse.json(current)),
-      http.get("/api/income-config/10/current", async () => { await loading; return HttpResponse.json({ ...current, store_id: 10, version_id: null, version: 0, enabled: false, items: [] }); }),
+      http.get("/api/income-config/10/current", async () => { await loading; return HttpResponse.json({ ...current, store_id: 10, enabled: false, items: [] }); }),
       http.get("/api/admin/income-categories", () => HttpResponse.json([])),
     );
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -168,7 +165,7 @@ describe("IncomeItemsPanel", () => {
 
   it("keeps unrelated unsaved draft edits after archiving an item", async () => {
     let configReads = 0;
-    const afterArchive = { ...current, version_id: 4, version: 4, items: [current.items[0], current.items[1]] };
+    const afterArchive = { ...current, items: [current.items[0], current.items[1]] };
     mockReads();
     server.use(
       http.get("/api/income-config/9/current", () => HttpResponse.json(configReads++ === 0 ? current : afterArchive)),
@@ -192,7 +189,7 @@ describe("IncomeItemsPanel", () => {
     const pending = new Promise<void>((resolve) => { reject = resolve; });
     server.use(
       http.get("/api/income-config/9/current", () => HttpResponse.json(current)),
-      http.get("/api/income-config/10/current", () => HttpResponse.json({ ...current, store_id: 10, version_id: null, version: 0, enabled: false, items: [] })),
+      http.get("/api/income-config/10/current", () => HttpResponse.json({ ...current, store_id: 10, enabled: false, items: [] })),
       http.get("/api/admin/income-categories", () => HttpResponse.json([])),
       http.put("/api/admin/stores/9/income-config", async () => { await pending; return HttpResponse.json({ detail: "旧门店保存失败" }, { status: 500 }); }),
     );

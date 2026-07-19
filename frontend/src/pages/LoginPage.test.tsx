@@ -77,6 +77,12 @@ describe("LoginPage", () => {
     expect(screen.getAllByRole("heading")).toHaveLength(1);
   });
 
+  it("does not offer a remembered-login checkbox", () => {
+    renderLogin();
+
+    expect(screen.queryByLabelText("记住我")).not.toBeInTheDocument();
+  });
+
   it("toggles password visibility from the keyboard with a dynamic accessible name", async () => {
     const user = userEvent.setup();
     renderLogin();

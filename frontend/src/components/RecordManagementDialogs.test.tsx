@@ -4,39 +4,33 @@ import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-import type { AuditEntry, RecordSnapshot } from "@/api/types";
+import type { RecordSnapshot } from "@/api/types";
 import { useAuth } from "@/auth/AuthProvider";
 import { RecordManagementDialogs } from "@/components/RecordManagementDialogs";
-import { invalidateUserData } from "@/lib/user-api";
 
 vi.mock("@/auth/AuthProvider", () => ({ useAuth: vi.fn() }));
-vi.mock("@/lib/user-api", async (importOriginal) => ({
-  ...await importOriginal<typeof import("@/lib/user-api")>(),
-  invalidateUserData: vi.fn(),
-}));
 
 const server = setupServer();
-const record: RecordSnapshot = {
-  id: 4, store_id: 1, date: "2026-07-14", daily_revenue: "100.00", income_mode: "composed", income_config_version_id: 3, row_version: 1,
-  wash_count: 8, is_open: "营业", weather: "晴", weather_auto: "晴", weather_code: 1, temperature_max: "20.0", temperature_min: "10.0", precipitation: "0.0",
-  activity: null, weather_edited: false, scanned: false, created_by: 1, updated_by: 1, created_at: "", updated_at: "", items: [],
-};
-const audit: AuditEntry = { id: 9, record_id: 4, record_date: "2026-07-14", operation_type: "update", operation_source: "manual", operator_user_id: 1, operator_username: "admin", before: record, after: record, description: "修改", requires_approval: false, approved: true, rollbackable: true, created_at: "" };
+const record = {
+  id: 4, store_id: 1, date: "2026-07-14", daily_revenue: 100, income_mode: "composed",
+  wash_count: 8, is_open: "营业", weather: "晴", weather_auto: "晴", weather_code: 1,
+  temperature_max: "20.0", temperature_min: "10.0", precipitation: "0.0",
+  activity: null, weather_edited: false, scanned: false, created_by: 1, updated_by: 1,
+  created_at: "", updated_at: "", items: [],
+} satisfies RecordSnapshot;
 
-function renderDialogs(props: Partial<React.ComponentProps<typeof RecordManagementDialogs>> = {}) {
+function renderDialogs(recordValue: RecordSnapshot | null = record) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  const invalidatedRoots: string[] = [];
-  const invalidateQueries = client.invalidateQueries.bind(client);
-  vi.spyOn(client, "invalidateQueries").mockImplementation(async (filters) => {
-    const root = filters?.queryKey?.[0];
-    if (typeof root === "string") invalidatedRoots.push(root);
-    return invalidateQueries(filters);
-  });
-  vi.mocked(invalidateUserData).mockImplementation(async () => {
-    invalidatedRoots.push("ledger", "database", "charts", "dashboard");
-  });
-  render(<QueryClientProvider client={client}><RecordManagementDialogs storeId={1} record={record} targetDate="2026-07-14" open onOpenChange={vi.fn()} onCompleted={vi.fn()} {...props} /></QueryClientProvider>);
-  return { invalidatedRoots };
+  for (const key of [
+    ["ledger", "record", 1, "2026-07-14"],
+    ["ledgerMonth", 1, "2026-07"],
+    ["ledger", "recent", 1, 7],
+    ["database", "records", 1, "query"],
+    ["charts", 1, "query"],
+    ["dashboard", 1],
+  ]) client.setQueryData(key, true);
+  render(<QueryClientProvider client={client}><RecordManagementDialogs storeId={1} record={recordValue} open onOpenChange={vi.fn()} onCompleted={vi.fn()} /></QueryClientProvider>);
+  return client;
 }
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
@@ -44,43 +38,49 @@ afterEach(() => { server.resetHandlers(); vi.restoreAllMocks(); });
 afterAll(() => server.close());
 
 describe("RecordManagementDialogs", () => {
-  it("deletes with the displayed version, exposes rollback, and invalidates dependent data", async () => {
-    let deleteRequest = "";
+  it("permanently deletes without version, history, or rollback requests and invalidates dependants", async () => {
+    const requests: string[] = [];
     server.use(
-      http.get("/api/database/1/history", () => HttpResponse.json({ items: [audit], total: 1, page: 1, page_size: 20 })),
-      http.delete("/api/ledger/1/2026-07-14", ({ request }) => { deleteRequest = request.url; return new HttpResponse(null, { status: 204 }); }),
+      http.all("/api/*", ({ request }) => {
+        requests.push(request.url);
+        if (request.method === "DELETE") return new HttpResponse(null, { status: 204 });
+        return HttpResponse.json({ detail: "unexpected request" }, { status: 500 });
+      }),
     );
     vi.mocked(useAuth).mockReturnValue({ user: { id: 1, username: "admin", role: "admin", is_owner: false } } as ReturnType<typeof useAuth>);
-    const { invalidatedRoots } = renderDialogs();
+    const client = renderDialogs();
 
-    fireEvent.click(await screen.findByRole("button", { name: "删除这天记录" }));
-    fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
-    await waitFor(() => expect(deleteRequest).not.toBe(""));
-    expect(new URL(deleteRequest).search).toBe("?expected_version=1");
-    expect(await screen.findByRole("button", { name: "回滚 #9" })).toBeInTheDocument();
-    await waitFor(() => expect(invalidatedRoots).toEqual(expect.arrayContaining(["ledger", "database", "charts", "dashboard"])));
+    fireEvent.click(screen.getByRole("button", { name: "永久删除这天记录" }));
+    expect(screen.getByText("删除后无法恢复。")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "确认永久删除" }));
+
+    await waitFor(() => expect(requests).toHaveLength(1));
+    expect(requests[0]).toMatch(/\/api\/ledger\/1\/2026-07-14$/);
+    expect(requests.some((request) => request.includes("/history") || request.includes("/rollback"))).toBe(false);
+    await waitFor(() => {
+      for (const key of [
+        ["ledger", "record", 1, "2026-07-14"],
+        ["ledgerMonth", 1, "2026-07"],
+        ["ledger", "recent", 1, 7],
+        ["database", "records", 1, "query"],
+        ["charts", 1, "query"],
+        ["dashboard", 1],
+      ]) expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+    });
   });
 
-  it("shows a reloadable stale-delete message", async () => {
-    server.use(
-      http.get("/api/database/1/history", () => HttpResponse.json({ items: [], total: 0, page: 1, page_size: 20 })),
-      http.delete("/api/ledger/1/2026-07-14", () => HttpResponse.json({ detail: "Record changed" }, { status: 409 })),
-    );
-    vi.mocked(useAuth).mockReturnValue({ user: { id: 1, username: "admin", role: "admin", is_owner: false } } as ReturnType<typeof useAuth>);
-    renderDialogs();
-
-    fireEvent.click(await screen.findByRole("button", { name: "删除这天记录" }));
-    fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("数据已经发生变化，请刷新后重试");
-    expect(screen.getByRole("button", { name: "重新加载记录" })).toBeInTheDocument();
-  });
-
-  it("does not expose history, deletion, or rollback to non-admin users", () => {
+  it("shows no destructive controls to non-admin users", () => {
     vi.mocked(useAuth).mockReturnValue({ user: { id: 2, username: "user", role: "user", is_owner: false } } as ReturnType<typeof useAuth>);
     renderDialogs();
 
-    expect(screen.queryByRole("button", { name: "删除这天记录" })).not.toBeInTheDocument();
-    expect(screen.queryByText("修改历史")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /回滚/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "永久删除这天记录" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/历史|回滚/)).not.toBeInTheDocument();
+  });
+
+  it("does not offer deletion when there is no saved record", () => {
+    vi.mocked(useAuth).mockReturnValue({ user: { id: 1, username: "admin", role: "admin", is_owner: false } } as ReturnType<typeof useAuth>);
+    renderDialogs(null);
+
+    expect(screen.queryByRole("button", { name: "永久删除这天记录" })).not.toBeInTheDocument();
   });
 });

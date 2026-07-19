@@ -34,10 +34,6 @@ function MoreRoute() {
   return <>{status === "密码已更新" && <p className="mb-4 text-sm text-primary" role="status">密码已更新</p>}<MorePage /></>;
 }
 
-function Placeholder({ title }: { title: string }) {
-  return <section><h1 className="text-2xl font-semibold">{title}</h1><p className="text-muted-foreground">此页面将在后续任务中实现。</p></section>;
-}
-
 const routes: RouteObject[] = [{
   element: <AuthProvider><Outlet /></AuthProvider>,
   children: [
@@ -48,7 +44,6 @@ const routes: RouteObject[] = [{
       { path: "database", element: <BusinessRecordsPage /> },
       { path: "more", element: <MoreRoute /> },
       { path: "account/password", element: <AccountPasswordPage /> },
-      { path: "workers", element: <Placeholder title="员工管理（Phase 2）" /> },
       { path: "admin", element: <AdminRoute /> },
     ] },
   ],

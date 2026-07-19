@@ -11,6 +11,7 @@ from app.api.routes.dashboard import RefreshLimiter
 from app.api.routes.ledger import _refresh_briefing_after_commit
 from app.models.identity import Store, StoreMember, User
 from app.models.operations import DailyBriefing
+from app.services.weather import FrozenWeatherLocation
 
 
 async def _assign_store(auth_client, db_session: AsyncSession, store_factory) -> Store:
@@ -37,6 +38,33 @@ async def test_dashboard_returns_cached_cards(auth_client, db_session, store_fac
 
     assert response.status_code == 200
     assert [card["card_type"] for card in response.json()] == ["yesterday", "today", "tomorrow"]
+
+
+async def test_dashboard_returns_cached_revenue_as_integer(
+    auth_client, db_session, store_factory
+) -> None:
+    store = await _assign_store(auth_client, db_session, store_factory)
+    db_session.add(
+        DailyBriefing(
+            store_id=store.id,
+            card_type="today",
+            content="integer",
+            payload={
+                "card_type": "today",
+                "state": "recorded",
+                "revenue": 321,
+                "generated_at": "2026-07-15T04:00:00Z",
+            },
+            timestamp_contract="utc_v1",
+        )
+    )
+    await db_session.flush()
+
+    response = await auth_client.get(f"/api/dashboard/{store.id}")
+
+    assert response.status_code == 200
+    assert response.json()[0]["revenue"] == 321
+    assert isinstance(response.json()[0]["revenue"], int)
 
 
 async def test_dashboard_returns_structured_payload_without_calling_weather(
@@ -138,12 +166,23 @@ async def test_yesterday_ledger_change_regenerates_only_yesterday(
     regenerate = AsyncMock(return_value=[])
     monkeypatch.setattr("app.services.briefing.BriefingService.regenerate", regenerate)
     local_date = datetime.now(ZoneInfo(store.timezone)).date()
+    user = await db_session.scalar(
+        select(User).where(User.username == "authenticated")
+    )
+    assert user is not None
+    actor_id = user.id
+    store_id = store.id
+    location = FrozenWeatherLocation.from_store(store)
+    await db_session.commit()
 
     await _refresh_briefing_after_commit(
         Request({"type": "http", "app": auth_client._transport.app}),
         db_session,
-        store,
-        local_date - timedelta(days=1),
+        actor_id=actor_id,
+        store_id=store_id,
+        location=location,
+        capability="ledger.edit",
+        record_date=local_date - timedelta(days=1),
     )
 
     assert regenerate.await_args.args[1] == ["yesterday"]
@@ -153,13 +192,35 @@ async def test_manual_refresh_is_limited_per_user_and_store(
     auth_client, db_session, store_factory
 ) -> None:
     store = await _assign_store(auth_client, db_session, store_factory)
+    await db_session.commit()
+    store_id = store.id
 
-    first = await auth_client.post(f"/api/dashboard/{store.id}/refresh")
-    second = await auth_client.post(f"/api/dashboard/{store.id}/refresh")
+    first = await auth_client.post(f"/api/dashboard/{store_id}/refresh")
+    second = await auth_client.post(f"/api/dashboard/{store_id}/refresh")
 
     assert first.status_code == 200
     assert second.status_code == 429
     assert second.json()["detail"] == "请等待五分钟后再刷新"
+
+
+async def test_manual_refresh_releases_dependency_transaction_before_weather(
+    auth_client, db_session, store_factory
+) -> None:
+    store = await _assign_store(auth_client, db_session, store_factory)
+    await db_session.commit()
+    observed_transactions: list[bool] = []
+
+    class ObservedWeather:
+        async def get_daily(self, store, target):
+            observed_transactions.append(db_session.in_transaction())
+            return None
+
+    auth_client._transport.app.state.weather_service = ObservedWeather()
+
+    response = await auth_client.post(f"/api/dashboard/{store.id}/refresh")
+
+    assert response.status_code == 200
+    assert observed_transactions == [False, False]
 
 
 def test_refresh_limiter_is_per_user_store_and_per_app_instance() -> None:

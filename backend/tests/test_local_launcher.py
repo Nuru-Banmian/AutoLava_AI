@@ -23,12 +23,13 @@ def test_vite_proxies_api_and_health_to_loopback_backend() -> None:
         assert "changeOrigin: false" in block
 
 
-def test_launcher_has_generic_secret_safe_configuration_contract() -> None:
+def test_launcher_initializes_sqlite_and_secret_safe_local_configuration() -> None:
     launcher = read("scripts/start-local.ps1")
     for fragment in (
         "$PSScriptRoot",
-        ".autolava-db.env",
         'Join-Path $RepoRoot ".env"',
+        'Join-Path $StateDir "autolava.sqlite3"',
+        'AUTOLAVA_DATABASE_PATH',
         "Get-EnvFileValues",
         "Initialize-LocalSettings",
         "Set-AutoLavaEnvironment",
@@ -39,20 +40,22 @@ def test_launcher_has_generic_secret_safe_configuration_contract() -> None:
         "RandomNumberGenerator",
     ):
         assert fragment in launcher
+    assert ".autolava-db.env" not in launcher
+    assert "AUTOLAVA_DATABASE_URL" not in launcher
     assert "Get-ChildItem Env:AUTOLAVA_*" not in launcher
 
 
 def test_launcher_validates_local_credentials_without_echoing_values() -> None:
     launcher = read("scripts/start-local.ps1")
     assert '::IsNullOrWhiteSpace([string]$local["AUTOLAVA_JWT_SECRET"])' in launcher
-    assert '$jwtSecret.Trim().Length -lt 32' in launcher
+    assert "$jwtSecret.Trim().Length -lt 32" in launcher
     assert "JWT 密钥长度不能少于 32 个字符" in launcher
     assert '::IsNullOrWhiteSpace([string]$local["AUTOLAVA_BOOTSTRAP_USERNAME"])' in launcher
     assert '::IsNullOrWhiteSpace([string]$local["AUTOLAVA_BOOTSTRAP_PASSWORD"])' in launcher
     assert '$username = ([string]$local["AUTOLAVA_BOOTSTRAP_USERNAME"]).Trim()' in launcher
-    assert '$username.Length -lt 3 -or $username.Length -gt 80' in launcher
+    assert "$username.Length -lt 3 -or $username.Length -gt 80" in launcher
     assert '$local["AUTOLAVA_BOOTSTRAP_USERNAME"] = $username' in launcher
-    assert '$password.Length -lt 8 -or $password.Length -gt 128' in launcher
+    assert "$password.Length -lt 8 -or $password.Length -gt 128" in launcher
     assert "管理员用户名长度必须为 3 到 80 个字符" in launcher
     assert "管理员密码长度必须为 8 到 128 个字符" in launcher
 
@@ -126,9 +129,11 @@ try {
 def test_launcher_preflight_and_dependency_cache_are_repository_local() -> None:
     launcher = read("scripts/start-local.ps1")
     for fragment in (
-        "Assert-Command",
-        "Test-TcpPort",
-        "Assert-PortFree",
+        'Assert-Command "uv"',
+        'Assert-Command "node"',
+        'Assert-Command "npm"',
+        "Assert-PortFree 8000",
+        "Assert-PortFree 5173",
         "Get-FileHash",
         'Join-Path $RepoRoot ".autolava-local"',
         'Join-Path $BackendDir ".venv"',
@@ -175,6 +180,7 @@ def test_launcher_migrates_bootstraps_and_waits_for_proxied_health() -> None:
     assert positions == sorted(positions)
     assert '"-m", "alembic", "upgrade", "head"' in launcher
     assert '"-m", "app.scripts.create_admin"' in launcher
+    assert '"--workers", "1"' in launcher
 
 
 def test_launcher_owns_and_cleans_up_only_its_child_processes() -> None:
@@ -195,14 +201,6 @@ def test_launcher_passes_vite_entrypoint_relative_to_frontend_working_directory(
     assert "-ArgumentList @($vite," not in launcher
 
 
-def test_launcher_rejects_test_database_without_explicit_override() -> None:
-    launcher = read("scripts/start-local.ps1")
-    assert "[switch]$AllowTestDatabase" in launcher
-    assert "function Assert-RuntimeDatabaseUrl" in launcher
-    assert "数据库保留给自动化测试" in launcher
-    assert "Assert-RuntimeDatabaseUrl $databaseUrl $AllowTestDatabase" in launcher
-
-
 def test_root_batch_launcher_safely_delegates_to_powershell() -> None:
     batch = read("start-autolava.bat")
     lowered = batch.lower()
@@ -217,7 +215,7 @@ def test_root_batch_launcher_safely_delegates_to_powershell() -> None:
     assert "if not \"%exit_code%\"==\"0\"" in lowered
     assert "pause" in lowered
     assert "exit /b %exit_code%" in lowered
-    assert "autolava_database_url" not in lowered
+    assert "autolava_database_path" not in lowered
     assert "autolava_bootstrap_password" not in lowered
 
 
@@ -230,26 +228,32 @@ def test_windows_powershell_launcher_has_utf8_bom_for_chinese_messages() -> None
     assert launcher.startswith(b"\xef\xbb\xbf")
 
 
-def test_database_backup_and_restore_scripts_are_secret_safe() -> None:
-    backup = read("scripts/backup-local-db.ps1")
-    restore = read("scripts/restore-local-db.ps1")
-    for script in (backup, restore):
-        assert "--defaults-extra-file" in script
-        assert "Remove-Item -LiteralPath $defaultsFile" in script
-        assert "finally" in script
-        assert "AUTOLAVA_DATABASE_URL" in script
-        assert "--password=" not in script
-    assert '.autolava-local\\backups' in backup
-    assert "mysqldump" in backup
-    assert '"--no-tablespaces"' in backup
-    assert "TargetDatabase" in restore
-    assert "endsWith(\"_test\"" in restore
-    assert "-Force" in restore
-    assert "function Set-RuntimeDatabaseUrl" in restore
-    assert "Set-RuntimeDatabaseUrl $DatabaseEnvFile $TargetDatabase" in restore
+def test_legacy_backup_restore_and_database_probe_behavior_is_absent() -> None:
+    launcher = read("scripts/start-local.ps1")
+    blocked = (
+        ".autolava-db.env",
+        "AUTOLAVA_DATABASE_URL",
+        "databaseHost",
+        "databasePort",
+        "backup-local-db.ps1",
+        "restore-local-db.ps1",
+        "compose.temporary.yaml",
+        "my" + "sql",
+    )
+    for fragment in blocked:
+        assert fragment.lower() not in launcher.lower()
+    assert not (ROOT / "scripts" / "backup-local-db.ps1").exists()
+    assert not (ROOT / "scripts" / "restore-local-db.ps1").exists()
 
 
-def test_readme_documents_reusable_windows_launcher_without_secrets() -> None:
+def test_router_has_no_workforce_placeholder() -> None:
+    router = read("frontend/src/router.tsx")
+    assert '"work' + 'ers"' not in router
+    assert "员工管理" not in router
+    assert "function Placeholder" not in router
+
+
+def test_readme_documents_simple_sqlite_windows_launcher() -> None:
     readme = read("README.md")
     for fragment in (
         r".\scripts\start-local.ps1",
@@ -258,23 +262,22 @@ def test_readme_documents_reusable_windows_launcher_without_secrets() -> None:
         "alembic upgrade head",
         "manifests change",
         "Ctrl+C",
-        "Phase 2",
-        "Phase 3",
-        "Phase 4",
-        ".autolava-db.env",
+        ".autolava-local/autolava.sqlite3",
         ".env",
-        "backup-local-db.ps1",
-        "restore-local-db.ps1",
-        "autolava_local",
-        "-AllowTestDatabase",
     ):
         assert fragment in readme
+    for obsolete in (
+        ".autolava-db.env",
+        "backup-local-db.ps1",
+        "restore-local-db.ps1",
+        "-AllowTestDatabase",
+    ):
+        assert obsolete not in readme
 
 
 def test_local_runtime_artifacts_are_ignored() -> None:
     ignore = read(".gitignore").splitlines()
     assert ".env" in ignore
-    assert ".autolava-db.env" in ignore
     assert ".autolava-local/" in ignore
     assert ".venv/" in ignore
     assert "node_modules/" in ignore

@@ -15,7 +15,4 @@ async def get_current_income_config(
     access: Annotated[StoreAccess, Depends(require_store_read_access)],
 ) -> IncomeConfigResponse:
     service = IncomeConfigService(session)
-    return service.response(
-        await service.current(access.store.id),
-        store_id=access.store.id,
-    )
+    return await service.current(access.store.id)

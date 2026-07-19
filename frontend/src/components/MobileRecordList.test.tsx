@@ -5,8 +5,8 @@ import type { RecordSnapshot } from "@/api/types";
 import { MobileRecordList } from "@/components/MobileRecordList";
 
 const record: RecordSnapshot = {
-  id: 7, store_id: 3, date: "2026-07-14", daily_revenue: "100.00", wash_count: 4, is_open: "休息",
-  income_mode: "legacy_total", income_config_version_id: null, row_version: 1, weather: "晴", weather_auto: null,
+  id: 7, store_id: 3, date: "2026-07-14", daily_revenue: 100, wash_count: 4, is_open: "休息",
+  income_mode: "legacy_total", weather: "晴", weather_auto: null,
   weather_code: null, temperature_max: null, temperature_min: null, precipitation: null, activity: "活动",
   weather_edited: false, scanned: false, created_by: 1, updated_by: 1, created_at: "2026-07-14T00:00:00Z",
   updated_at: "2026-07-14T00:00:00Z", items: [],
@@ -17,7 +17,7 @@ describe("MobileRecordList", () => {
     const onSelect = vi.fn();
     render(<MobileRecordList records={[record]} selectedDate={record.date} onSelect={onSelect} />);
 
-    const row = screen.getByRole("button", { name: /2026年7月14日，休息，€100.00/ });
+    const row = screen.getByRole("button", { name: /2026年7月14日，休息，€100/ });
     expect(row).toHaveClass("py-2");
     expect(row).not.toHaveClass("py-3");
     expect(row).toHaveAttribute("aria-pressed", "true");

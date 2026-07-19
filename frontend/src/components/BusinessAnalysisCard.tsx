@@ -9,7 +9,7 @@ import { NativeDateInput } from "@/components/NativeDateInput";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { analysisRange, analysisSearchParams, type AnalysisRangeMode, type DateRange } from "@/lib/business-record-ranges";
-import { amountToCents, chartNumber, formatMoney, chartsKey } from "@/lib/user-api";
+import { chartsKey, formatWholeEuro } from "@/lib/user-api";
 
 interface BusinessAnalysisCardProps {
   storeId: number;
@@ -27,15 +27,14 @@ function comparisonText(data: ChartsResponse): string | null {
   const previous = data.comparison_kpis;
   if (!previous) return null;
 
-  const currentCents = amountToCents(data.kpis.total_revenue) ?? 0n;
-  const previousCents = amountToCents(previous.total_revenue) ?? 0n;
-  if (previousCents === 0n) return "上期为 0，暂无可比增幅";
+  const current = data.kpis.total_revenue;
+  const previousTotal = previous.total_revenue;
+  if (previousTotal === 0) return "上期为 0，暂无可比增幅";
 
-  const deltaCents = currentCents - previousCents;
-  const deltaTenths = (deltaCents * 1000n) / previousCents;
-  const absoluteTenths = deltaTenths < 0n ? -deltaTenths : deltaTenths;
-  const prefix = deltaTenths > 0n ? "+" : deltaTenths < 0n ? "-" : "";
-  return `较上期 ${prefix}${absoluteTenths / 10n}.${absoluteTenths % 10n}%`;
+  const deltaTenths = Math.trunc(((current - previousTotal) * 1000) / previousTotal);
+  const absoluteTenths = Math.abs(deltaTenths);
+  const prefix = deltaTenths > 0 ? "+" : deltaTenths < 0 ? "-" : "";
+  return `较上期 ${prefix}${Math.floor(absoluteTenths / 10)}.${absoluteTenths % 10}%`;
 }
 
 function Kpi({ title, value }: { title: string; value: string }) {
@@ -63,9 +62,9 @@ export function BusinessAnalysisCard({ storeId, today }: BusinessAnalysisCardPro
   });
   const data = charts.data;
   const trend = data ? (data.range.bucket === "day"
-    ? data.daily.map((row) => ({ label: row.date, revenue: chartNumber(row.revenue), revenue_raw: row.revenue }))
-    : data.monthly.map((row) => ({ label: row.month, revenue: chartNumber(row.revenue), revenue_raw: row.revenue }))) : [];
-  const hasBusinessData = (amountToCents(data?.kpis.total_revenue ?? "0") ?? 0n) !== 0n;
+    ? data.daily.map((row) => ({ label: row.date, revenue: row.revenue }))
+    : data.monthly.map((row) => ({ label: row.month, revenue: row.revenue }))) : [];
+  const hasBusinessData = (data?.kpis.total_revenue ?? 0) !== 0;
 
   return <Card>
     <CardHeader className="gap-4">
@@ -85,9 +84,9 @@ export function BusinessAnalysisCard({ storeId, today }: BusinessAnalysisCardPro
       {charts.isRefetchError && data && <p role="alert">刷新失败</p>}
       {data && <>
         <div className="grid gap-2 sm:grid-cols-3">
-          <Kpi title="总营业额" value={formatMoney(data.kpis.total_revenue)} />
+          <Kpi title="总营业额" value={formatWholeEuro(data.kpis.total_revenue)} />
           <Kpi title="营业天数" value={`${data.kpis.open_days} 天`} />
-          <Kpi title="营业日均" value={formatMoney(data.kpis.average_revenue)} />
+          <Kpi title="营业日均" value={formatWholeEuro(data.kpis.average_revenue)} />
         </div>
         <div className="grid gap-1 text-sm text-muted-foreground">
           <p>当前区间：{data.range.start} 至 {data.range.end}（按{data.range.bucket === "day" ? "日" : "月"}）</p>

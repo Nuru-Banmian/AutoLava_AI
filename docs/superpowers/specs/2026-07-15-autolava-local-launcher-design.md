@@ -1,5 +1,9 @@
 # AutoLava AI Windows 本机启动器设计
 
+> **已被取代：** 本文记录的 MySQL 本机运行方案已由
+> [`2026-07-18-sqlite-low-memory-runtime-design.md`](2026-07-18-sqlite-low-memory-runtime-design.md)
+> 取代，不再描述当前运行时。当前启动器使用本地 SQLite 文件；以下内容仅作为历史设计记录。
+
 ## 目标
 
 为 Windows 开发机提供一个贯穿 AutoLava AI 全部规划阶段的 PowerShell 一键启动入口。在不安装 Docker 的前提下，复用本机已运行的 MySQL 8.0，自动准备依赖、迁移数据库、初始化管理员、启动 FastAPI 与 Vite，并在系统可用后打开浏览器。
@@ -52,7 +56,6 @@
 
 启动器是仓库级开发入口，不绑定 Phase 1 的页面或数据表：
 
-- Phase 2 继续扩展现有 FastAPI 与 React，启动器通过依赖哈希和最新迁移自动接纳代码、依赖与 schema 变化；
 - Phase 3 的 Agent 与模型客户端仍位于 FastAPI 进程，新增密钥和模型配置通过通用 `.env` 加载；
 - Phase 4 的 APScheduler、自动化和记忆引擎仍位于单个 FastAPI 进程，随后端生命周期启动和停止；
 - 每次启动都执行 `alembic upgrade head`，因此后续阶段新增迁移不需要改脚本；

@@ -2,7 +2,7 @@ import { format, parseISO } from "date-fns";
 import type { KeyboardEvent } from "react";
 
 import type { RecordSnapshot } from "@/api/types";
-import { formatMoney } from "@/lib/user-api";
+import { formatWholeEuro } from "@/lib/user-api";
 
 export type RecordTableRow = RecordSnapshot | { id: null; date: string };
 
@@ -47,8 +47,8 @@ export function RecordTable({ records, selectedDate, loading, error, onSelect, o
                 className={selected ? "cursor-pointer border-l-4 border-primary bg-primary/10" : "cursor-pointer border-l-4 border-transparent hover:bg-muted/60"}
               >
                 <td className="px-3 py-3">{dateLabel}</td>
-                <td className="px-3 py-3">{isUnrecorded ? "未录入" : <><span aria-hidden="true" className="mr-2 inline-block size-2 rounded-full bg-current" />{record.is_open}</>}</td>
-                <td className="px-3 py-3">{isUnrecorded ? "—" : formatMoney(record.daily_revenue)}</td>
+                <td className="px-3 py-3">{isUnrecorded ? "未录入" : record.is_open}</td>
+                <td className="px-3 py-3">{isUnrecorded ? "—" : formatWholeEuro(record.daily_revenue)}</td>
                 <td className="px-3 py-3">{isUnrecorded ? "—" : record.weather ?? "—"}</td>
               </tr>
             );

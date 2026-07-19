@@ -7,6 +7,7 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     ForeignKey,
+    Integer,
     Index,
     Numeric,
     String,
@@ -39,12 +40,8 @@ class StoreDailyRecord(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"))
     date: Mapped[date] = mapped_column(Date)
-    daily_revenue: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
+    daily_revenue: Mapped[int] = mapped_column(Integer, default=0)
     income_mode: Mapped[str] = mapped_column(String(20), default="legacy_total")
-    income_config_version_id: Mapped[int | None] = mapped_column(
-        ForeignKey("income_config_versions.id", ondelete="SET NULL")
-    )
-    row_version: Mapped[int] = mapped_column(default=1)
     wash_count: Mapped[int | None]
     is_open: Mapped[str] = mapped_column(String(20))
     weather: Mapped[str | None] = mapped_column(String(50))
@@ -66,6 +63,7 @@ class StoreDailyRecord(Base):
     __table_args__ = (
         UniqueConstraint("store_id", "date", name="uq_store_daily_records_store_date"),
         CheckConstraint("is_open in ('营业','休息','天气停业')", name="open_status"),
+        CheckConstraint("daily_revenue >= 0", name="daily_revenue_nonnegative"),
     )
 
 
@@ -79,10 +77,11 @@ class DailyIncomeItem(Base):
     category_name: Mapped[str] = mapped_column(String(100), default="")
     include_in_total: Mapped[bool] = mapped_column(Boolean, default=True)
     sort_order: Mapped[int] = mapped_column(default=0)
-    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
+    amount: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
     __table_args__ = (
         UniqueConstraint("record_id", "category_id"),
         Index("ix_daily_income_items_record_sort", "record_id", "sort_order"),
+        CheckConstraint("amount >= 0", name="amount_nonnegative"),
     )

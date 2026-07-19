@@ -1,5 +1,8 @@
 # 临时服务器部署 Implementation Plan
 
+> 历史临时部署记录，仅为保留决策来源。该拓扑、命令和备份脚本均已废弃，
+> 不代表当前生产部署。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 将 AutoLava AI 部署到 `116.62.112.245:8080`，使用私有 MySQL 容器和每日完整备份。

@@ -7,13 +7,21 @@ import asyncio
 from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse
 
-from app.api.deps import Session, StoreAccess, require_capability, require_store_access, require_store_read_access
+from app.api.deps import (
+    Session,
+    StoreAccess,
+    require_capability,
+    require_store_access,
+    require_store_read_access,
+)
 from app.api.routes.dashboard import get_weather_service
+from app.core.database import end_read_transaction, sqlite_short_write
 from app.schemas.ledger import LedgerBody
-from app.services.audit import record_snapshot
+from app.services.access import Capability, require_fresh_store_access
 from app.services.briefing import BriefingService
 from app.services.ledger import LedgerService
-from app.services.weather import WeatherService
+from app.services.record_payload import record_payload
+from app.services.weather import FrozenWeatherLocation, WeatherService
 
 router = APIRouter(prefix="/ledger", tags=["ledger"])
 
@@ -21,11 +29,15 @@ router = APIRouter(prefix="/ledger", tags=["ledger"])
 async def _refresh_briefing_after_commit(
     request: Request,
     session: Session,
-    store,
+    *,
+    actor_id: int,
+    store_id: int,
+    location: FrozenWeatherLocation,
+    capability: Capability,
     record_date: date,
     weather_overrides: dict[date, str] | None = None,
 ) -> None:
-    local_date = datetime.now(ZoneInfo(store.timezone)).date()
+    local_date = datetime.now(ZoneInfo(location.timezone)).date()
     card_type = (
         "today"
         if record_date == local_date
@@ -33,28 +45,58 @@ async def _refresh_briefing_after_commit(
     )
     if card_type is None:
         return
-    await BriefingService(session, get_weather_service(request)).regenerate(
-        store.id,
-        [card_type],
-        local_date=local_date,
-        weather_overrides=weather_overrides,
-    )
-    await session.commit()
+    weather_service = get_weather_service(request)
+    resolved_overrides = dict(weather_overrides or {})
+    if card_type == "today" and local_date not in resolved_overrides:
+        await end_read_transaction(session)
+        try:
+            weather = await asyncio.wait_for(
+                weather_service.get_daily(location, local_date), timeout=9
+            )
+        except Exception:
+            weather = None
+        resolved_overrides[local_date] = (
+            weather.weather if weather is not None else "天气暂时不可用"
+        )
+    async with sqlite_short_write(session):
+        await require_fresh_store_access(
+            session,
+            user_id=actor_id,
+            store_id=store_id,
+            capability=capability,
+        )
+        await BriefingService(session, weather_service).regenerate(
+            store_id,
+            [card_type],
+            local_date=local_date,
+            weather_overrides=resolved_overrides,
+        )
 
 
 async def _safely_refresh_briefing(
     request: Request,
     session: Session,
-    store,
+    *,
+    actor_id: int,
+    store_id: int,
+    location: FrozenWeatherLocation,
+    capability: Capability,
     record_date: date,
     weather_overrides: dict[date, str] | None = None,
 ) -> None:
     try:
         await _refresh_briefing_after_commit(
-            request, session, store, record_date, weather_overrides
+            request,
+            session,
+            actor_id=actor_id,
+            store_id=store_id,
+            location=location,
+            capability=capability,
+            record_date=record_date,
+            weather_overrides=weather_overrides,
         )
     except Exception:
-        await session.rollback()
+        pass
 
 
 @router.get(
@@ -68,7 +110,7 @@ async def recent_records(
     access: StoreAccess = Depends(require_store_read_access),
 ) -> list[dict]:
     records = await LedgerService(session).recent(store=access.store, days=days)
-    return [record_snapshot(record) for record in records]
+    return [record_payload(record) for record in records]
 
 
 @router.get(
@@ -82,7 +124,7 @@ async def get_record_by_query(
     access: StoreAccess = Depends(require_store_read_access),
 ) -> dict:
     record = await LedgerService(session).get(store=access.store, record_date=record_date)
-    return record_snapshot(record)
+    return record_payload(record)
 
 
 @router.get(
@@ -96,7 +138,7 @@ async def get_record_by_path(
     access: StoreAccess = Depends(require_store_read_access),
 ) -> dict:
     record = await LedgerService(session).get(store=access.store, record_date=record_date)
-    return record_snapshot(record)
+    return record_payload(record)
 
 
 @router.get(
@@ -127,14 +169,16 @@ async def put_record(
     body: LedgerBody,
     request: Request,
     session: Session,
-    overwrite: bool = False,
     access: StoreAccess = Depends(require_store_access),
 ) -> Response:
+    actor_id = access.user.id
+    location = FrozenWeatherLocation.from_store(access.store)
     payload = body.model_dump(mode="json")
     weather_service: WeatherService = get_weather_service(request)
+    await end_read_transaction(session)
     try:
         result = await asyncio.wait_for(
-            weather_service.get_daily(access.store, record_date), timeout=9
+            weather_service.get_daily(location, record_date), timeout=9
         )
     except Exception:
         result = None
@@ -149,25 +193,28 @@ async def put_record(
             }
         )
     write = await LedgerService(session).upsert(
-        store=access.store,
+        store_id=store_id,
         record_date=record_date,
         payload=payload,
-        actor=access.user,
-        overwrite=overwrite,
+        actor_id=actor_id,
     )
     record, created = write
     response_content = {
         "id": record.id,
         "date": record.date.isoformat(),
-        "daily_revenue": str(record.daily_revenue),
-        "row_version": record.row_version,
+        "daily_revenue": record.daily_revenue,
     }
     await _safely_refresh_briefing(
         request,
         session,
-        access.store,
-        write.event.record_date,
-        {record_date: result.weather if result is not None else "天气暂时不可用"},
+        actor_id=actor_id,
+        store_id=store_id,
+        location=location,
+        capability="ledger.edit",
+        record_date=write.event.record_date,
+        weather_overrides={
+            record_date: result.weather if result is not None else "天气暂时不可用"
+        },
     )
     return JSONResponse(
         content=response_content,
@@ -185,14 +232,22 @@ async def delete_record(
     record_date: date,
     request: Request,
     session: Session,
-    expected_version: Annotated[int, Query(ge=1)],
     access: StoreAccess = Depends(require_store_access),
 ) -> Response:
+    actor_id = access.user.id
+    location = FrozenWeatherLocation.from_store(access.store)
     event = await LedgerService(session).delete(
-        store=access.store,
+        store_id=store_id,
         record_date=record_date,
-        actor=access.user,
-        expected_version=expected_version,
+        actor_id=actor_id,
     )
-    await _safely_refresh_briefing(request, session, access.store, event.record_date)
+    await _safely_refresh_briefing(
+        request,
+        session,
+        actor_id=actor_id,
+        store_id=store_id,
+        location=location,
+        capability="ledger.delete",
+        record_date=event.record_date,
+    )
     return Response(status_code=204)

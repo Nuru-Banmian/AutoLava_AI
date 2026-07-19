@@ -1,10 +1,11 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class LoginBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     username: str
     password: str
-    remember: bool = False
 
 
 class PasswordChange(BaseModel):

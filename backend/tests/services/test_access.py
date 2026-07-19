@@ -34,7 +34,6 @@ def test_role_capabilities_preserve_current_role_permissions() -> None:
             "income_config.manage",
             "users.manage",
             "stores.manage",
-            "audit.view",
         }
     )
 
@@ -46,11 +45,10 @@ def test_capability_check_is_independent_of_store_membership() -> None:
     assert has_capability(user, "ledger.delete") is False
 
 
-def test_regular_user_cannot_delete_or_view_audit_history() -> None:
+def test_regular_user_cannot_delete_records() -> None:
     user = make_user(role="user")
 
     assert has_capability(user, "ledger.delete") is False
-    assert has_capability(user, "audit.view") is False
     assert has_capability(user, "ledger.edit") is True
 
 

@@ -135,7 +135,7 @@ requires-python = ">=3.12"
 dependencies = [
   "alembic",
   "apscheduler",
-  "asyncmy",
+  "aiosqlite",
   "bcrypt",
   "fastapi",
   "httpx",
@@ -190,7 +190,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="AUTOLAVA_", env_file=".env")
 
     environment: str = "development"
-    database_url: str = "mysql+asyncmy://autolava:autolava@127.0.0.1/autolava"
+    database_path: Path = Path("../.autolava-local/autolava.sqlite3")
     jwt_secret: SecretStr = SecretStr("development-only-secret")
     cookie_secure: bool = False
     cors_origins: list[str] = ["http://localhost:5173"]
@@ -464,14 +464,6 @@ class StoreMember(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     __table_args__ = (UniqueConstraint("store_id", "user_id", name="uq_store_members_store_user"),)
 
-
-class StoreSetting(Base):
-    __tablename__ = "store_settings"
-    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), primary_key=True)
-    standard_work_hours: Mapped[int] = mapped_column(default=8)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
-    __table_args__ = (CheckConstraint("standard_work_hours between 1 and 24", name="work_hours"),)
 ```
 
 ```python
@@ -1015,7 +1007,7 @@ def add_admin_audit(session, *, actor_id: int, store_id: int | None,
     return entry
 ```
 
-Complete these exact operations in `admin.py`: `GET /users`, `GET /users/{id}/stores`, `GET /users/{id}/operations`, `POST/PATCH /stores`, `GET /stores`, `GET /stores/{id}/members`, `POST/PATCH/DELETE /income-categories`, `GET /income-categories?store_id=`, `GET /alerts`, and `GET /task-logs`. Every lookup returns 404 when absent; list routes order by display name or `sort_order,id`; store creation also inserts `StoreSetting(standard_work_hours=8)` in the same transaction. Every mutation calls `add_admin_audit` before commit; password snapshots contain only `{"password_changed": true}` and never a hash. When `include_in_total` changes, lock every affected daily record, snapshot it, recompute `daily_revenue`, and add one `operation_domain=ledger`, `operation_source=system` audit per affected record in the same transaction so stored historical totals cannot become stale.
+Complete these exact operations in `admin.py`: `GET /users`, `GET /users/{id}/stores`, `GET /users/{id}/operations`, `POST/PATCH /stores`, `GET /stores`, `GET /stores/{id}/members`, `POST/PATCH/DELETE /income-categories`, `GET /income-categories?store_id=`, `GET /alerts`, and `GET /task-logs`. Every lookup returns 404 when absent; list routes order by display name or `sort_order,id`. Every mutation calls `add_admin_audit` before commit; password snapshots contain only `{"password_changed": true}` and never a hash. When `include_in_total` changes, lock every affected daily record, snapshot it, recompute `daily_revenue`, and add one `operation_domain=ledger`, `operation_source=system` audit per affected record in the same transaction so stored historical totals cannot become stale.
 
 Run: `cd backend && pytest tests/api/test_admin.py -q`
 
@@ -1823,7 +1815,7 @@ export function StoreProvider({ children }: PropsWithChildren) {
 
 - [ ] **Step 4: Implement routes/navigation/admin forms and verify behavior**
 
-Create routes for `/login`, `/`, `/ledger`, `/database`, `/charts`, `/workers` (disabled link until Phase 2), and `/admin`. `AppShell` uses top navigation at `min-width: 768px` and fixed bottom tabs below it. `AdminPage` renders user, store, membership, category, alert, and task-log tabs; mutation success invalidates the exact React Query list key. Hide the admin route and link for role `user`, while the backend remains the authority.
+Create routes for `/login`, `/`, `/ledger`, `/database`, `/charts`, and `/admin`. `AppShell` uses top navigation at `min-width: 768px` and fixed bottom tabs below it. `AdminPage` renders user, store, membership, category, alert, and task-log tabs; mutation success invalidates the exact React Query list key. Hide the admin route and link for role `user`, while the backend remains the authority.
 
 Run: `cd frontend && npm test -- AuthProvider AdminPage && npm run build`
 
@@ -2047,5 +2039,5 @@ git commit -m "build: package phase one deployment and CI"
 - Database filters, summary, history, delete, rollback, and Excel export operate on the same store-scoped dataset.
 - Charts never compare stores and hide wash metrics when no wash count was recorded.
 - Home reads three stored cards without waiting for weather or generation.
-- Mobile ledger is usable without horizontal scrolling; the database table scrolls horizontally; worker navigation remains unavailable until Phase 2.
-- Deployment compose contains no database container and connects the API to host MySQL.
+- Mobile ledger is usable without horizontal scrolling; the database table scrolls horizontally.
+- Deployment compose contains only API and Web services and persists SQLite under `/data`.

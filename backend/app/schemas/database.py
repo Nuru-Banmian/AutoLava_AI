@@ -24,19 +24,7 @@ class CategoryDescriptor(BaseModel):
 class DatabasePage(BaseModel):
     items: list[dict]
     categories: list[CategoryDescriptor]
-    sum_daily_revenue: str
-    total: int
-    page: int
-    page_size: int
-
-
-class RollbackResult(BaseModel):
-    audit_id: int
-    record: dict | None
-
-
-class AuditPage(BaseModel):
-    items: list[dict]
+    sum_daily_revenue: int
     total: int
     page: int
     page_size: int

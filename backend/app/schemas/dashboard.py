@@ -11,7 +11,7 @@ from app.schemas.time import trusted_utc
 class DashboardCardResponse(BaseModel):
     card_type: Literal["yesterday", "today", "tomorrow"]
     state: Literal["missing", "recorded", "rest", "weather_closed", "forecast", "unavailable"]
-    revenue: Decimal | None = None
+    revenue: int | None = None
     weather: str | None = None
     weekday: str | None = None
     temperature_max: Decimal | None = None

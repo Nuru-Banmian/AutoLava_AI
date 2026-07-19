@@ -1,10 +1,14 @@
 # AutoLava AI Windows Local Launcher Implementation Plan
 
+> **Historical implementation record:** The database probe and environment-file snippets below
+> describe the superseded launcher. The current launcher contract is SQLite-only and is documented
+> in `README.md` and `scripts/start-local.ps1`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a reusable Windows PowerShell launcher that prepares and starts every currently planned AutoLava AI phase on the developer's existing MySQL installation, then opens and supervises the local web application.
 
-**Architecture:** A repository-root PowerShell entry point owns preflight checks, generic `AUTOLAVA_*` configuration loading, dependency hashing, migrations, administrator bootstrap, child-process startup, health polling, and cleanup. Vite proxies stable `/api` and `/health` paths to the loopback FastAPI server, so future Phase 2–4 routes and in-process scheduler/agent features require no launcher changes. Secrets remain only in ignored local files.
+**Architecture:** A repository-root PowerShell entry point owns preflight checks, generic `AUTOLAVA_*` configuration loading, dependency hashing, migrations, administrator bootstrap, child-process startup, health polling, and cleanup. Vite proxies stable `/api` and `/health` paths to the loopback FastAPI server. Secrets remain only in ignored local files.
 
 **Tech Stack:** PowerShell 7/Windows PowerShell 5.1, uv, Python 3.12+, FastAPI/Uvicorn, Alembic, MySQL 8.0, Node.js 22+, npm, Vite, pytest, Vitest, Playwright.
 
@@ -30,7 +34,7 @@
 - Create `backend/tests/test_local_launcher.py`: static deployment-contract regressions that run on Linux CI without executing Windows services.
 - Modify `frontend/vite.config.ts`: add phase-independent loopback development proxy.
 - Modify `.gitignore`: ignore launcher dependency-state directory.
-- Modify `README.md`: document one-command local use, secrets, lifecycle, and Phase 2–4 compatibility.
+- Modify `README.md`: document one-command local use, secrets, and lifecycle.
 
 ### Task 1: Add the phase-independent Vite development proxy
 
@@ -587,7 +591,6 @@ def test_readme_documents_reusable_windows_launcher_without_secrets() -> None:
         r".\scripts\start-local.ps1",
         "http://127.0.0.1:5173",
         "Ctrl+C",
-        "Phase 2",
         "Phase 3",
         "Phase 4",
         ".autolava-db.env",
@@ -619,7 +622,7 @@ Add a `## Windows local development` section to `README.md` before `## Productio
 ## Windows local development
 
 The reusable local launcher supports the current Phase 1 application and remains the entry point
-for planned Phase 2 workforce, Phase 3 agent, and Phase 4 automation features. It reuses the local
+for possible future Phase 3 agent and Phase 4 automation features. It reuses the local
 MySQL service, applies every migration through `alembic upgrade head`, refreshes dependencies when
 their manifests change, starts FastAPI and Vite, and opens `http://127.0.0.1:5173`.
 
