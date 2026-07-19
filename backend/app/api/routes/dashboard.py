@@ -9,11 +9,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import case, select
 
 from app.api.deps import Session, StoreAccess, require_store_access, require_store_read_access
-from app.core.database import SQLITE_WRITE_LOCK
+from app.core.database import end_read_transaction, sqlite_short_write
 from app.models.operations import DailyBriefing, UTC_TIMESTAMP_CONTRACT
 from app.schemas.dashboard import DashboardCardResponse
+from app.services.access import require_fresh_store_access
 from app.services.briefing import BriefingService
-from app.services.weather import WeatherResult, WeatherService
+from app.services.weather import FrozenWeatherLocation, WeatherResult, WeatherService
 
 router = APIRouter(tags=["dashboard"])
 
@@ -128,12 +129,16 @@ async def refresh_dashboard(
     limiter: RefreshLimiter = request.app.state.dashboard_refresh_limiter
     if not limiter.allow(user_id=access.user.id, store_id=access.store.id):
         raise HTTPException(429, "请等待五分钟后再刷新")
-    local_date = datetime.now(ZoneInfo(access.store.timezone)).date()
+    actor_id = access.user.id
+    store_id = access.store.id
+    location = FrozenWeatherLocation.from_store(access.store)
+    local_date = datetime.now(ZoneInfo(location.timezone)).date()
     weather_dates = (local_date, local_date + timedelta(days=1))
+    await end_read_transaction(session)
 
     async def lookup(target: date) -> WeatherResult | None:
         try:
-            return await weather.get_daily(access.store, target)
+            return await weather.get_daily(location, target)
         except Exception:
             return None
 
@@ -144,17 +149,18 @@ async def refresh_dashboard(
         async def get_daily(self, store, target):
             return cached.get(target)
 
-    async with SQLITE_WRITE_LOCK:
-        try:
-            cards = await BriefingService(
-                session, CachedWeatherService()
-            ).regenerate(
-                access.store.id,
-                ["yesterday", "today", "tomorrow"],
-                local_date=local_date,
-            )
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
+    async with sqlite_short_write(session):
+        await require_fresh_store_access(
+            session,
+            user_id=actor_id,
+            store_id=store_id,
+            capability="analytics.view",
+        )
+        cards = await BriefingService(
+            session, CachedWeatherService()
+        ).regenerate(
+            store_id,
+            ["yesterday", "today", "tomorrow"],
+            local_date=local_date,
+        )
     return [_card_payload(card) for card in cards]

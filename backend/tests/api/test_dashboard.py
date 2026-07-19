@@ -192,13 +192,35 @@ async def test_manual_refresh_is_limited_per_user_and_store(
     auth_client, db_session, store_factory
 ) -> None:
     store = await _assign_store(auth_client, db_session, store_factory)
+    await db_session.commit()
+    store_id = store.id
 
-    first = await auth_client.post(f"/api/dashboard/{store.id}/refresh")
-    second = await auth_client.post(f"/api/dashboard/{store.id}/refresh")
+    first = await auth_client.post(f"/api/dashboard/{store_id}/refresh")
+    second = await auth_client.post(f"/api/dashboard/{store_id}/refresh")
 
     assert first.status_code == 200
     assert second.status_code == 429
     assert second.json()["detail"] == "请等待五分钟后再刷新"
+
+
+async def test_manual_refresh_releases_dependency_transaction_before_weather(
+    auth_client, db_session, store_factory
+) -> None:
+    store = await _assign_store(auth_client, db_session, store_factory)
+    await db_session.commit()
+    observed_transactions: list[bool] = []
+
+    class ObservedWeather:
+        async def get_daily(self, store, target):
+            observed_transactions.append(db_session.in_transaction())
+            return None
+
+    auth_client._transport.app.state.weather_service = ObservedWeather()
+
+    response = await auth_client.post(f"/api/dashboard/{store.id}/refresh")
+
+    assert response.status_code == 200
+    assert observed_transactions == [False, False]
 
 
 def test_refresh_limiter_is_per_user_store_and_per_app_instance() -> None:

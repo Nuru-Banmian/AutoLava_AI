@@ -3,10 +3,11 @@ from sqlalchemy import select
 
 from app.api.deps import CurrentUser, Session
 from app.core.config import get_settings
+from app.core.database import sqlite_short_write
 from app.core.security import create_access_token, hash_password, verify_password
 from app.models.identity import User
 from app.schemas.auth import LoginBody, PasswordChange
-from app.services.access import list_accessible_stores
+from app.services.access import list_accessible_stores, require_fresh_user
 from app.services.owner import authenticated_user_payload
 
 router = APIRouter(tags=["auth"])
@@ -40,17 +41,13 @@ async def logout(response: Response) -> None:
 
 @router.post("/auth/password", status_code=204)
 async def change_password(body: PasswordChange, session: Session, user: CurrentUser) -> None:
-    locked_user = await session.scalar(
-        select(User)
-        .where(User.id == user.id)
-        .execution_options(populate_existing=True)
-    )
-    if locked_user is None or not locked_user.is_active:
-        raise HTTPException(401, "Authentication required")
-    if not verify_password(body.current_password, locked_user.password_hash):
-        raise HTTPException(422, "当前密码不正确")
-    locked_user.password_hash = hash_password(body.new_password)
-    await session.commit()
+    actor_id = user.id
+    next_password_hash = hash_password(body.new_password)
+    async with sqlite_short_write(session):
+        locked_user = await require_fresh_user(session, user_id=actor_id)
+        if not verify_password(body.current_password, locked_user.password_hash):
+            raise HTTPException(422, "当前密码不正确")
+        locked_user.password_hash = next_password_hash
 
 
 @router.get("/auth/me")

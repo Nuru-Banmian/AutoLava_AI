@@ -270,12 +270,13 @@ async def test_logout_clears_cookie_and_session(auth_client) -> None:
     assert (await auth_client.get("/api/auth/me")).status_code == 401
 
 
-async def test_user_changes_own_password(client, user_factory) -> None:
-    user = await user_factory(username="password-owner", password="OldPassword1")
-    other = await user_factory(username="other-user", password="OtherPassword1")
+async def test_user_changes_own_password(client, user_factory, db_session) -> None:
+    await user_factory(username="password-owner", password="OldPassword1")
+    await user_factory(username="other-user", password="OtherPassword1")
+    await db_session.commit()
     login = await client.post(
         "/api/auth/login",
-        json={"username": user.username, "password": "OldPassword1"},
+        json={"username": "password-owner", "password": "OldPassword1"},
     )
     assert login.status_code == 200
 
@@ -289,26 +290,29 @@ async def test_user_changes_own_password(client, user_factory) -> None:
 
     old_login = await client.post(
         "/api/auth/login",
-        json={"username": user.username, "password": "OldPassword1"},
+        json={"username": "password-owner", "password": "OldPassword1"},
     )
     new_login = await client.post(
         "/api/auth/login",
-        json={"username": user.username, "password": "NewPassword2"},
+        json={"username": "password-owner", "password": "NewPassword2"},
     )
     other_login = await client.post(
         "/api/auth/login",
-        json={"username": other.username, "password": "OtherPassword1"},
+        json={"username": "other-user", "password": "OtherPassword1"},
     )
     assert old_login.status_code == 401
     assert new_login.status_code == 200
     assert other_login.status_code == 200
 
 
-async def test_password_change_rejects_wrong_current_password(client, user_factory) -> None:
-    user = await user_factory(username="password-owner", password="OldPassword1")
+async def test_password_change_rejects_wrong_current_password(
+    client, user_factory, db_session
+) -> None:
+    await user_factory(username="password-owner", password="OldPassword1")
+    await db_session.commit()
     await client.post(
         "/api/auth/login",
-        json={"username": user.username, "password": "OldPassword1"},
+        json={"username": "password-owner", "password": "OldPassword1"},
     )
 
     response = await client.post(
@@ -322,7 +326,7 @@ async def test_password_change_rejects_wrong_current_password(client, user_facto
     assert "NewPassword2" not in response.text
     old_login = await client.post(
         "/api/auth/login",
-        json={"username": user.username, "password": "OldPassword1"},
+        json={"username": "password-owner", "password": "OldPassword1"},
     )
     assert old_login.status_code == 200
 

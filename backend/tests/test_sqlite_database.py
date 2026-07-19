@@ -1,9 +1,17 @@
+import asyncio
 from pathlib import Path
 
-from sqlalchemy import text
+import pytest
+from sqlalchemy import select, text
 
 from app.core.config import Settings
-from app.core.database import engine, sqlite_url
+from app.core.database import (
+    SQLITE_WRITE_LOCK,
+    engine,
+    sqlite_short_write,
+    sqlite_url,
+)
+from app.models.identity import User
 
 
 def test_sqlite_url_uses_aiosqlite_and_absolute_path(tmp_path: Path) -> None:
@@ -32,3 +40,79 @@ async def test_live_connections_enable_required_pragmas() -> None:
     assert busy_timeout == 10_000
     assert str(journal_mode).lower() == "wal"
     assert synchronous == 1
+
+
+async def test_sqlite_short_write_rejects_nested_entry(db_session) -> None:
+    async def enter_twice() -> None:
+        async with sqlite_short_write(db_session):
+            async with sqlite_short_write(db_session):
+                pass
+
+    with pytest.raises(RuntimeError, match="Nested SQLite write transaction"):
+        await asyncio.wait_for(enter_twice(), timeout=0.2)
+
+
+async def test_sqlite_short_write_commits_successful_work(db_session) -> None:
+    async with sqlite_short_write(db_session):
+        db_session.add(
+            User(
+                username="short-write-commit",
+                password_hash="unused",
+                role="user",
+                is_active=True,
+            )
+        )
+
+    assert await db_session.scalar(
+        select(User.username).where(User.username == "short-write-commit")
+    ) == "short-write-commit"
+
+
+async def test_sqlite_short_write_rolls_back_exceptions(db_session) -> None:
+    with pytest.raises(RuntimeError, match="stop write"):
+        async with sqlite_short_write(db_session):
+            db_session.add(
+                User(
+                    username="short-write-error",
+                    password_hash="unused",
+                    role="user",
+                    is_active=True,
+                )
+            )
+            await db_session.flush()
+            raise RuntimeError("stop write")
+
+    assert await db_session.scalar(
+        select(User.id).where(User.username == "short-write-error")
+    ) is None
+
+
+async def test_sqlite_short_write_rolls_back_cancellation_and_releases_lock(
+    db_session,
+) -> None:
+    entered = asyncio.Event()
+
+    async def write_until_cancelled() -> None:
+        async with sqlite_short_write(db_session):
+            db_session.add(
+                User(
+                    username="short-write-cancel",
+                    password_hash="unused",
+                    role="user",
+                    is_active=True,
+                )
+            )
+            await db_session.flush()
+            entered.set()
+            await asyncio.Event().wait()
+
+    task = asyncio.create_task(write_until_cancelled())
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert SQLITE_WRITE_LOCK.locked() is False
+    assert await db_session.scalar(
+        select(User.id).where(User.username == "short-write-cancel")
+    ) is None
