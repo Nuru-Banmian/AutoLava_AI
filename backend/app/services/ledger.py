@@ -18,6 +18,13 @@ _MAX_MONEY = 9_999_999_999
 
 
 @dataclass(frozen=True)
+class _IncomeItemSnapshot:
+    category_name: str
+    include_in_total: bool
+    sort_order: int
+
+
+@dataclass(frozen=True)
 class LedgerWriteResult:
     record: StoreDailyRecord
     created: bool
@@ -141,7 +148,7 @@ class LedgerService:
         if len(category_ids) != len(set(category_ids)):
             raise HTTPException(422, "Duplicate income categories are not allowed")
 
-        snapshots: dict[int, tuple[str, bool, int]] = {}
+        snapshots: dict[int, _IncomeItemSnapshot] = {}
         item_values: list[tuple[int, int]] = []
         if income_mode == "legacy_total":
             if items:
@@ -168,19 +175,19 @@ class LedgerService:
                     )
                 )
                 snapshots = {
-                    category.id: (
-                        category.name,
-                        category.include_in_total,
-                        category.sort_order,
+                    category.id: _IncomeItemSnapshot(
+                        category_name=category.name,
+                        include_in_total=category.include_in_total,
+                        sort_order=category.sort_order,
                     )
                     for category in categories
                 }
             else:
                 snapshots = {
-                    item.category_id: (
-                        item.category_name,
-                        item.include_in_total,
-                        item.sort_order,
+                    item.category_id: _IncomeItemSnapshot(
+                        category_name=item.category_name,
+                        include_in_total=item.include_in_total,
+                        sort_order=item.sort_order,
                     )
                     for item in record.items
                 }
@@ -200,7 +207,7 @@ class LedgerService:
             daily_revenue = sum(
                 amount
                 for category_id, amount in item_values
-                if snapshots[category_id][1]
+                if snapshots[category_id].include_in_total
             )
             if daily_revenue > _MAX_MONEY:
                 raise HTTPException(422, "Daily revenue exceeds integer capacity")
@@ -241,9 +248,9 @@ class LedgerService:
         record.items = [
             DailyIncomeItem(
                 category_id=category_id,
-                category_name=snapshots[category_id][0],
-                include_in_total=snapshots[category_id][1],
-                sort_order=snapshots[category_id][2],
+                category_name=snapshots[category_id].category_name,
+                include_in_total=snapshots[category_id].include_in_total,
+                sort_order=snapshots[category_id].sort_order,
                 amount=amount,
             )
             for category_id, amount in item_values
