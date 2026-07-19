@@ -1,6 +1,8 @@
 import asyncio
-from datetime import datetime
+import sqlite3
+from datetime import UTC, date, datetime
 from decimal import Decimal
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
@@ -16,7 +18,9 @@ from app.models.operations import ScheduledTaskLog
 from app.services.briefing import BriefingService
 from app.services.scheduler import (
     BackgroundRefreshScheduler,
+    DailyScheduler,
     apply_refreshed_weather,
+    make_sqlite_maintenance_callback,
     make_refresh_callback,
 )
 from app.services.ledger import LedgerService
@@ -51,6 +55,158 @@ async def test_background_refresh_is_bounded_and_can_be_stopped() -> None:
     await scheduler.stop()
     assert refresh.await_count >= 1
     assert scheduler.running is False
+
+
+async def test_daily_scheduler_skips_startup_callback_for_valid_today_backup() -> None:
+    callback = AsyncMock()
+    sleep_started = asyncio.Event()
+
+    async def sleeper(_seconds: float) -> None:
+        sleep_started.set()
+        await asyncio.Event().wait()
+
+    scheduler = DailyScheduler(
+        callback,
+        timezone=ZoneInfo("Europe/Rome"),
+        startup_complete=lambda today: today == date(2026, 7, 19),
+        clock=lambda: datetime(2026, 7, 19, 4, tzinfo=ZoneInfo("Europe/Rome")),
+        sleeper=sleeper,
+    )
+    scheduler.start()
+    await asyncio.wait_for(sleep_started.wait(), timeout=1)
+    await scheduler.stop()
+
+    callback.assert_not_awaited()
+    assert scheduler.running is False
+
+
+async def test_daily_scheduler_catches_up_then_sleeps_until_next_local_0300() -> None:
+    callback = AsyncMock()
+    delays: list[float] = []
+    sleep_started = asyncio.Event()
+
+    async def sleeper(seconds: float) -> None:
+        delays.append(seconds)
+        sleep_started.set()
+        await asyncio.Event().wait()
+
+    scheduler = DailyScheduler(
+        callback,
+        timezone=ZoneInfo("Europe/Rome"),
+        startup_complete=lambda _today: False,
+        clock=lambda: datetime(2026, 7, 19, 4, tzinfo=ZoneInfo("Europe/Rome")),
+        sleeper=sleeper,
+    )
+    scheduler.start()
+    await asyncio.wait_for(sleep_started.wait(), timeout=1)
+    await scheduler.stop()
+
+    callback.assert_awaited_once_with()
+    assert delays == [23 * 60 * 60]
+
+
+async def test_daily_scheduler_defaults_to_startup_catch_up_for_timezone_name() -> None:
+    callback = AsyncMock()
+    sleep_started = asyncio.Event()
+
+    async def sleeper(_seconds: float) -> None:
+        sleep_started.set()
+        await asyncio.Event().wait()
+
+    scheduler = DailyScheduler(
+        callback,
+        timezone="Europe/Rome",
+        clock=lambda: datetime(2026, 7, 19, 4, tzinfo=ZoneInfo("Europe/Rome")),
+        sleeper=sleeper,
+    )
+    scheduler.start()
+    await asyncio.wait_for(sleep_started.wait(), timeout=1)
+    await scheduler.stop()
+
+    callback.assert_awaited_once_with()
+
+
+async def test_sqlite_maintenance_runs_retention_after_failed_backup(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await _reset_database()
+    order: list[str] = []
+
+    def fail_backup(_source: Path, _destination: Path, _today: date) -> Path:
+        order.append("backup")
+        raise RuntimeError("simulated backup failure " + "x" * 1000)
+
+    async def record_retention(_session, _now):
+        order.append("retention")
+
+    monkeypatch.setattr("app.services.scheduler.backup_sqlite", fail_backup)
+    monkeypatch.setattr(
+        "app.services.scheduler.prune_operational_rows", record_retention
+    )
+    callback = make_sqlite_maintenance_callback(
+        async_session_factory,
+        source=tmp_path / "missing.sqlite3",
+        destination=tmp_path / "backups",
+        timezone=ZoneInfo("Europe/Rome"),
+        clock=lambda: datetime(2026, 7, 19, 1, tzinfo=UTC),
+    )
+
+    await callback()
+
+    assert order == ["backup", "retention"]
+    async with async_session_factory() as verify:
+        task = await verify.scalar(
+            select(ScheduledTaskLog).where(
+                ScheduledTaskLog.task_type == "sqlite_backup"
+            )
+        )
+        assert task is not None
+        assert task.status == "failed"
+        assert len(task.message) <= 500
+
+
+async def test_sqlite_maintenance_runs_retention_after_successful_backup(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await _reset_database()
+    source = tmp_path / "source.sqlite3"
+    with sqlite3.connect(source) as connection:
+        connection.execute("CREATE TABLE marker (value TEXT)")
+        connection.execute("INSERT INTO marker VALUES ('ok')")
+    order: list[str] = []
+
+    def observe_backup(source_path: Path, destination: Path, today: date) -> Path:
+        order.append("backup")
+        from app.services.sqlite_backup import backup_sqlite
+
+        return backup_sqlite(source_path, destination, today)
+
+    async def record_retention(_session, _now):
+        order.append("retention")
+
+    monkeypatch.setattr("app.services.scheduler.backup_sqlite", observe_backup)
+    monkeypatch.setattr(
+        "app.services.scheduler.prune_operational_rows", record_retention
+    )
+    callback = make_sqlite_maintenance_callback(
+        async_session_factory,
+        source=source,
+        destination=tmp_path / "backups",
+        timezone=ZoneInfo("Europe/Rome"),
+        clock=lambda: datetime(2026, 7, 19, 1, tzinfo=UTC),
+    )
+
+    await callback()
+
+    assert order == ["backup", "retention"]
+    async with async_session_factory() as verify:
+        task = await verify.scalar(
+            select(ScheduledTaskLog).where(
+                ScheduledTaskLog.task_type == "sqlite_backup"
+            )
+        )
+        assert task is not None
+        assert task.status == "success"
 
 
 async def test_refresh_rechecks_weather_edited_after_network_wait() -> None:
