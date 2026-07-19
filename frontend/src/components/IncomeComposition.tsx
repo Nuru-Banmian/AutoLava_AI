@@ -15,7 +15,6 @@ interface IncomeCompositionProps {
   included: CategoryComposition[];
   excluded: CategoryComposition[];
   classifiedIncludedTotal: number;
-  totalRevenue: number;
 }
 
 interface CompositionGroupProps {
@@ -53,13 +52,15 @@ function CompositionGroup({ title, rows, expanded, onExpandedChange, showProport
   </section>;
 }
 
-export function IncomeComposition({ included, excluded, classifiedIncludedTotal, totalRevenue }: IncomeCompositionProps) {
+export function IncomeComposition({ included, excluded, classifiedIncludedTotal }: IncomeCompositionProps) {
   const [includedExpanded, setIncludedExpanded] = useState(false);
   const [excludedExpanded, setExcludedExpanded] = useState(false);
   const showProportions = included.length >= 2 && classifiedIncludedTotal > 0;
 
+  if (included.length === 0 && excluded.length === 0) return null;
+
   return <section className="grid gap-4" aria-label="收入构成">
-    <CompositionGroup
+    {included.length > 0 && <CompositionGroup
       title="收入分类"
       rows={included}
       expanded={includedExpanded}
@@ -67,18 +68,16 @@ export function IncomeComposition({ included, excluded, classifiedIncludedTotal,
       showProportions={showProportions}
       total={classifiedIncludedTotal}
       toggleLabel="展开收入分类"
-    />
-    <hr className="border-border" />
-    <CompositionGroup
-      title="未计入总额"
+    />}
+    {excluded.length > 0 && <hr className="border-border" />}
+    {excluded.length > 0 && <CompositionGroup
+      title="其他数据"
       rows={excluded}
       expanded={excludedExpanded}
       onExpandedChange={() => setExcludedExpanded((value) => !value)}
       showProportions={false}
       total={0}
-      toggleLabel="展开未计入总额"
-    />
-    <p className="text-xs text-muted-foreground">未计入总额的金额不会计入总营业额、增幅或平均值。</p>
-    {classifiedIncludedTotal < totalRevenue && <p className="text-xs text-muted-foreground">部分历史总额记录未分配到收入分类，因此分类金额低于总营业额。</p>}
+      toggleLabel="展开其他数据"
+    />}
   </section>;
 }

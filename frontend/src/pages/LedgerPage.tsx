@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { endOfMonth, format, isValid, parseISO, startOfMonth } from "date-fns";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { api, ApiError, friendlyApiError } from "@/api/client";
 import type { DatabaseResponse, IncomeConfigResponse, LedgerBody, LedgerSaveResponse, RecordSnapshot, WeatherResponse } from "@/api/types";
 import { LedgerDatePicker } from "@/components/LedgerDatePicker";
@@ -9,6 +9,7 @@ import { LedgerForm } from "@/components/LedgerForm";
 import { categoryCatalogKey, incomeConfigKey, invalidateUserData, ledgerMonthKey, ledgerRecordKey, recentKey, storeLocalToday } from "@/lib/user-api";
 import { useStore } from "@/stores/StoreProvider";
 import { useUnsavedChanges } from "@/navigation/UnsavedChanges";
+import { ledgerReturnState } from "@/navigation/business-records-return";
 
 function validDateParameter(value: string | null) {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
@@ -17,7 +18,8 @@ function validDateParameter(value: string | null) {
 }
 
 export function LedgerPage() {
-  const { selected } = useStore(); const client = useQueryClient(); const { markDirty, requestTransition } = useUnsavedChanges();
+  const { selected } = useStore(); const client = useQueryClient(); const { markDirty, requestTransition, resetUnsavedChanges } = useUnsavedChanges();
+  const location = useLocation(); const navigate = useNavigate(); const returnToBusinessRecords = ledgerReturnState(location.state);
   const [searchParams, setSearchParams] = useSearchParams(); const hasDateParameter = searchParams.has("date"); const parameterDate = validDateParameter(searchParams.get("date"));
   const today = selected ? storeLocalToday(selected) : ""; const allowedParameterDate = today && parameterDate && parameterDate <= today ? parameterDate : null; const [dateSelection, setDateSelection] = useState<{ storeId: number | null; date: string }>({ storeId: null, date: "" }); const storedDate = dateSelection.storeId === selected?.id && dateSelection.date <= today ? dateSelection.date : ""; const date = hasDateParameter ? allowedParameterDate ?? today : storedDate || today; const [visibleMonth, setVisibleMonth] = useState(() => date.slice(0, 7)); const [calendarOpen, setCalendarOpen] = useState(false); const [message, setMessage] = useState(""); const [savedSubmission, setSavedSubmission] = useState<{ revision: number; storeId: number; date: string; body: LedgerBody; canonicalRequested: boolean; canonicalReady: boolean } | null>(null);
   const scopeRef = useRef({ storeId: selected?.id ?? null, date }); scopeRef.current = { storeId: selected?.id ?? null, date };
@@ -52,7 +54,8 @@ export function LedgerPage() {
   const save = useMutation({
     mutationFn: ({ storeId, date: targetDate, body }: { storeId: number; date: string; body: LedgerBody }) => api<LedgerSaveResponse>(`/ledger/${storeId}/${targetDate}`, { method: "PUT", body: JSON.stringify(body) }),
     onSuccess: async (_data, variables) => {
-      if (scopeRef.current.storeId === variables.storeId && scopeRef.current.date === variables.date) {
+      const isCurrentScope = scopeRef.current.storeId === variables.storeId && scopeRef.current.date === variables.date;
+      if (isCurrentScope) {
         setSavedSubmission((previous) => ({ revision: (previous?.revision ?? 0) + 1, storeId: variables.storeId, date: variables.date, body: variables.body, canonicalRequested: false, canonicalReady: false }));
         setMessage("保存成功");
       }
@@ -60,6 +63,10 @@ export function LedgerPage() {
       if (scopeRef.current.storeId === variables.storeId && scopeRef.current.date === variables.date) {
         const canonical = client.getQueryState<RecordSnapshot | null>(ledgerRecordKey(variables.storeId, variables.date));
         setSavedSubmission((previous) => previous?.body === variables.body ? { ...previous, canonicalRequested: true, canonicalReady: canonical?.status === "success" && Boolean(canonical.data) } : previous);
+      }
+      if (isCurrentScope && returnToBusinessRecords?.storeId === variables.storeId) {
+        resetUnsavedChanges();
+        navigate("/database", { replace: true, state: { restoreBusinessRecords: returnToBusinessRecords } });
       }
     },
     onError: (error, variables) => {

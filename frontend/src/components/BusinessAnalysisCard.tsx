@@ -10,10 +10,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { analysisRange, analysisSearchParams, type AnalysisRangeMode, type DateRange } from "@/lib/business-record-ranges";
 import { chartsKey, formatWholeEuro } from "@/lib/user-api";
+import type { BusinessAnalysisViewState } from "@/navigation/business-records-return";
 
 interface BusinessAnalysisCardProps {
   storeId: number;
   today: string;
+  initialViewState?: BusinessAnalysisViewState;
+  onViewStateChange?(state: BusinessAnalysisViewState): void;
 }
 
 const rangeModes: { mode: AnalysisRangeMode; label: string }[] = [
@@ -44,9 +47,13 @@ function Kpi({ title, value }: { title: string; value: string }) {
   </div>;
 }
 
-export function BusinessAnalysisCard({ storeId, today }: BusinessAnalysisCardProps) {
-  const [mode, setMode] = useState<AnalysisRangeMode>("current-month");
-  const [custom, setCustom] = useState<DateRange>(() => ({ start: `${today.slice(0, 7)}-01`, end: today }));
+export function BusinessAnalysisCard({ storeId, today, initialViewState, onViewStateChange }: BusinessAnalysisCardProps) {
+  const [viewState, setViewState] = useState<BusinessAnalysisViewState>(() => initialViewState ?? ({ mode: "current-month", custom: { start: `${today.slice(0, 7)}-01`, end: today } }));
+  const { mode, custom } = viewState;
+  const updateViewState = (next: BusinessAnalysisViewState) => {
+    setViewState(next);
+    onViewStateChange?.(next);
+  };
   const resolved = useMemo(() => {
     try {
       return analysisRange(mode, today, custom);
@@ -70,11 +77,11 @@ export function BusinessAnalysisCard({ storeId, today }: BusinessAnalysisCardPro
     <CardHeader className="gap-4">
       <CardTitle>经营分析</CardTitle>
       <div className="flex flex-wrap gap-2" aria-label="经营分析日期范围">
-        {rangeModes.map(({ mode: nextMode, label }) => <Button key={nextMode} type="button" variant={mode === nextMode ? "default" : "outline"} size="sm" aria-pressed={mode === nextMode} onClick={() => setMode(nextMode)}>{label}</Button>)}
+        {rangeModes.map(({ mode: nextMode, label }) => <Button key={nextMode} type="button" variant={mode === nextMode ? "default" : "outline"} size="sm" aria-pressed={mode === nextMode} onClick={() => updateViewState({ ...viewState, mode: nextMode })}>{label}</Button>)}
       </div>
       {mode === "custom" && <div className="flex flex-wrap gap-3">
-        <label className="grid gap-1 text-sm">开始日期<NativeDateInput aria-label="分析开始日期" value={custom.start} max={custom.end || today} onChange={(event) => setCustom((value) => ({ ...value, start: event.target.value }))} /></label>
-        <label className="grid gap-1 text-sm">结束日期<NativeDateInput aria-label="分析结束日期" value={custom.end} min={custom.start} max={today} onChange={(event) => setCustom((value) => ({ ...value, end: event.target.value }))} /></label>
+        <label className="grid gap-1 text-sm">开始日期<NativeDateInput aria-label="分析开始日期" value={custom.start} max={custom.end || today} onChange={(event) => updateViewState({ ...viewState, custom: { ...custom, start: event.target.value } })} /></label>
+        <label className="grid gap-1 text-sm">结束日期<NativeDateInput aria-label="分析结束日期" value={custom.end} min={custom.start} max={today} onChange={(event) => updateViewState({ ...viewState, custom: { ...custom, end: event.target.value } })} /></label>
       </div>}
     </CardHeader>
     <CardContent className="grid gap-5">
@@ -95,7 +102,7 @@ export function BusinessAnalysisCard({ storeId, today }: BusinessAnalysisCardPro
         </div>
         {!hasBusinessData && <p>该范围暂无经营数据</p>}
         <ChartPanel embedded title="营业额趋势" kind="line" data={trend} xKey="label" valueKey="revenue" emptyMessage="暂无趋势数据" heightClassName="h-64 min-h-64" />
-        <IncomeComposition included={data.categories} excluded={data.excluded_categories} classifiedIncludedTotal={data.classified_included_total} totalRevenue={data.kpis.total_revenue} />
+        <IncomeComposition included={data.categories} excluded={data.excluded_categories} classifiedIncludedTotal={data.classified_included_total} />
       </>}
     </CardContent>
   </Card>;

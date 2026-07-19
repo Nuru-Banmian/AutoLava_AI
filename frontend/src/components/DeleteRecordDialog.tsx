@@ -1,12 +1,10 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { api, friendlyApiError } from "@/api/client";
 import type { RecordSnapshot } from "@/api/types";
-import { useAuth } from "@/auth/AuthProvider";
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { invalidateUserData } from "@/lib/user-api";
 
 interface DeleteScope {
@@ -14,7 +12,7 @@ interface DeleteScope {
   date: string;
 }
 
-export interface RecordManagementDialogsProps {
+export interface DeleteRecordDialogProps {
   storeId: number;
   record: RecordSnapshot | null;
   open: boolean;
@@ -22,15 +20,16 @@ export interface RecordManagementDialogsProps {
   onCompleted(): void;
 }
 
-export function RecordManagementDialogs({ storeId, record, open, onOpenChange, onCompleted }: RecordManagementDialogsProps) {
-  const { user } = useAuth();
+export function DeleteRecordDialog({ storeId, record, open, onOpenChange, onCompleted }: DeleteRecordDialogProps) {
   const client = useQueryClient();
-  const isAdmin = user?.role === "admin";
-  const [deleting, setDeleting] = useState(false);
   const [message, setMessage] = useState("");
   const targetDate = record?.date ?? null;
   const currentScope = useRef<DeleteScope>({ storeId, date: targetDate ?? "" });
   currentScope.current = { storeId, date: targetDate ?? "" };
+
+  useEffect(() => {
+    if (open) setMessage("");
+  }, [open, targetDate]);
 
   const matchesCurrentScope = (scope: DeleteScope) => (
     currentScope.current.storeId === scope.storeId
@@ -41,7 +40,6 @@ export function RecordManagementDialogs({ storeId, record, open, onOpenChange, o
     mutationFn: (scope: DeleteScope) => api<void>(`/ledger/${scope.storeId}/${scope.date}`, { method: "DELETE" }),
     onSuccess: async (_data, scope) => {
       if (matchesCurrentScope(scope)) {
-        setDeleting(false);
         setMessage("删除成功");
         onOpenChange(false);
         onCompleted();
@@ -53,29 +51,20 @@ export function RecordManagementDialogs({ storeId, record, open, onOpenChange, o
     },
   });
 
-  if (!isAdmin || !targetDate) return null;
-
   return <>
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader><DialogTitle>管理 {targetDate} 记录</DialogTitle></DialogHeader>
-        {record
-          ? <Button type="button" variant="destructive" className="w-fit" onClick={() => { setMessage(""); setDeleting(true); }}>永久删除这天记录</Button>
-          : <p className="text-sm text-muted-foreground">这一天没有可管理的记录。</p>}
-      </DialogContent>
-    </Dialog>
-    <AlertDialog open={deleting} onOpenChange={(nextOpen) => { if (!nextOpen) setDeleting(false); }}>
+    {record && <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>确认永久删除记录？</AlertDialogTitle>
           <AlertDialogDescription>删除后无法恢复。</AlertDialogDescription>
         </AlertDialogHeader>
+        {message && message !== "删除成功" && <p role="alert">{message}</p>}
         <AlertDialogFooter>
           <AlertDialogCancel>取消</AlertDialogCancel>
-          <Button type="button" variant="destructive" disabled={remove.isPending} onClick={() => record && remove.mutate({ storeId, date: record.date })}>确认永久删除</Button>
+          <Button type="button" variant="destructive" disabled={remove.isPending} onClick={() => remove.mutate({ storeId, date: record.date })}>确认永久删除</Button>
         </AlertDialogFooter>
       </AlertDialogContent>
-    </AlertDialog>
-    {message && <p role={message === "删除成功" ? "status" : "alert"}>{message}</p>}
+    </AlertDialog>}
+    {message === "删除成功" && <p role="status">{message}</p>}
   </>;
 }

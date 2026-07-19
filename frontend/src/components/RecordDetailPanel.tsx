@@ -11,11 +11,12 @@ export type RecordDetail = RecordSnapshot | { id: null; date: string };
 export interface RecordDetailPanelProps {
   record: RecordDetail;
   canEdit: boolean;
-  canManage: boolean;
-  onManage(): void;
+  canDelete: boolean;
+  onEdit?(date: string): void;
+  onDelete(): void;
 }
 
-export function RecordDetailPanel({ record, canEdit, canManage, onManage }: RecordDetailPanelProps) {
+export function RecordDetailPanel({ record, canEdit, canDelete, onEdit, onDelete }: RecordDetailPanelProps) {
   const isUnrecorded = record.id === null;
   const composedItems = !isUnrecorded && record.income_mode === "composed" ? record.items : [];
 
@@ -51,8 +52,8 @@ export function RecordDetailPanel({ record, canEdit, canManage, onManage }: Reco
 
         {!isUnrecorded && record.activity && <p className="text-sm"><span className="text-muted-foreground">活动：</span>{record.activity}</p>}
         <div className="flex flex-wrap gap-2">
-          {canEdit && <Button asChild><Link to={`/ledger?date=${record.date}`}>修改这天记录</Link></Button>}
-          {canManage && !isUnrecorded && <Button type="button" variant="outline" onClick={onManage}>管理这天记录</Button>}
+          {canEdit && <Button asChild><Link to={`/ledger?date=${record.date}`} onClick={onEdit ? (event) => { event.preventDefault(); onEdit(record.date); } : undefined}>修改这天记录</Link></Button>}
+          {canDelete && !isUnrecorded && <Button type="button" variant="destructive" onClick={onDelete}>删除这天记录</Button>}
         </div>
       </CardContent>
     </Card>

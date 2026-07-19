@@ -12,15 +12,15 @@ const record: RecordSnapshot = {
   items: [{ id: 1, category_id: 1, category_name: "现金", include_in_total: true, sort_order: 1, amount: 100, created_at: "", updated_at: "" }],
 };
 
-function renderPanel(value: RecordSnapshot, canManage = false) {
-  return render(<MemoryRouter><RecordDetailPanel record={value} canEdit canManage={canManage} onManage={vi.fn()} /></MemoryRouter>);
+function renderPanel(value: RecordSnapshot, canDelete = false, onDelete = vi.fn()) {
+  return render(<MemoryRouter><RecordDetailPanel record={value} canEdit canDelete={canDelete} onDelete={onDelete} /></MemoryRouter>);
 }
 
 describe("RecordDetailPanel", () => {
   it("renders an unrecorded date with the same edit action position", () => {
     render(
       <MemoryRouter>
-        <RecordDetailPanel record={{ id: null, date: "2026-07-15" }} canEdit canManage onManage={vi.fn()} />
+        <RecordDetailPanel record={{ id: null, date: "2026-07-15" }} canEdit canDelete onDelete={vi.fn()} />
       </MemoryRouter>,
     );
 
@@ -28,7 +28,7 @@ describe("RecordDetailPanel", () => {
     expect(screen.getByText("未录入", { exact: true })).toBeInTheDocument();
     expect(screen.getAllByText("—", { exact: true })).toHaveLength(3);
     expect(screen.getByRole("link", { name: "修改这天记录" })).toHaveAttribute("href", "/ledger?date=2026-07-15");
-    expect(screen.queryByRole("button", { name: "管理这天记录" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "删除这天记录" })).not.toBeInTheDocument();
   });
 
   it("renders rest records without fabricating an open status", () => {
@@ -44,6 +44,17 @@ describe("RecordDetailPanel", () => {
     expect(screen.getByText(/会员日/)).toBeInTheDocument();
     expect(screen.getByText("计入总营业额")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "修改这天记录" })).toHaveAttribute("href", "/ledger?date=2026-07-14");
+    expect(screen.queryByRole("button", { name: "删除这天记录" })).not.toBeInTheDocument();
+  });
+
+  it("shows a destructive delete action for a saved record when allowed", () => {
+    const onDelete = vi.fn();
+    renderPanel(record, true, onDelete);
+
+    const action = screen.getByRole("button", { name: "删除这天记录" });
+    expect(action.className).toContain("destructive");
+    action.click();
+    expect(onDelete).toHaveBeenCalledOnce();
     expect(screen.queryByRole("button", { name: "管理这天记录" })).not.toBeInTheDocument();
   });
 

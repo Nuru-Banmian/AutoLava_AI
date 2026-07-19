@@ -5,10 +5,7 @@ import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { RecordSnapshot } from "@/api/types";
-import { useAuth } from "@/auth/AuthProvider";
-import { RecordManagementDialogs } from "@/components/RecordManagementDialogs";
-
-vi.mock("@/auth/AuthProvider", () => ({ useAuth: vi.fn() }));
+import { DeleteRecordDialog } from "@/components/DeleteRecordDialog";
 
 const server = setupServer();
 const record = {
@@ -19,7 +16,7 @@ const record = {
   created_at: "", updated_at: "", items: [],
 } satisfies RecordSnapshot;
 
-function renderDialogs(recordValue: RecordSnapshot | null = record) {
+function renderDialog(recordValue: RecordSnapshot | null = record) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   for (const key of [
     ["ledger", "record", 1, "2026-07-14"],
@@ -29,15 +26,17 @@ function renderDialogs(recordValue: RecordSnapshot | null = record) {
     ["charts", 1, "query"],
     ["dashboard", 1],
   ]) client.setQueryData(key, true);
-  render(<QueryClientProvider client={client}><RecordManagementDialogs storeId={1} record={recordValue} open onOpenChange={vi.fn()} onCompleted={vi.fn()} /></QueryClientProvider>);
-  return client;
+  const onOpenChange = vi.fn();
+  const onCompleted = vi.fn();
+  render(<QueryClientProvider client={client}><DeleteRecordDialog storeId={1} record={recordValue} open onOpenChange={onOpenChange} onCompleted={onCompleted} /></QueryClientProvider>);
+  return { client, onOpenChange, onCompleted };
 }
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => { server.resetHandlers(); vi.restoreAllMocks(); });
 afterAll(() => server.close());
 
-describe("RecordManagementDialogs", () => {
+describe("DeleteRecordDialog", () => {
   it("permanently deletes without version, history, or rollback requests and invalidates dependants", async () => {
     const requests: string[] = [];
     server.use(
@@ -47,16 +46,17 @@ describe("RecordManagementDialogs", () => {
         return HttpResponse.json({ detail: "unexpected request" }, { status: 500 });
       }),
     );
-    vi.mocked(useAuth).mockReturnValue({ user: { id: 1, username: "admin", role: "admin", is_owner: false } } as ReturnType<typeof useAuth>);
-    const client = renderDialogs();
+    const { client, onOpenChange, onCompleted } = renderDialog();
 
-    fireEvent.click(screen.getByRole("button", { name: "永久删除这天记录" }));
-    expect(screen.getByText("删除后无法恢复。")).toBeInTheDocument();
+    expect(screen.getByRole("alertdialog", { name: "确认永久删除记录？" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "确认永久删除" }));
 
     await waitFor(() => expect(requests).toHaveLength(1));
     expect(requests[0]).toMatch(/\/api\/ledger\/1\/2026-07-14$/);
     expect(requests.some((request) => request.includes("/history") || request.includes("/rollback"))).toBe(false);
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(onCompleted).toHaveBeenCalledOnce();
+    expect(screen.getByRole("status", { hidden: true })).toHaveTextContent("删除成功");
     await waitFor(() => {
       for (const key of [
         ["ledger", "record", 1, "2026-07-14"],
@@ -69,18 +69,24 @@ describe("RecordManagementDialogs", () => {
     });
   });
 
-  it("shows no destructive controls to non-admin users", () => {
-    vi.mocked(useAuth).mockReturnValue({ user: { id: 2, username: "user", role: "user", is_owner: false } } as ReturnType<typeof useAuth>);
-    renderDialogs();
+  it("keeps the final confirmation open and retryable after a conflict", async () => {
+    let requests = 0;
+    server.use(http.delete("/api/ledger/1/2026-07-14", () => {
+      requests += 1;
+      return HttpResponse.json({ detail: "Record changed" }, { status: 409 });
+    }));
+    renderDialog();
 
-    expect(screen.queryByRole("button", { name: "永久删除这天记录" })).not.toBeInTheDocument();
-    expect(screen.queryByText(/历史|回滚/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "确认永久删除" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("数据已经发生变化，请刷新后重试");
+    expect(screen.getByRole("alertdialog", { name: "确认永久删除记录？" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "确认永久删除" }));
+    await waitFor(() => expect(requests).toBe(2));
   });
 
-  it("does not offer deletion when there is no saved record", () => {
-    vi.mocked(useAuth).mockReturnValue({ user: { id: 1, username: "admin", role: "admin", is_owner: false } } as ReturnType<typeof useAuth>);
-    renderDialogs(null);
+  it("renders no confirmation when there is no saved record", () => {
+    renderDialog(null);
 
-    expect(screen.queryByRole("button", { name: "永久删除这天记录" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 });
