@@ -43,7 +43,7 @@ function StoreProbe() {
 function OwnerLoginProbe() {
   const { user, login } = useAuth();
   if (user) return <span>owner:{String(user.is_owner)}</span>;
-  return <button type="button" onClick={() => void login({ username: "owner", password: "long-password", remember: false })}>probe login</button>;
+  return <button type="button" onClick={() => void login({ username: "owner", password: "long-password" })}>probe login</button>;
 }
 
 describe("authenticated application shell", () => {
@@ -125,7 +125,7 @@ describe("authenticated application shell", () => {
     expect(await screen.findByRole("heading", { name: "每日台账" })).toBeInTheDocument();
   });
 
-  it("sends remember=true and opens the authenticated shell after login", async () => {
+  it("sends only username and password and opens the authenticated shell after login", async () => {
     let loginBody: unknown;
     server.use(
       http.get("/api/auth/me", () => HttpResponse.json({ detail: "Authentication required" }, { status: 401 })),
@@ -139,11 +139,10 @@ describe("authenticated application shell", () => {
 
     fireEvent.change(await screen.findByLabelText("用户名"), { target: { value: "admin" } });
     fireEvent.change(screen.getByLabelText("密码"), { target: { value: "long-password" } });
-    fireEvent.click(screen.getByLabelText("记住我"));
     fireEvent.click(screen.getByRole("button", { name: "登录" }));
 
     expect(await screen.findByRole("heading", { name: "仪表盘" })).toBeInTheDocument();
-    expect(loginBody).toEqual({ username: "admin", password: "long-password", remember: true });
+    expect(loginBody).toEqual({ username: "admin", password: "long-password" });
   });
 
   it("keeps the owner flag from the login response without refetching the session", async () => {

@@ -7,6 +7,7 @@ import jwt
 from app.core.config import get_settings
 
 _LONG_PASSWORD_PREFIX = "$autolava-bcrypt-sha256$v1$"
+ACCESS_TOKEN_SECONDS = 24 * 60 * 60
 
 
 def _long_password_digest(password: str) -> bytes:
@@ -31,11 +32,13 @@ def verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
-def create_access_token(user_id: int, remember: bool) -> tuple[str, int]:
-    max_age = 30 * 24 * 3600 if remember else 12 * 3600
-    payload = {"sub": str(user_id), "exp": datetime.now(UTC) + timedelta(seconds=max_age)}
+def create_access_token(user_id: int) -> tuple[str, int]:
+    payload = {
+        "sub": str(user_id),
+        "exp": datetime.now(UTC) + timedelta(seconds=ACCESS_TOKEN_SECONDS),
+    }
     secret = get_settings().jwt_secret.get_secret_value()
-    return jwt.encode(payload, secret, algorithm="HS256"), max_age
+    return jwt.encode(payload, secret, algorithm="HS256"), ACCESS_TOKEN_SECONDS
 
 
 def decode_access_token(token: str) -> int:

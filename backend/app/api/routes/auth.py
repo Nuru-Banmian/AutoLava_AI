@@ -20,7 +20,7 @@ async def login(body: LoginBody, response: Response, session: Session) -> dict:
     password_matches = verify_password(body.password, password_hash)
     if user is None or not user.is_active or not password_matches:
         raise HTTPException(401, "Invalid credentials")
-    token, max_age = create_access_token(user.id, body.remember)
+    token, max_age = create_access_token(user.id)
     response.set_cookie(
         "access_token",
         token,

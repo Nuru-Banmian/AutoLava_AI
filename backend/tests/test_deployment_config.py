@@ -212,9 +212,10 @@ def test_development_defaults_remain_available() -> None:
 def test_nginx_enforces_a_bounded_login_rate_limit() -> None:
     nginx = read("frontend/nginx.conf")
     compose = yaml.safe_load(read("compose.yaml"))
-    assert "limit_req_zone $binary_remote_addr zone=login" in nginx
+    assert "limit_req_zone $binary_remote_addr zone=login:1m rate=10r/m;" in nginx
     assert "location = /api/auth/login" in nginx
-    assert "limit_req zone=login" in nginx
+    assert "limit_req zone=login burst=10 nodelay;" in nginx
+    assert "limit_req_status 429;" in nginx
     assert compose["services"]["autolava-web"]["ports"] == [
         "${AUTOLAVA_WEB_HOST_PORT:-127.0.0.1:80}:80"
     ]
