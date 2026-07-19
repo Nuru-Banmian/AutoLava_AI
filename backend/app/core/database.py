@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from sqlalchemy import event
@@ -10,6 +11,24 @@ from app.core.config import get_settings
 
 
 SQLITE_WRITE_LOCK = asyncio.Lock()
+
+
+async def end_read_transaction(session: AsyncSession) -> None:
+    """Release a dependency-opened SQLite snapshot before external or lock waits."""
+    await session.rollback()
+
+
+@asynccontextmanager
+async def sqlite_short_write(session: AsyncSession) -> AsyncIterator[None]:
+    """Run one fresh, process-serialized write transaction."""
+    await end_read_transaction(session)
+    async with SQLITE_WRITE_LOCK:
+        try:
+            yield
+            await session.commit()
+        except BaseException:
+            await session.rollback()
+            raise
 
 
 def sqlite_url(path: Path) -> URL:

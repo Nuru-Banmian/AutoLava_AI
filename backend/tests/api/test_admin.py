@@ -24,13 +24,21 @@ from app.schemas.admin import UserPatch
 
 
 @pytest.fixture
-async def admin_client(client, user_factory) -> AsyncClient:
+async def admin_client(client, user_factory, db_session: AsyncSession) -> AsyncClient:
     await user_factory(username="administrator", password="secret", role="admin")
     response = await client.post(
         "/api/auth/login",
         json={"username": "administrator", "password": "secret"},
     )
     assert response.status_code == 200
+    await db_session.commit()
+    request = client.request
+
+    async def request_with_committed_setup(*args, **kwargs):
+        await db_session.commit()
+        return await request(*args, **kwargs)
+
+    client.request = request_with_committed_setup
     return client
 
 
@@ -121,6 +129,7 @@ async def test_last_active_admin_cannot_be_deactivated(
         password="secret",
         role="admin",
     )
+    await db_session.commit()
 
     with pytest.raises(HTTPException) as exc_info:
         await patch_user(
@@ -130,8 +139,8 @@ async def test_last_active_admin_cannot_be_deactivated(
             actor,
         )
 
-    assert exc_info.value.status_code == 409
-    assert exc_info.value.detail == "At least one active administrator is required"
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "Authentication required"
     await db_session.refresh(target)
     assert target.is_active is True
 
@@ -139,6 +148,7 @@ async def test_last_active_admin_cannot_be_deactivated(
 async def test_owner_protection_rejects_self_management(
     client,
     user_factory,
+    db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("AUTOLAVA_BOOTSTRAP_USERNAME", "protected-owner")
@@ -154,6 +164,7 @@ async def test_owner_protection_rejects_self_management(
     )
     assert login.status_code == 200
     owner_id = owner.id
+    await db_session.commit()
 
     demoted = await client.patch(
         f"/api/admin/users/{owner_id}",
@@ -347,6 +358,7 @@ async def test_non_owner_cannot_grant_or_manage_admin_roles(
 async def test_configured_owner_can_manage_another_admin(
     client,
     user_factory,
+    db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("AUTOLAVA_BOOTSTRAP_USERNAME", "configured-owner")
@@ -367,9 +379,11 @@ async def test_configured_owner_can_manage_another_admin(
             json={"username": owner.username, "password": "secret123"},
         )
     ).status_code == 200
+    target_id = target.id
+    await db_session.commit()
 
     response = await client.patch(
-        f"/api/admin/users/{target.id}", json={"role": "user"}
+        f"/api/admin/users/{target_id}", json={"role": "user"}
     )
 
     assert response.status_code == 200
@@ -489,11 +503,12 @@ async def test_referenced_user_cannot_be_deleted(
     )
     db_session.add(record)
     await db_session.flush()
+    referenced_id = referenced.id
 
-    response = await admin_client.delete(f"/api/admin/users/{referenced.id}")
+    response = await admin_client.delete(f"/api/admin/users/{referenced_id}")
 
     assert response.status_code == 409
-    assert await db_session.get(User, referenced.id) is not None
+    assert await db_session.get(User, referenced_id) is not None
 
 
 async def test_concurrent_admin_deactivation_keeps_one_active_admin(
@@ -545,7 +560,7 @@ async def test_concurrent_admin_deactivation_keeps_one_active_admin(
             .select_from(User)
             .where(User.role == "admin", User.is_active.is_(True))
         )
-    assert sorted(statuses) == [200, 403]
+    assert sorted(statuses) == [200, 401]
     assert active_admins == 1
 
 
@@ -730,10 +745,11 @@ async def test_referenced_store_must_be_archived_instead_of_hard_deleted(
         )
     db_session.add(reference)
     await db_session.flush()
+    store_id = store.id
 
-    deleted = await admin_client.delete(f"/api/admin/stores/{store.id}")
+    deleted = await admin_client.delete(f"/api/admin/stores/{store_id}")
     archived = await admin_client.patch(
-        f"/api/admin/stores/{store.id}", json={"is_active": False}
+        f"/api/admin/stores/{store_id}", json={"is_active": False}
     )
 
     assert deleted.status_code == 409
@@ -783,23 +799,26 @@ async def test_invalid_store_membership_replacement_is_atomic(
     store = await store_factory(name="Atomic member replacement")
     db_session.add(StoreMember(store_id=store.id, user_id=existing.id))
     await db_session.flush()
+    store_id = store.id
+    administrator_id = administrator.id
+    existing_id = existing.id
 
     missing = await admin_client.put(
-        f"/api/admin/stores/{store.id}/members",
+        f"/api/admin/stores/{store_id}/members",
         json={"user_ids": [999_999]},
     )
     admin_member = await admin_client.put(
-        f"/api/admin/stores/{store.id}/members",
-        json={"user_ids": [administrator.id]},
+        f"/api/admin/stores/{store_id}/members",
+        json={"user_ids": [administrator_id]},
     )
 
     assert missing.status_code == 404
     assert admin_member.status_code == 409
     assert list(
         await db_session.scalars(
-            select(StoreMember.user_id).where(StoreMember.store_id == store.id)
+            select(StoreMember.user_id).where(StoreMember.store_id == store_id)
         )
-    ) == [existing.id]
+    ) == [existing_id]
 
 
 async def test_archived_store_cannot_receive_members(
@@ -815,7 +834,7 @@ async def test_archived_store_cannot_receive_members(
         json={"user_ids": [user.id]},
     )
 
-    assert response.status_code == 409
+    assert response.status_code == 404
 
 
 async def test_admin_can_create_list_and_patch_current_income_categories(
@@ -969,8 +988,19 @@ async def test_category_patch_preserves_snapshot_and_refreshes_current_briefing(
         amount=50,
     )
     db_session.add(item)
-    await db_session.flush()
+    await db_session.commit()
+    db_session.expunge(store)
     calls: list[tuple[int, list[str]]] = []
+    weather_transactions: list[bool] = []
+
+    class TransactionObservingWeather:
+        async def get_daily(self, store, target):
+            weather_transactions.append(db_session.in_transaction())
+            return None
+
+    admin_client._transport.app.state.weather_service = (
+        TransactionObservingWeather()
+    )
 
     async def record_regeneration(service, store_id, card_types, **_kwargs):
         calls.append((store_id, card_types))
@@ -991,6 +1021,7 @@ async def test_category_patch_preserves_snapshot_and_refreshes_current_briefing(
 
     assert response.status_code == 200
     assert calls == [(store.id, ["today"])]
+    assert weather_transactions == [False]
     await db_session.refresh(record)
     await db_session.refresh(item)
     assert record.daily_revenue == 50

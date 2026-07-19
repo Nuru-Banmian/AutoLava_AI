@@ -24,15 +24,22 @@ class LedgerContext:
     store: Store
     cash: IncomeCategory
     agency: IncomeCategory
+    user_id: int
+    store_id: int
+    cash_id: int
+    agency_id: int
+    timezone: str
 
     @property
     def today(self) -> date:
-        return datetime.now(ZoneInfo(self.store.timezone)).date()
+        return datetime.now(ZoneInfo(self.timezone)).date()
 
 
 @pytest.fixture
 async def ledger_context(db_session, user_factory, store_factory) -> LedgerContext:
-    user = await user_factory(username="ledger-user", password="secret")
+    user = await user_factory(
+        username="ledger-user", password="secret", role="admin"
+    )
     store = await store_factory(name="Ledger Store", timezone="Europe/Berlin")
     store.income_items_enabled = True
     cash = IncomeCategory(
@@ -50,8 +57,19 @@ async def ledger_context(db_session, user_factory, store_factory) -> LedgerConte
         sort_order=1,
     )
     db_session.add_all([cash, agency])
-    await db_session.flush()
-    return LedgerContext(db_session, user, store, cash, agency)
+    await db_session.commit()
+    return LedgerContext(
+        db_session,
+        user,
+        store,
+        cash,
+        agency,
+        user_id=user.id,
+        store_id=store.id,
+        cash_id=cash.id,
+        agency_id=agency.id,
+        timezone=store.timezone,
+    )
 
 
 def composed_payload(context: LedgerContext, *, cash: int = 100, agency: int = 50) -> dict:
@@ -63,8 +81,8 @@ def composed_payload(context: LedgerContext, *, cash: int = 100, agency: int = 5
         "weather_edited": False,
         "activity": None,
         "items": [
-            {"category_id": context.cash.id, "amount": cash},
-            {"category_id": context.agency.id, "amount": agency},
+            {"category_id": context.cash_id, "amount": cash},
+            {"category_id": context.agency_id, "amount": agency},
         ],
     }
 
@@ -73,10 +91,10 @@ async def test_composed_total_sums_only_included_integer_items(
     ledger_context: LedgerContext,
 ) -> None:
     result = await LedgerService(ledger_context.session).upsert(
-        store=ledger_context.store,
+        store_id=ledger_context.store_id,
         record_date=ledger_context.today,
         payload=composed_payload(ledger_context),
-        actor=ledger_context.user,
+        actor_id=ledger_context.user_id,
     )
     assert result.record.daily_revenue == 100
     assert [item.amount for item in result.record.items] == [100, 50]
@@ -87,16 +105,16 @@ async def test_second_write_directly_overwrites_existing_record(
 ) -> None:
     service = LedgerService(ledger_context.session)
     first = await service.upsert(
-        store=ledger_context.store,
+        store_id=ledger_context.store_id,
         record_date=ledger_context.today,
         payload=composed_payload(ledger_context),
-        actor=ledger_context.user,
+        actor_id=ledger_context.user_id,
     )
     second = await service.upsert(
-        store=ledger_context.store,
+        store_id=ledger_context.store_id,
         record_date=ledger_context.today,
         payload=composed_payload(ledger_context, cash=175),
-        actor=ledger_context.user,
+        actor_id=ledger_context.user_id,
     )
     assert second.created is False
     assert second.record.id == first.record.id
@@ -108,10 +126,10 @@ async def test_existing_snapshot_survives_current_category_edits(
 ) -> None:
     service = LedgerService(ledger_context.session)
     await service.upsert(
-        store=ledger_context.store,
+        store_id=ledger_context.store_id,
         record_date=ledger_context.today,
         payload=composed_payload(ledger_context),
-        actor=ledger_context.user,
+        actor_id=ledger_context.user_id,
     )
     ledger_context.cash.name = "Renamed"
     ledger_context.cash.include_in_total = False
@@ -119,13 +137,13 @@ async def test_existing_snapshot_survives_current_category_edits(
     ledger_context.agency.name = "Agency renamed"
     ledger_context.agency.include_in_total = True
     ledger_context.agency.sort_order = 8
-    await ledger_context.session.flush()
+    await ledger_context.session.commit()
 
     result = await service.upsert(
-        store=ledger_context.store,
+        store_id=ledger_context.store_id,
         record_date=ledger_context.today,
         payload=composed_payload(ledger_context, cash=125, agency=75),
-        actor=ledger_context.user,
+        actor_id=ledger_context.user_id,
     )
 
     assert result.record.daily_revenue == 125
@@ -142,10 +160,10 @@ async def test_new_composed_record_requires_each_active_category_once(
     payload["items"] = payload["items"][:1]
     with pytest.raises(HTTPException) as exc_info:
         await LedgerService(ledger_context.session).upsert(
-            store=ledger_context.store,
+            store_id=ledger_context.store_id,
             record_date=ledger_context.today,
             payload=payload,
-            actor=ledger_context.user,
+            actor_id=ledger_context.user_id,
         )
     assert exc_info.value.status_code == 422
 
@@ -156,10 +174,10 @@ async def test_rest_day_zeros_total_wash_and_all_items(
     payload = composed_payload(ledger_context)
     payload["is_open"] = "休息"
     result = await LedgerService(ledger_context.session).upsert(
-        store=ledger_context.store,
+        store_id=ledger_context.store_id,
         record_date=ledger_context.today,
         payload=payload,
-        actor=ledger_context.user,
+        actor_id=ledger_context.user_id,
     )
     assert result.record.daily_revenue == 0
     assert result.record.wash_count == 0
@@ -169,13 +187,17 @@ async def test_rest_day_zeros_total_wash_and_all_items(
 async def test_legacy_total_uses_integer_and_rejects_items(
     db_session: AsyncSession, user_factory, store_factory
 ) -> None:
-    user = await user_factory(username="direct-user", password="secret")
+    user = await user_factory(
+        username="direct-user", password="secret", role="admin"
+    )
     store = await store_factory(name="Direct", timezone="Europe/Berlin")
+    user_id, store_id, timezone = user.id, store.id, store.timezone
+    await db_session.commit()
     result = await LedgerService(db_session).upsert(
-        store=store,
-        record_date=datetime.now(ZoneInfo(store.timezone)).date(),
+        store_id=store_id,
+        record_date=datetime.now(ZoneInfo(timezone)).date(),
         payload={"is_open": "营业", "daily_revenue": 125, "items": []},
-        actor=user,
+        actor_id=user_id,
     )
     assert result.record.income_mode == "legacy_total"
     assert result.record.daily_revenue == 125
@@ -187,19 +209,19 @@ async def test_future_date_and_duplicate_categories_do_not_write(
     service = LedgerService(ledger_context.session)
     with pytest.raises(HTTPException):
         await service.upsert(
-            store=ledger_context.store,
+            store_id=ledger_context.store_id,
             record_date=date(2999, 1, 1),
             payload=composed_payload(ledger_context),
-            actor=ledger_context.user,
+            actor_id=ledger_context.user_id,
         )
     duplicate = composed_payload(ledger_context)
-    duplicate["items"][1]["category_id"] = ledger_context.cash.id
+    duplicate["items"][1]["category_id"] = ledger_context.cash_id
     with pytest.raises(HTTPException):
         await service.upsert(
-            store=ledger_context.store,
+            store_id=ledger_context.store_id,
             record_date=ledger_context.today,
             payload=duplicate,
-            actor=ledger_context.user,
+            actor_id=ledger_context.user_id,
         )
     assert (
         await ledger_context.session.scalar(
@@ -212,18 +234,19 @@ async def test_future_date_and_duplicate_categories_do_not_write(
 async def test_delete_removes_current_record(ledger_context: LedgerContext) -> None:
     service = LedgerService(ledger_context.session)
     result = await service.upsert(
-        store=ledger_context.store,
+        store_id=ledger_context.store_id,
         record_date=ledger_context.today,
         payload=composed_payload(ledger_context),
-        actor=ledger_context.user,
+        actor_id=ledger_context.user_id,
     )
+    record_id = result.record.id
     event = await service.delete(
-        store=ledger_context.store,
+        store_id=ledger_context.store_id,
         record_date=ledger_context.today,
-        actor=ledger_context.user,
+        actor_id=ledger_context.user_id,
     )
     assert event.operation == "deleted"
-    assert await ledger_context.session.get(StoreDailyRecord, result.record.id) is None
+    assert await ledger_context.session.get(StoreDailyRecord, record_id) is None
 
 
 async def test_same_day_creates_are_serialized_to_one_current_record() -> None:
@@ -248,14 +271,16 @@ async def test_same_day_creates_are_serialized_to_one_current_record() -> None:
         )
         setup.add_all([user, store])
         await setup.commit()
+        user_id, store_id = user.id, store.id
+        timezone = store.timezone
 
     async def write(total: int):
         async with async_session_factory() as session:
             return await LedgerService(session).upsert(
-                store=store,
-                record_date=datetime.now(ZoneInfo(store.timezone)).date(),
+                store_id=store_id,
+                record_date=datetime.now(ZoneInfo(timezone)).date(),
                 payload={"is_open": "营业", "daily_revenue": total, "items": []},
-                actor=user,
+                actor_id=user_id,
             )
 
     results = await asyncio.gather(write(100), write(200))
@@ -309,9 +334,10 @@ async def test_new_record_reloads_composed_config_after_waiting_for_lock() -> No
                 )
                 await config_session.commit()
 
+        timezone = stale_store.timezone
         result = await LedgerService(ledger_session).upsert(
-            store=stale_store,
-            record_date=datetime.now(ZoneInfo(stale_store.timezone)).date(),
+            store_id=store_id,
+            record_date=datetime.now(ZoneInfo(timezone)).date(),
             payload={
                 "is_open": "营业",
                 "daily_revenue": None,
@@ -320,7 +346,7 @@ async def test_new_record_reloads_composed_config_after_waiting_for_lock() -> No
                     {"category_id": configured.items[1].id, "amount": 80},
                 ],
             },
-            actor=actor,
+            actor_id=user_id,
         )
 
     assert result.record.income_mode == "composed"

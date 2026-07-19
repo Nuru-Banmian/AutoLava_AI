@@ -28,7 +28,7 @@ async def test_current_config_has_only_current_categories(
     user = await db_session.scalar(select(User).where(User.username == "authenticated"))
     store = await store_factory(name="User current config")
     db_session.add(StoreMember(store_id=store.id, user_id=user.id))
-    await db_session.flush()
+    await db_session.commit()
 
     configured = await admin_client.put(
         f"/api/admin/stores/{store.id}/income-config",
@@ -104,7 +104,7 @@ async def test_used_category_can_be_archived_but_not_permanently_deleted(
         store_id=store.id, name="Used", include_in_total=True, is_active=True, sort_order=0
     )
     db_session.add(category)
-    await db_session.flush()
+    await db_session.commit()
     record = StoreDailyRecord(
         store_id=store.id,
         date=date(2026, 7, 1),
@@ -136,7 +136,7 @@ async def test_used_category_can_be_archived_but_not_permanently_deleted(
             amount=1,
         )
     )
-    await db_session.flush()
+    await db_session.commit()
 
     category_id = category.id
     archived = await admin_client.post(
@@ -187,7 +187,7 @@ async def test_current_category_patch_preserves_historical_total_and_item_snapsh
         amount=150,
     )
     db_session.add(item)
-    await db_session.flush()
+    await db_session.commit()
 
     response = await admin_client.patch(
         f"/api/admin/income-categories/{category.id}",
@@ -233,7 +233,7 @@ async def test_income_configuration_writes_wait_for_active_ledger_write_lock(
         archived_at=datetime.now() if operation == "restore" else None,
     )
     db_session.add(category)
-    await db_session.flush()
+    await db_session.commit()
 
     if operation == "replace":
         request = admin_client.put(

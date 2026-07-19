@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy import select
 
+import app.services.ledger as ledger_service_module
 from app.core.database import async_session_factory, engine
 from app.models.base import Base
 from app.models.identity import Store, User
@@ -350,23 +351,25 @@ async def _held_ledger_write(
     async def no_transaction() -> None:
         return None
 
-    async def fresh_store(_statement):
-        return store
+    async def fresh_access(*_args, **_kwargs):
+        return SimpleNamespace(id=77), store
 
     monkeypatch.setattr(LedgerService, "_upsert_locked", hold)
     monkeypatch.setattr(LedgerService, "_find_record", canonical)
+    monkeypatch.setattr(
+        ledger_service_module, "require_fresh_store_access", fresh_access
+    )
     task = asyncio.create_task(
         LedgerService(
             SimpleNamespace(
                 commit=no_transaction,
                 rollback=no_transaction,
-                scalar=fresh_store,
             )
         ).upsert(
-            store=store,
+            store_id=store.id,
             record_date=target,
             payload={},
-            actor=SimpleNamespace(id=77),
+            actor_id=77,
         )
     )
     await entered.wait()

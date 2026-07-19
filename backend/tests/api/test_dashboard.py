@@ -11,6 +11,7 @@ from app.api.routes.dashboard import RefreshLimiter
 from app.api.routes.ledger import _refresh_briefing_after_commit
 from app.models.identity import Store, StoreMember, User
 from app.models.operations import DailyBriefing
+from app.services.weather import FrozenWeatherLocation
 
 
 async def _assign_store(auth_client, db_session: AsyncSession, store_factory) -> Store:
@@ -165,12 +166,23 @@ async def test_yesterday_ledger_change_regenerates_only_yesterday(
     regenerate = AsyncMock(return_value=[])
     monkeypatch.setattr("app.services.briefing.BriefingService.regenerate", regenerate)
     local_date = datetime.now(ZoneInfo(store.timezone)).date()
+    user = await db_session.scalar(
+        select(User).where(User.username == "authenticated")
+    )
+    assert user is not None
+    actor_id = user.id
+    store_id = store.id
+    location = FrozenWeatherLocation.from_store(store)
+    await db_session.commit()
 
     await _refresh_briefing_after_commit(
         Request({"type": "http", "app": auth_client._transport.app}),
         db_session,
-        store,
-        local_date - timedelta(days=1),
+        actor_id=actor_id,
+        store_id=store_id,
+        location=location,
+        capability="ledger.edit",
+        record_date=local_date - timedelta(days=1),
     )
 
     assert regenerate.await_args.args[1] == ["yesterday"]

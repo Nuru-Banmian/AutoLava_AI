@@ -8,13 +8,15 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.api.routes.ledger as ledger_routes
+import app.services.ledger as ledger_service_module
 from app.api.routes.ledger import _refresh_briefing_after_commit
 from app.models.identity import Store
 from app.models.ledger import StoreDailyRecord
 from app.models.operations import DailyBriefing
 from app.services.briefing import BriefingService
 from app.services.ledger import LedgerService
-from app.services.weather import WeatherResult
+from app.services.weather import FrozenWeatherLocation, WeatherResult
 
 
 class StubWeatherService:
@@ -175,24 +177,27 @@ async def test_ledger_write_blocks_briefing_write_section(
     async def no_transaction() -> None:
         return None
 
-    async def fresh_store(_statement):
-        return store
+    async def fresh_access(*_args, **_kwargs):
+        return SimpleNamespace(id=99), store
 
     monkeypatch.setattr(LedgerService, "_upsert_locked", hold_ledger)
     monkeypatch.setattr(LedgerService, "_find_record", canonical_record)
     monkeypatch.setattr(BriefingService, "regenerate", regenerate)
+    monkeypatch.setattr(
+        ledger_service_module, "require_fresh_store_access", fresh_access
+    )
+    monkeypatch.setattr(ledger_routes, "require_fresh_store_access", fresh_access)
     ledger_task = asyncio.create_task(
         LedgerService(
             SimpleNamespace(
                 commit=no_transaction,
                 rollback=no_transaction,
-                scalar=fresh_store,
             )
         ).upsert(
-            store=store,
+            store_id=store.id,
             record_date=target,
             payload={},
-            actor=SimpleNamespace(id=99),
+            actor_id=99,
         )
     )
     await ledger_entered.wait()
@@ -204,8 +209,11 @@ async def test_ledger_write_blocks_briefing_write_section(
                 )
             ),
             db_session,
-            store,
-            target,
+            actor_id=99,
+            store_id=store.id,
+            location=FrozenWeatherLocation.from_store(store),
+            capability="ledger.edit",
+            record_date=target,
         )
     )
     try:

@@ -8,10 +8,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.database import SQLITE_WRITE_LOCK
+from app.core.database import sqlite_short_write
 from app.events.ledger import LedgerChanged
-from app.models.identity import Store, User
+from app.models.identity import Store
 from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
+from app.services.access import require_fresh_store_access
 
 _MAX_MONEY = 9_999_999_999
 
@@ -247,52 +248,41 @@ class LedgerService:
             )
             for category_id, amount in item_values
         ]
-        await self.session.commit()
+        await self.session.flush()
         return created, record.id, record.date
 
     async def upsert(
         self,
         *,
-        store: Store,
+        store_id: int,
         record_date: date,
         payload: dict[str, Any],
-        actor: User,
+        actor_id: int,
     ) -> LedgerWriteResult:
-        if record_date > self._local_today(store):
-            raise HTTPException(422, "Future ledger dates are not allowed")
-        store_id = store.id
-        actor_id = actor.id
-        async with SQLITE_WRITE_LOCK:
-            try:
-                # The dependency-loaded Store may predate weather or another external wait.
-                # End that read transaction only after winning the process write lock, then
-                # reload the configuration used to choose a new record's immutable mode.
-                await self.session.commit()
-                fresh_store = await self.session.scalar(
-                    select(Store)
-                    .where(Store.id == store_id)
-                    .execution_options(populate_existing=True)
-                )
-                if fresh_store is None:
-                    raise HTTPException(404, "Store not found")
-                created, record_id, canonical_date = await self._upsert_locked(
-                    store=fresh_store,
-                    record_date=record_date,
-                    payload=payload,
-                    actor_id=actor_id,
-                )
-            except Exception:
-                await self.session.rollback()
-                raise
+        async with sqlite_short_write(self.session):
+            _, fresh_store = await require_fresh_store_access(
+                self.session,
+                user_id=actor_id,
+                store_id=store_id,
+                capability="ledger.edit",
+            )
+            if record_date > self._local_today(fresh_store):
+                raise HTTPException(422, "Future ledger dates are not allowed")
+            created, record_id, canonical_date = await self._upsert_locked(
+                store=fresh_store,
+                record_date=record_date,
+                payload=payload,
+                actor_id=actor_id,
+            )
         canonical = await self._find_record(
-            store_id=store.id, record_date=record_date
+            store_id=store_id, record_date=record_date
         )
         assert canonical is not None
         return LedgerWriteResult(
             record=canonical,
             created=created,
             event=LedgerChanged(
-                store_id=store.id,
+                store_id=store_id,
                 record_id=record_id,
                 record_date=canonical_date,
                 operation="created" if created else "updated",
@@ -303,27 +293,28 @@ class LedgerService:
     async def delete(
         self,
         *,
-        store: Store,
+        store_id: int,
         record_date: date,
-        actor: User,
+        actor_id: int,
     ) -> LedgerChanged:
-        async with SQLITE_WRITE_LOCK:
-            try:
-                record = await self._find_record(
-                    store_id=store.id, record_date=record_date
-                )
-                if record is None:
-                    raise HTTPException(404, "Record not found")
-                event = LedgerChanged(
-                    store_id=store.id,
-                    record_id=record.id,
-                    record_date=record.date,
-                    operation="deleted",
-                    actor_id=actor.id,
-                )
-                await self.session.delete(record)
-                await self.session.commit()
-                return event
-            except Exception:
-                await self.session.rollback()
-                raise
+        async with sqlite_short_write(self.session):
+            await require_fresh_store_access(
+                self.session,
+                user_id=actor_id,
+                store_id=store_id,
+                capability="ledger.delete",
+            )
+            record = await self._find_record(
+                store_id=store_id, record_date=record_date
+            )
+            if record is None:
+                raise HTTPException(404, "Record not found")
+            event = LedgerChanged(
+                store_id=store_id,
+                record_id=record.id,
+                record_date=record.date,
+                operation="deleted",
+                actor_id=actor_id,
+            )
+            await self.session.delete(record)
+            return event

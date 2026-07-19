@@ -16,10 +16,14 @@ class AssignedStore:
     store: Store
     cash: IncomeCategory
     excluded: IncomeCategory
+    store_id: int
+    cash_id: int
+    excluded_id: int
+    timezone: str
 
     @property
     def id(self) -> int:
-        return self.store.id
+        return self.store_id
 
 
 @pytest.fixture
@@ -41,8 +45,16 @@ async def assigned_store(
         sort_order=1,
     )
     db_session.add_all([StoreMember(store_id=store.id, user_id=user.id), cash, excluded])
-    await db_session.flush()
-    return AssignedStore(store, cash, excluded)
+    await db_session.commit()
+    return AssignedStore(
+        store,
+        cash,
+        excluded,
+        store_id=store.id,
+        cash_id=cash.id,
+        excluded_id=excluded.id,
+        timezone=store.timezone,
+    )
 
 
 @pytest.fixture
@@ -55,14 +67,38 @@ def ledger_payload(assigned_store: AssignedStore) -> dict:
         "weather_edited": True,
         "activity": None,
         "items": [
-            {"category_id": assigned_store.cash.id, "amount": 200},
-            {"category_id": assigned_store.excluded.id, "amount": 80},
+            {"category_id": assigned_store.cash_id, "amount": 200},
+            {"category_id": assigned_store.excluded_id, "amount": 80},
         ],
     }
 
 
 def today_for(assigned_store: AssignedStore) -> date:
-    return datetime.now(ZoneInfo(assigned_store.store.timezone)).date()
+    return datetime.now(ZoneInfo(assigned_store.timezone)).date()
+
+
+async def test_put_releases_dependency_transaction_before_weather(
+    auth_client: AsyncClient,
+    assigned_store: AssignedStore,
+    ledger_payload: dict,
+    db_session: AsyncSession,
+) -> None:
+    observed_transactions: list[bool] = []
+
+    class TransactionObservingWeather:
+        async def get_daily(self, store: Store, target: date):
+            observed_transactions.append(db_session.in_transaction())
+            return None
+
+    auth_client._transport.app.state.weather_service = TransactionObservingWeather()
+
+    response = await auth_client.put(
+        f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}",
+        json=ledger_payload,
+    )
+
+    assert response.status_code == 201
+    assert observed_transactions == [False]
 
 
 @pytest.mark.parametrize("amount", [1.5, "1.00"])
@@ -88,7 +124,7 @@ async def test_direct_total_requires_json_integer(
     daily_revenue,
 ) -> None:
     assigned_store.store.income_items_enabled = False
-    await db_session.flush()
+    await db_session.commit()
     response = await auth_client.put(
         f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}",
         json={"is_open": "营业", "daily_revenue": daily_revenue, "items": []},
@@ -103,8 +139,8 @@ async def test_second_put_overwrites_without_compatibility_parameters(
     first = await auth_client.put(path, json=ledger_payload)
     second_payload = ledger_payload | {
         "items": [
-            {"category_id": assigned_store.cash.id, "amount": 321},
-            {"category_id": assigned_store.excluded.id, "amount": 90},
+            {"category_id": assigned_store.cash_id, "amount": 321},
+            {"category_id": assigned_store.excluded_id, "amount": 90},
         ]
     }
     second = await auth_client.put(path, json=second_payload)
@@ -127,15 +163,15 @@ async def test_record_snapshot_is_retained_after_current_category_edits(
     assigned_store.excluded.name = "Excluded renamed"
     assigned_store.excluded.include_in_total = True
     assigned_store.excluded.sort_order = 9
-    await db_session.flush()
+    await db_session.commit()
 
     updated = await auth_client.put(
         path,
         json=ledger_payload
         | {
             "items": [
-                {"category_id": assigned_store.cash.id, "amount": 125},
-                {"category_id": assigned_store.excluded.id, "amount": 75},
+                {"category_id": assigned_store.cash_id, "amount": 125},
+                {"category_id": assigned_store.excluded_id, "amount": 75},
             ]
         },
     )
@@ -200,7 +236,7 @@ async def test_delete_returns_204(
     user = await db_session.scalar(select(User).where(User.username == "authenticated"))
     assert user is not None
     user.role = "admin"
-    await db_session.flush()
+    await db_session.commit()
     path = f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}"
     assert (await auth_client.put(path, json=ledger_payload)).status_code == 201
     deleted = await auth_client.delete(path)
