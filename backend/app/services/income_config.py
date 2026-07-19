@@ -33,7 +33,7 @@ class IncomeConfigService:
         recorded_only = [item.name for item in active if not item.include_in_total]
         total = "营业额 = " + (" + ".join(included) if included else "0")
         if recorded_only:
-            quoted = "、“".join(recorded_only)
+            quoted = "”、“".join(recorded_only)
             total += f"；“{quoted}”只记录，不计入营业额"
         return total
 
@@ -99,23 +99,15 @@ class IncomeConfigService:
                 .with_for_update()
             )
         }
-        existing_names = {
-            category.name.casefold()
-            for category in current.values()
-            if category.id not in requested_ids
-        }
-        for item in body.items:
+        for sort_order, item in enumerate(body.items):
             category = categories.get(item.category_id)
             if category is None:
-                if item.name.casefold() in existing_names:
-                    raise HTTPException(422, "Income category name already exists")
                 category = IncomeCategory(store_id=store_id)
                 self.session.add(category)
-                existing_names.add(item.name.casefold())
             category.name = item.name
             category.include_in_total = item.include_in_total
             category.is_active = item.is_active
-            category.sort_order = item.sort_order
+            category.sort_order = sort_order
             category.archived_at = None
 
         now = datetime.now(UTC).replace(tzinfo=None)
