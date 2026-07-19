@@ -1,8 +1,7 @@
 .worktrees/
-.conda/
-.superpowers/
 .autolava-db.env
 .env
+/start-autolava.bat
 .venv/
 __pycache__/
 *.py[cod]

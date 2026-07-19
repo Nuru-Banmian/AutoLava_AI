@@ -5,7 +5,7 @@
 > memory. An optional future `compose.agent.yaml` may be considered only after measurement; no
 > overlay, Agent service, or automation service is provided now.
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Execution note:** Work through this roadmap task by task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Complete reliable store-local automation, retry missing weather without harming ledger entry, extract conservative per-store memories, enrich cached briefings, and expose actionable task/alert operations to administrators.
 

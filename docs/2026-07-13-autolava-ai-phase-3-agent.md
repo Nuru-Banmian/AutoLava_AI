@@ -5,7 +5,7 @@
 > memory. An optional future `compose.agent.yaml` may be considered only after measurement; no
 > overlay or Agent service is provided now.
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Execution note:** Work through this roadmap task by task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a permission-safe AI assistant for store-scoped queries, qualitative analysis, ledger drafts, and explicit approval-gated ledger mutations with complete conversation history and audit evidence.
 

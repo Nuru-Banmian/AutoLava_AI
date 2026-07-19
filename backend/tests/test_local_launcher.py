@@ -201,28 +201,6 @@ def test_launcher_passes_vite_entrypoint_relative_to_frontend_working_directory(
     assert "-ArgumentList @($vite," not in launcher
 
 
-def test_root_batch_launcher_safely_delegates_to_powershell() -> None:
-    batch = read("start-autolava.bat")
-    lowered = batch.lower()
-    assert "@echo off" in lowered
-    assert "chcp 65001" in lowered
-    assert 'cd /d "%~dp0"' in lowered
-    assert (
-        'powershell.exe -nologo -noprofile -executionpolicy bypass '
-        '-file "%~dp0scripts\\start-local.ps1" %*'
-    ) in lowered
-    assert 'set "exit_code=%errorlevel%"' in lowered
-    assert "if not \"%exit_code%\"==\"0\"" in lowered
-    assert "pause" in lowered
-    assert "exit /b %exit_code%" in lowered
-    assert "autolava_database_path" not in lowered
-    assert "autolava_bootstrap_password" not in lowered
-
-
-def test_root_batch_launcher_is_ascii_safe_before_it_changes_the_code_page() -> None:
-    assert (ROOT / "start-autolava.bat").read_bytes().isascii()
-
-
 def test_windows_powershell_launcher_has_utf8_bom_for_chinese_messages() -> None:
     launcher = (ROOT / "scripts" / "start-local.ps1").read_bytes()
     assert launcher.startswith(b"\xef\xbb\xbf")

@@ -1,6 +1,6 @@
 # AutoLava AI Phase 1 Foundation Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Execution note:** Work through this roadmap task by task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build and deploy the complete non-AI operating system for authentication, store-scoped administration, daily ledger entry, audit/rollback, export, weather, dashboard briefings, and charts.
 
