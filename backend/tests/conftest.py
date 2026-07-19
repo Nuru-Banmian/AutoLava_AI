@@ -1,10 +1,20 @@
+# ruff: noqa: E402
+
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from decimal import Decimal
+import os
+from pathlib import Path
+import tempfile
 
 import bcrypt
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
+
+_test_database_directory = tempfile.TemporaryDirectory()
+os.environ["AUTOLAVA_DATABASE_PATH"] = str(
+    Path(_test_database_directory.name) / "autolava-test.sqlite3"
+)
 
 from app.core.config import get_settings
 from app.core.database import engine, get_session
@@ -42,11 +52,21 @@ def test_jwt_secret(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     get_settings.cache_clear()
 
 
+@pytest.fixture(scope="session", autouse=True)
+async def database_schema() -> AsyncIterator[None]:
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    try:
+        yield
+    finally:
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.drop_all)
+        await engine.dispose()
+        _test_database_directory.cleanup()
+
+
 @pytest.fixture
 async def db_session() -> AsyncIterator[AsyncSession]:
-    if engine.dialect.name != "mysql" or engine.url.database != "autolava_test":
-        raise RuntimeError("API tests require the dedicated MySQL autolava_test database")
-
     async with engine.connect() as connection:
         transaction = await connection.begin()
         for table in reversed(Base.metadata.sorted_tables):
@@ -62,8 +82,6 @@ async def db_session() -> AsyncIterator[AsyncSession]:
         finally:
             await session.close()
             await transaction.rollback()
-
-    await engine.dispose()
 
 
 @pytest.fixture
