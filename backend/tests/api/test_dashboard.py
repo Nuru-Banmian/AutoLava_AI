@@ -39,6 +39,33 @@ async def test_dashboard_returns_cached_cards(auth_client, db_session, store_fac
     assert [card["card_type"] for card in response.json()] == ["yesterday", "today", "tomorrow"]
 
 
+async def test_dashboard_returns_cached_revenue_as_integer(
+    auth_client, db_session, store_factory
+) -> None:
+    store = await _assign_store(auth_client, db_session, store_factory)
+    db_session.add(
+        DailyBriefing(
+            store_id=store.id,
+            card_type="today",
+            content="integer",
+            payload={
+                "card_type": "today",
+                "state": "recorded",
+                "revenue": 321,
+                "generated_at": "2026-07-15T04:00:00Z",
+            },
+            timestamp_contract="utc_v1",
+        )
+    )
+    await db_session.flush()
+
+    response = await auth_client.get(f"/api/dashboard/{store.id}")
+
+    assert response.status_code == 200
+    assert response.json()[0]["revenue"] == 321
+    assert isinstance(response.json()[0]["revenue"], int)
+
+
 async def test_dashboard_returns_structured_payload_without_calling_weather(
     auth_client, db_session, store_factory
 ) -> None:

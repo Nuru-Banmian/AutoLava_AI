@@ -3,6 +3,7 @@ from datetime import date
 from io import BytesIO
 
 from openpyxl import Workbook
+from openpyxl.cell import WriteOnlyCell
 
 
 def _safe_text(value: object) -> object:
@@ -27,14 +28,19 @@ def build_ledger_workbook(records: Iterable[dict], categories: list[dict]) -> by
             "最后修改人",
         ]
     )
+    def money_cell(value: int) -> WriteOnlyCell:
+        cell = WriteOnlyCell(sheet, value=int(value))
+        cell.number_format = "€#,##0"
+        return cell
+
     for record in records:
         amounts = {item["category_id"]: item["amount"] for item in record["items"]}
         sheet.append(
             [
                 date.fromisoformat(record["date"]),
                 record["is_open"],
-                float(record["daily_revenue"]),
-                *[float(amounts.get(category["id"], "0.00")) for category in categories],
+                money_cell(record["daily_revenue"]),
+                *[money_cell(amounts.get(category["id"], 0)) for category in categories],
                 record["wash_count"],
                 _safe_text(record["weather"]),
                 _safe_text(record["activity"]),

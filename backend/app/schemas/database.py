@@ -24,7 +24,7 @@ class CategoryDescriptor(BaseModel):
 class DatabasePage(BaseModel):
     items: list[dict]
     categories: list[CategoryDescriptor]
-    sum_daily_revenue: str
+    sum_daily_revenue: int
     total: int
     page: int
     page_size: int

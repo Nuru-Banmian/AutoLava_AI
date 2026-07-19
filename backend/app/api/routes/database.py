@@ -1,8 +1,7 @@
 from datetime import date
-from decimal import Decimal
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -117,7 +116,7 @@ async def _record_payloads(session: AsyncSession, records: list[StoreDailyRecord
     ]
 
 
-async def _query_summary(session: AsyncSession, record_query: Select) -> tuple[int, str]:
+async def _query_summary(session: AsyncSession, record_query: Select) -> tuple[int, int]:
     filtered = (
         record_query.order_by(None)
         .with_only_columns(StoreDailyRecord.id, StoreDailyRecord.daily_revenue)
@@ -127,11 +126,11 @@ async def _query_summary(session: AsyncSession, record_query: Select) -> tuple[i
         await session.execute(
             select(
                 func.count(filtered.c.id),
-                func.coalesce(func.sum(filtered.c.daily_revenue), Decimal("0.00")),
+                func.coalesce(func.sum(filtered.c.daily_revenue), 0),
             )
         )
     ).one()
-    return int(total), f"{Decimal(revenue):.2f}"
+    return int(total), int(revenue)
 
 
 async def _load_records(session: AsyncSession, record_query: Select) -> list[StoreDailyRecord]:

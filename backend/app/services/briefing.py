@@ -2,7 +2,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select
-from sqlalchemy.dialects.mysql import insert as mysql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.identity import Store
@@ -110,13 +110,13 @@ class BriefingService:
                 return "昨天休息。"
             if card.state == "weather_closed":
                 return "昨天因天气停业。"
-            return f"昨天营业，营业额 €{card.revenue:.2f}。"
+            return f"昨天营业，营业额 €{card.revenue}。"
         weather = card.weather or "天气暂时不可用"
         if card.card_type == "today":
             if card.state == "missing":
                 status = "还未记账"
             elif card.state == "recorded":
-                status = f"已记账，营业额 €{card.revenue:.2f}"
+                status = f"已记账，营业额 €{card.revenue}"
             elif card.state == "rest":
                 status = "休息"
             else:
@@ -156,29 +156,31 @@ class BriefingService:
                 continue
             content = self._content(response)
             payload = response.model_dump(mode="json")
-            statement = mysql_insert(DailyBriefing).values(
-                store_id=store_id,
-                card_type=card_type,
-                content=content,
-                payload=payload,
-                generated_at=datetime.now(UTC).replace(tzinfo=None),
-                timestamp_contract=UTC_TIMESTAMP_CONTRACT,
+            values = {
+                "store_id": store_id,
+                "card_type": card_type,
+                "content": content,
+                "payload": payload,
+                "generated_at": datetime.now(UTC).replace(tzinfo=None),
+                "timestamp_contract": UTC_TIMESTAMP_CONTRACT,
+            }
+            statement = sqlite_insert(DailyBriefing).values(**values)
+            statement = statement.on_conflict_do_update(
+                index_elements=["store_id", "card_type"],
+                set_={
+                    "content": statement.excluded.content,
+                    "payload": statement.excluded.payload,
+                    "generated_at": statement.excluded.generated_at,
+                    "timestamp_contract": statement.excluded.timestamp_contract,
+                },
             )
-            await self.session.execute(
-                statement.on_duplicate_key_update(
-                    content=statement.inserted.content,
-                    payload=statement.inserted.payload,
-                    generated_at=datetime.now(UTC).replace(tzinfo=None),
-                    timestamp_contract=UTC_TIMESTAMP_CONTRACT,
-                )
-            )
+            await self.session.execute(statement)
             card = await self.session.scalar(
                 select(DailyBriefing)
                 .where(
                     DailyBriefing.store_id == store_id,
                     DailyBriefing.card_type == card_type,
                 )
-                .with_for_update()
                 .execution_options(populate_existing=True)
             )
             assert card is not None

@@ -127,7 +127,6 @@ async def put_record(
     body: LedgerBody,
     request: Request,
     session: Session,
-    overwrite: bool = False,
     access: StoreAccess = Depends(require_store_access),
 ) -> Response:
     payload = body.model_dump(mode="json")
@@ -153,13 +152,12 @@ async def put_record(
         record_date=record_date,
         payload=payload,
         actor=access.user,
-        overwrite=overwrite,
     )
     record, created = write
     response_content = {
         "id": record.id,
         "date": record.date.isoformat(),
-        "daily_revenue": str(record.daily_revenue),
+        "daily_revenue": record.daily_revenue,
     }
     await _safely_refresh_briefing(
         request,

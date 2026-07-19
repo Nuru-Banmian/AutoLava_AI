@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -43,7 +44,9 @@ class BackgroundRefreshScheduler:
 
     def start(self) -> None:
         if not self.running:
-            self._task = asyncio.create_task(self._run(), name="autolava-background-refresh")
+            self._task = asyncio.create_task(
+                self._run(), name="autolava-background-refresh"
+            )
 
     async def stop(self) -> None:
         if self._task is None:
@@ -59,19 +62,32 @@ class BackgroundRefreshScheduler:
                 if self.timeout_seconds is None:
                     await self.refresh()
                 else:
-                    await asyncio.wait_for(self.refresh(), timeout=self.timeout_seconds)
+                    await asyncio.wait_for(
+                        self.refresh(), timeout=self.timeout_seconds
+                    )
             except Exception:
                 pass
             await asyncio.sleep(self.interval_seconds)
+
+
+@dataclass(frozen=True)
+class _StoreWeather:
+    store: Store
+    today: date
+    dates: tuple[date, date, date]
+    results: dict[date, WeatherResult | None]
 
 
 def make_refresh_callback(
     session_factory: async_sessionmaker[AsyncSession],
     weather_service: WeatherService,
     *,
-    store_concurrency: int = 4,
+    store_concurrency: int = 1,
     weather_timeout_seconds: float = 9,
 ) -> Callable[[], Awaitable[None]]:
+    # Kept as a compatibility argument; SQLite store writes are always serialized.
+    del store_concurrency
+
     class CachedWeatherService:
         def __init__(self, results: dict[date, WeatherResult | None]):
             self.results = results
@@ -79,9 +95,9 @@ def make_refresh_callback(
         async def get_daily(self, store: Store, target: date) -> WeatherResult | None:
             return self.results.get(target)
 
-    async def refresh_store(store: Store) -> bool:
+    async def fetch_weather(store: Store) -> _StoreWeather:
         today = datetime.now(ZoneInfo(store.timezone)).date()
-        weather_dates = [today - timedelta(days=1), today, today + timedelta(days=1)]
+        dates = (today - timedelta(days=1), today, today + timedelta(days=1))
 
         async def lookup(target: date) -> WeatherResult | None:
             try:
@@ -92,31 +108,40 @@ def make_refresh_callback(
             except Exception:
                 return None
 
-        weather_values = await asyncio.gather(*(lookup(target) for target in weather_dates))
-        results = dict(zip(weather_dates, weather_values, strict=True))
-        cached_weather = CachedWeatherService(results)
+        values = await asyncio.gather(*(lookup(target) for target in dates))
+        return _StoreWeather(
+            store=store,
+            today=today,
+            dates=dates,
+            results=dict(zip(dates, values, strict=True)),
+        )
+
+    async def write_store(weather: _StoreWeather) -> bool:
         async with session_factory() as session:
             try:
+                # This query happens after all network waits, so manual edits made
+                # while weather was in flight are observed before automatic writes.
                 records = list(
                     await session.scalars(
-                        select(StoreDailyRecord)
-                        .where(
-                            StoreDailyRecord.store_id == store.id,
-                            StoreDailyRecord.date.in_(weather_dates[:2]),
+                        select(StoreDailyRecord).where(
+                            StoreDailyRecord.store_id == weather.store.id,
+                            StoreDailyRecord.date.in_(weather.dates[:2]),
                         )
-                        .with_for_update()
                     )
                 )
                 for record in records:
-                    result = results[record.date]
+                    result = weather.results[record.date]
                     if result is not None:
                         apply_refreshed_weather(record, result)
-                await session.flush()
-                await BriefingService(session, cached_weather).regenerate(
-                    store.id, ["yesterday", "today", "tomorrow"], local_date=today
+                await BriefingService(
+                    session, CachedWeatherService(weather.results)
+                ).regenerate(
+                    weather.store.id,
+                    ["yesterday", "today", "tomorrow"],
+                    local_date=weather.today,
                 )
                 await session.commit()
-                return all(result is not None for result in weather_values)
+                return all(result is not None for result in weather.results.values())
             except Exception:
                 await session.rollback()
                 return False
@@ -128,22 +153,20 @@ def make_refresh_callback(
             async with session_factory() as session:
                 stores = list(
                     await session.scalars(
-                        select(Store).where(Store.is_active.is_(True)).order_by(Store.id)
+                        select(Store)
+                        .where(Store.is_active.is_(True))
+                        .order_by(Store.id)
                     )
                 )
         except Exception:
             stores = []
             discovery_failed = True
-        semaphore = asyncio.Semaphore(store_concurrency)
 
-        async def bounded_refresh(store: Store) -> bool:
-            async with semaphore:
-                try:
-                    return await refresh_store(store)
-                except Exception:
-                    return False
-
-        outcomes = await asyncio.gather(*(bounded_refresh(store) for store in stores))
+        fetched = await asyncio.gather(*(fetch_weather(store) for store in stores))
+        outcomes = [
+            await write_store(weather)
+            for weather in sorted(fetched, key=lambda value: value.store.id)
+        ]
         succeeded = sum(outcomes)
         failed = len(stores) - succeeded
         if discovery_failed:

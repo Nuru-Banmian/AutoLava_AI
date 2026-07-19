@@ -1,5 +1,4 @@
 from datetime import date
-from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,7 +22,7 @@ async def _record(db_session: AsyncSession, store: Store, category: IncomeCatego
     record = StoreDailyRecord(
         store_id=store.id,
         date=date(2026, 7, 12),
-        daily_revenue=Decimal("125.00"),
+        daily_revenue=125,
         wash_count=None,
         is_open="营业",
         weather="晴",
@@ -47,7 +46,7 @@ async def _record(db_session: AsyncSession, store: Store, category: IncomeCatego
             category_name=category.name,
             include_in_total=category.include_in_total,
             sort_order=category.sort_order,
-            amount=Decimal("25.00"),
+            amount=25,
         )
     )
     await db_session.flush()
@@ -88,7 +87,7 @@ async def test_charts_defaults_to_included_categories(
 
     assert response.status_code == 200
     assert response.json()["categories"] == [
-        {"category_id": included.id, "category_name": "Included", "amount": "25.00"}
+        {"category_id": included.id, "category_name": "Included", "amount": 25}
     ]
 
 
@@ -110,10 +109,10 @@ async def test_charts_deduplicates_explicit_categories_without_changing_kpis(
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["kpis"]["total_revenue"] == "125.00"
-    assert payload["daily"] == [{"date": "2026-07-12", "revenue": "125.00"}]
+    assert payload["kpis"]["total_revenue"] == 125
+    assert payload["daily"] == [{"date": "2026-07-12", "revenue": 125}]
     assert payload["categories"] == [
-        {"category_id": category.id, "category_name": "Optional", "amount": "25.00"}
+        {"category_id": category.id, "category_name": "Optional", "amount": 25}
     ]
 
 
@@ -139,17 +138,17 @@ async def test_charts_returns_stable_empty_result(auth_client, db_session, store
     assert response.status_code == 200
     assert response.json() == {
         "kpis": {
-            "total_revenue": "0.00",
+            "total_revenue": 0,
             "record_days": 0,
             "open_days": 0,
-            "average_revenue": "0.00",
+            "average_revenue": 0,
             "primary_categories": [],
             "total_wash_count": None,
             "average_ticket": None,
         },
         "range": {"start": "2026-07-01", "end": "2026-07-31", "bucket": "day"},
         "comparison_kpis": None,
-        "classified_included_total": "0.00",
+        "classified_included_total": 0,
         "daily": [],
         "categories": [],
         "excluded_categories": [],
@@ -226,6 +225,6 @@ async def test_charts_accepts_month_bucket_and_returns_excluded_snapshot_items(
         {
             "category_id": excluded.id,
             "category_name": "历史优惠券",
-            "amount": "25.00",
+            "amount": 25,
         }
     ]
