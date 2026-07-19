@@ -16,8 +16,12 @@ def _create_database(path, value: str) -> sqlite3.Connection:
 
 
 def test_online_backup_is_readable_while_source_connection_remains_open(tmp_path) -> None:
-    source = tmp_path / "source.sqlite3"
-    source_connection = _create_database(source, "committed")
+    source = tmp_path / "source # live.sqlite3"
+    source_connection = sqlite3.connect(source)
+    assert source_connection.execute("PRAGMA journal_mode=WAL").fetchone() == ("wal",)
+    source_connection.execute("CREATE TABLE snapshot_marker (value TEXT NOT NULL)")
+    source_connection.execute("INSERT INTO snapshot_marker VALUES ('committed')")
+    source_connection.commit()
     try:
         backup = backup_sqlite(source, tmp_path / "backups", date(2026, 7, 19))
         with sqlite3.connect(backup) as connection:
@@ -75,6 +79,37 @@ def test_failed_integrity_check_preserves_previous_same_day_backup(
         value = connection.execute("SELECT value FROM snapshot_marker").fetchone()
     assert value == ("previous",)
     assert not previous.with_suffix(".sqlite3.tmp").exists()
+
+
+def test_missing_source_fails_without_creating_or_promoting_files(tmp_path) -> None:
+    source = tmp_path / "source with spaces.sqlite3"
+    destination = tmp_path / "backups"
+    final = destination / "autolava-20260719.sqlite3"
+    temporary = final.with_suffix(".sqlite3.tmp")
+
+    with pytest.raises(sqlite3.OperationalError):
+        backup_sqlite(source, destination, date(2026, 7, 19))
+
+    assert not source.exists()
+    assert not final.exists()
+    assert not temporary.exists()
+
+
+def test_missing_source_preserves_existing_same_day_backup(tmp_path) -> None:
+    source = tmp_path / "source.sqlite3"
+    destination = tmp_path / "backups"
+    _create_database(source, "previous").close()
+    final = backup_sqlite(source, destination, date(2026, 7, 19))
+    source.unlink()
+
+    with pytest.raises(sqlite3.OperationalError):
+        backup_sqlite(source, destination, date(2026, 7, 19))
+
+    assert not source.exists()
+    with sqlite3.connect(final) as connection:
+        value = connection.execute("SELECT value FROM snapshot_marker").fetchone()
+    assert value == ("previous",)
+    assert not final.with_suffix(".sqlite3.tmp").exists()
 
 
 def test_successful_backup_retains_three_calendar_days(tmp_path) -> None:

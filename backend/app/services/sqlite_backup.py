@@ -46,9 +46,10 @@ def backup_sqlite(source: Path, destination: Path, today: date) -> Path:
     destination.mkdir(parents=True, exist_ok=True)
     final_path = destination / f"autolava-{today:%Y%m%d}.sqlite3"
     temporary_path = final_path.with_suffix(".sqlite3.tmp")
+    source_uri = f"{source.resolve().as_uri()}?mode=ro"
     temporary_path.unlink(missing_ok=True)
     try:
-        with closing(sqlite3.connect(source)) as source_connection:
+        with closing(sqlite3.connect(source_uri, uri=True)) as source_connection:
             with closing(sqlite3.connect(temporary_path)) as backup_connection:
                 source_connection.backup(backup_connection)
         if _integrity_result(temporary_path) != "ok":
