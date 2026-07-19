@@ -8,7 +8,7 @@ jobs:
   backend:
     runs-on: ubuntu-latest
     env:
-      AUTOLAVA_DATABASE_PATH: ${{ runner.temp }}/autolava-ci.sqlite3
+      AUTOLAVA_DATABASE_PATH: /tmp/autolava-ci.sqlite3
       AUTOLAVA_JWT_SECRET: ci-only-jwt-secret-with-at-least-32-bytes
     defaults:
       run:
