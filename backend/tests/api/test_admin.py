@@ -7,7 +7,7 @@ async def admin_client(client, user_factory) -> AsyncClient:
     await user_factory(username="administrator", password="secret", role="admin")
     response = await client.post(
         "/api/auth/login",
-        json={"username": "administrator", "password": "secret", "remember": False},
+        json={"username": "administrator", "password": "secret"},
     )
     assert response.status_code == 200
     return client
@@ -26,14 +26,14 @@ async def test_alerts_and_task_logs_remain_admin_only(
 ) -> None:
     login = await admin_client.post(
         "/api/auth/login",
-        json={"username": "administrator", "password": "secret", "remember": False},
+        json={"username": "administrator", "password": "secret"},
     )
     assert login.status_code == 200
     assert (await admin_client.get("/api/admin/alerts")).status_code == 200
     assert (await admin_client.get("/api/admin/task-logs")).status_code == 200
     login = await auth_client.post(
         "/api/auth/login",
-        json={"username": "authenticated", "password": "secret", "remember": False},
+        json={"username": "authenticated", "password": "secret"},
     )
     assert login.status_code == 200
     assert (await auth_client.get("/api/admin/alerts")).status_code == 403

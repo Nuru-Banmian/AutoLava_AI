@@ -213,14 +213,12 @@ async def patch_user(
                 select(User)
                 .where(User.role == "admin", User.is_active.is_(True))
                 .order_by(User.id)
-                .with_for_update()
                 .execution_options(populate_existing=True)
             )
         )
     user = await session.scalar(
         select(User)
         .where(User.id == user_id)
-        .with_for_update()
         .execution_options(populate_existing=True)
     )
     if user is None:
@@ -262,9 +260,7 @@ async def patch_user(
 async def delete_unused_user(
     user_id: int, session: Session, actor: UsersManager
 ) -> None:
-    user = await session.scalar(
-        select(User).where(User.id == user_id).with_for_update()
-    )
+    user = await session.scalar(select(User).where(User.id == user_id))
     if user is None:
         raise HTTPException(404, "User not found")
     _require_can_manage_target(actor, user)
@@ -375,9 +371,7 @@ async def _store_has_protected_references(session: Session, store_id: int) -> bo
 
 @router.delete("/stores/{store_id}", status_code=204)
 async def delete_store(store_id: int, session: Session, actor: StoresManager) -> None:
-    store = await session.scalar(
-        select(Store).where(Store.id == store_id).with_for_update()
-    )
+    store = await session.scalar(select(Store).where(Store.id == store_id))
     if store is None:
         raise HTTPException(404, "Store not found")
     if await _store_has_protected_references(session, store_id):
@@ -386,7 +380,7 @@ async def delete_store(store_id: int, session: Session, actor: StoresManager) ->
         await session.execute(delete(StoreMember).where(StoreMember.store_id == store_id))
         await session.execute(delete(IncomeCategory).where(IncomeCategory.store_id == store_id))
         await session.delete(store)
-        # Force foreign-key checks while the transaction and row lock are still held.
+        # Force foreign-key checks before the transaction is committed.
         await session.flush()
         await session.commit()
     except IntegrityError as exc:

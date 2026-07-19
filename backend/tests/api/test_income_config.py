@@ -18,7 +18,7 @@ async def admin_client(client, user_factory) -> AsyncClient:
     await user_factory(username="config-admin", password="secret", role="admin")
     response = await client.post(
         "/api/auth/login",
-        json={"username": "config-admin", "password": "secret", "remember": False},
+        json={"username": "config-admin", "password": "secret"},
     )
     assert response.status_code == 200
     return client

@@ -128,6 +128,15 @@ def test_runtime_and_dependency_files_have_no_legacy_database_contract() -> None
             assert term.lower() not in content.lower(), f"{relative} contains {term}"
 
 
+def test_active_backend_has_no_row_lock_contract() -> None:
+    blocked = ("with_" + "for_update", "for_" + "update")
+
+    for source in (ROOT / "backend" / "app").rglob("*.py"):
+        content = source.read_text(encoding="utf-8")
+        for term in blocked:
+            assert term not in content, f"{source.relative_to(ROOT)} contains {term}"
+
+
 def test_images_and_nginx_define_prebuilt_release_boundaries() -> None:
     backend = read("backend/Dockerfile")
     frontend = read("frontend/Dockerfile.prebuilt")

@@ -43,7 +43,6 @@ async def change_password(body: PasswordChange, session: Session, user: CurrentU
     locked_user = await session.scalar(
         select(User)
         .where(User.id == user.id)
-        .with_for_update()
         .execution_options(populate_existing=True)
     )
     if locked_user is None or not locked_user.is_active:

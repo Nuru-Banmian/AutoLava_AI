@@ -17,11 +17,8 @@ class IncomeConfigService:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def _require_store(self, store_id: int, *, for_update: bool = False) -> Store:
-        statement = select(Store).where(Store.id == store_id)
-        if for_update:
-            statement = statement.with_for_update()
-        store = await self.session.scalar(statement)
+    async def _require_store(self, store_id: int) -> Store:
+        store = await self.session.scalar(select(Store).where(Store.id == store_id))
         if store is None:
             raise HTTPException(404, "Store not found")
         return store
@@ -75,15 +72,13 @@ class IncomeConfigService:
     async def replace(
         self, store_id: int, body: IncomeConfigPublishBody
     ) -> IncomeConfigResponse:
-        store = await self._require_store(store_id, for_update=True)
+        store = await self._require_store(store_id)
         self._validate_unique(body)
         requested_ids = {item.category_id for item in body.items if item.category_id is not None}
         categories = {
             category.id: category
             for category in await self.session.scalars(
-                select(IncomeCategory)
-                .where(IncomeCategory.id.in_(requested_ids))
-                .with_for_update()
+                select(IncomeCategory).where(IncomeCategory.id.in_(requested_ids))
             )
         }
         if set(categories) != requested_ids or any(
@@ -94,9 +89,7 @@ class IncomeConfigService:
         current = {
             category.id: category
             for category in await self.session.scalars(
-                select(IncomeCategory)
-                .where(IncomeCategory.store_id == store_id)
-                .with_for_update()
+                select(IncomeCategory).where(IncomeCategory.store_id == store_id)
             )
         }
         for sort_order, item in enumerate(body.items):
@@ -120,7 +113,7 @@ class IncomeConfigService:
         return self.response(store, await self._current_categories(store_id))
 
     async def archive(self, category_id: int) -> IncomeCategory:
-        category = await self.session.get(IncomeCategory, category_id, with_for_update=True)
+        category = await self.session.get(IncomeCategory, category_id)
         if category is None:
             raise HTTPException(404, "Category not found")
         category.archived_at = datetime.now(UTC).replace(tzinfo=None)
@@ -129,7 +122,7 @@ class IncomeConfigService:
         return category
 
     async def restore_category(self, category_id: int) -> IncomeCategory:
-        category = await self.session.get(IncomeCategory, category_id, with_for_update=True)
+        category = await self.session.get(IncomeCategory, category_id)
         if category is None:
             raise HTTPException(404, "Category not found")
         category.archived_at = None
@@ -138,7 +131,7 @@ class IncomeConfigService:
         return category
 
     async def delete_unused(self, category_id: int) -> None:
-        category = await self.session.get(IncomeCategory, category_id, with_for_update=True)
+        category = await self.session.get(IncomeCategory, category_id)
         if category is None:
             raise HTTPException(404, "Category not found")
         used = await self.session.scalar(
