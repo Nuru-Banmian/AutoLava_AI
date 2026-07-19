@@ -140,6 +140,6 @@ git add -- docs/superpowers/2026-07-19-sqlite-final-release-evidence.md
 git commit -m "docs: record sqlite final release gates (#12)"
 ```
 
-- [ ] **Step 5: Review the whole branch**
+- [x] **Step 5: Review the whole branch**
 
 Resolve `main`, confirm `git diff main...HEAD` is non-empty, fetch Issues #7–#12 as the spec source, then run the `code-review` skill's Standards and Spec agents in parallel. Fix any confirmed blocking finding, rerun affected tests, and commit the fix before reporting completion.

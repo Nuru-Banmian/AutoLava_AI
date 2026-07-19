@@ -389,7 +389,7 @@ async def patch_store(
             session, user_id=actor_id, capability="stores.manage"
         )
         store = await session.get(Store, store_id, populate_existing=True)
-        if store is None:
+        if store is None or not store.is_active:
             raise HTTPException(404, "Store not found")
         for field, value in body.model_dump(exclude_none=True).items():
             setattr(store, field, value)
@@ -421,7 +421,7 @@ async def delete_store(store_id: int, session: Session, actor: StoresManager) ->
                 session, user_id=actor_id, capability="stores.manage"
             )
             store = await session.get(Store, store_id, populate_existing=True)
-            if store is None:
+            if store is None or not store.is_active:
                 raise HTTPException(404, "Store not found")
             if await _store_has_protected_references(session, store_id):
                 raise HTTPException(

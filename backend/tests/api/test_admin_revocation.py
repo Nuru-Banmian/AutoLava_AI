@@ -290,3 +290,50 @@ async def test_income_config_replace_rejects_deactivated_actor_after_lock_wait()
         assert category is not None
         assert store.income_items_enabled is False
         assert category.name == "Before"
+
+
+@pytest.mark.parametrize("operation", ["store-patch", "store-delete"])
+async def test_store_mutation_rejects_store_archived_after_lock_wait(
+    operation: str,
+) -> None:
+    await _reset_database()
+    _, target_id, store_id, category_id = await _setup_admin_mutation(operation)
+    app = create_app()
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        login = await client.post(
+            "/api/auth/login",
+            json={"username": "revoked-admin", "password": "secret"},
+        )
+        assert login.status_code == 200
+        await SQLITE_WRITE_LOCK.acquire()
+        try:
+            mutation = asyncio.create_task(
+                _request_for(
+                    client,
+                    operation,
+                    target_id=target_id,
+                    store_id=store_id,
+                    category_id=category_id,
+                )
+            )
+            while not SQLITE_WRITE_LOCK._waiters:
+                await asyncio.sleep(0)
+            async with async_session_factory() as archive:
+                store = await archive.get(Store, store_id)
+                assert store is not None
+                store.is_active = False
+                await archive.commit()
+        finally:
+            SQLITE_WRITE_LOCK.release()
+        response = await mutation
+
+    assert response.status_code == 404
+    async with async_session_factory() as verify:
+        store = await verify.get(Store, store_id)
+        category = await verify.get(IncomeCategory, category_id)
+        assert store is not None
+        assert store.is_active is False
+        assert store.name == "Admin revocation"
+        assert category is not None
