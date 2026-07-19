@@ -60,7 +60,7 @@ export function IncomeComposition({ included, excluded, classifiedIncludedTotal 
   if (included.length === 0 && excluded.length === 0) return null;
 
   return <section className="grid gap-4" aria-label="收入构成">
-    {included.length > 0 && <CompositionGroup
+    <CompositionGroup
       title="收入分类"
       rows={included}
       expanded={includedExpanded}
@@ -68,7 +68,7 @@ export function IncomeComposition({ included, excluded, classifiedIncludedTotal 
       showProportions={showProportions}
       total={classifiedIncludedTotal}
       toggleLabel="展开收入分类"
-    />}
+    />
     {excluded.length > 0 && <hr className="border-border" />}
     {excluded.length > 0 && <CompositionGroup
       title="其他数据"

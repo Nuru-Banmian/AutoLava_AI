@@ -108,7 +108,7 @@ export function LedgerForm({ categories, config, record, weather, onSave, onDirt
     : null;
   function changeStatus(next: LedgerStatus) {
     setStatus(next);
-    if (next === "休息") { setWash("0"); setAmounts(Object.fromEntries(active.map((category) => [category.id, "0"]))); }
+    if (next === "休息") setWash("0");
   }
   return <form className="grid min-w-0 gap-3" onSubmit={(event) => { event.preventDefault(); const items = active.map((category) => ({ category_id: category.id, result: status === "休息" ? { value: 0 } : parseWholeAmount(amounts[category.id] ?? "") })); const directResult = status === "休息" ? { value: 0 } : parseWholeAmount(directTotal); const invalid = (composed ? items.map((item) => item.result) : [directResult]).find((result): result is { error: string } => "error" in result); if (invalid) { setValidationError(invalid.error); return; } setValidationError(""); onSave({ is_open: status, daily_revenue: composed ? null : "value" in directResult ? directResult.value : 0, wash_count: status === "休息" ? 0 : wash === "" ? null : Number(wash), weather: weatherValue || null, weather_edited: weatherEdited, activity: activity.trim() || null, items: composed ? items.map((item) => ({ category_id: item.category_id, amount: "value" in item.result ? item.result.value : 0 })) : [] }); }}>
     <label>状态<select aria-label="状态" value={status} onChange={(event) => changeStatus(event.target.value as LedgerStatus)} className="w-full rounded border p-2"><option>营业</option><option>休息</option><option>天气停业</option></select></label>

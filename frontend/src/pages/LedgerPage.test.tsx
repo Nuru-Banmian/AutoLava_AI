@@ -415,6 +415,33 @@ describe("LedgerPage", () => {
     await waitFor(() => expect(screen.getByLabelText("当前位置")).toHaveTextContent("/database"));
   });
 
+  it("stays on the ledger when the saved date is outside the source record range", async () => {
+    renderLedger([
+      http.put("/api/ledger/1/:date", () => HttpResponse.json({ id: 9, date: "2026-07-15", daily_revenue: 1 })),
+    ], {
+      pathname: "/ledger",
+      search: "?date=2026-07-15",
+      state: {
+        returnToBusinessRecords: {
+          storeId: 1,
+          recordMode: "previous-month",
+          range: { start: "2026-06-01", end: "2026-06-30" },
+          page: 1,
+          selectedDate: null,
+          mobileRecordDate: null,
+          analysis: { mode: "previous-month", custom: { start: "2026-06-01", end: "2026-06-30" } },
+          scrollY: 0,
+        },
+      },
+    });
+    fireEvent.change(await screen.findByLabelText("现金"), { target: { value: "1" } });
+    fillBlankLedgerAmounts();
+    fireEvent.click(screen.getByRole("button", { name: "保存今日记录" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent("保存成功");
+    expect(screen.getByLabelText("当前位置")).toHaveTextContent("/ledger?date=2026-07-15");
+  });
+
   it("stays on the ledger after a direct successful save", async () => {
     renderLedger([
       http.put("/api/ledger/1/:date", () => HttpResponse.json({ id: 9, date: "2026-07-15", daily_revenue: 1 })),

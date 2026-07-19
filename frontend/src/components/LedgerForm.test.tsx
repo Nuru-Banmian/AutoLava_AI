@@ -80,6 +80,10 @@ describe("LedgerForm", () => {
     fireEvent.change(screen.getByLabelText("状态"), { target: { value: "天气停业" } });
     expect(screen.getByLabelText("现金")).toHaveValue("");
     expect(screen.getByLabelText("不计入")).toHaveValue("");
+    fireEvent.change(screen.getByLabelText("状态"), { target: { value: "休息" } });
+    fireEvent.change(screen.getByLabelText("状态"), { target: { value: "营业" } });
+    expect(screen.getByLabelText("现金")).toHaveValue("");
+    expect(screen.getByLabelText("不计入")).toHaveValue("");
   });
 
   it("accepts only whole non-negative money input", () => {

@@ -64,7 +64,10 @@ export function LedgerPage() {
         const canonical = client.getQueryState<RecordSnapshot | null>(ledgerRecordKey(variables.storeId, variables.date));
         setSavedSubmission((previous) => previous?.body === variables.body ? { ...previous, canonicalRequested: true, canonicalReady: canonical?.status === "success" && Boolean(canonical.data) } : previous);
       }
-      if (isCurrentScope && returnToBusinessRecords?.storeId === variables.storeId) {
+      const canReturnToBusinessRecords = returnToBusinessRecords?.storeId === variables.storeId
+        && returnToBusinessRecords.range.start <= variables.date
+        && variables.date <= returnToBusinessRecords.range.end;
+      if (isCurrentScope && canReturnToBusinessRecords) {
         resetUnsavedChanges();
         navigate("/database", { replace: true, state: { restoreBusinessRecords: returnToBusinessRecords } });
       }

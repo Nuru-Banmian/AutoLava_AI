@@ -64,7 +64,8 @@ it("shows only the groups that contain rows and uses the domain term other data"
     />,
   );
 
-  expect(screen.queryByRole("region", { name: "收入分类" })).not.toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "收入分类" })).toBeInTheDocument();
+  expect(screen.getByText("暂无分类金额")).toBeInTheDocument();
   expect(screen.getByRole("region", { name: "其他数据" })).toBeInTheDocument();
   expect(screen.getByRole("separator")).toBeInTheDocument();
   expect(screen.queryByText("未计入总额")).not.toBeInTheDocument();
