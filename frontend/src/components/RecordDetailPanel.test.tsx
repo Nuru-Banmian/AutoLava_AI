@@ -6,10 +6,10 @@ import type { RecordSnapshot } from "@/api/types";
 import { RecordDetailPanel } from "@/components/RecordDetailPanel";
 
 const record: RecordSnapshot = {
-  id: 4, store_id: 1, date: "2026-07-14", daily_revenue: "100.00", income_mode: "composed", income_config_version_id: 3, row_version: 1,
+  id: 4, store_id: 1, date: "2026-07-14", daily_revenue: 100, income_mode: "composed",
   wash_count: 8, is_open: "营业", weather: "晴", weather_auto: "晴", weather_code: 1, temperature_max: "20.0", temperature_min: "10.0", precipitation: "0.0",
   activity: null, weather_edited: false, scanned: false, created_by: 1, updated_by: 1, created_at: "", updated_at: "", created_by_name: "admin", updated_by_name: "admin",
-  items: [{ id: 1, category_id: 1, category_name: "现金", include_in_total: true, sort_order: 1, amount: "100.00", created_at: "", updated_at: "" }],
+  items: [{ id: 1, category_id: 1, category_name: "现金", include_in_total: true, sort_order: 1, amount: 100, created_at: "", updated_at: "" }],
 };
 
 function renderPanel(value: RecordSnapshot, canManage = false) {

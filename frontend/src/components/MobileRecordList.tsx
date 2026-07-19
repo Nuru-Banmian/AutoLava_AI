@@ -1,7 +1,7 @@
 import { format, parseISO } from "date-fns";
 
 import type { RecordTableRow } from "@/components/RecordTable";
-import { formatMoney } from "@/lib/user-api";
+import { formatWholeEuro } from "@/lib/user-api";
 
 interface MobileRecordListProps {
   records: RecordTableRow[];
@@ -16,7 +16,7 @@ export function MobileRecordList({ records, selectedDate, onSelect }: MobileReco
         const dateLabel = format(parseISO(record.date), "yyyy年M月d日");
         const isUnrecorded = record.id === null;
         const status = isUnrecorded ? "未录入" : record.is_open;
-        const revenue = isUnrecorded ? "—" : formatMoney(record.daily_revenue);
+        const revenue = isUnrecorded ? "—" : formatWholeEuro(record.daily_revenue);
         return (
           <button
             key={record.id ?? record.date}

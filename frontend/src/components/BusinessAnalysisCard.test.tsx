@@ -12,14 +12,14 @@ const server = setupServer();
 
 function payload(overrides: Partial<ChartsResponse> = {}): ChartsResponse {
   return {
-    kpis: { total_revenue: "100.00", record_days: 2, open_days: 2, average_revenue: "50.00", primary_categories: [], total_wash_count: null, average_ticket: null },
+    kpis: { total_revenue: 100, record_days: 2, open_days: 2, average_revenue: 50, primary_categories: [], total_wash_count: null, average_ticket: null },
     range: { start: "2026-07-01", end: "2026-07-17", bucket: "day" },
-    comparison_kpis: { start: "2026-06-01", end: "2026-06-17", total_revenue: "80.00", open_days: 2, average_revenue: "40.00" },
-    classified_included_total: "100.00",
-    daily: [{ date: "2026-07-01", revenue: "100.00" }],
-    categories: [{ category_id: 1, category_name: "现金收入", amount: "100.00" }],
-    excluded_categories: [{ category_id: 2, category_name: "代收款", amount: "20.00" }],
-    monthly: [{ month: "2026-07", revenue: "100.00" }],
+    comparison_kpis: { start: "2026-06-01", end: "2026-06-17", total_revenue: 80, open_days: 2, average_revenue: 40 },
+    classified_included_total: 100,
+    daily: [{ date: "2026-07-01", revenue: 100 }],
+    categories: [{ category_id: 1, category_name: "现金收入", amount: 100 }],
+    excluded_categories: [{ category_id: 2, category_name: "代收款", amount: 20 }],
+    monthly: [{ month: "2026-07", revenue: 100 }],
     weather: [],
     weekday: [],
     ...overrides,
@@ -45,16 +45,16 @@ describe("BusinessAnalysisCard", () => {
       const isSixMonths = url.searchParams.get("bucket") === "month";
       const isCustom = url.searchParams.get("start") === "2026-07-02";
       const response: Partial<ChartsResponse> = isSixMonths ? {
-        kpis: { ...payload().kpis, total_revenue: "600.00" },
+        kpis: { ...payload().kpis, total_revenue: 600 },
         range: { start: "2026-02-01", end: "2026-07-17", bucket: "month" },
-        categories: [{ category_id: 3, category_name: "月度收入", amount: "600.00" }],
-        excluded_categories: [{ category_id: 4, category_name: "月度排除", amount: "30.00" }],
+        categories: [{ category_id: 3, category_name: "月度收入", amount: 600 }],
+        excluded_categories: [{ category_id: 4, category_name: "月度排除", amount: 30 }],
       } : isCustom ? {
-        kpis: { ...payload().kpis, total_revenue: "200.00" },
+        kpis: { ...payload().kpis, total_revenue: 200 },
         range: { start: "2026-07-02", end: "2026-07-03", bucket: "day" },
         comparison_kpis: null,
-        categories: [{ category_id: 5, category_name: "自定义收入", amount: "200.00" }],
-        excluded_categories: [{ category_id: 6, category_name: "自定义排除", amount: "5.00" }],
+        categories: [{ category_id: 5, category_name: "自定义收入", amount: 200 }],
+        excluded_categories: [{ category_id: 6, category_name: "自定义排除", amount: 5 }],
       } : payload();
       return HttpResponse.json(payload(response));
     }));
@@ -72,7 +72,7 @@ describe("BusinessAnalysisCard", () => {
     await user.click(screen.getByRole("button", { name: "近 6 月" }));
     await screen.findByText("月度收入");
     expect(requests.at(-1)?.searchParams.get("bucket")).toBe("month");
-    expect(screen.getAllByText("€600.00").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("€600").length).toBeGreaterThan(0);
     expect(screen.getByText("月度排除")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "自定义" }));
@@ -84,13 +84,13 @@ describe("BusinessAnalysisCard", () => {
     const customRequest = requests.at(-1)!;
     expect(customRequest.searchParams.get("compare_start")).toBeNull();
     expect(customRequest.searchParams.get("compare_end")).toBeNull();
-    expect(screen.getAllByText("€200.00").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("€200").length).toBeGreaterThan(0);
     expect(screen.getByText("自定义排除")).toBeInTheDocument();
   });
 
   it("renders the zero-data and retry states", async () => {
     server.use(http.get("/api/charts/1", () => HttpResponse.json(payload({
-      kpis: { ...payload().kpis, total_revenue: "0.00", open_days: 0 },
+      kpis: { ...payload().kpis, total_revenue: 0, open_days: 0 },
       daily: [],
       categories: [],
       excluded_categories: [],
@@ -110,15 +110,15 @@ describe("BusinessAnalysisCard", () => {
     server.use(http.get("/api/charts/1", () => fail ? HttpResponse.json({ detail: "failed" }, { status: 500 }) : HttpResponse.json(payload())));
     const client = renderCard();
 
-    expect((await screen.findAllByText("€100.00")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("€100")).length).toBeGreaterThan(0);
     fail = true;
     await client.invalidateQueries({ queryKey: ["charts", 1] });
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("刷新失败"));
-    expect(screen.getAllByText("€100.00").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("€100").length).toBeGreaterThan(0);
   });
 
   it("avoids a numeric comparison when the prior total is zero", async () => {
-    server.use(http.get("/api/charts/1", () => HttpResponse.json(payload({ comparison_kpis: { start: "2026-06-01", end: "2026-06-17", total_revenue: "0.00", open_days: 0, average_revenue: "0.00" } }))));
+    server.use(http.get("/api/charts/1", () => HttpResponse.json(payload({ comparison_kpis: { start: "2026-06-01", end: "2026-06-17", total_revenue: 0, open_days: 0, average_revenue: 0 } }))));
     renderCard();
 
     expect(await screen.findByText("上期为 0，暂无可比增幅")).toBeInTheDocument();

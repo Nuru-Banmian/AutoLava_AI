@@ -7,7 +7,7 @@ import type { RecordSnapshot } from "@/api/types";
 import { MobileRecordSheet } from "@/components/MobileRecordSheet";
 
 const record: RecordSnapshot = {
-  id: 4, store_id: 1, date: "2026-07-14", daily_revenue: "100.00", income_mode: "composed", income_config_version_id: 3, row_version: 1,
+  id: 4, store_id: 1, date: "2026-07-14", daily_revenue: 100, income_mode: "composed",
   wash_count: 8, is_open: "营业", weather: "晴", weather_auto: "晴", weather_code: 1, temperature_max: "20.0", temperature_min: "10.0", precipitation: "0.0",
   activity: null, weather_edited: false, scanned: false, created_by: 1, updated_by: 1, created_at: "", updated_at: "",
   items: [],

@@ -1,10 +1,13 @@
 import type { ReactNode } from "react";
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatMoney } from "@/lib/user-api";
+import { formatWholeEuro } from "@/lib/user-api";
 export const chartSeriesColors = ["var(--primary)", "var(--chart-series-2)", "var(--chart-series-3)"];
 export type ChartKind = "bar" | "horizontal-bar" | "line";
-export function chartTooltipValue(row: Record<string, unknown>, valueKey: string) { return formatMoney(String(row[`${valueKey}_raw`] ?? row[valueKey] ?? "0")); }
+export function chartTooltipValue(row: Record<string, unknown>, valueKey: string) {
+  const value = row[`${valueKey}_raw`] ?? row[valueKey] ?? 0;
+  return formatWholeEuro(typeof value === "number" ? value : Number(value));
+}
 interface ChartPanelProps {
   title: string;
   data?: Record<string, unknown>[];

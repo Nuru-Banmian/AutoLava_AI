@@ -17,12 +17,10 @@ function record(index: number) {
     id: 100 + index,
     store_id: 1,
     date,
-    daily_revenue: `${100 - index}.00`,
+    daily_revenue: 100 - index,
     wash_count: 20 - index,
     is_open: "营业",
     income_mode: "composed",
-    income_config_version_id: 4,
-    row_version: 1,
     weather: "晴",
     weather_auto: null,
     weather_code: null,
@@ -42,7 +40,7 @@ function record(index: number) {
       category_name: categories[0].name,
       include_in_total: true,
       sort_order: 1,
-      amount: `${100 - index}.00`,
+      amount: 100 - index,
       created_at: now,
       updated_at: now,
     }],
@@ -70,7 +68,7 @@ async function mockResponsiveApi(page: Page) {
       return json({
         items: records,
         categories,
-        sum_daily_revenue: "1480.00",
+        sum_daily_revenue: 1480,
         total: records.length,
         page: 1,
         page_size: 200,
@@ -78,27 +76,27 @@ async function mockResponsiveApi(page: Page) {
     }
     if (path === "/api/charts/1") return json({
       kpis: {
-        total_revenue: "100.00", record_days: 1, open_days: 1, average_revenue: "100.00",
+        total_revenue: 100, record_days: 1, open_days: 1, average_revenue: 100,
         primary_categories: [], total_wash_count: null, average_ticket: null,
       },
       range: { start: "2026-07-01", end: "2026-07-17", bucket: "day" },
       comparison_kpis: {
-        start: "2026-06-01", end: "2026-06-17", total_revenue: "80.00",
-        open_days: 1, average_revenue: "80.00",
+        start: "2026-06-01", end: "2026-06-17", total_revenue: 80,
+        open_days: 1, average_revenue: 80,
       },
-      classified_included_total: "100.00",
-      daily: [{ date: "2026-07-14", revenue: "100.00" }],
+      classified_included_total: 100,
+      daily: [{ date: "2026-07-14", revenue: 100 }],
       categories: categories.slice(0, 6).map((category, index) => ({
         category_id: category.id,
         category_name: category.name,
-        amount: index === 0 ? "50.00" : "10.00",
+        amount: index === 0 ? 50 : 10,
       })),
       excluded_categories: categories.slice(6).map((category) => ({
         category_id: category.id,
         category_name: category.name,
-        amount: "5.00",
+        amount: 5,
       })),
-      monthly: [{ month: "2026-07", revenue: "100.00" }],
+      monthly: [{ month: "2026-07", revenue: 100 }],
       weather: [],
       weekday: [],
     });
@@ -213,10 +211,10 @@ test("320px record list, bottom sheet, and analysis remain reachable without cli
   await expect(page.getByRole("heading", { name: "2026年7月17日" })).toHaveCount(0);
 
   const firstRow = page.locator('main button[aria-label^="2026年7月17日"]').first();
-  await expect(firstRow).toHaveAccessibleName("2026年7月17日，营业，€100.00");
+  await expect(firstRow).toHaveAccessibleName("2026年7月17日，营业，€100");
   const visibleFields = firstRow.locator(":scope > span");
   await expect(visibleFields).toHaveCount(3);
-  await expect(visibleFields).toHaveText(["2026年7月17日", "营业", "€100.00"]);
+  await expect(visibleFields).toHaveText(["2026年7月17日", "营业", "€100"]);
   await firstRow.scrollIntoViewIfNeeded();
   const scrollBeforeOpen = await page.evaluate(() => window.scrollY);
   await firstRow.click();

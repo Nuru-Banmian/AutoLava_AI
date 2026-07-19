@@ -2,8 +2,8 @@ import { render, screen } from "@testing-library/react";
 import { expect, it } from "vitest";
 import { ChartPanel, chartSeriesColors, chartTooltipValue } from "@/components/ChartPanel";
 
-it("uses the raw decimal string for chart tooltip money", () => {
-  expect(chartTooltipValue({ revenue: Number.MAX_SAFE_INTEGER, revenue_raw: "9007199254740993.10" }, "revenue")).toBe("€9007199254740993.10");
+it("formats integer chart tooltip values as whole euros", () => {
+  expect(chartTooltipValue({ revenue: 1234 }, "revenue")).toBe("€1.234");
 });
 
 it("uses theme variables for chart series", () => {
@@ -34,7 +34,7 @@ it("renders embedded charts without a card wrapper", () => {
       embedded
       title="营业额趋势"
       kind="line"
-      data={[{ label: "7月1日", revenue: 100, revenue_raw: "100.00" }]}
+      data={[{ label: "7月1日", revenue: 100 }]}
       xKey="label"
       valueKey="revenue"
     />,

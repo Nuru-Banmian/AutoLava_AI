@@ -26,8 +26,8 @@ function configItems(config: IncomeConfigResponse): DraftItem[] {
   return [...config.items]
     .sort((left, right) => left.sort_order - right.sort_order)
     .map((item, sort_order) => ({
-      key: item.category_id === null ? `snapshot-${item.id}` : `category-${item.category_id}`,
-      category_id: item.category_id,
+      key: `category-${item.id}`,
+      category_id: item.id,
       name: item.name,
       include_in_total: item.include_in_total,
       is_active: item.is_active,

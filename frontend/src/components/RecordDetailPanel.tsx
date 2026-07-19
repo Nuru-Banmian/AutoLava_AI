@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import type { RecordSnapshot } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatMoney } from "@/lib/user-api";
+import { formatWholeEuro } from "@/lib/user-api";
 
 export type RecordDetail = RecordSnapshot | { id: null; date: string };
 
@@ -30,7 +30,7 @@ export function RecordDetailPanel({ record, canEdit, canManage, onManage }: Reco
             <p className="text-muted-foreground">营业状态</p>
             <p className="font-medium">{isUnrecorded ? "未录入" : record.is_open}</p>
           </div>
-          <div><p className="text-muted-foreground">营业额</p><p className="font-medium">{isUnrecorded ? "—" : formatMoney(record.daily_revenue)}</p></div>
+          <div><p className="text-muted-foreground">营业额</p><p className="font-medium">{isUnrecorded ? "—" : formatWholeEuro(record.daily_revenue)}</p></div>
           <div><p className="text-muted-foreground">洗车数量</p><p className="font-medium">{isUnrecorded ? "—" : `洗车数量 ${record.wash_count ?? "—"}`}</p></div>
           <div><p className="text-muted-foreground">天气</p><p className="font-medium">{isUnrecorded ? "—" : record.weather ?? "—"}</p></div>
         </div>
@@ -43,7 +43,7 @@ export function RecordDetailPanel({ record, canEdit, canManage, onManage }: Reco
               <div key={item.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
                 <span>{item.category_name}</span>
                 <span className="text-muted-foreground">{item.include_in_total ? "计入总营业额" : "独立记录"}</span>
-                <span>{formatMoney(item.amount)}</span>
+                <span>{formatWholeEuro(item.amount)}</span>
               </div>
             ))}
           </div>

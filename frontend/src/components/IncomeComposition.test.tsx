@@ -7,12 +7,12 @@ import { IncomeComposition, compositionPercentage } from "@/components/IncomeCom
 const included = Array.from({ length: 6 }, (_, index) => ({
   category_id: index + 1,
   category_name: `收入分类${index + 1}`,
-  amount: index === 0 ? "50.00" : "10.00",
+  amount: index === 0 ? 50 : 10,
 }));
 const excluded = Array.from({ length: 6 }, (_, index) => ({
   category_id: index + 11,
   category_name: `排除分类${index + 1}`,
-  amount: "5.00",
+  amount: 5,
 }));
 
 function renderComposition(props: Partial<ComponentProps<typeof IncomeComposition>> = {}) {
@@ -20,8 +20,8 @@ function renderComposition(props: Partial<ComponentProps<typeof IncomeCompositio
     <IncomeComposition
       included={included}
       excluded={excluded}
-      classifiedIncludedTotal="100.00"
-      totalRevenue="100.00"
+      classifiedIncludedTotal={100}
+      totalRevenue={100}
       {...props}
     />,
   );
@@ -45,7 +45,7 @@ it("shows five rows per group initially and expands each group independently", a
 });
 
 it("does not render proportion bars for a single category or zero classified total", () => {
-  const { rerender } = renderComposition({ included: [included[0]], excluded: [], classifiedIncludedTotal: "50.00" });
+  const { rerender } = renderComposition({ included: [included[0]], excluded: [], classifiedIncludedTotal: 50 });
 
   expect(screen.queryByTestId("composition-proportion")).not.toBeInTheDocument();
 
@@ -53,14 +53,14 @@ it("does not render proportion bars for a single category or zero classified tot
     <IncomeComposition
       included={included}
       excluded={[]}
-      classifiedIncludedTotal="0.00"
-      totalRevenue="100.00"
+      classifiedIncludedTotal={0}
+      totalRevenue={100}
     />,
   );
 
   expect(screen.queryByTestId("composition-proportion")).not.toBeInTheDocument();
 });
 
-it("rounds composition percentages from cents", () => {
-  expect(compositionPercentage("1.00", "3.00")).toBe("33.3%");
+it("rounds composition percentages from whole amounts", () => {
+  expect(compositionPercentage(1, 3)).toBe("33.3%");
 });

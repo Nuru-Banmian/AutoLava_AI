@@ -35,7 +35,6 @@ export function BusinessRecordsPage() {
   const [mobileRecord, setMobileRecord] = useState<RecordDetail | null>(null);
   const [returnFocusTo, setReturnFocusTo] = useState<HTMLButtonElement | null>(null);
   const [managementOpen, setManagementOpen] = useState(false);
-  const [managementDate, setManagementDate] = useState<string | null>(null);
   const [recordStoreId, setRecordStoreId] = useState<number | null>(selected?.id ?? null);
   const selectedRecordRef = useRef<RecordSnapshot | null>(null);
 
@@ -46,7 +45,6 @@ export function BusinessRecordsPage() {
       setMobileRecord(null);
       setReturnFocusTo(null);
       setManagementOpen(false);
-      setManagementDate(null);
       return;
     }
     setRecordStoreId(selected.id);
@@ -57,7 +55,6 @@ export function BusinessRecordsPage() {
     setMobileRecord(null);
     setReturnFocusTo(null);
     setManagementOpen(false);
-    setManagementDate(null);
   }, [selected?.id, today]);
 
   const recordQueryString = useMemo(() => new URLSearchParams({
@@ -191,7 +188,6 @@ export function BusinessRecordsPage() {
                 canManage={isAdmin && selectedTableRow.id !== null}
                 onManage={() => {
                   if (selectedTableRow.id === null) return;
-                  setManagementDate(selectedTableRow.date);
                   setManagementOpen(true);
                 }}
               />
@@ -219,7 +215,6 @@ export function BusinessRecordsPage() {
           }}
           onManage={() => {
             if (mobileRecord.id === null) return;
-            setManagementDate(mobileRecord.date);
             setManagementOpen(true);
           }}
         />
@@ -228,7 +223,6 @@ export function BusinessRecordsPage() {
         key={selected.id}
         storeId={selected.id}
         record={selectedRecord}
-        targetDate={recordStateReady ? managementDate : null}
         open={recordStateReady && managementOpen}
         onOpenChange={setManagementOpen}
         onCompleted={() => setMobileRecord(null)}

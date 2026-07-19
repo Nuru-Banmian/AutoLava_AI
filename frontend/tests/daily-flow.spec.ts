@@ -9,11 +9,11 @@ const categories = Array.from({ length: 13 }, (_, index) => ({
   sort_order: index + 1,
 }));
 
-function snapshot(id: number, date: string, amount = `${id}.00`) {
+function snapshot(id: number, date: string, amount = id) {
   const now = `${date}T12:00:00`;
   return {
     id, store_id: 1, date, daily_revenue: amount, wash_count: null, is_open: "营业",
-    income_mode: "composed", income_config_version_id: 4, row_version: 1,
+    income_mode: "composed",
     weather: null, weather_auto: null, weather_code: null, temperature_max: null,
     temperature_min: null, precipitation: null, activity: null, weather_edited: false,
     scanned: false, created_by: 1, updated_by: 1, created_at: now, updated_at: now,
@@ -58,12 +58,9 @@ async function mockMergedFlow(page: Page) {
     if (path === "/api/dashboard/1") return json([]);
     if (path === "/api/income-config/1/current") return json({
       store_id: 1,
-      version_id: 4,
-      version: 4,
       enabled: true,
       formula: categories.slice(0, 7).map((category) => category.name).join(" + "),
-      created_at: `${today}T08:00:00`,
-      items: categories.map((category, index) => ({ id: index + 20, category_id: category.id, ...category })),
+      items: categories.map((category) => ({ ...category, store_id: 1, archived_at: null })),
     });
     if (path === `/api/weather/1/${today}`) return json({
       weather: null, weather_code: null, temperature_max: null, temperature_min: null, precipitation: null,
@@ -80,9 +77,9 @@ async function mockMergedFlow(page: Page) {
         weather: string | null;
         weather_edited: boolean;
         activity: string | null;
-        items: { category_id: number; amount: string }[];
+        items: { category_id: number; amount: number }[];
       };
-      const amount = body.items.find((item) => item.category_id === 1)?.amount ?? "0.00";
+      const amount = body.items.find((item) => item.category_id === 1)?.amount ?? 0;
       const saved = snapshot(999, today, amount);
       saved.items = body.items.map((item, index) => ({
         id: 9990 + index,
@@ -95,7 +92,7 @@ async function mockMergedFlow(page: Page) {
         updated_at: `${today}T12:00:00`,
       }));
       records = [saved, ...records.filter((item) => item.date !== today)];
-      return json({ id: 999, date: today, daily_revenue: amount, row_version: 1 });
+      return json({ id: 999, date: today, daily_revenue: amount });
     }
     if (path === "/api/database/1/records") {
       const pageNumber = Number(url.searchParams.get("page"));
@@ -109,7 +106,7 @@ async function mockMergedFlow(page: Page) {
         return json({
           items: filtered.slice(0, 1),
           categories,
-          sum_daily_revenue: filtered[0]?.daily_revenue ?? "0.00",
+          sum_daily_revenue: filtered[0]?.daily_revenue ?? 0,
           total: filtered.length,
           page: 1,
           page_size: 1,
@@ -120,7 +117,7 @@ async function mockMergedFlow(page: Page) {
       return json({
         items: filtered,
         categories,
-        sum_daily_revenue: filtered.reduce((sum, record) => sum + Number(record.daily_revenue), 0).toFixed(2),
+        sum_daily_revenue: filtered.reduce((sum, record) => sum + record.daily_revenue, 0),
         total: filtered.length,
         page: 1,
         page_size: 200,
@@ -141,27 +138,27 @@ async function mockMergedFlow(page: Page) {
       const bucket = url.searchParams.get("bucket") === "month" ? "month" : "day";
       return json({
         kpis: {
-          total_revenue: "100.00", record_days: 1, open_days: 1, average_revenue: "100.00",
+          total_revenue: 100, record_days: 1, open_days: 1, average_revenue: 100,
           primary_categories: [], total_wash_count: null, average_ticket: null,
         },
         range: { start, end, bucket },
         comparison_kpis: {
-          start: "2026-06-01", end: "2026-06-17", total_revenue: "80.00",
-          open_days: 1, average_revenue: "80.00",
+          start: "2026-06-01", end: "2026-06-17", total_revenue: 80,
+          open_days: 1, average_revenue: 80,
         },
-        classified_included_total: "100.00",
-        daily: [{ date: "2026-07-14", revenue: "100.00" }],
+        classified_included_total: 100,
+        daily: [{ date: "2026-07-14", revenue: 100 }],
         categories: categories.slice(0, 7).map((category, index) => ({
           category_id: category.id,
           category_name: category.name,
-          amount: index === 0 ? "40.00" : "10.00",
+          amount: index === 0 ? 40 : 10,
         })),
         excluded_categories: categories.slice(7).map((category) => ({
           category_id: category.id,
           category_name: category.name,
-          amount: "5.00",
+          amount: 5,
         })),
-        monthly: [{ month: "2026-07", revenue: "100.00" }],
+        monthly: [{ month: "2026-07", revenue: 100 }],
         weather: [],
         weekday: [],
       });
@@ -205,7 +202,7 @@ for (const viewport of [
     const detail = mobile
       ? page.getByRole("dialog", { name: "2026-07-17 营业记录详情" })
       : page.getByRole("heading", { name: "2026年7月17日" }).locator("../..");
-    await expect(detail.getByText("€100.00", { exact: true }).first()).toBeVisible();
+    await expect(detail.getByText("€100", { exact: true }).first()).toBeVisible();
     await expect(detail.getByRole("link", { name: "修改这天记录" })).toBeVisible();
     if (mobile) await page.getByRole("button", { name: "Close" }).click();
 
