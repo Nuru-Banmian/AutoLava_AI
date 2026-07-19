@@ -198,7 +198,7 @@ def test_ci_uses_disposable_sqlite_and_prebuilt_release_images() -> None:
 
     assert "services" not in backend
     assert "services" not in containers
-    assert backend["env"]["AUTOLAVA_DATABASE_PATH"] == "${{ runner.temp }}/autolava-ci.sqlite3"
+    assert backend["env"]["AUTOLAVA_DATABASE_PATH"] == "/tmp/autolava-ci.sqlite3"
     assert any("aiosqlite" in command for command in backend_commands)
     assert any("alembic upgrade head" in command for command in backend_commands)
     assert any("ruff check ." in command for command in backend_commands)
