@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { IncomeConfigResponse, LedgerBody, RecordSnapshot } from "@/api/types";
@@ -65,6 +65,21 @@ describe("LedgerForm", () => {
     expect(input).toHaveAttribute("type", "text");
     expect(input).toHaveAttribute("inputmode", "numeric");
     expect(screen.queryByRole("group", { name: "收入项目" })).not.toBeInTheDocument();
+  });
+
+  it("starts new business and weather-closure amounts empty in both ledger modes", () => {
+    const direct = render(<LedgerForm categories={[]} config={directConfig} onSave={vi.fn()} />);
+    expect(screen.getByLabelText("当日营业额")).toHaveValue("");
+    fireEvent.change(screen.getByLabelText("状态"), { target: { value: "天气停业" } });
+    expect(screen.getByLabelText("当日营业额")).toHaveValue("");
+    direct.unmount();
+
+    render(<LedgerForm categories={[]} config={composedConfig} onSave={vi.fn()} />);
+    expect(screen.getByLabelText("现金")).toHaveValue("");
+    expect(screen.getByLabelText("不计入")).toHaveValue("");
+    fireEvent.change(screen.getByLabelText("状态"), { target: { value: "天气停业" } });
+    expect(screen.getByLabelText("现金")).toHaveValue("");
+    expect(screen.getByLabelText("不计入")).toHaveValue("");
   });
 
   it("accepts only whole non-negative money input", () => {
@@ -137,7 +152,28 @@ describe("LedgerForm", () => {
   it("absorbs late automatic weather while the form is clean", () => {
     const view = render(<LedgerForm categories={[]} config={directConfig} onSave={vi.fn()} />);
     view.rerender(<LedgerForm categories={[]} config={directConfig} weather={{ weather: "晴", weather_code: 1, temperature_max: 20, temperature_min: 10, precipitation: 0 }} onSave={vi.fn()} />);
-    fireEvent.click(screen.getByRole("button", { name: "天气" }));
-    expect(screen.getByLabelText("天气")).toHaveValue("晴");
+    expect(screen.getByRole("combobox", { name: "天气" })).toHaveTextContent("晴");
+  });
+
+  it("shows record weather as a select and can save before weather is known", () => {
+    const onSave = vi.fn();
+    render(<LedgerForm categories={[]} config={directConfig} onSave={onSave} />);
+
+    expect(screen.getByRole("combobox", { name: "天气" })).toHaveTextContent("请选择天气");
+    fireEvent.change(screen.getByLabelText("当日营业额"), { target: { value: "12" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ weather: null }));
+  });
+
+  it("offers exactly the six record-weather choices", async () => {
+    render(<LedgerForm categories={[]} config={directConfig} onSave={vi.fn()} />);
+
+    fireEvent.pointerDown(screen.getByRole("combobox", { name: "天气" }), { button: 0, ctrlKey: false, pointerType: "mouse" });
+
+    await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(6));
+    const weatherOptions = [...document.querySelectorAll('[role="option"]')];
+    expect(weatherOptions.map((option) => option.textContent)).toEqual(["晴", "多云", "雾", "雨", "雪", "雷雨"]);
+    expect(weatherOptions.some((option) => /未选择|请选择天气/.test(option.textContent ?? ""))).toBe(false);
   });
 });

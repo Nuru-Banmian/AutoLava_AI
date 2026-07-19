@@ -45,6 +45,20 @@ function renderLedger(extra: Parameters<typeof server.use> = [], initialEntry = 
   return { ...render(<MemoryRouter initialEntries={[initialEntry]}><QueryClientProvider client={client}><StoreProvider><LedgerPage /></StoreProvider></QueryClientProvider></MemoryRouter>), client };
 }
 
+function fillBlankLedgerAmounts() {
+  for (const input of document.querySelectorAll<HTMLInputElement>('input[inputmode="numeric"]')) {
+    if (input.value === "") fireEvent.change(input, { target: { value: "0" } });
+  }
+}
+
+async function chooseRecordWeather(value: string) {
+  fireEvent.pointerDown(screen.getByRole("combobox", { name: "天气" }), { button: 0, ctrlKey: false, pointerType: "mouse" });
+  await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(6));
+  const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((candidate) => candidate.textContent === value);
+  expect(option).toBeDefined();
+  fireEvent.click(option!);
+}
+
 function recordSnapshot(amount: number, activity: string | null = null, weather: string | null = null) {
   return {
     id: 9, store_id: 1, date: "2026-07-15", daily_revenue: amount, income_mode: "composed",
@@ -150,13 +164,12 @@ describe("LedgerPage", () => {
     expect(invalidStoreTwoRequests).toEqual([]);
   });
 
-  it("keeps income visible while weather and wash/activity start collapsed", async () => {
+  it("keeps income and weather visible while wash/activity starts collapsed", async () => {
     renderLedger();
 
     expect(await screen.findByRole("group", { name: "收入项目" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "天气" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("combobox", { name: "天气" })).toHaveTextContent("请选择天气");
     expect(screen.getByRole("button", { name: "洗车数量 / 活动" })).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByLabelText("天气")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("洗车数量")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "保存今日记录" })).toBeEnabled();
   });
@@ -181,7 +194,7 @@ describe("LedgerPage", () => {
 
   it("autofills a calendar-selected saved record and preserves untouched fields on modification", async () => {
     const historicalRecord = {
-      ...recordSnapshot(101, "周末促销", "小雨"),
+      ...recordSnapshot(101, "周末促销", "雨"),
       date: "2026-07-14",
       is_open: "天气停业" as const,
       wash_count: 17,
@@ -214,17 +227,17 @@ describe("LedgerPage", () => {
     expect(screen.getByLabelText("状态")).toHaveValue("天气停业");
     expect(screen.getByLabelText("现金")).toHaveValue("89");
     expect(screen.getByLabelText("刷卡")).toHaveValue("12");
-    fireEvent.click(screen.getByRole("button", { name: "天气" }));
-    expect(screen.getByLabelText("天气")).toHaveValue("小雨");
+    expect(screen.getByRole("combobox", { name: "天气" })).toHaveTextContent("雨");
     fireEvent.click(screen.getByRole("button", { name: "洗车数量 / 活动" }));
     expect(screen.getByLabelText("洗车数量")).toHaveValue(17);
     expect(screen.getByLabelText("活动")).toHaveValue("周末促销");
 
     fireEvent.change(screen.getByLabelText("现金"), { target: { value: "100" } });
+    fillBlankLedgerAmounts();
     fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
     await waitFor(() => expect(submitted).toEqual({
       is_open: "天气停业", daily_revenue: null,
-      wash_count: 17, weather: "小雨", weather_edited: false, activity: "周末促销",
+      wash_count: 17, weather: "雨", weather_edited: false, activity: "周末促销",
       items: [{ category_id: 1, amount: 100 }, { category_id: 2, amount: 12 }, { category_id: 3, amount: 5 }],
     }));
   });
@@ -297,6 +310,7 @@ describe("LedgerPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "选择台账日期" })).not.toBeInTheDocument());
 
+    fillBlankLedgerAmounts();
     fireEvent.click(await screen.findByRole("button", { name: "保存今日记录" }));
     expect(await screen.findByRole("status")).toHaveTextContent("保存成功");
     expect(client.getQueryState(ledgerMonthKey(1, "2026-07"))?.isInvalidated).toBe(true);
@@ -359,6 +373,7 @@ describe("LedgerPage", () => {
     fireEvent.change(screen.getByLabelText("刷卡"), { target: { value: "150" } });
     fireEvent.change(screen.getByLabelText("暗钱"), { target: { value: "80" } });
     expect(screen.getByText("合计 €350")).toBeInTheDocument();
+    fillBlankLedgerAmounts();
     fireEvent.click(screen.getByRole("button", { name: "保存今日记录" }));
     await waitFor(() => expect(submitted).not.toBeNull());
     expect(new URL(requestUrl).search).toBe("");
@@ -393,13 +408,12 @@ describe("LedgerPage", () => {
     expect(screen.getByLabelText("活动")).toHaveValue("夏日活动");
   });
 
-  it("keeps a manually edited weather value when delayed automatic weather arrives", () => {
+  it("keeps a manually selected weather value when delayed automatic weather arrives", async () => {
     const props = { config: singleConfig, categories: [{ id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }], onSave: () => undefined };
     const view = render(<LedgerForm {...props} />);
-    fireEvent.click(screen.getByRole("button", { name: "天气" }));
-    fireEvent.change(screen.getByLabelText("天气"), { target: { value: "手动天气" } });
-    view.rerender(<LedgerForm {...props} weather={{ weather: "自动天气", weather_code: 1, temperature_max: 20, temperature_min: 10, precipitation: 0 }} />);
-    expect(screen.getByLabelText("天气")).toHaveValue("手动天气");
+    await chooseRecordWeather("雨");
+    view.rerender(<LedgerForm {...props} weather={{ weather: "晴", weather_code: 1, temperature_max: 20, temperature_min: 10, precipitation: 0 }} />);
+    expect(screen.getByRole("combobox", { name: "天气" })).toHaveTextContent("雨");
   });
 
   it("blocks decimal and negative amounts with a visible whole-number error", () => {
@@ -465,6 +479,7 @@ describe("LedgerPage", () => {
     window.dispatchEvent(dirtyEvent);
     expect(dirtyEvent.defaultPrevented).toBe(true);
 
+    fillBlankLedgerAmounts();
     fireEvent.click(screen.getByRole("button", { name: "保存今日记录" }));
     expect(await screen.findByRole("status")).toHaveTextContent("保存成功");
     const savedEvent = new Event("beforeunload", { cancelable: true });
@@ -489,6 +504,7 @@ describe("LedgerPage", () => {
     fireEvent.change(await screen.findByLabelText("现金"), { target: { value: "13" } });
     fireEvent.click(screen.getByRole("button", { name: "洗车数量 / 活动" }));
     fireEvent.change(screen.getByLabelText("活动"), { target: { value: " 促销 " } });
+    fillBlankLedgerAmounts();
     fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
     expect(await screen.findByRole("status")).toHaveTextContent("保存成功");
     await waitFor(() => expect(saved).toBe(true));
@@ -519,20 +535,20 @@ describe("LedgerPage", () => {
       http.put("/api/ledger/1/:date", () => HttpResponse.json(recordSnapshot(10, null, "晴"))),
     ]);
     fireEvent.change(await screen.findByLabelText("现金"), { target: { value: "10" } });
+    fillBlankLedgerAmounts();
     fireEvent.click(screen.getByRole("button", { name: "保存今日记录" }));
     expect(await screen.findByRole("status")).toHaveTextContent("保存成功");
-    fireEvent.click(screen.getByRole("button", { name: "天气" }));
     await waitFor(() => expect(recordCalls).toBe(2));
 
     await act(async () => { releaseWeather(); });
     await waitFor(() => expect(weatherReturned).toBe(true));
-    expect(screen.getByLabelText("天气")).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "天气" })).toHaveTextContent("请选择天气");
     const intermediateEvent = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(intermediateEvent);
     expect(intermediateEvent.defaultPrevented).toBe(false);
 
     await act(async () => { releaseRecord(); });
-    await waitFor(() => expect(screen.getByLabelText("天气")).toHaveValue("晴"));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "天气" })).toHaveTextContent("晴"));
 
     await waitFor(() => {
       const event = new Event("beforeunload", { cancelable: true });
@@ -553,6 +569,7 @@ describe("LedgerPage", () => {
       http.put("/api/ledger/1/:date", () => HttpResponse.json(recordSnapshot(10))),
     ]);
     fireEvent.change(await screen.findByLabelText("现金"), { target: { value: "10" } });
+    fillBlankLedgerAmounts();
     fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
     expect(await screen.findByRole("status")).toHaveTextContent("保存成功");
     await waitFor(() => expect(recordCalls).toBe(2));
@@ -565,8 +582,7 @@ describe("LedgerPage", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "重试台账" }));
-    fireEvent.click(screen.getByRole("button", { name: "天气" }));
-    await waitFor(() => expect(screen.getByLabelText("天气")).toHaveValue("晴"));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "天气" })).toHaveTextContent("晴"));
   });
 
   it("keeps a newly created record retryable when its post-save refetch fails", async () => {
@@ -581,6 +597,7 @@ describe("LedgerPage", () => {
       http.put("/api/ledger/1/:date", () => HttpResponse.json({ id: 9, date: "2026-07-15", daily_revenue: 10 })),
     ]);
     fireEvent.change(await screen.findByLabelText("现金"), { target: { value: "10" } });
+    fillBlankLedgerAmounts();
     fireEvent.click(screen.getByRole("button", { name: "保存今日记录" }));
     expect(await screen.findByRole("status")).toHaveTextContent("保存成功");
     await waitFor(() => expect(recordCalls).toBe(2));
@@ -592,8 +609,7 @@ describe("LedgerPage", () => {
     expect(savedEvent.defaultPrevented).toBe(false);
 
     fireEvent.click(screen.getByRole("button", { name: "重试台账" }));
-    fireEvent.click(screen.getByRole("button", { name: "天气" }));
-    await waitFor(() => expect(screen.getByLabelText("天气")).toHaveValue("晴"));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "天气" })).toHaveTextContent("晴"));
     const canonicalEvent = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(canonicalEvent);
     expect(canonicalEvent.defaultPrevented).toBe(false);
@@ -608,6 +624,7 @@ describe("LedgerPage", () => {
       http.put("/api/ledger/1/:date", async () => { await delayed; saved = true; return HttpResponse.json(recordSnapshot(10)); }),
     ]);
     fireEvent.change(await screen.findByLabelText("现金"), { target: { value: "10" } });
+    fillBlankLedgerAmounts();
     fireEvent.click(screen.getByRole("button", { name: "保存今日记录" }));
     fireEvent.change(screen.getByLabelText("现金"), { target: { value: "20" } });
     release();
@@ -631,7 +648,7 @@ describe("LedgerPage", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(<MemoryRouter><QueryClientProvider client={client}><StoreProvider><StoreControls /><LedgerPage /></StoreProvider></QueryClientProvider></MemoryRouter>);
     fireEvent.click(await screen.findByRole("button", { name: "choose1" })); fireEvent.click(await screen.findByRole("button", { name: "选择台账日期：2026年7月15日" })); fireEvent.click(screen.getByRole("button", { name: "2026年7月13日" }));
-    fireEvent.change(await screen.findByLabelText("现金"), { target: { value: "1" } }); fireEvent.click(screen.getByRole("button", { name: "补记历史记录" }));
+    fireEvent.change(await screen.findByLabelText("现金"), { target: { value: "1" } }); fillBlankLedgerAmounts(); fireEvent.click(screen.getByRole("button", { name: "补记历史记录" }));
     client.setQueryData(["dashboard", 1], true); client.setQueryData(["dashboard", 2], true); fireEvent.click(screen.getByRole("button", { name: "choose2" })); fireEvent.click(await screen.findByRole("button", { name: "放弃修改" })); release();
     await waitFor(() => expect(saveUrl).toContain("/api/ledger/1/2026-07-13")); expect(new URL(saveUrl).search).toBe(""); await waitFor(() => expect(client.getQueryState(["dashboard", 1])?.isInvalidated).toBe(true)); expect(client.getQueryState(["dashboard", 2])?.isInvalidated).toBe(false);
   });
@@ -657,13 +674,15 @@ describe("LedgerPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "choose2" }));
     fireEvent.click(await screen.findByRole("button", { name: "放弃修改" }));
-    await waitFor(() => expect(screen.getByLabelText("现金")).toHaveValue("0"));
+    await waitFor(() => expect(screen.getByLabelText("现金")).toHaveValue(""));
   });
 
   it("shows a save error directly without an overwrite confirmation", async () => {
     server.use(http.put("/api/ledger/1/:date", () => HttpResponse.json({ detail: "exists" }, { status: 409 })));
     renderLedger();
-    fireEvent.click(await screen.findByRole("button", { name: "保存今日记录" }));
+    const saveButton = await screen.findByRole("button", { name: "保存今日记录" });
+    fillBlankLedgerAmounts();
+    fireEvent.click(saveButton);
     expect(await screen.findByRole("alert")).toHaveTextContent("数据已经发生变化，请刷新后重试");
     expect(screen.queryByText(/覆盖已有记录/)).not.toBeInTheDocument();
   });

@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import type { CategoryDescriptor, IncomeConfigResponse, LedgerBody, LedgerStatus, RecordSnapshot, WeatherResponse } from "@/api/types";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatWholeEuro, parseWholeAmount } from "@/lib/user-api";
+
+const RECORD_WEATHER_OPTIONS = ["晴", "多云", "雾", "雨", "雪", "雷雨"] as const;
 
 export interface LedgerFormProps {
   categories: CategoryDescriptor[];
@@ -49,11 +52,11 @@ export function LedgerForm({ categories, config, record, weather, onSave, onDirt
   const [weatherValue, setWeatherValue] = useState(record?.weather ?? weather?.weather ?? "");
   const [weatherEdited, setWeatherEdited] = useState(record?.weather_edited ?? false);
   const [activity, setActivity] = useState(record?.activity ?? "");
-  const [directTotal, setDirectTotal] = useState(String(record?.daily_revenue ?? 0));
-  const loadedAmounts = useMemo(() => Object.fromEntries(active.map((category) => [category.id, String(record?.items.find((item) => item.category_id === category.id)?.amount ?? 0)])), [active, record]);
+  const loadedDirectTotal = record ? String(record.daily_revenue) : "";
+  const [directTotal, setDirectTotal] = useState(loadedDirectTotal);
+  const loadedAmounts = useMemo(() => Object.fromEntries(active.map((category) => [category.id, record ? String(record.items.find((item) => item.category_id === category.id)?.amount ?? 0) : ""])), [active, record]);
   const [amounts, setAmounts] = useState<Record<number, string>>(loadedAmounts);
   const [validationError, setValidationError] = useState("");
-  const [weatherOpen, setWeatherOpen] = useState(false);
   const [washActivityOpen, setWashActivityOpen] = useState(false);
   const incomingSignature = JSON.stringify({ record, recordRevision, loadedAmounts, automaticWeather: record ? null : weather?.weather ?? null });
   const semanticSignature = (values: { status: LedgerStatus; wash: string; weatherValue: string; weatherEdited: boolean; activity: string; directTotal: string; amounts: Record<number, string> }) => JSON.stringify({
@@ -74,7 +77,7 @@ export function LedgerForm({ categories, config, record, weather, onSave, onDirt
     activity: body.activity,
     items: body.items.map((item) => [item.category_id, item.amount]),
   });
-  const loadedSemanticSignature = semanticSignature({ status: record?.is_open ?? "营业", wash: record?.wash_count == null ? "" : String(record.wash_count), weatherValue: record?.weather ?? weather?.weather ?? "", weatherEdited: record?.weather_edited ?? false, activity: record?.activity ?? "", directTotal: String(record?.daily_revenue ?? 0), amounts: loadedAmounts });
+  const loadedSemanticSignature = semanticSignature({ status: record?.is_open ?? "营业", wash: record?.wash_count == null ? "" : String(record.wash_count), weatherValue: record?.weather ?? weather?.weather ?? "", weatherEdited: record?.weather_edited ?? false, activity: record?.activity ?? "", directTotal: loadedDirectTotal, amounts: loadedAmounts });
   const [baselineSignature, setBaselineSignature] = useState(loadedSemanticSignature);
   const [appliedIncomingSignature, setAppliedIncomingSignature] = useState(incomingSignature);
   const [consumedSubmissionRevision, setConsumedSubmissionRevision] = useState<number | null>(null);
@@ -89,11 +92,11 @@ export function LedgerForm({ categories, config, record, weather, onSave, onDirt
     setAppliedIncomingSignature(incomingSignature);
     setStatus(record?.is_open ?? "营业"); setWash(record?.wash_count == null ? "" : String(record.wash_count));
     setWeatherValue(record?.weather ?? weather?.weather ?? ""); setWeatherEdited(record?.weather_edited ?? false); setActivity(record?.activity ?? "");
-    setDirectTotal(String(record?.daily_revenue ?? 0));
+    setDirectTotal(loadedDirectTotal);
     setAmounts(loadedAmounts);
     setBaselineSignature(loadedSemanticSignature);
     if (canonicalSavedRecordReady) setConsumedSubmissionRevision(pendingSavedSubmission!.revision);
-  }, [appliedIncomingSignature, canonicalSavedRecordReady, currentSignature, effectiveBaselineSignature, incomingSignature, loadedAmounts, loadedSemanticSignature, pendingSavedSubmission, record, weather?.weather]);
+  }, [appliedIncomingSignature, canonicalSavedRecordReady, currentSignature, effectiveBaselineSignature, incomingSignature, loadedAmounts, loadedDirectTotal, loadedSemanticSignature, pendingSavedSubmission, record, weather?.weather]);
   useEffect(() => { onDirtyChange?.(currentSignature !== effectiveBaselineSignature); }, [currentSignature, effectiveBaselineSignature, onDirtyChange]);
   const includedAmounts = active.filter((category) => category.include_in_total).map((category) => parseWholeAmount(amounts[category.id] ?? "0"));
   const total = includedAmounts.every((result): result is { value: number } => "value" in result)
@@ -109,9 +112,9 @@ export function LedgerForm({ categories, config, record, weather, onSave, onDirt
   }
   return <form className="grid min-w-0 gap-3" onSubmit={(event) => { event.preventDefault(); const items = active.map((category) => ({ category_id: category.id, result: status === "休息" ? { value: 0 } : parseWholeAmount(amounts[category.id] ?? "") })); const directResult = status === "休息" ? { value: 0 } : parseWholeAmount(directTotal); const invalid = (composed ? items.map((item) => item.result) : [directResult]).find((result): result is { error: string } => "error" in result); if (invalid) { setValidationError(invalid.error); return; } setValidationError(""); onSave({ is_open: status, daily_revenue: composed ? null : "value" in directResult ? directResult.value : 0, wash_count: status === "休息" ? 0 : wash === "" ? null : Number(wash), weather: weatherValue || null, weather_edited: weatherEdited, activity: activity.trim() || null, items: composed ? items.map((item) => ({ category_id: item.category_id, amount: "value" in item.result ? item.result.value : 0 })) : [] }); }}>
     <label>状态<select aria-label="状态" value={status} onChange={(event) => changeStatus(event.target.value as LedgerStatus)} className="w-full rounded border p-2"><option>营业</option><option>休息</option><option>天气停业</option></select></label>
-    {composed ? <fieldset aria-label="收入项目" disabled={status === "休息"} className="grid gap-2 sm:grid-cols-2"><legend>收入项目</legend>{active.map((category) => <label key={category.id}>{category.name}<input aria-label={category.name} inputMode="numeric" type="text" value={amounts[category.id] ?? "0"} onChange={(event) => setAmounts((old) => ({ ...old, [category.id]: event.target.value }))} className="w-full rounded border p-2" /></label>)}</fieldset> : <label>当日营业额<input aria-label="当日营业额" inputMode="numeric" type="text" disabled={status === "休息"} value={directTotal} onChange={(event) => setDirectTotal(event.target.value)} className="w-full rounded border p-2" /></label>}
+    {composed ? <fieldset aria-label="收入项目" disabled={status === "休息"} className="grid gap-2 sm:grid-cols-2"><legend>收入项目</legend>{active.map((category) => <label key={category.id}>{category.name}<input aria-label={category.name} inputMode="numeric" type="text" value={amounts[category.id] ?? ""} onChange={(event) => setAmounts((old) => ({ ...old, [category.id]: event.target.value }))} className="w-full rounded border p-2" /></label>)}</fieldset> : <label>当日营业额<input aria-label="当日营业额" inputMode="numeric" type="text" disabled={status === "休息"} value={directTotal} onChange={(event) => setDirectTotal(event.target.value)} className="w-full rounded border p-2" /></label>}
     {composed && <p className="text-xl font-semibold">合计 {total === null ? "—" : formatWholeEuro(total)}</p>}
-    <section className="min-w-0 rounded-lg border"><button type="button" aria-controls="ledger-weather" aria-expanded={weatherOpen} onClick={() => setWeatherOpen((open) => !open)} className="flex min-h-11 w-full items-center justify-between px-3 py-2 text-left font-medium">天气<span aria-hidden="true">{weatherOpen ? "−" : "+"}</span></button>{weatherOpen && <div id="ledger-weather" className="border-t p-3"><label>天气<input aria-label="天气" value={weatherValue} onChange={(event) => { setWeatherValue(event.target.value); setWeatherEdited(true); }} className="w-full min-w-0 rounded border p-2" /></label></div>}</section>
+    <div className="grid min-w-0 gap-1"><span className="font-medium">天气</span><Select value={weatherValue} onValueChange={(value) => { setWeatherValue(value); setWeatherEdited(true); }}><SelectTrigger aria-label="天气" className="h-10"><SelectValue placeholder="请选择天气" /></SelectTrigger><SelectContent>{RECORD_WEATHER_OPTIONS.map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectContent></Select></div>
     <section className="min-w-0 rounded-lg border"><button type="button" aria-controls="ledger-wash-activity" aria-expanded={washActivityOpen} onClick={() => setWashActivityOpen((open) => !open)} className="flex min-h-11 w-full items-center justify-between px-3 py-2 text-left font-medium">洗车数量 / 活动<span aria-hidden="true">{washActivityOpen ? "−" : "+"}</span></button>{washActivityOpen && <div id="ledger-wash-activity" className="grid min-w-0 gap-3 border-t p-3"><label>洗车数量<input aria-label="洗车数量" type="number" min="0" disabled={status === "休息"} value={wash} onChange={(event) => setWash(event.target.value)} className="w-full min-w-0 rounded border p-2" /></label><label>活动<textarea aria-label="活动" value={activity} onChange={(event) => setActivity(event.target.value)} className="w-full min-w-0 rounded border p-2" /></label></div>}</section>
     {validationError && <p role="alert">{validationError}</p>}<Button disabled={saving} type="submit">{submitLabel}</Button>
   </form>;
