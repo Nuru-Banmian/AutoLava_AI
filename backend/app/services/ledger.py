@@ -127,7 +127,7 @@ class LedgerService:
         store: Store,
         record_date: date,
         payload: dict[str, Any],
-        actor: User,
+        actor_id: int,
     ) -> tuple[bool, int, date]:
         record = await self._find_record(store_id=store.id, record_date=record_date)
         created = record is None
@@ -163,6 +163,7 @@ class LedgerService:
                             IncomeCategory.is_active.is_(True),
                         )
                         .order_by(IncomeCategory.sort_order, IncomeCategory.id)
+                        .execution_options(populate_existing=True)
                     )
                 )
                 snapshots = {
@@ -207,13 +208,13 @@ class LedgerService:
             record = StoreDailyRecord(
                 store_id=store.id,
                 date=record_date,
-                created_by=actor.id,
-                updated_by=actor.id,
+                created_by=actor_id,
+                updated_by=actor_id,
                 income_mode=income_mode,
             )
             self.session.add(record)
         else:
-            record.updated_by = actor.id
+            record.updated_by = actor_id
             record.items.clear()
             await self.session.flush()
 
@@ -259,13 +260,26 @@ class LedgerService:
     ) -> LedgerWriteResult:
         if record_date > self._local_today(store):
             raise HTTPException(422, "Future ledger dates are not allowed")
+        store_id = store.id
+        actor_id = actor.id
         async with SQLITE_WRITE_LOCK:
             try:
+                # The dependency-loaded Store may predate weather or another external wait.
+                # End that read transaction only after winning the process write lock, then
+                # reload the configuration used to choose a new record's immutable mode.
+                await self.session.commit()
+                fresh_store = await self.session.scalar(
+                    select(Store)
+                    .where(Store.id == store_id)
+                    .execution_options(populate_existing=True)
+                )
+                if fresh_store is None:
+                    raise HTTPException(404, "Store not found")
                 created, record_id, canonical_date = await self._upsert_locked(
-                    store=store,
+                    store=fresh_store,
                     record_date=record_date,
                     payload=payload,
-                    actor=actor,
+                    actor_id=actor_id,
                 )
             except Exception:
                 await self.session.rollback()
@@ -282,7 +296,7 @@ class LedgerService:
                 record_id=record_id,
                 record_date=canonical_date,
                 operation="created" if created else "updated",
-                actor_id=actor.id,
+                actor_id=actor_id,
             ),
         )
 

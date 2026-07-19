@@ -8,7 +8,7 @@ directions without committing the constrained server to unvalidated services.
 
 ## Plan order
 
-1. [`2026-07-13-autolava-ai-phase-1-foundation.md`](2026-07-13-autolava-ai-phase-1-foundation.md) — authentication, store access, administration, ledger, audit/rollback, export, weather, dashboard, charts, responsive web UI, and deployment.
+1. [`2026-07-13-autolava-ai-phase-1-foundation.md`](2026-07-13-autolava-ai-phase-1-foundation.md) — authentication, store access, administration, current-state ledger, historical business records, export, weather, dashboard, charts, responsive web UI, and deployment. Its original implementation details are superseded by the SQLite simplification plan where they differ.
 3. [`2026-07-13-autolava-ai-phase-3-agent.md`](2026-07-13-autolava-ai-phase-3-agent.md) — future AI assistant direction; redesign is required before implementation.
 4. [`2026-07-13-autolava-ai-phase-4-automation-memory.md`](2026-07-13-autolava-ai-phase-4-automation-memory.md) — future automation and memory direction; redesign is required before implementation.
 

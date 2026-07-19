@@ -347,10 +347,22 @@ async def _held_ledger_write(
     async def canonical(*_args, **_kwargs):
         return SimpleNamespace(id=456, date=target)
 
+    async def no_transaction() -> None:
+        return None
+
+    async def fresh_store(_statement):
+        return store
+
     monkeypatch.setattr(LedgerService, "_upsert_locked", hold)
     monkeypatch.setattr(LedgerService, "_find_record", canonical)
     task = asyncio.create_task(
-        LedgerService(SimpleNamespace(rollback=None)).upsert(
+        LedgerService(
+            SimpleNamespace(
+                commit=no_transaction,
+                rollback=no_transaction,
+                scalar=fresh_store,
+            )
+        ).upsert(
             store=store,
             record_date=target,
             payload={},

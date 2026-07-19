@@ -8,10 +8,12 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import async_session_factory, engine
+from app.core.database import SQLITE_WRITE_LOCK, async_session_factory, engine
 from app.models.base import Base
 from app.models.identity import Store, User
 from app.models.ledger import IncomeCategory, StoreDailyRecord
+from app.schemas.income_config import IncomeConfigPublishBody
+from app.services.income_config import IncomeConfigService
 from app.services.ledger import LedgerService
 
 
@@ -260,3 +262,73 @@ async def test_same_day_creates_are_serialized_to_one_current_record() -> None:
     assert sorted(result.created for result in results) == [False, True]
     async with async_session_factory() as verify:
         assert await verify.scalar(select(func.count()).select_from(StoreDailyRecord)) == 1
+
+
+async def test_new_record_reloads_composed_config_after_waiting_for_lock() -> None:
+    async with engine.begin() as connection:
+        for table in reversed(Base.metadata.sorted_tables):
+            await connection.execute(table.delete())
+    async with async_session_factory() as setup:
+        user = User(
+            username="stale-config-ledger",
+            password_hash="unused",
+            role="admin",
+            is_active=True,
+        )
+        store = Store(
+            name="Stale configuration",
+            address="Stale configuration",
+            latitude=45,
+            longitude=9,
+            timezone="Europe/Berlin",
+            is_active=True,
+            income_items_enabled=False,
+        )
+        setup.add_all([user, store])
+        await setup.commit()
+        user_id, store_id = user.id, store.id
+
+    async with async_session_factory() as ledger_session:
+        stale_store = await ledger_session.get(Store, store_id)
+        actor = await ledger_session.get(User, user_id)
+        assert stale_store is not None
+        assert actor is not None
+        assert stale_store.income_items_enabled is False
+
+        async with async_session_factory() as config_session:
+            async with SQLITE_WRITE_LOCK:
+                configured = await IncomeConfigService(config_session).replace(
+                    store_id,
+                    IncomeConfigPublishBody(
+                        enabled=True,
+                        items=[
+                            {"name": "Cash", "include_in_total": True},
+                            {"name": "Agency", "include_in_total": False},
+                        ],
+                    ),
+                )
+                await config_session.commit()
+
+        result = await LedgerService(ledger_session).upsert(
+            store=stale_store,
+            record_date=datetime.now(ZoneInfo(stale_store.timezone)).date(),
+            payload={
+                "is_open": "营业",
+                "daily_revenue": None,
+                "items": [
+                    {"category_id": configured.items[0].id, "amount": 200},
+                    {"category_id": configured.items[1].id, "amount": 80},
+                ],
+            },
+            actor=actor,
+        )
+
+    assert result.record.income_mode == "composed"
+    assert result.record.daily_revenue == 200
+    assert [
+        (item.category_name, item.include_in_total, item.sort_order, item.amount)
+        for item in result.record.items
+    ] == [
+        ("Cash", True, 0, 200),
+        ("Agency", False, 1, 80),
+    ]

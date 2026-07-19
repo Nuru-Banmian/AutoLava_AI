@@ -205,55 +205,79 @@ async def create_user(body: UserCreate, session: Session, actor: UsersManager) -
 async def patch_user(
     user_id: int, body: UserPatch, session: Session, actor: UsersManager
 ) -> dict[str, Any]:
-    active_admins: list[User] = []
-    removes_active_admin = body.is_active is False or body.role == "user"
-    if removes_active_admin:
-        active_admins = list(
-            await session.scalars(
+    next_password_hash = (
+        hash_password(body.password) if body.password is not None else None
+    )
+    actor_id = actor.id
+    async with SQLITE_WRITE_LOCK:
+        try:
+            # Authentication may have opened a read transaction before this request
+            # waited for another write. End it under the lock so the safeguard counts
+            # administrators from the latest committed state.
+            await session.commit()
+            active_admins: list[User] = []
+            removes_active_admin = body.is_active is False or body.role == "user"
+            if removes_active_admin:
+                active_admins = list(
+                    await session.scalars(
+                        select(User)
+                        .where(User.role == "admin", User.is_active.is_(True))
+                        .order_by(User.id)
+                        .execution_options(populate_existing=True)
+                    )
+                )
+            user = await session.scalar(
                 select(User)
-                .where(User.role == "admin", User.is_active.is_(True))
-                .order_by(User.id)
+                .where(User.id == user_id)
                 .execution_options(populate_existing=True)
             )
-        )
-    user = await session.scalar(
-        select(User)
-        .where(User.id == user_id)
-        .execution_options(populate_existing=True)
-    )
-    if user is None:
-        raise HTTPException(404, "User not found")
-    _require_can_manage_target(actor, user)
-    _require_can_assign_role(actor, body.role)
-    if body.is_active is False and user.is_active:
-        if user.id == actor.id:
-            raise HTTPException(409, "You cannot deactivate your current account")
-        if user.role == "admin" and len(active_admins) <= 1:
-            raise HTTPException(409, "At least one active administrator is required")
-    if body.role == "user" and user.role == "admin" and user.is_active:
-        if len(active_admins) <= 1:
-            raise HTTPException(409, "At least one active administrator is required")
-    previous_store_ids = await _user_store_ids(session, user.id)
-    includes_access_change = body.role is not None or body.store_ids is not None
-    if body.password is not None:
-        user.password_hash = hash_password(body.password)
-    if body.is_active is not None:
-        user.is_active = body.is_active
-    if body.role is not None:
-        user.role = body.role
-    next_store_ids = previous_store_ids
-    if user.role == "admin":
-        next_store_ids = []
-    elif body.store_ids is not None:
-        next_store_ids = sorted(set(body.store_ids))
-        await _require_stores(session, next_store_ids)
-    if includes_access_change:
-        await session.execute(delete(StoreMember).where(StoreMember.user_id == user.id))
-        session.add_all(
-            StoreMember(store_id=store_id, user_id=user.id) for store_id in next_store_ids
-        )
-    await session.commit()
-    return _managed_user_payload(user, next_store_ids)
+            if user is None:
+                raise HTTPException(404, "User not found")
+            _require_can_manage_target(actor, user)
+            _require_can_assign_role(actor, body.role)
+            if body.is_active is False and user.is_active:
+                if user.id == actor_id:
+                    raise HTTPException(
+                        409, "You cannot deactivate your current account"
+                    )
+                if user.role == "admin" and len(active_admins) <= 1:
+                    raise HTTPException(
+                        409, "At least one active administrator is required"
+                    )
+            if body.role == "user" and user.role == "admin" and user.is_active:
+                if len(active_admins) <= 1:
+                    raise HTTPException(
+                        409, "At least one active administrator is required"
+                    )
+            previous_store_ids = await _user_store_ids(session, user.id)
+            includes_access_change = (
+                body.role is not None or body.store_ids is not None
+            )
+            if next_password_hash is not None:
+                user.password_hash = next_password_hash
+            if body.is_active is not None:
+                user.is_active = body.is_active
+            if body.role is not None:
+                user.role = body.role
+            next_store_ids = previous_store_ids
+            if user.role == "admin":
+                next_store_ids = []
+            elif body.store_ids is not None:
+                next_store_ids = sorted(set(body.store_ids))
+                await _require_stores(session, next_store_ids)
+            if includes_access_change:
+                await session.execute(
+                    delete(StoreMember).where(StoreMember.user_id == user.id)
+                )
+                session.add_all(
+                    StoreMember(store_id=store_id, user_id=user.id)
+                    for store_id in next_store_ids
+                )
+            await session.commit()
+            return _managed_user_payload(user, next_store_ids)
+        except Exception:
+            await session.rollback()
+            raise
 
 
 @router.delete("/users/{user_id}", status_code=204)
@@ -444,13 +468,19 @@ async def list_income_categories(store_id: int, session: Session) -> list[dict[s
 async def create_income_category(
     body: CategoryCreate, session: Session, actor: IncomeConfigManager
 ) -> dict[str, Any]:
-    await _require_store(session, body.store_id)
-    category = IncomeCategory(**body.model_dump())
-    session.add(category)
-    await session.flush()
-    response_payload = _category_payload(category)
-    await session.commit()
-    return response_payload
+    async with SQLITE_WRITE_LOCK:
+        try:
+            await session.commit()
+            await _require_store(session, body.store_id)
+            category = IncomeCategory(**body.model_dump())
+            session.add(category)
+            await session.flush()
+            response_payload = _category_payload(category)
+            await session.commit()
+            return response_payload
+        except Exception:
+            await session.rollback()
+            raise
 
 
 @router.patch("/income-categories/{category_id}")
@@ -461,24 +491,28 @@ async def patch_income_category(
     session: Session,
     actor: IncomeConfigManager,
 ) -> dict[str, Any]:
-    category = await session.get(IncomeCategory, category_id)
-    if category is None:
-        raise HTTPException(404, "Category not found")
-    include_changed = (
-        body.include_in_total is not None and body.include_in_total != category.include_in_total
-    )
     record_dates = set()
-    if include_changed:
-        record_dates = set(
-            await session.scalars(
-                select(StoreDailyRecord.date)
-                .join(DailyIncomeItem, DailyIncomeItem.record_id == StoreDailyRecord.id)
-                .where(DailyIncomeItem.category_id == category.id)
-            )
-        )
-
     async with SQLITE_WRITE_LOCK:
         try:
+            await session.commit()
+            category = await session.get(IncomeCategory, category_id)
+            if category is None:
+                raise HTTPException(404, "Category not found")
+            include_changed = (
+                body.include_in_total is not None
+                and body.include_in_total != category.include_in_total
+            )
+            if include_changed:
+                record_dates = set(
+                    await session.scalars(
+                        select(StoreDailyRecord.date)
+                        .join(
+                            DailyIncomeItem,
+                            DailyIncomeItem.record_id == StoreDailyRecord.id,
+                        )
+                        .where(DailyIncomeItem.category_id == category.id)
+                    )
+                )
             for field, value in body.model_dump(exclude_none=True).items():
                 setattr(category, field, value)
             await session.flush()
@@ -536,8 +570,14 @@ async def patch_income_category(
 async def delete_unused_category(
     category_id: int, session: Session, actor: IncomeConfigManager
 ) -> None:
-    await IncomeConfigService(session).delete_unused(category_id)
-    await session.commit()
+    async with SQLITE_WRITE_LOCK:
+        try:
+            await session.commit()
+            await IncomeConfigService(session).delete_unused(category_id)
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
 
 
 @router.get("/alerts", dependencies=[Depends(require_admin)])

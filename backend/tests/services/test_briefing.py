@@ -172,11 +172,23 @@ async def test_ledger_write_blocks_briefing_write_section(
         briefing_entered.set()
         return []
 
+    async def no_transaction() -> None:
+        return None
+
+    async def fresh_store(_statement):
+        return store
+
     monkeypatch.setattr(LedgerService, "_upsert_locked", hold_ledger)
     monkeypatch.setattr(LedgerService, "_find_record", canonical_record)
     monkeypatch.setattr(BriefingService, "regenerate", regenerate)
     ledger_task = asyncio.create_task(
-        LedgerService(SimpleNamespace(rollback=None)).upsert(
+        LedgerService(
+            SimpleNamespace(
+                commit=no_transaction,
+                rollback=no_transaction,
+                scalar=fresh_store,
+            )
+        ).upsert(
             store=store,
             record_date=target,
             payload={},
