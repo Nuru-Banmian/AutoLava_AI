@@ -79,6 +79,59 @@ jobs:
             sleep 2
           done
           exit 1
+      - name: Bootstrap, login, and verify SQLite persistence
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose exec -T autolava-api python -m app.scripts.create_admin
+
+          login() {
+            local payload response
+            payload="$(jq -cn \
+              --arg username "$AUTOLAVA_BOOTSTRAP_USERNAME" \
+              --arg password "$AUTOLAVA_BOOTSTRAP_PASSWORD" \
+              '{username: $username, password: $password}')"
+            response="$(curl --fail-with-body --silent --show-error \
+              --header "Content-Type: application/json" \
+              --data "$payload" \
+              http://127.0.0.1/api/auth/login)"
+            jq -e --arg username "$AUTOLAVA_BOOTSTRAP_USERNAME" \
+              '.username == $username' <<<"$response" >/dev/null
+          }
+
+          login
+          docker compose up -d --no-build --force-recreate autolava-api
+          docker compose restart autolava-web
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error http://127.0.0.1/health; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              exit 1
+            fi
+            sleep 2
+          done
+          login
+      - name: Verify manual SQLite online backup
+        run: |
+          docker compose exec -T autolava-api python - <<'PY'
+          from datetime import date
+
+          from app.core.config import get_settings
+          from app.services.sqlite_backup import backup_sqlite, has_valid_backup
+
+          settings = get_settings()
+          today = date.today()
+          expected = settings.backup_directory / f"autolava-{today:%Y%m%d}.sqlite3"
+          actual = backup_sqlite(settings.database_path, settings.backup_directory, today)
+          if (
+              actual != expected
+              or not expected.is_file()
+              or not has_valid_backup(settings.backup_directory, today)
+          ):
+              raise SystemExit("manual SQLite backup verification failed")
+          print(expected.name)
+          PY
       - name: Container diagnostics and cleanup
         if: always()
         run: |

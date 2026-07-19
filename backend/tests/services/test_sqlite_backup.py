@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 from datetime import date
 
 import pytest
@@ -24,7 +25,7 @@ def test_online_backup_is_readable_while_source_connection_remains_open(tmp_path
     source_connection.commit()
     try:
         backup = backup_sqlite(source, tmp_path / "backups", date(2026, 7, 19))
-        with sqlite3.connect(backup) as connection:
+        with closing(sqlite3.connect(backup)) as connection:
             value = connection.execute("SELECT value FROM snapshot_marker").fetchone()
         assert value == ("committed",)
         assert source_connection.execute("SELECT 1").fetchone() == (1,)
@@ -75,7 +76,7 @@ def test_failed_integrity_check_preserves_previous_same_day_backup(
     with pytest.raises(RuntimeError, match="integrity check failed"):
         backup_sqlite(source, destination, date(2026, 7, 19))
 
-    with sqlite3.connect(previous) as connection:
+    with closing(sqlite3.connect(previous)) as connection:
         value = connection.execute("SELECT value FROM snapshot_marker").fetchone()
     assert value == ("previous",)
     assert not previous.with_suffix(".sqlite3.tmp").exists()
@@ -106,7 +107,7 @@ def test_missing_source_preserves_existing_same_day_backup(tmp_path) -> None:
         backup_sqlite(source, destination, date(2026, 7, 19))
 
     assert not source.exists()
-    with sqlite3.connect(final) as connection:
+    with closing(sqlite3.connect(final)) as connection:
         value = connection.execute("SELECT value FROM snapshot_marker").fetchone()
     assert value == ("previous",)
     assert not final.with_suffix(".sqlite3.tmp").exists()

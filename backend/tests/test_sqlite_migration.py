@@ -1,8 +1,9 @@
 import os
-from pathlib import Path
 import sqlite3
 import subprocess
 import sys
+from contextlib import closing
+from pathlib import Path
 
 import pytest
 
@@ -31,7 +32,7 @@ def test_blank_sqlite_file_migrates_to_final_schema(tmp_path: Path) -> None:
         check=True,
     )
 
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection:
         tables = {
             name
             for (name,) in connection.execute(
@@ -70,7 +71,7 @@ def test_blank_sqlite_schema_rejects_negative_money_values(tmp_path: Path) -> No
         check=True,
     )
 
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection:
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute(
             "INSERT INTO users (username, password_hash, role, is_active) VALUES (?, ?, ?, ?)",

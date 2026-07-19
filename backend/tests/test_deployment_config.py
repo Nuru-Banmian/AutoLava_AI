@@ -225,6 +225,39 @@ def test_ci_uses_disposable_sqlite_and_prebuilt_release_images() -> None:
     assert "docker compose down --volumes --remove-orphans" in cleanup["run"]
 
 
+def test_ci_verifies_persistent_login_and_manual_online_backup() -> None:
+    workflow = yaml.safe_load(read(".github/workflows/ci.yml"))
+    steps = {
+        step.get("name"): step
+        for step in workflow["jobs"]["containers"]["steps"]
+        if step.get("name")
+    }
+
+    persistence = steps["Bootstrap, login, and verify SQLite persistence"]
+    persistence_script = persistence["run"]
+    assert "python -m app.scripts.create_admin" in persistence_script
+    assert "jq -cn" in persistence_script
+    assert "--arg username" in persistence_script
+    assert "--arg password" in persistence_script
+    assert "/api/auth/login" in persistence_script
+    assert "docker compose up -d --no-build --force-recreate autolava-api" in persistence_script
+    assert "docker compose restart autolava-web" in persistence_script
+    assert persistence_script.count("login") >= 3
+    assert "echo $AUTOLAVA_BOOTSTRAP_PASSWORD" not in persistence_script
+    assert "set -x" not in persistence_script
+
+    backup = steps["Verify manual SQLite online backup"]["run"]
+    assert "from app.services.sqlite_backup import backup_sqlite, has_valid_backup" in backup
+    assert "backup_sqlite(settings.database_path, settings.backup_directory, today)" in backup
+    assert 'f"autolava-{today:%Y%m%d}.sqlite3"' in backup
+    assert "expected.is_file()" in backup
+    assert "has_valid_backup(settings.backup_directory, today)" in backup
+
+    cleanup = steps["Container diagnostics and cleanup"]
+    assert cleanup["if"] == "always()"
+    assert "docker compose down --volumes --remove-orphans" in cleanup["run"]
+
+
 def test_environment_example_and_readme_document_sqlite_release_operations() -> None:
     environment = read(".env.example")
     readme = read("README.md")

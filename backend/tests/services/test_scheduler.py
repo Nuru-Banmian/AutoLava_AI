@@ -1,5 +1,6 @@
 import asyncio
 import sqlite3
+from contextlib import closing
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -170,7 +171,7 @@ async def test_sqlite_maintenance_runs_retention_after_successful_backup(
 ) -> None:
     await _reset_database()
     source = tmp_path / "source.sqlite3"
-    with sqlite3.connect(source) as connection:
+    with closing(sqlite3.connect(source)) as connection:
         connection.execute("CREATE TABLE marker (value TEXT)")
         connection.execute("INSERT INTO marker VALUES ('ok')")
     order: list[str] = []

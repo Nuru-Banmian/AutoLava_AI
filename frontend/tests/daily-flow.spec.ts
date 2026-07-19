@@ -42,6 +42,8 @@ async function mockMergedFlow(page: Page) {
   const databaseRequests: URL[] = [];
   const chartRequests: URL[] = [];
   const exportRequests: URL[] = [];
+  const ledgerWrites: { date: string; body: { items: { category_id: number; amount: number }[] } }[] = [];
+  const ledgerDeletes: string[] = [];
 
   await page.route(/^http:\/\/127\.0\.0\.1:4173\/api\//, async (route) => {
     const request = route.request();
@@ -62,15 +64,17 @@ async function mockMergedFlow(page: Page) {
       formula: categories.slice(0, 7).map((category) => category.name).join(" + "),
       items: categories.map((category) => ({ ...category, store_id: 1, archived_at: null })),
     });
-    if (path === `/api/weather/1/${today}`) return json({
+    if (/^\/api\/weather\/1\/\d{4}-\d{2}-\d{2}$/.test(path)) return json({
       weather: null, weather_code: null, temperature_max: null, temperature_min: null, precipitation: null,
     });
     if (path === "/api/ledger/1/recent") return json(records.slice(0, 7));
-    if (path === `/api/ledger/1/${today}` && request.method() === "GET") {
-      const record = records.find((item) => item.date === today);
+    const ledgerMatch = path.match(/^\/api\/ledger\/1\/(\d{4}-\d{2}-\d{2})$/);
+    if (ledgerMatch && request.method() === "GET") {
+      const record = records.find((item) => item.date === ledgerMatch[1]);
       return record ? json(record) : json({ detail: "not found" }, 404);
     }
-    if (path === `/api/ledger/1/${today}` && request.method() === "PUT") {
+    if (ledgerMatch && request.method() === "PUT") {
+      const targetDate = ledgerMatch[1];
       const body = request.postDataJSON() as {
         is_open: "营业" | "休息" | "天气停业";
         wash_count: number | null;
@@ -79,20 +83,28 @@ async function mockMergedFlow(page: Page) {
         activity: string | null;
         items: { category_id: number; amount: number }[];
       };
+      ledgerWrites.push({ date: targetDate, body });
       const amount = body.items.find((item) => item.category_id === 1)?.amount ?? 0;
-      const saved = snapshot(999, today, amount);
+      const existing = records.find((item) => item.date === targetDate);
+      const saved = snapshot(existing?.id ?? 999, targetDate, amount);
       saved.items = body.items.map((item, index) => ({
-        id: 9990 + index,
+        id: saved.id * 10 + index,
         category_id: item.category_id,
         category_name: categories.find((category) => category.id === item.category_id)!.name,
         include_in_total: categories.find((category) => category.id === item.category_id)!.include_in_total,
         sort_order: categories.find((category) => category.id === item.category_id)!.sort_order,
         amount: item.amount,
-        created_at: `${today}T12:00:00`,
-        updated_at: `${today}T12:00:00`,
+        created_at: `${targetDate}T12:00:00`,
+        updated_at: `${targetDate}T12:00:00`,
       }));
-      records = [saved, ...records.filter((item) => item.date !== today)];
-      return json({ id: 999, date: today, daily_revenue: amount });
+      records = [saved, ...records.filter((item) => item.date !== targetDate)]
+        .sort((left, right) => right.date.localeCompare(left.date));
+      return json({ id: saved.id, date: targetDate, daily_revenue: amount });
+    }
+    if (ledgerMatch && request.method() === "DELETE") {
+      ledgerDeletes.push(ledgerMatch[1]);
+      records = records.filter((item) => item.date !== ledgerMatch[1]);
+      return route.fulfill({ status: 204 });
     }
     if (path === "/api/database/1/records") {
       const pageNumber = Number(url.searchParams.get("page"));
@@ -102,7 +114,7 @@ async function mockMergedFlow(page: Page) {
       const filtered = records
         .filter((record) => record.date >= start && record.date <= end)
         .sort((left, right) => right.date.localeCompare(left.date));
-      if (pageNumber === 1 && pageSize === 1 && start === today && end === today) {
+      if (pageNumber === 1 && pageSize === 1 && start === end) {
         return json({
           items: filtered.slice(0, 1),
           categories,
@@ -166,7 +178,7 @@ async function mockMergedFlow(page: Page) {
     return json({ detail: `unmocked ${request.method()} ${path}` }, 500);
   });
 
-  return { databaseRequests, chartRequests, exportRequests };
+  return { databaseRequests, chartRequests, exportRequests, ledgerWrites, ledgerDeletes };
 }
 
 function recordRows(page: Page, mobile: boolean) {
@@ -257,3 +269,63 @@ for (const viewport of [
 
   });
 }
+
+test("desktop: multi-date ledger snapshots, markers, dirty guards, and permanent deletion", async ({ page }) => {
+  await page.clock.install({ time: new Date(`${today}T12:00:00Z`) });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const flow = await mockMergedFlow(page);
+
+  await page.goto(`/ledger?date=${today}`);
+  await page.getByLabel(categories[0].name).fill("123");
+  await page.getByRole("button", { name: "保存今日记录" }).click();
+  await expect(page.getByRole("status")).toContainText("保存成功");
+
+  await page.getByRole("button", { name: "选择台账日期：2026年7月17日" }).click();
+  const july15 = page.getByRole("button", { name: "2026年7月15日，已有记录" });
+  const july16 = page.getByRole("button", { name: "2026年7月16日，已有记录" });
+  await expect(july15).toHaveAttribute("data-recorded", "true");
+  await expect(july16).toHaveAttribute("data-recorded", "true");
+  await expect(july15.locator("span")).toHaveClass(/bg-primary/);
+  await july15.click();
+
+  await expect(page).toHaveURL(/date=2026-07-15/);
+  await expect(page.getByLabel(categories[0].name)).toHaveValue("101");
+  await page.getByLabel(categories[0].name).fill("215");
+  await page.getByRole("button", { name: "保存修改" }).click();
+  await expect(page.getByRole("status")).toContainText("保存成功");
+  expect(flow.ledgerWrites.map(({ date, body }) => ({
+    date,
+    amount: body.items.find((item) => item.category_id === 1)?.amount,
+  }))).toEqual([
+    { date: "2026-07-17", amount: 123 },
+    { date: "2026-07-15", amount: 215 },
+  ]);
+
+  await page.getByRole("button", { name: /2026-07-16/ }).click();
+  await expect(page.getByRole("button", { name: "选择台账日期：2026年7月16日" })).toBeVisible();
+  await expect(page.getByRole("alertdialog", { name: "放弃未保存的修改？" })).toHaveCount(0);
+  await expect(page.getByLabel(categories[0].name)).toHaveValue("100");
+
+  await page.getByLabel(categories[0].name).fill("333");
+  await page.getByRole("button", { name: /2026-07-15/ }).click();
+  const dirtyGuard = page.getByRole("alertdialog", { name: "放弃未保存的修改？" });
+  await expect(dirtyGuard).toBeVisible();
+  await dirtyGuard.getByRole("button", { name: "继续编辑" }).click();
+  await expect(page.getByLabel(categories[0].name)).toHaveValue("333");
+  await page.getByRole("button", { name: /2026-07-15/ }).click();
+  await dirtyGuard.getByRole("button", { name: "放弃修改" }).click();
+
+  const navigation = page.getByRole("navigation", { name: "主导航" });
+  await navigation.getByRole("link", { name: "营业记录" }).click();
+  const targetRow = page.getByRole("table").locator("tbody tr").filter({ hasText: "2026年7月15日" });
+  await targetRow.click();
+  await page.getByRole("button", { name: "管理这天记录" }).click();
+  await page.getByRole("button", { name: "永久删除这天记录" }).click();
+  await page.getByRole("button", { name: "确认永久删除" }).click();
+  await expect.poll(() => flow.ledgerDeletes).toContain("2026-07-15");
+  await expect(page.getByRole("table").locator("tbody tr").filter({ hasText: "2026年7月15日" })).toContainText("未录入");
+
+  await navigation.getByRole("link", { name: "每日记账" }).click();
+  await page.getByRole("button", { name: "选择台账日期：2026年7月17日" }).click();
+  await expect(page.getByRole("button", { name: "2026年7月15日" })).not.toHaveAttribute("data-recorded");
+});
