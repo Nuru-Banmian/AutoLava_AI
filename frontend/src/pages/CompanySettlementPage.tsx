@@ -329,11 +329,11 @@ export function CompanySettlementPage() {
       ]);
     },
     onError: async (error, variables) => {
+      const config = recordTransitionConfig[variables.kind];
+      const current = canonicalConflictRecord(error);
+      const targetReached = current?.id === variables.recordId
+        && current.status === config.targetStatus;
       if (selected?.id === variables.storeId) {
-        const config = recordTransitionConfig[variables.kind];
-        const current = canonicalConflictRecord(error);
-        const targetReached = current?.id === variables.recordId
-          && current.status === config.targetStatus;
         if (targetReached) {
           setRecordTransition(null);
           setRecordError("");
@@ -346,7 +346,12 @@ export function CompanySettlementPage() {
           setRecordMessage("");
         }
       }
-      await queryClient.invalidateQueries({ queryKey: ["settlement-month", variables.storeId, variables.month] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["settlement-month", variables.storeId, variables.month] }),
+        ...(targetReached
+          ? [queryClient.invalidateQueries({ queryKey: ["charts", variables.storeId] })]
+          : []),
+      ]);
     },
   });
   useEffect(() => {

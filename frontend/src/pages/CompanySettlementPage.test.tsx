@@ -146,7 +146,7 @@ describe("CompanySettlementPage record corrections", () => {
 
   it("adopts an already-confirmed canonical state after a concurrent confirmation", async () => {
     let current = record();
-    renderPage([
+    const { client } = renderPage([
       http.get("/api/settlements/1/months/:month", () => HttpResponse.json(monthResponse([current]))),
       http.post("/api/settlements/1/records/20/confirm", () => {
         current = record({ status: "confirmed", revision: 2 });
@@ -159,6 +159,8 @@ describe("CompanySettlementPage record corrections", () => {
         }, { status: 409 });
       }),
     ]);
+    const chartsQueryKey = ["charts", 1, "start=2026-07-01&end=2026-07-31"];
+    client.setQueryData(chartsQueryKey, { kpis: { total_revenue: 900 } });
 
     fireEvent.click(await screen.findByRole("button", { name: "确认Alpha开票记录到账" }));
     fireEvent.click(screen.getByRole("button", { name: "确认到账" }));
@@ -166,6 +168,7 @@ describe("CompanySettlementPage record corrections", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("记录状态已同步：已确认到账");
     expect(screen.queryByRole("alertdialog", { name: "确认整笔到账？" })).not.toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "撤销Alpha开票记录到账确认" })).toBeInTheDocument();
+    expect(client.getQueryState(chartsQueryKey)?.isInvalidated).toBe(true);
   });
 
   it("keeps a failed revocation open for a safe retry", async () => {
