@@ -181,10 +181,10 @@ test("settlement corrections feed complete-month analysis without narrow-screen 
 
   await page.getByPlaceholder("输入结算公司名称").fill("Alpha");
   await page.getByRole("button", { name: "新增结算公司" }).click();
-  await expect(page.getByLabel("结算公司", { exact: true }).locator("option").last()).toHaveText("Alpha（活动）");
+  await expect(page.getByLabel("结算公司", { exact: true }).locator("option").last()).toHaveText("Alpha");
 
   await page.getByLabel("开票月份").fill("2026-06");
-  await page.getByLabel("结算公司", { exact: true }).selectOption({ label: "Alpha（活动）" });
+  await page.getByLabel("结算公司", { exact: true }).selectOption({ label: "Alpha" });
   await page.getByLabel("金额（整数欧元）").fill("120");
   await page.getByRole("button", { name: "登记待到账记录" }).click();
   await expect(page.getByRole("button", { name: "编辑Alpha开票记录" })).toBeVisible();
@@ -207,7 +207,7 @@ test("settlement corrections feed complete-month analysis without narrow-screen 
   await expect(page.getByText("本月暂无开票记录。")).toBeVisible();
   const mobileStore = page.getByTestId("mobile-store-picker").getByLabel("门店");
   await mobileStore.selectOption("2");
-  await expect(page.getByText("Roma的公司结算")).toBeVisible();
+  await expect(mobileStore).toHaveValue("2");
   await mobileStore.selectOption("1");
   await expect(page.getByLabel("开票月份")).toHaveValue("2026-07");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);

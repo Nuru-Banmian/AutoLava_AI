@@ -53,7 +53,7 @@ function fillBlankLedgerAmounts() {
 
 async function chooseRecordWeather(value: string) {
   fireEvent.pointerDown(screen.getByRole("combobox", { name: "天气" }), { button: 0, ctrlKey: false, pointerType: "mouse" });
-  await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(6));
+  await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(28));
   const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((candidate) => candidate.textContent === value);
   expect(option).toBeDefined();
   fireEvent.click(option!);
@@ -194,7 +194,7 @@ describe("LedgerPage", () => {
 
   it("autofills a calendar-selected saved record and preserves untouched fields on modification", async () => {
     const historicalRecord = {
-      ...recordSnapshot(101, "周末促销", "雨"),
+      ...recordSnapshot(101, "周末促销", "中雨"),
       date: "2026-07-14",
       is_open: "天气停业" as const,
       wash_count: 17,
@@ -227,7 +227,7 @@ describe("LedgerPage", () => {
     expect(screen.getByLabelText("状态")).toHaveValue("天气停业");
     expect(screen.getByLabelText("现金")).toHaveValue("89");
     expect(screen.getByLabelText("刷卡")).toHaveValue("12");
-    expect(screen.getByRole("combobox", { name: "天气" })).toHaveTextContent("雨");
+    expect(screen.getByRole("combobox", { name: "天气" })).toHaveTextContent("中雨");
     fireEvent.click(screen.getByRole("button", { name: "洗车数量 / 活动" }));
     expect(screen.getByLabelText("洗车数量")).toHaveValue(17);
     expect(screen.getByLabelText("活动")).toHaveValue("周末促销");
@@ -237,7 +237,7 @@ describe("LedgerPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
     await waitFor(() => expect(submitted).toEqual({
       is_open: "天气停业", daily_revenue: null,
-      wash_count: 17, weather: "雨", weather_edited: false, activity: "周末促销",
+      wash_count: 17, weather: "中雨", weather_edited: false, activity: "周末促销",
       items: [{ category_id: 1, amount: 100 }, { category_id: 2, amount: 12 }, { category_id: 3, amount: 5 }],
     }));
   });
@@ -411,9 +411,9 @@ describe("LedgerPage", () => {
   it("keeps a manually selected weather value when delayed automatic weather arrives", async () => {
     const props = { config: singleConfig, categories: [{ id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }], onSave: () => undefined };
     const view = render(<LedgerForm {...props} />);
-    await chooseRecordWeather("雨");
+    await chooseRecordWeather("中雨");
     view.rerender(<LedgerForm {...props} weather={{ weather: "晴", weather_code: 1, temperature_max: 20, temperature_min: 10, precipitation: 0 }} />);
-    expect(screen.getByRole("combobox", { name: "天气" })).toHaveTextContent("雨");
+    expect(screen.getByRole("combobox", { name: "天气" })).toHaveTextContent("中雨");
   });
 
   it("blocks decimal and negative amounts with a visible whole-number error", () => {

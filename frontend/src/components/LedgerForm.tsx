@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import type { CategoryDescriptor, IncomeConfigResponse, LedgerBody, LedgerStatus, RecordSnapshot, WeatherResponse } from "@/api/types";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatWholeEuro, parseWholeAmount } from "@/lib/user-api";
 
-const RECORD_WEATHER_OPTIONS = ["晴", "多云", "雾", "雨", "雪", "雷雨"] as const;
+const RECORD_WEATHER_GROUPS = [
+  { label: "常用天气", options: ["晴", "少云", "多云", "阴", "小雨", "中雨", "大雨", "阵雨", "小雪", "中雪", "大雪", "雷雨"] },
+  { label: "雾与毛毛雨", options: ["雾", "冻雾", "小毛毛雨", "毛毛雨", "大毛毛雨", "小冻毛毛雨", "冻毛毛雨"] },
+  { label: "冻雨与强阵雨", options: ["小冻雨", "冻雨", "小阵雨", "大阵雨"] },
+  { label: "特殊降雪与雷暴", options: ["雪粒", "小阵雪", "大阵雪", "雷雨伴小冰雹", "雷雨伴大冰雹"] },
+] as const;
 
 export interface LedgerFormProps {
   categories: CategoryDescriptor[];
@@ -114,7 +119,7 @@ export function LedgerForm({ categories, config, record, weather, onSave, onDirt
     <label>状态<select aria-label="状态" value={status} onChange={(event) => changeStatus(event.target.value as LedgerStatus)} className="w-full rounded border p-2"><option>营业</option><option>休息</option><option>天气停业</option></select></label>
     {composed ? <fieldset aria-label="收入项目" disabled={status === "休息"} className="grid gap-2 sm:grid-cols-2"><legend>收入项目</legend>{active.map((category) => <label key={category.id}>{category.name}<input aria-label={category.name} inputMode="numeric" type="text" value={amounts[category.id] ?? ""} onChange={(event) => setAmounts((old) => ({ ...old, [category.id]: event.target.value }))} className="w-full rounded border p-2" /></label>)}</fieldset> : <label>当日营业额<input aria-label="当日营业额" inputMode="numeric" type="text" disabled={status === "休息"} value={directTotal} onChange={(event) => setDirectTotal(event.target.value)} className="w-full rounded border p-2" /></label>}
     {composed && <p className="text-xl font-semibold">合计 {total === null ? "—" : formatWholeEuro(total)}</p>}
-    <div className="grid min-w-0 gap-1"><span className="font-medium">天气</span><Select value={weatherValue} onValueChange={(value) => { setWeatherValue(value); setWeatherEdited(true); }}><SelectTrigger aria-label="天气" className="h-10"><SelectValue placeholder="请选择天气" /></SelectTrigger><SelectContent>{RECORD_WEATHER_OPTIONS.map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectContent></Select></div>
+    <div className="grid min-w-0 gap-1"><span className="font-medium">天气</span><Select value={weatherValue} onValueChange={(value) => { setWeatherValue(value); setWeatherEdited(true); }}><SelectTrigger aria-label="天气" className="h-10"><SelectValue placeholder="请选择天气" /></SelectTrigger><SelectContent>{RECORD_WEATHER_GROUPS.map((group, index) => <SelectGroup key={group.label}>{index > 0 && <SelectSeparator />}<SelectLabel>{group.label}</SelectLabel>{group.options.map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectGroup>)}</SelectContent></Select></div>
     <section className="min-w-0 rounded-lg border"><button type="button" aria-controls="ledger-wash-activity" aria-expanded={washActivityOpen} onClick={() => setWashActivityOpen((open) => !open)} className="flex min-h-11 w-full items-center justify-between px-3 py-2 text-left font-medium">洗车数量 / 活动<span aria-hidden="true">{washActivityOpen ? "−" : "+"}</span></button>{washActivityOpen && <div id="ledger-wash-activity" className="grid min-w-0 gap-3 border-t p-3"><label>洗车数量<input aria-label="洗车数量" type="number" min="0" disabled={status === "休息"} value={wash} onChange={(event) => setWash(event.target.value)} className="w-full min-w-0 rounded border p-2" /></label><label>活动<textarea aria-label="活动" value={activity} onChange={(event) => setActivity(event.target.value)} className="w-full min-w-0 rounded border p-2" /></label></div>}</section>
     {validationError && <p role="alert">{validationError}</p>}<Button disabled={saving} type="submit">{submitLabel}</Button>
   </form>;

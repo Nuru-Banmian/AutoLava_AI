@@ -41,20 +41,37 @@ class WeatherResult:
     precipitation: float
 
 
-def weather_label(code: int) -> str:
-    if code == 0:
-        return "晴"
-    if code in {1, 2, 3}:
-        return "多云"
-    if code in {45, 48}:
-        return "雾"
-    if code in {51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82}:
-        return "雨"
-    if code in {71, 73, 75, 77, 85, 86}:
-        return "雪"
-    if code in {95, 96, 99}:
-        return "雷雨"
-    return "未知"
+def weather_label(code: int) -> str | None:
+    return {
+        0: "晴",
+        1: "少云",
+        2: "多云",
+        3: "阴",
+        45: "雾",
+        48: "冻雾",
+        51: "小毛毛雨",
+        53: "毛毛雨",
+        55: "大毛毛雨",
+        56: "小冻毛毛雨",
+        57: "冻毛毛雨",
+        61: "小雨",
+        63: "中雨",
+        65: "大雨",
+        66: "小冻雨",
+        67: "冻雨",
+        71: "小雪",
+        73: "中雪",
+        75: "大雪",
+        77: "雪粒",
+        80: "小阵雨",
+        81: "阵雨",
+        82: "大阵雨",
+        85: "小阵雪",
+        86: "大阵雪",
+        95: "雷雨",
+        96: "雷雨伴小冰雹",
+        99: "雷雨伴大冰雹",
+    }.get(code)
 
 
 class WeatherProvider(Protocol):
@@ -95,8 +112,11 @@ class OpenMeteoProvider:
             response.raise_for_status()
             daily = response.json()["daily"]
             code = int(daily["weather_code"][0])
+            label = weather_label(code)
+            if label is None:
+                return None
             return WeatherResult(
-                weather=weather_label(code),
+                weather=label,
                 weather_code=code,
                 temperature_max=float(daily["temperature_2m_max"][0]),
                 temperature_min=float(daily["temperature_2m_min"][0]),

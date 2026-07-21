@@ -90,6 +90,29 @@ afterEach(() => {
 afterAll(() => server.close());
 
 describe("CompanySettlementPage record corrections", () => {
+  it("shows streamlined company labels and keeps company creation in one place", async () => {
+    renderPage();
+
+    const companySelect = await screen.findByLabelText("结算公司", { exact: true });
+    await screen.findByRole("option", { name: "Alpha" });
+    expect(companySelect).toHaveTextContent("Alpha");
+    expect(companySelect).not.toHaveTextContent("（活动）");
+    expect(screen.queryByText("登记时新增公司")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "新增并选择" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重命名Alpha" })).toHaveTextContent(/^重命名$/);
+    expect(screen.getByRole("button", { name: "归档Alpha" })).toHaveTextContent(/^归档$/);
+    expect(screen.getByRole("button", { name: "永久删除Alpha" })).toHaveTextContent(/^永久删除$/);
+    expect(screen.getByRole("button", { name: "新增结算公司" })).toBeInTheDocument();
+
+    const archivedCompanies = screen.getByRole("button", { name: "归档结算公司" });
+    expect(archivedCompanies).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("暂无归档公司")).not.toBeInTheDocument();
+
+    fireEvent.click(archivedCompanies);
+    expect(archivedCompanies).toHaveAttribute("aria-expanded", "true");
+    expect(await screen.findByText("暂无归档公司")).toBeInTheDocument();
+  });
+
   it("confirms the whole record after an explicit prompt and refreshes its month", async () => {
     let submitted: unknown;
     let current = record();
@@ -293,12 +316,20 @@ describe("CompanySettlementPage record corrections", () => {
   });
 
   it("clears the old store month, edit dialog, errors, and mutation state when switching stores", async () => {
+    let romaArchivedReads = 0;
     renderPage([
       http.patch("/api/settlements/1/records/20", () =>
         HttpResponse.json({ detail: "Internal Server Error" }, { status: 500 })),
+      http.get("/api/settlements/:storeId/companies", ({ params, request }) => {
+        const archived = new URL(request.url).searchParams.has("archived");
+        if (params.storeId === "2" && archived) romaArchivedReads += 1;
+        return HttpResponse.json(archived ? [] : companies);
+      }),
     ]);
 
     fireEvent.change(await screen.findByLabelText("开票月份"), { target: { value: "2026-06" } });
+    fireEvent.click(screen.getByRole("button", { name: "归档结算公司" }));
+    expect(await screen.findByText("暂无归档公司")).toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: "编辑Alpha开票记录" }));
     fireEvent.change(screen.getByLabelText("编辑金额（整数欧元）"), { target: { value: "250" } });
     fireEvent.click(screen.getByRole("button", { name: "保存开票记录修改" }));
@@ -306,9 +337,10 @@ describe("CompanySettlementPage record corrections", () => {
 
     fireEvent.click(screen.getByText("切换到Roma"));
 
-    expect(await screen.findByText("Roma的公司结算")).toBeInTheDocument();
+    expect(await screen.findByText("本月暂无开票记录。")).toBeInTheDocument();
     expect(screen.getByLabelText("开票月份")).toHaveValue("2026-07");
     expect(screen.queryByRole("dialog", { name: "修改开票记录" })).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(romaArchivedReads).toBe(0);
   });
 });

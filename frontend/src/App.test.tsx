@@ -213,13 +213,14 @@ describe("App", () => {
           ? HttpResponse.json({ detail: "暂时失败" }, { status: 503 })
           : HttpResponse.json({ store_id: 1, store_name: "已启用", company_settlement_enabled: true });
       }),
+      http.get("/api/settlements/1/companies", () => HttpResponse.json([])),
     );
     renderApplication("/settlements", { role: "user" });
 
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("暂时失败"));
     await userEvent.click(screen.getByRole("button", { name: "重试公司结算" }));
 
-    expect(await screen.findByText("已启用的公司结算")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "公司结算" })).toBeInTheDocument();
     expect(reads).toBe(2);
   });
 
@@ -252,8 +253,10 @@ describe("App", () => {
     );
     renderApplication("/settlements", { role: "user" });
 
-    expect(await screen.findByText("Alpha Fleet")).toBeInTheDocument();
-    expect(screen.getByText("Old Fleet")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "重命名Alpha Fleet" })).toBeInTheDocument();
+    expect(screen.queryByText("Old Fleet")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "归档结算公司" }));
+    expect(await screen.findByText("Old Fleet")).toBeInTheDocument();
     const input = screen.getByRole("textbox", { name: "新结算公司名称" });
     await userEvent.type(input, "  New   Fleet  ");
     await userEvent.click(screen.getByRole("button", { name: "新增结算公司" }));
@@ -261,9 +264,9 @@ describe("App", () => {
     expect(input).toHaveValue("  New   Fleet  ");
 
     await userEvent.click(screen.getByRole("button", { name: "重试操作" }));
-    expect(await screen.findByText("操作成功")).toBeInTheDocument();
     await waitFor(() => expect(input).toHaveValue(""));
-    expect(await screen.findByText("New Fleet")).toBeInTheDocument();
+    expect(screen.queryByText("操作成功")).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "重命名New Fleet" })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "归档Alpha Fleet" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "归档Alpha Fleet" })).not.toBeInTheDocument());
@@ -304,7 +307,7 @@ describe("App", () => {
     );
     renderApplication("/settlements", { role: "user" });
 
-    expect(await screen.findByText("一店公司")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "重命名一店公司" })).toBeInTheDocument();
     const draft = screen.getByRole("textbox", { name: "新结算公司名称" });
     await userEvent.type(draft, "一店草稿");
     await userEvent.click(screen.getByRole("button", { name: "新增结算公司" }));
@@ -315,7 +318,7 @@ describe("App", () => {
 
     const picker = within(screen.getByTestId("desktop-store-picker")).getByRole("combobox", { name: "门店" });
     await userEvent.selectOptions(picker, "2");
-    expect(await screen.findByText("二店公司")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "重命名二店公司" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "新结算公司名称" })).toHaveValue("");
     expect(screen.queryByRole("textbox", { name: "重命名一店公司" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "重试操作" })).not.toBeInTheDocument();
@@ -323,7 +326,7 @@ describe("App", () => {
     resolveOldRequest?.();
     await waitFor(() => expect(creates).toBe(2));
     expect(screen.queryByText("操作成功")).not.toBeInTheDocument();
-    expect(screen.getByText("二店公司")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重命名二店公司" })).toBeInTheDocument();
   });
 
   it("uses the store timezone for the opening month boundary", () => {
@@ -371,9 +374,11 @@ describe("App", () => {
     await waitFor(() => expect(screen.getByText("日常营业额").nextElementSibling).toHaveTextContent("€1,000"));
     expect(screen.getByText("月度总收入").nextElementSibling).toHaveTextContent("€1,000");
 
-    await userEvent.type(screen.getByLabelText("登记时新增公司"), "Beta Fleet");
-    await userEvent.click(screen.getByRole("button", { name: "新增并选择" }));
-    await waitFor(() => expect(screen.getByRole("combobox", { name: "结算公司" })).toHaveValue("2"));
+    await userEvent.type(screen.getByRole("textbox", { name: "新结算公司名称" }), "Beta Fleet");
+    await userEvent.click(screen.getByRole("button", { name: "新增结算公司" }));
+    const companyInput = screen.getByRole("combobox", { name: "结算公司" });
+    await within(companyInput).findByRole("option", { name: "Beta Fleet" });
+    await userEvent.selectOptions(companyInput, "2");
     const amountInput = screen.getByRole("spinbutton", { name: "金额（整数欧元）" });
     await userEvent.type(amountInput, "250");
     await userEvent.click(screen.getByRole("button", { name: "登记待到账记录" }));
@@ -418,12 +423,11 @@ describe("App", () => {
     );
     renderApplication("/settlements", { role: "user" });
     const company = await screen.findByRole("combobox", { name: "结算公司" });
-    await within(company).findByRole("option", { name: "1号公司（活动）" });
+    await within(company).findByRole("option", { name: "1号公司" });
     await userEvent.selectOptions(company, "1");
     await userEvent.clear(screen.getByLabelText("开票月份"));
     await userEvent.type(screen.getByLabelText("开票月份"), "2026-06");
     await userEvent.type(screen.getByRole("spinbutton", { name: "金额（整数欧元）" }), "88");
-    await userEvent.type(screen.getByLabelText("登记时新增公司"), "一店新公司");
     await userEvent.click(screen.getByRole("button", { name: "登记待到账记录" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("一店保存失败");
     await userEvent.click(screen.getByRole("button", { name: "重试保存" }));
@@ -432,7 +436,6 @@ describe("App", () => {
     await waitFor(() => expect(screen.getByRole("combobox", { name: "结算公司" })).toHaveValue(""));
     expect(screen.getByLabelText("开票月份")).toHaveValue(monthInTimezone("Pacific/Honolulu"));
     expect(screen.getByRole("spinbutton", { name: "金额（整数欧元）" })).toHaveValue(null);
-    expect(screen.getByLabelText("登记时新增公司")).toHaveValue("");
     expect(screen.queryByRole("button", { name: "重试保存" })).not.toBeInTheDocument();
     await waitFor(() => expect(screen.getByText("日常营业额").nextElementSibling).toHaveTextContent("€200"));
     releaseOldSave?.();

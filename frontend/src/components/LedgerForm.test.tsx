@@ -166,14 +166,20 @@ describe("LedgerForm", () => {
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ weather: null }));
   });
 
-  it("offers exactly the six record-weather choices", async () => {
+  it("offers all automatic weather types in convenient groups", async () => {
     render(<LedgerForm categories={[]} config={directConfig} onSave={vi.fn()} />);
 
     fireEvent.pointerDown(screen.getByRole("combobox", { name: "天气" }), { button: 0, ctrlKey: false, pointerType: "mouse" });
 
-    await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(6));
+    await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(28));
     const weatherOptions = [...document.querySelectorAll('[role="option"]')];
-    expect(weatherOptions.map((option) => option.textContent)).toEqual(["晴", "多云", "雾", "雨", "雪", "雷雨"]);
+    expect(weatherOptions.map((option) => option.textContent)).toEqual([
+      "晴", "少云", "多云", "阴", "小雨", "中雨", "大雨", "阵雨", "小雪", "中雪", "大雪", "雷雨",
+      "雾", "冻雾", "小毛毛雨", "毛毛雨", "大毛毛雨", "小冻毛毛雨", "冻毛毛雨",
+      "小冻雨", "冻雨", "小阵雨", "大阵雨", "雪粒", "小阵雪", "大阵雪", "雷雨伴小冰雹", "雷雨伴大冰雹",
+    ]);
+    expect(screen.getByText("常用天气")).toBeInTheDocument();
+    expect(screen.getByText("特殊降雪与雷暴")).toBeInTheDocument();
     expect(weatherOptions.some((option) => /未选择|请选择天气/.test(option.textContent ?? ""))).toBe(false);
   });
 });
