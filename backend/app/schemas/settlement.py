@@ -1,8 +1,8 @@
 import re
-from datetime import date
-from typing import Annotated
+from datetime import date, datetime
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, BeforeValidator, Field, StringConstraints
+from pydantic import BaseModel, BeforeValidator, Field, StrictInt, StringConstraints, field_serializer
 
 
 def _name(value: str) -> str:
@@ -23,6 +23,7 @@ CompanyName = Annotated[
     BeforeValidator(_name),
     StringConstraints(min_length=1, max_length=120),
 ]
+MAX_SETTLEMENT_AMOUNT = 9_999_999_999
 
 
 class CompanyResponse(BaseModel):
@@ -42,9 +43,39 @@ class CompanyPatch(BaseModel):
 
 
 class RecordCreate(BaseModel):
-    company_id: int
+    company_id: StrictInt = Field(gt=0)
     opening_month: str
-    amount: int = Field(gt=0)
+    amount: StrictInt = Field(gt=0, le=MAX_SETTLEMENT_AMOUNT)
+
+
+class SettlementRecordResponse(BaseModel):
+    id: int
+    company_id: int
+    company_name: str
+    opening_month: date
+    amount: int
+    status: Literal["pending", "confirmed"]
+    revision: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+    @field_serializer("opening_month")
+    def serialize_opening_month(self, value: date) -> str:
+        return value.strftime("%Y-%m")
+
+
+class SettlementMonthResponse(BaseModel):
+    opening_month: date
+    records: list[SettlementRecordResponse]
+    daily_ledger_revenue: int
+    confirmed_settlement_income: int
+    pending_amount: int
+    monthly_total: int
+
+    @field_serializer("opening_month")
+    def serialize_opening_month(self, value: date) -> str:
+        return value.strftime("%Y-%m")
 
 
 class RecordPatch(BaseModel):

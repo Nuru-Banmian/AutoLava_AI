@@ -4,9 +4,16 @@ from fastapi import APIRouter, Depends, Query, Response, status
 
 from app.api.deps import CurrentUser, Session
 from app.models.identity import Store, User
-from app.schemas.settlement import CompanyCreate, CompanyPatch, CompanyResponse
+from app.schemas.settlement import (
+    CompanyCreate,
+    CompanyPatch,
+    CompanyResponse,
+    RecordCreate,
+    SettlementMonthResponse,
+    SettlementRecordResponse,
+)
 from app.services.access import require_company_settlement_access
-from app.services.settlement import SettlementCompanyService
+from app.services.settlement import SettlementCompanyService, SettlementRecordService
 
 
 router = APIRouter(prefix="/settlements", tags=["company-settlement"])
@@ -40,6 +47,39 @@ async def settlement_workspace(
 def company_service(session: Session, access: EnabledSettlementStore) -> SettlementCompanyService:
     user, store = access
     return SettlementCompanyService(session, store_id=store.id, actor_id=user.id)
+
+
+def record_service(session: Session, access: EnabledSettlementStore) -> SettlementRecordService:
+    user, store = access
+    return SettlementRecordService(session, store=store, actor_id=user.id)
+
+
+@router.get("/{store_id}/months/{opening_month}", response_model=SettlementMonthResponse)
+async def settlement_month(
+    store_id: int,
+    opening_month: str,
+    access: EnabledSettlementStore,
+    session: Session,
+) -> SettlementMonthResponse:
+    return await record_service(session, access).month(opening_month)
+
+
+@router.post(
+    "/{store_id}/records",
+    response_model=SettlementRecordResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_settlement_record(
+    store_id: int,
+    body: RecordCreate,
+    access: EnabledSettlementStore,
+    session: Session,
+) -> SettlementRecordResponse:
+    return await record_service(session, access).create(
+        company_id=body.company_id,
+        opening_month=body.opening_month,
+        amount=body.amount,
+    )
 
 
 @router.get("/{store_id}/companies", response_model=list[CompanyResponse])

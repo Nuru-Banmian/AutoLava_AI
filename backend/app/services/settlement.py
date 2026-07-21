@@ -1,4 +1,5 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 from sqlalchemy import func, select
@@ -6,7 +7,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import sqlite_short_write
+from app.models.identity import Store
+from app.models.ledger import StoreDailyRecord
 from app.models.settlement import SettlementAuditEvent, SettlementCompany, SettlementRecord
+from app.schemas.settlement import parse_month
 from app.services.access import require_company_settlement_access
 
 
@@ -141,3 +145,126 @@ class SettlementCompanyService:
             before = company_state(company)
             await self.session.delete(company)
             self.audit("settlement_company.delete", company_id, before, None)
+
+
+def record_state(record: SettlementRecord) -> dict[str, object]:
+    return {
+        "id": record.id,
+        "company_id": record.company_id,
+        "company_name": record.company_name,
+        "opening_month": record.opening_month.isoformat(),
+        "amount": record.amount,
+        "status": record.status,
+        "revision": record.revision,
+    }
+
+
+class SettlementRecordService:
+    def __init__(self, session: AsyncSession, *, store: Store, actor_id: int):
+        self.session = session
+        self.store = store
+        self.store_id = store.id
+        self.actor_id = actor_id
+
+    async def recheck_access(self) -> Store:
+        _, store = await require_company_settlement_access(
+            self.session, user_id=self.actor_id, store_id=self.store_id
+        )
+        return store
+
+    def validated_month(self, value: str) -> date:
+        try:
+            month = parse_month(value)
+        except ValueError as exc:
+            raise HTTPException(422, "开票月份必须是有效的 YYYY-MM") from exc
+        current = datetime.now(ZoneInfo(self.store.timezone)).date().replace(day=1)
+        if month > current:
+            raise HTTPException(422, "开票月份不能位于未来")
+        return month
+
+    async def month(self, value: str) -> dict[str, object]:
+        store = await self.recheck_access()
+        self.store = store
+        month = self.validated_month(value)
+        if month.month == 12:
+            next_month = date(month.year + 1, 1, 1)
+        else:
+            next_month = date(month.year, month.month + 1, 1)
+        records = list(
+            (
+                await self.session.scalars(
+                    select(SettlementRecord)
+                    .where(
+                        SettlementRecord.store_id == self.store_id,
+                        SettlementRecord.opening_month == month,
+                    )
+                    .order_by(
+                        SettlementRecord.status.desc(),
+                        func.lower(SettlementRecord.company_name),
+                        SettlementRecord.created_at,
+                        SettlementRecord.id,
+                    )
+                )
+            ).all()
+        )
+        daily_revenue = int(
+            await self.session.scalar(
+                select(func.coalesce(func.sum(StoreDailyRecord.daily_revenue), 0)).where(
+                    StoreDailyRecord.store_id == self.store_id,
+                    StoreDailyRecord.date >= month,
+                    StoreDailyRecord.date < next_month,
+                )
+            )
+            or 0
+        )
+        confirmed = sum(record.amount for record in records if record.status == "confirmed")
+        pending = sum(record.amount for record in records if record.status == "pending")
+        return {
+            "opening_month": month,
+            "records": records,
+            "daily_ledger_revenue": daily_revenue,
+            "confirmed_settlement_income": confirmed,
+            "pending_amount": pending,
+            "monthly_total": daily_revenue + confirmed,
+        }
+
+    async def create(self, *, company_id: int, opening_month: str, amount: int) -> SettlementRecord:
+        month = self.validated_month(opening_month)
+        async with sqlite_short_write(self.session):
+            store = await self.recheck_access()
+            self.store = store
+            month = self.validated_month(opening_month)
+            company = await self.session.scalar(
+                select(SettlementCompany).where(
+                    SettlementCompany.id == company_id,
+                    SettlementCompany.store_id == self.store_id,
+                    SettlementCompany.is_active.is_(True),
+                )
+            )
+            if company is None:
+                raise HTTPException(404, "当前门店的活动结算公司不存在")
+            record = SettlementRecord(
+                store_id=self.store_id,
+                company_id=company.id,
+                company_name=company.name,
+                opening_month=month,
+                amount=amount,
+                status="pending",
+                revision=1,
+                created_by=self.actor_id,
+                updated_by=self.actor_id,
+            )
+            self.session.add(record)
+            await self.session.flush()
+            self.session.add(
+                SettlementAuditEvent(
+                    store_id=self.store_id,
+                    actor_id=self.actor_id,
+                    action="settlement_record.create",
+                    entity_type="settlement_record",
+                    entity_id=record.id,
+                    before_state=None,
+                    after_state=record_state(record),
+                )
+            )
+        return record

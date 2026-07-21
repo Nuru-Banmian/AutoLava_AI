@@ -19,6 +19,45 @@ interface SettlementCompany {
   is_active: boolean;
 }
 
+interface SettlementRecord {
+  id: number;
+  company_id: number;
+  company_name: string;
+  opening_month: string;
+  amount: number;
+  status: "pending" | "confirmed";
+  revision: number;
+  created_at: string;
+}
+
+interface SettlementMonth {
+  opening_month: string;
+  records: SettlementRecord[];
+  daily_ledger_revenue: number;
+  confirmed_settlement_income: number;
+  pending_amount: number;
+  monthly_total: number;
+}
+
+export function monthInTimezone(timezone: string, now = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone, year: "numeric", month: "2-digit",
+  }).formatToParts(now);
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${value.year}-${value.month}`;
+}
+
+function euro(value: number) {
+  return new Intl.NumberFormat("zh-CN", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(value);
+}
+
+const MAX_SETTLEMENT_AMOUNT = 9_999_999_999;
+
+function validAmount(value: string) {
+  const amount = Number(value);
+  return /^\d+$/.test(value) && Number.isSafeInteger(amount) && amount > 0 && amount <= MAX_SETTLEMENT_AMOUNT;
+}
+
 interface CompanyMutation {
   storeId: number;
   path: string;
@@ -70,6 +109,11 @@ export function CompanySettlementPage() {
   const [name, setName] = useState("");
   const [message, setMessage] = useState("");
   const [failedAction, setFailedAction] = useState<(() => void) | null>(null);
+  const [month, setMonth] = useState(() => selected ? monthInTimezone(selected.timezone) : "");
+  const [companyId, setCompanyId] = useState("");
+  const [amount, setAmount] = useState("");
+  const [inlineCompanyName, setInlineCompanyName] = useState("");
+  const [recordError, setRecordError] = useState("");
   const enabled = selected?.company_settlement_enabled === true;
   const workspace = useQuery({
     queryKey: ["settlements", selected?.id],
@@ -85,6 +129,11 @@ export function CompanySettlementPage() {
     queryKey: ["settlement-companies", selected?.id, "archived"],
     queryFn: () => api<SettlementCompany[]>(`/settlements/${selected!.id}/companies?archived=true`),
     enabled: Boolean(selected && enabled && workspace.data),
+  });
+  const monthSummary = useQuery({
+    queryKey: ["settlement-month", selected?.id, month],
+    queryFn: () => api<SettlementMonth>(`/settlements/${selected!.id}/months/${month}`),
+    enabled: Boolean(selected && enabled && workspace.data && month),
   });
   const refresh = async (storeId: number) => {
     await queryClient.invalidateQueries({ queryKey: ["settlement-companies", storeId] });
@@ -105,11 +154,51 @@ export function CompanySettlementPage() {
       setFailedAction(() => variables.retry);
     },
   });
+  const recordMutation = useMutation({
+    mutationFn: (variables: { storeId: number; month: string; companyId: number; amount: number }) =>
+      api<SettlementRecord>(`/settlements/${variables.storeId}/records`, {
+        method: "POST",
+        body: JSON.stringify({ company_id: variables.companyId, opening_month: variables.month, amount: variables.amount }),
+      }),
+    onSuccess: async (_record, variables) => {
+      if (selected?.id === variables.storeId) {
+        setAmount("");
+        setRecordError("");
+      }
+      await queryClient.invalidateQueries({ queryKey: ["settlement-month", variables.storeId, variables.month] });
+    },
+    onError: (error, variables) => {
+      if (selected?.id === variables.storeId) setRecordError(friendlyApiError(error, "开票记录保存失败，请重试"));
+    },
+  });
+  const inlineCompanyMutation = useMutation({
+    mutationFn: (variables: { storeId: number; name: string }) => api<SettlementCompany>(`/settlements/${variables.storeId}/companies`, {
+      method: "POST", body: JSON.stringify({ name: variables.name }),
+    }),
+    onSuccess: async (company, variables) => {
+      if (selected?.id === variables.storeId) {
+        setCompanyId(String(company.id));
+        setInlineCompanyName("");
+        setRecordError("");
+      }
+      await refresh(variables.storeId);
+    },
+    onError: (error, variables) => {
+      if (selected?.id === variables.storeId) setRecordError(friendlyApiError(error, "结算公司新增失败，请重试"));
+    },
+  });
   useEffect(() => {
     setName("");
     setMessage("");
     setFailedAction(null);
+    setMonth(selected ? monthInTimezone(selected.timezone) : "");
+    setCompanyId("");
+    setAmount("");
+    setInlineCompanyName("");
+    setRecordError("");
     mutate.reset();
+    recordMutation.reset();
+    inlineCompanyMutation.reset();
   }, [selected?.id]);
   const submitCreate = (storeId: number, submittedName: string) => {
     const retry = () => submitCreate(storeId, submittedName);
@@ -151,6 +240,71 @@ export function CompanySettlementPage() {
       {workspace.data ? `${workspace.data.store_name}的公司结算` : "正在加载公司结算…"}
     </p>
     {workspace.data && <>
+      <section className="grid gap-4" aria-labelledby="records-title">
+        <div className="flex min-w-0 flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold" id="records-title">开票记录</h2>
+            <p className="text-sm text-muted-foreground">按开票月份登记；到账确认不会记录单独日期。</p>
+          </div>
+          <label className="grid gap-1 text-sm font-medium">
+            开票月份
+            <Input aria-label="开票月份" max={selected ? monthInTimezone(selected.timezone) : undefined} onChange={(event) => setMonth(event.target.value)} required type="month" value={month} />
+          </label>
+        </div>
+        <form className="grid min-w-0 gap-3 rounded-lg border p-4 sm:grid-cols-2 lg:grid-cols-4" onSubmit={(event) => {
+          event.preventDefault();
+          if (!selected || !month || !companyId || !validAmount(amount)) return;
+          inlineCompanyMutation.reset();
+          setRecordError("");
+          recordMutation.mutate({ storeId: selected.id, month, companyId: Number(companyId), amount: Number(amount) });
+        }}>
+          <label className="grid min-w-0 gap-1 text-sm font-medium">
+            结算公司
+            <select aria-label="结算公司" className="h-9 min-w-0 rounded-md border border-input bg-transparent px-3 text-sm" onChange={(event) => setCompanyId(event.target.value)} required value={companyId}>
+              <option value="">请选择活动结算公司</option>
+              {(active.data ?? []).map((company) => <option key={company.id} value={company.id}>{company.name}（活动）</option>)}
+            </select>
+          </label>
+          <label className="grid min-w-0 gap-1 text-sm font-medium">
+            金额（整数欧元）
+            <Input aria-label="金额（整数欧元）" inputMode="numeric" max={MAX_SETTLEMENT_AMOUNT} min="1" onChange={(event) => setAmount(event.target.value)} pattern="[0-9]+" required step="1" type="number" value={amount} />
+          </label>
+          <div className="flex items-end">
+            <Button className="w-full" disabled={recordMutation.isPending || !month || !companyId || !validAmount(amount)} type="submit">登记待到账记录</Button>
+          </div>
+          <div className="grid min-w-0 gap-1">
+            <label className="text-sm font-medium" htmlFor="inline-company-name">登记时新增公司</label>
+            <div className="flex min-w-0 gap-2">
+              <Input id="inline-company-name" maxLength={120} onChange={(event) => setInlineCompanyName(event.target.value)} placeholder="公司名称" value={inlineCompanyName} />
+              <Button disabled={inlineCompanyMutation.isPending || !inlineCompanyName.trim()} onClick={() => {
+                if (!selected) return;
+                recordMutation.reset();
+                setRecordError("");
+                inlineCompanyMutation.mutate({ storeId: selected.id, name: inlineCompanyName });
+              }} type="button" variant="outline">新增并选择</Button>
+            </div>
+          </div>
+        </form>
+        {recordError && <div role="alert">{recordError}<Button className="ml-2" disabled={recordMutation.isPending || inlineCompanyMutation.isPending} onClick={() => {
+          if (recordMutation.isError && selected && month && companyId && validAmount(amount)) recordMutation.mutate({ storeId: selected.id, month, companyId: Number(companyId), amount: Number(amount) });
+          else if (inlineCompanyMutation.isError && selected) inlineCompanyMutation.mutate({ storeId: selected.id, name: inlineCompanyName });
+        }} type="button" variant="outline">重试保存</Button></div>}
+        {monthSummary.isLoading ? <p role="status">正在加载月份记录…</p> : monthSummary.error ? <div role="alert"><p>{friendlyApiError(monthSummary.error, "月份记录加载失败")}</p><Button onClick={() => void monthSummary.refetch()} type="button" variant="outline">重试月份记录</Button></div> : monthSummary.data && <>
+          <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-lg border p-3"><dt className="text-sm text-muted-foreground">日常营业额</dt><dd className="text-lg font-semibold">{euro(monthSummary.data.daily_ledger_revenue)}</dd></div>
+            <div className="rounded-lg border p-3"><dt className="text-sm text-muted-foreground">已确认公司结算</dt><dd className="text-lg font-semibold">{euro(monthSummary.data.confirmed_settlement_income)}</dd></div>
+            <div className="rounded-lg border p-3"><dt className="text-sm text-muted-foreground">待到账金额</dt><dd className="text-lg font-semibold">{euro(monthSummary.data.pending_amount)}</dd></div>
+            <div className="rounded-lg border p-3"><dt className="text-sm text-muted-foreground">月度总收入</dt><dd className="text-lg font-semibold">{euro(monthSummary.data.monthly_total)}</dd></div>
+          </dl>
+          {monthSummary.data.records.length ? <ul aria-label={`${month}开票记录`} className="grid gap-2">
+            {monthSummary.data.records.map((record) => <li className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg border p-3" key={record.id}>
+              <span className="min-w-0 break-words font-medium">{record.company_name}</span>
+              <span>{euro(record.amount)}</span>
+              <span className="rounded-full bg-muted px-2 py-1 text-sm">{record.status === "pending" ? "待到账" : "已确认"}</span>
+            </li>)}
+          </ul> : <p>本月暂无开票记录。</p>}
+        </>}
+      </section>
       <section className="grid gap-3" aria-labelledby="active-companies-title">
         <h2 className="text-xl font-semibold" id="active-companies-title">活动结算公司</h2>
         <form className="flex min-w-0 flex-wrap gap-2" onSubmit={create}>
