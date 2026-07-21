@@ -24,10 +24,13 @@ class DailyRevenue(BaseModel):
     revenue: int
 
 
-class CategoryComposition(BaseModel):
-    category_id: int | None
-    category_name: str
+class SettlementComposition(BaseModel):
+    category_id: None = None
+    category_name: Literal["公司结算"]
     amount: int
+
+
+CategoryComposition = PrimaryCategory | SettlementComposition
 
 
 class MonthlyRevenue(BaseModel):

@@ -132,7 +132,9 @@ export interface BriefingCard {
 }
 export interface WeatherResponse { weather: string | null; weather_code: number | null; temperature_max: number | null; temperature_min: number | null; precipitation: number | null }
 export type ChartBucket = "day" | "month";
-export interface CategoryComposition { category_id: number | null; category_name: string; amount: number }
+export type CategoryComposition =
+  | { category_id: number; category_name: string; amount: number }
+  | { category_id: null; category_name: "公司结算"; amount: number };
 export interface ChartComparisonKpis { start: string; end: string; total_revenue: number; open_days: number; average_revenue: number }
 export interface IncomeSummary { daily_ledger_revenue: number; confirmed_settlement_income: number; total_income: number; includes_settlement_income: boolean }
 export interface MonthlyRevenue { month: string; revenue: number; daily_ledger_revenue: number; confirmed_settlement_income: number | null; monthly_total_income: number | null }

@@ -65,7 +65,7 @@ function renderPage(extra: Parameters<typeof server.use> = []) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
+  const view = render(
     <MemoryRouter>
       <QueryClientProvider client={client}>
         <StoreProvider userId={1}>
@@ -75,6 +75,7 @@ function renderPage(extra: Parameters<typeof server.use> = []) {
       </QueryClientProvider>
     </MemoryRouter>,
   );
+  return { ...view, client };
 }
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
@@ -116,7 +117,7 @@ describe("CompanySettlementPage record corrections", () => {
   it("confirms the whole record after an explicit prompt and refreshes its month", async () => {
     let submitted: unknown;
     let current = record();
-    renderPage([
+    const { client } = renderPage([
       http.get("/api/settlements/1/months/:month", () => HttpResponse.json({
         ...monthResponse([current]),
         confirmed_settlement_income: current.status === "confirmed" ? current.amount : 0,
@@ -129,6 +130,8 @@ describe("CompanySettlementPage record corrections", () => {
         return HttpResponse.json(current);
       }),
     ]);
+    const chartsQueryKey = ["charts", 1, "start=2026-07-01&end=2026-07-31"];
+    client.setQueryData(chartsQueryKey, { kpis: { total_revenue: 900 } });
 
     fireEvent.click(await screen.findByRole("button", { name: "确认Alpha开票记录到账" }));
     expect(screen.getByRole("alertdialog", { name: "确认整笔到账？" })).toBeInTheDocument();
@@ -138,6 +141,7 @@ describe("CompanySettlementPage record corrections", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("开票记录已确认到账");
     expect(await screen.findByRole("button", { name: "撤销Alpha开票记录到账确认" })).toBeInTheDocument();
     expect(screen.getByText("€120", { selector: "dd" })).toBeInTheDocument();
+    expect(client.getQueryState(chartsQueryKey)?.isInvalidated).toBe(true);
   });
 
   it("adopts an already-confirmed canonical state after a concurrent confirmation", async () => {

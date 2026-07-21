@@ -323,7 +323,10 @@ export function CompanySettlementPage() {
         setRecordError("");
         setRecordMessage(recordTransitionConfig[variables.kind].successMessage);
       }
-      await queryClient.invalidateQueries({ queryKey: ["settlement-month", variables.storeId, variables.month] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["settlement-month", variables.storeId, variables.month] }),
+        queryClient.invalidateQueries({ queryKey: ["charts", variables.storeId] }),
+      ]);
     },
     onError: async (error, variables) => {
       if (selected?.id === variables.storeId) {
