@@ -137,7 +137,7 @@ export type CategoryComposition =
   | { category_id: null; category_name: "公司结算"; amount: number };
 export interface ChartComparisonKpis { start: string; end: string; total_revenue: number; open_days: number; average_revenue: number }
 export interface IncomeSummary { daily_ledger_revenue: number; confirmed_settlement_income: number; total_income: number; includes_settlement_income: boolean }
-export interface MonthlyRevenue { month: string; revenue: number; daily_ledger_revenue: number; confirmed_settlement_income: number | null; monthly_total_income: number | null }
+export interface MonthlyRevenue { month: string; revenue: number; daily_ledger_revenue: number; confirmed_settlement_income: number; monthly_total_income: number }
 export interface ChartsResponse {
   kpis: { total_revenue: number; record_days: number; open_days: number; average_revenue: number; primary_categories: CategoryComposition[]; total_wash_count: number | null; average_ticket: number | null };
   range: { start: string; end: string; bucket: ChartBucket };

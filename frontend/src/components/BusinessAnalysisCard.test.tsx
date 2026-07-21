@@ -20,7 +20,7 @@ function payload(overrides: Partial<ChartsResponse> = {}): ChartsResponse {
     daily: [{ date: "2026-07-01", revenue: 100 }],
     categories: [{ category_id: 1, category_name: "现金收入", amount: 100 }],
     excluded_categories: [{ category_id: 2, category_name: "代收款", amount: 20 }],
-    monthly: [{ month: "2026-07", revenue: 100, daily_ledger_revenue: 100, confirmed_settlement_income: null, monthly_total_income: null }],
+    monthly: [{ month: "2026-07", revenue: 100, daily_ledger_revenue: 100, confirmed_settlement_income: 0, monthly_total_income: 100 }],
     weather: [],
     weekday: [],
     ...overrides,

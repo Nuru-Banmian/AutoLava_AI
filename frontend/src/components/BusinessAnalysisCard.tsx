@@ -63,7 +63,7 @@ export function BusinessAnalysisCard({ storeId, today }: BusinessAnalysisCardPro
   const data = charts.data;
   const trend = data ? (data.range.bucket === "day"
     ? data.daily.map((row) => ({ label: row.date, revenue: row.revenue }))
-    : data.monthly.map((row) => ({ label: row.month, revenue: row.monthly_total_income ?? row.revenue }))) : [];
+    : data.monthly.map((row) => ({ label: row.month, revenue: row.monthly_total_income }))) : [];
   const hasBusinessData = (data?.income_summary.total_income ?? 0) !== 0;
   const isSingleMonth = data?.range.start.slice(0, 7) === data?.range.end.slice(0, 7);
 

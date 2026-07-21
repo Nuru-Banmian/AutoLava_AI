@@ -1,5 +1,4 @@
 from collections import defaultdict
-from calendar import monthrange
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
@@ -59,33 +58,25 @@ def _revenue_kpis(records: list[StoreDailyRecord]) -> dict:
     }
 
 
-def _is_complete_month_range(start: date, end: date) -> bool:
-    return start.day == 1 and end.day == monthrange(end.year, end.month)[1]
+def _month_start(value: date) -> date:
+    return value.replace(day=1)
 
 
 def _monthly_revenue_rows(
     daily_by_month: dict[str, int],
     settlement_by_month: dict[str, int],
-    *,
-    include_settlement: bool,
 ) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for month in sorted(daily_by_month.keys() | settlement_by_month.keys()):
         daily_revenue = daily_by_month.get(month, 0)
-        settlement_income = (
-            settlement_by_month.get(month, 0) if include_settlement else None
-        )
+        settlement_income = settlement_by_month.get(month, 0)
         rows.append(
             {
                 "month": month,
                 "revenue": daily_revenue,
                 "daily_ledger_revenue": daily_revenue,
                 "confirmed_settlement_income": settlement_income,
-                "monthly_total_income": (
-                    daily_revenue + settlement_income
-                    if settlement_income is not None
-                    else None
-                ),
+                "monthly_total_income": daily_revenue + settlement_income,
             }
         )
     return rows
@@ -98,8 +89,8 @@ class AnalyticsService:
     async def _confirmed_settlement_by_month(
         self, *, store_id: int, start: date, end: date
     ) -> dict[str, int]:
-        if not _is_complete_month_range(start, end):
-            return {}
+        first_month = _month_start(start)
+        last_month = _month_start(end)
         rows = (
             await self.session.execute(
                 select(
@@ -109,8 +100,8 @@ class AnalyticsService:
                 .where(
                     SettlementRecord.store_id == store_id,
                     SettlementRecord.status == "confirmed",
-                    SettlementRecord.opening_month >= start,
-                    SettlementRecord.opening_month <= end,
+                    SettlementRecord.opening_month >= first_month,
+                    SettlementRecord.opening_month <= last_month,
                 )
                 .group_by(SettlementRecord.opening_month)
             )
@@ -127,6 +118,7 @@ class AnalyticsService:
         start: date,
         end: date,
         category_ids: list[int] | None,
+        company_settlement_enabled: bool = False,
         compare_start: date | None = None,
         compare_end: date | None = None,
         bucket: Literal["day", "month"] = "day",
@@ -206,6 +198,9 @@ class AnalyticsService:
         kpis = _revenue_kpis(records)
         daily_ledger_revenue = kpis["total_revenue"]
         confirmed_settlement_income = sum(settlement_by_month.values())
+        includes_settlement_income = (
+            company_settlement_enabled or confirmed_settlement_income > 0
+        )
         total_income = daily_ledger_revenue + confirmed_settlement_income
         if confirmed_settlement_income:
             compositions.append(
@@ -254,7 +249,7 @@ class AnalyticsService:
                 "daily_ledger_revenue": daily_ledger_revenue,
                 "confirmed_settlement_income": confirmed_settlement_income,
                 "total_income": total_income,
-                "includes_settlement_income": _is_complete_month_range(start, end),
+                "includes_settlement_income": includes_settlement_income,
             },
             "classified_included_total": classified_included_total,
             "daily": [
@@ -266,7 +261,6 @@ class AnalyticsService:
             "monthly": _monthly_revenue_rows(
                 monthly_totals,
                 settlement_by_month,
-                include_settlement=_is_complete_month_range(start, end),
             ),
             "weather": [
                 {

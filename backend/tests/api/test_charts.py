@@ -196,7 +196,7 @@ async def test_charts_returns_stable_empty_result(auth_client, db_session, store
             "daily_ledger_revenue": 0,
             "confirmed_settlement_income": 0,
             "total_income": 0,
-            "includes_settlement_income": True,
+            "includes_settlement_income": False,
         },
         "classified_included_total": 0,
         "daily": [],
@@ -205,6 +205,26 @@ async def test_charts_returns_stable_empty_result(auth_client, db_session, store
         "monthly": [],
         "weather": [],
         "weekday": [],
+    }
+
+
+async def test_charts_enabled_store_exposes_settlement_summary_for_partial_month(
+    auth_client, db_session, store_factory
+) -> None:
+    store = await _assigned_store(auth_client, db_session, store_factory)
+    store.company_settlement_enabled = True
+    await db_session.flush()
+
+    response = await auth_client.get(
+        f"/api/charts/{store.id}?start=2026-07-10&end=2026-07-20"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["income_summary"] == {
+        "daily_ledger_revenue": 0,
+        "confirmed_settlement_income": 0,
+        "total_income": 0,
+        "includes_settlement_income": True,
     }
 
 
@@ -339,7 +359,7 @@ async def test_charts_complete_calendar_month_includes_confirmed_settlement_hist
     ]
 
 
-async def test_charts_incomplete_range_keeps_daily_ledger_semantics(
+async def test_charts_partial_month_includes_confirmed_settlement_for_overlapping_month(
     auth_client, db_session, store_factory
 ) -> None:
     store = await _assigned_store(auth_client, db_session, store_factory)
@@ -367,14 +387,19 @@ async def test_charts_incomplete_range_keeps_daily_ledger_semantics(
     payload = response.json()
     assert payload["income_summary"] == {
         "daily_ledger_revenue": 125,
-        "confirmed_settlement_income": 0,
-        "total_income": 125,
-        "includes_settlement_income": False,
+        "confirmed_settlement_income": 300,
+        "total_income": 425,
+        "includes_settlement_income": True,
     }
-    assert payload["kpis"]["total_revenue"] == 125
+    assert payload["kpis"]["total_revenue"] == 425
+    assert payload["categories"][-1] == {
+        "category_id": None,
+        "category_name": "公司结算",
+        "amount": 300,
+    }
     assert payload["monthly"][0]["revenue"] == 125
-    assert payload["monthly"][0]["confirmed_settlement_income"] is None
-    assert payload["monthly"][0]["monthly_total_income"] is None
+    assert payload["monthly"][0]["confirmed_settlement_income"] == 300
+    assert payload["monthly"][0]["monthly_total_income"] == 425
 
 
 async def test_charts_complete_multi_month_range_sums_each_month_total(

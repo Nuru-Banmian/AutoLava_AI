@@ -123,12 +123,15 @@ async function mockSettlementAnalysis(page: Page) {
       return json({ items: [], categories: [], sum_daily_revenue: 0, total: 0, page: 1, page_size: 200 });
     }
     if (path === "/api/charts/1") {
-      const isCompleteJune = url.searchParams.get("start") === "2026-06-01"
-        && url.searchParams.get("end") === "2026-06-30";
-      const confirmed = isCompleteJune
-        ? records.get(1)!.filter((record) => record.opening_month === "2026-06" && record.status === "confirmed")
-          .reduce((total, record) => total + record.amount, 0)
-        : 0;
+      const startMonth = url.searchParams.get("start")!.slice(0, 7);
+      const endMonth = url.searchParams.get("end")!.slice(0, 7);
+      const confirmed = records.get(1)!
+        .filter((record) => (
+          record.opening_month >= startMonth
+          && record.opening_month <= endMonth
+          && record.status === "confirmed"
+        ))
+        .reduce((total, record) => total + record.amount, 0);
       return json({
         kpis: {
           total_revenue: 900 + confirmed,
@@ -149,20 +152,20 @@ async function mockSettlementAnalysis(page: Page) {
           daily_ledger_revenue: 900,
           confirmed_settlement_income: confirmed,
           total_income: 900 + confirmed,
-          includes_settlement_income: isCompleteJune,
+          includes_settlement_income: true,
         },
         classified_included_total: confirmed,
-        daily: [{ date: "2026-06-10", revenue: 900 }],
+        daily: [{ date: "2026-07-10", revenue: 900 }],
         categories: confirmed > 0
           ? [{ category_id: null, category_name: "公司结算", amount: confirmed }]
           : [],
         excluded_categories: [],
         monthly: [{
-          month: "2026-06",
+          month: "2026-07",
           revenue: 900,
           daily_ledger_revenue: 900,
-          confirmed_settlement_income: isCompleteJune ? confirmed : null,
-          monthly_total_income: isCompleteJune ? 900 + confirmed : null,
+          confirmed_settlement_income: confirmed,
+          monthly_total_income: 900 + confirmed,
         }],
         weather: [],
         weekday: [],
@@ -175,7 +178,7 @@ async function mockSettlementAnalysis(page: Page) {
   });
 }
 
-test("settlement corrections feed complete-month analysis without narrow-screen overflow", async ({ page }) => {
+test("settlement corrections feed current partial-month analysis without narrow-screen overflow", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-07-21T10:00:00Z") });
   await page.setViewportSize({ width: 320, height: 700 });
   await mockSettlementAnalysis(page);
@@ -185,7 +188,7 @@ test("settlement corrections feed complete-month analysis without narrow-screen 
   await page.getByRole("button", { name: "新增结算公司" }).click();
   await expect(page.getByLabel("结算公司", { exact: true }).locator("option").last()).toHaveText("Alpha");
 
-  await page.getByLabel("开票月份").fill("2026-06");
+  await page.getByLabel("开票月份").fill("2026-07");
   await page.getByLabel("结算公司", { exact: true }).selectOption({ label: "Alpha" });
   await page.getByLabel("金额（整数欧元）").fill("120");
   await page.getByRole("button", { name: "登记待到账记录" }).click();
@@ -205,7 +208,7 @@ test("settlement corrections feed complete-month analysis without narrow-screen 
   await page.getByRole("button", { name: "确认Alpha开票记录到账" }).click();
   await page.getByRole("button", { name: "确认到账", exact: true }).click();
 
-  await page.getByLabel("开票月份").fill("2026-07");
+  await page.getByLabel("开票月份").fill("2026-06");
   await expect(page.getByText("本月暂无开票记录。")).toBeVisible();
   const mobileStore = page.getByTestId("mobile-store-picker").getByLabel("门店");
   await mobileStore.selectOption("2");
@@ -215,7 +218,6 @@ test("settlement corrections feed complete-month analysis without narrow-screen 
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 
   await page.goto("/database");
-  await page.getByLabel("经营分析日期范围").getByRole("button", { name: "上月" }).click();
   const summary = page.getByRole("region", { name: "月度收入汇总" });
   await expect(summary.getByText("日常营业额")).toBeVisible();
   await expect(summary.getByText("公司结算收入")).toBeVisible();
