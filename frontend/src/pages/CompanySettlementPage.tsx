@@ -2,7 +2,7 @@ import { type FormEvent, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
-import { api, friendlyApiError } from "@/api/client";
+import { api, ApiError, friendlyApiError } from "@/api/client";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -84,20 +84,31 @@ interface CompanyMutation {
   retry: () => void;
 }
 
-interface RecordMutationVariables {
+interface RecordTarget {
   storeId: number;
   month: string;
   recordId: number;
-  companyId: number;
-  amount: number;
   revision: number;
 }
 
-interface RecordDeleteVariables {
-  storeId: number;
-  month: string;
-  recordId: number;
-  revision: number;
+interface RecordEditVariables extends RecordTarget {
+  companyId: number;
+  amount: number;
+}
+
+function canonicalConflictRecord(error: unknown): SettlementRecord | null {
+  if (!(error instanceof ApiError) || error.status !== 409) return null;
+  const response = error.responseBody;
+  if (typeof response !== "object" || response === null || !("detail" in response)) return null;
+  const detail = response.detail;
+  if (typeof detail !== "object" || detail === null || !("current_record" in detail)) return null;
+  const current = detail.current_record;
+  if (
+    typeof current !== "object" || current === null
+    || !("id" in current) || typeof current.id !== "number"
+    || !("revision" in current) || typeof current.revision !== "number"
+  ) return null;
+  return current as SettlementRecord;
 }
 
 function CompanyList({ companies, archived, busy, onRename, onLifecycle, onDelete }: {
@@ -227,7 +238,7 @@ export function CompanySettlementPage() {
     },
   });
   const editRecordMutation = useMutation({
-    mutationFn: (variables: RecordMutationVariables) => api<SettlementRecord>(
+    mutationFn: (variables: RecordEditVariables) => api<SettlementRecord>(
       `/settlements/${variables.storeId}/records/${variables.recordId}`,
       {
         method: "PATCH",
@@ -248,6 +259,8 @@ export function CompanySettlementPage() {
     },
     onError: async (error, variables) => {
       if (selected?.id === variables.storeId) {
+        const current = canonicalConflictRecord(error);
+        if (current?.id === variables.recordId) setEditingRecord(current);
         setRecordError(friendlyApiError(error, "开票记录修改失败，请重试"));
         setRecordMessage("");
       }
@@ -255,7 +268,7 @@ export function CompanySettlementPage() {
     },
   });
   const deleteRecordMutation = useMutation({
-    mutationFn: (variables: RecordDeleteVariables) => api<void>(
+    mutationFn: (variables: RecordTarget) => api<void>(
       `/settlements/${variables.storeId}/records/${variables.recordId}`,
       { method: "DELETE", body: JSON.stringify({ revision: variables.revision }) },
     ),
@@ -269,6 +282,8 @@ export function CompanySettlementPage() {
     },
     onError: async (error, variables) => {
       if (selected?.id === variables.storeId) {
+        const current = canonicalConflictRecord(error);
+        if (current?.id === variables.recordId) setRecordToDelete(current);
         setRecordError(friendlyApiError(error, "开票记录删除失败，请重试"));
         setRecordMessage("");
       }

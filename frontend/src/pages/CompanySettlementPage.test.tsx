@@ -132,6 +132,40 @@ describe("CompanySettlementPage record corrections", () => {
     await waitFor(() => expect(requests).toBe(2));
   });
 
+  it("adopts the canonical revision after an edit conflict while preserving the draft", async () => {
+    const submitted: unknown[] = [];
+    renderPage([
+      http.patch("/api/settlements/1/records/20", async ({ request }) => {
+        const body = await request.json();
+        submitted.push(body);
+        if (submitted.length === 1) {
+          return HttpResponse.json({
+            detail: {
+              code: "settlement_record_revision_conflict",
+              message: "开票记录已被其他用户修改，请重新加载后再试",
+              current_record: record({ amount: 200, revision: 2 }),
+            },
+          }, { status: 409 });
+        }
+        return HttpResponse.json(record({ amount: 250, revision: 3 }));
+      }),
+    ]);
+
+    fireEvent.click(await screen.findByRole("button", { name: "编辑Alpha开票记录" }));
+    fireEvent.change(screen.getByLabelText("编辑金额（整数欧元）"), { target: { value: "250" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存开票记录修改" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("开票记录已被其他用户修改");
+    expect(screen.getByLabelText("编辑金额（整数欧元）")).toHaveValue(250);
+    fireEvent.click(screen.getByRole("button", { name: "重试修改" }));
+
+    await waitFor(() => expect(submitted).toEqual([
+      { company_id: 10, amount: 250, revision: 1 },
+      { company_id: 10, amount: 250, revision: 2 },
+    ]));
+    expect(await screen.findByRole("status")).toHaveTextContent("开票记录已修改");
+  });
+
   it("permanently deletes only after confirmation and sends the current revision", async () => {
     let submitted: unknown;
     let deleted = false;
@@ -152,6 +186,33 @@ describe("CompanySettlementPage record corrections", () => {
     await waitFor(() => expect(submitted).toEqual({ revision: 1 }));
     expect(await screen.findByRole("status")).toHaveTextContent("开票记录已永久删除");
     expect(await screen.findByText("本月暂无开票记录。")).toBeInTheDocument();
+  });
+
+  it("adopts the canonical revision before retrying a conflicted deletion", async () => {
+    const submitted: unknown[] = [];
+    renderPage([
+      http.delete("/api/settlements/1/records/20", async ({ request }) => {
+        submitted.push(await request.json());
+        if (submitted.length === 1) {
+          return HttpResponse.json({
+            detail: {
+              code: "settlement_record_revision_conflict",
+              message: "开票记录已被其他用户修改，请重新加载后再试",
+              current_record: record({ amount: 200, revision: 2 }),
+            },
+          }, { status: 409 });
+        }
+        return new HttpResponse(null, { status: 204 });
+      }),
+    ]);
+
+    fireEvent.click(await screen.findByRole("button", { name: "删除Alpha开票记录" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认永久删除开票记录" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("开票记录已被其他用户修改");
+    fireEvent.click(screen.getByRole("button", { name: "确认永久删除开票记录" }));
+
+    await waitFor(() => expect(submitted).toEqual([{ revision: 1 }, { revision: 2 }]));
+    expect(await screen.findByRole("status")).toHaveTextContent("开票记录已永久删除");
   });
 
   it("clears the old store month, edit dialog, errors, and mutation state when switching stores", async () => {

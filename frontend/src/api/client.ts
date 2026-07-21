@@ -2,6 +2,7 @@ export class ApiError extends Error {
   constructor(
     public readonly status: number,
     public readonly detail: string,
+    public readonly responseBody?: unknown,
   ) {
     super(detail);
     this.name = "ApiError";
@@ -32,6 +33,9 @@ function errorDetail(body: unknown, fallback: string): string {
   if (typeof body === "object" && body !== null && "detail" in body) {
     const detail = (body as { detail: unknown }).detail;
     if (typeof detail === "string") return detail;
+    if (typeof detail === "object" && detail !== null && "message" in detail && typeof detail.message === "string") {
+      return detail.message;
+    }
     if (Array.isArray(detail)) {
       const messages = detail
         .map((item) => (typeof item === "object" && item !== null && "msg" in item ? String(item.msg) : ""))
@@ -56,7 +60,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     const contentType = response.headers.get("content-type") ?? "";
     if (contentType.includes("json")) {
       const body = await response.json().catch(() => null);
-      throw new ApiError(response.status, errorDetail(body, response.statusText));
+      throw new ApiError(response.status, errorDetail(body, response.statusText), body);
     }
     const text = await response.text().catch(() => "");
     throw new ApiError(response.status, text || response.statusText || "Request failed");
