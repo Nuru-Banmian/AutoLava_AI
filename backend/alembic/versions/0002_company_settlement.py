@@ -26,13 +26,24 @@ def upgrade() -> None:
         sa.Column("archived_at", sa.DateTime(), nullable=True),
         sa.Column("created_by", sa.Integer(), nullable=False),
         sa.Column("updated_by", sa.Integer(), nullable=False),
-        sa.Column("created_at", sa.DateTime(), server_default=sa.func.current_timestamp(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(), server_default=sa.func.current_timestamp(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(), server_default=sa.func.current_timestamp(), nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(), server_default=sa.func.current_timestamp(), nullable=False
+        ),
         sa.ForeignKeyConstraint(["store_id"], ["stores.id"]),
         sa.ForeignKeyConstraint(["created_by"], ["users.id"]),
         sa.ForeignKeyConstraint(["updated_by"], ["users.id"]),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("store_id", "normalized_name", name="uq_settlement_companies_store_name"),
+    )
+    op.create_index(
+        "uq_settlement_companies_active_store_name",
+        "settlement_companies",
+        ["store_id", "normalized_name"],
+        unique=True,
+        sqlite_where=sa.text("is_active = 1"),
+        postgresql_where=sa.text("is_active = true"),
     )
     op.create_table(
         "settlement_records",
@@ -46,10 +57,16 @@ def upgrade() -> None:
         sa.Column("revision", sa.Integer(), nullable=False),
         sa.Column("created_by", sa.Integer(), nullable=False),
         sa.Column("updated_by", sa.Integer(), nullable=False),
-        sa.Column("created_at", sa.DateTime(), server_default=sa.func.current_timestamp(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(), server_default=sa.func.current_timestamp(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(), server_default=sa.func.current_timestamp(), nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(), server_default=sa.func.current_timestamp(), nullable=False
+        ),
         sa.CheckConstraint("amount > 0", name="ck_settlement_records_amount_positive"),
-        sa.CheckConstraint("status in ('pending','confirmed')", name="ck_settlement_records_status"),
+        sa.CheckConstraint(
+            "status in ('pending','confirmed')", name="ck_settlement_records_status"
+        ),
         sa.CheckConstraint("revision > 0", name="ck_settlement_records_revision_positive"),
         sa.ForeignKeyConstraint(["store_id"], ["stores.id"]),
         sa.ForeignKeyConstraint(["company_id"], ["settlement_companies.id"]),
@@ -57,7 +74,9 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["updated_by"], ["users.id"]),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index("ix_settlement_records_store_month", "settlement_records", ["store_id", "opening_month"])
+    op.create_index(
+        "ix_settlement_records_store_month", "settlement_records", ["store_id", "opening_month"]
+    )
     op.create_table(
         "settlement_audit_events",
         sa.Column("id", sa.Integer(), nullable=False),
@@ -68,7 +87,9 @@ def upgrade() -> None:
         sa.Column("entity_id", sa.Integer(), nullable=True),
         sa.Column("before_state", sa.JSON(), nullable=True),
         sa.Column("after_state", sa.JSON(), nullable=True),
-        sa.Column("created_at", sa.DateTime(), server_default=sa.func.current_timestamp(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(), server_default=sa.func.current_timestamp(), nullable=False
+        ),
         sa.ForeignKeyConstraint(["store_id"], ["stores.id"]),
         sa.ForeignKeyConstraint(["actor_id"], ["users.id"]),
         sa.PrimaryKeyConstraint("id"),

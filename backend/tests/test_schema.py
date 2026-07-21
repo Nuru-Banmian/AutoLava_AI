@@ -31,6 +31,13 @@ def test_business_unique_constraints_exist() -> None:
     assert {c.name for c in Base.metadata.tables["store_daily_records"].constraints} >= {
         "uq_store_daily_records_store_date"
     }
+    company_indexes = {
+        index.name: index for index in Base.metadata.tables["settlement_companies"].indexes
+    }
+    active_names = company_indexes["uq_settlement_companies_active_store_name"]
+    assert active_names.unique is True
+    assert {column.name for column in active_names.columns} == {"store_id", "normalized_name"}
+    assert active_names.dialect_options["sqlite"]["where"] is not None
 
 
 def test_final_schema_columns_and_money_types() -> None:

@@ -1,6 +1,16 @@
 from datetime import date, datetime
 
-from sqlalchemy import JSON, Boolean, CheckConstraint, Date, ForeignKey, Index, Integer, String, UniqueConstraint, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    CheckConstraint,
+    Date,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -20,7 +30,14 @@ class SettlementCompany(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
     __table_args__ = (
-        UniqueConstraint("store_id", "normalized_name", name="uq_settlement_companies_store_name"),
+        Index(
+            "uq_settlement_companies_active_store_name",
+            "store_id",
+            "normalized_name",
+            unique=True,
+            sqlite_where=is_active.is_(True),
+            postgresql_where=is_active.is_(True),
+        ),
     )
 
 

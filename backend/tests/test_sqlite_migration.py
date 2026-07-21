@@ -39,15 +39,12 @@ def test_blank_sqlite_file_migrates_to_final_schema(tmp_path: Path) -> None:
         tables = {
             name
             for (name,) in connection.execute(
-                "SELECT name FROM sqlite_master "
-                "WHERE type = 'table' AND name != 'alembic_version'"
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name != 'alembic_version'"
             )
         }
         assert tables == EXPECTED_TABLES
 
-        store_columns = {
-            row[1]: row for row in connection.execute("PRAGMA table_info('stores')")
-        }
+        store_columns = {row[1]: row for row in connection.execute("PRAGMA table_info('stores')")}
         assert store_columns["company_settlement_enabled"][4].strip("'") == "0"
         assert store_columns["company_settlement_enabled"][3] == 1
 
@@ -66,6 +63,13 @@ def test_blank_sqlite_file_migrates_to_final_schema(tmp_path: Path) -> None:
             == {"store_id", "date"}
             for index_name in index_names
         )
+        company_index_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
+            ("uq_settlement_companies_active_store_name",),
+        ).fetchone()
+        assert company_index_sql is not None
+        assert "UNIQUE INDEX" in company_index_sql[0]
+        assert "WHERE is_active = 1" in company_index_sql[0]
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 

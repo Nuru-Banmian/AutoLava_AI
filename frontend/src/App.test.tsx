@@ -5,7 +5,7 @@ import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { buttonVariants } from "./components/ui/button";
 import App, { Application } from "./App";
 import { createAppRouter } from "./router";
@@ -212,6 +212,109 @@ describe("App", () => {
 
     expect(await screen.findByText("已启用的公司结算")).toBeInTheDocument();
     expect(reads).toBe(2);
+  });
+
+  it("maintains the company directory and preserves a failed inline name for retry", async () => {
+    let creates = 0;
+    const active = [{ id: 1, name: "Alpha Fleet", is_active: true }];
+    const archived = [{ id: 2, name: "Old Fleet", is_active: false }];
+    server.use(
+      http.get("/api/stores/accessible", () => HttpResponse.json([
+        { id: 1, name: "已启用", timezone: "Europe/Rome", company_settlement_enabled: true },
+      ])),
+      http.get("/api/settlements/1", () => HttpResponse.json({ store_id: 1, store_name: "已启用", company_settlement_enabled: true })),
+      http.get("/api/settlements/1/companies", ({ request }) => HttpResponse.json(
+        new URL(request.url).searchParams.get("archived") === "true" ? archived : active,
+      )),
+      http.post("/api/settlements/1/companies", async ({ request }) => {
+        creates += 1;
+        const body = await request.json() as { name: string };
+        if (creates === 1) return HttpResponse.json({ detail: "暂时无法保存" }, { status: 503 });
+        const company = { id: 3, name: body.name.trim().replace(/\s+/g, " "), is_active: true };
+        active.push(company);
+        return HttpResponse.json(company, { status: 201 });
+      }),
+      http.post("/api/settlements/1/companies/1/archive", () => {
+        const [company] = active.splice(0, 1);
+        company.is_active = false;
+        archived.push(company);
+        return HttpResponse.json(company);
+      }),
+    );
+    renderApplication("/settlements", { role: "user" });
+
+    expect(await screen.findByText("Alpha Fleet")).toBeInTheDocument();
+    expect(screen.getByText("Old Fleet")).toBeInTheDocument();
+    const input = screen.getByRole("textbox", { name: "新结算公司名称" });
+    await userEvent.type(input, "  New   Fleet  ");
+    await userEvent.click(screen.getByRole("button", { name: "新增结算公司" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("暂时无法保存");
+    expect(input).toHaveValue("  New   Fleet  ");
+
+    await userEvent.click(screen.getByRole("button", { name: "重试操作" }));
+    expect(await screen.findByText("操作成功")).toBeInTheDocument();
+    await waitFor(() => expect(input).toHaveValue(""));
+    expect(await screen.findByText("New Fleet")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "归档Alpha Fleet" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "归档Alpha Fleet" })).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "恢复Alpha Fleet" })).toBeInTheDocument();
+
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    await userEvent.click(screen.getByRole("button", { name: "永久删除New Fleet" }));
+    expect(confirm).toHaveBeenCalledWith("确定永久删除结算公司“New Fleet”吗？此操作无法撤销。");
+    confirm.mockRestore();
+  });
+
+  it("clears company editing state on store switch and ignores the old store response", async () => {
+    let creates = 0;
+    let resolveOldRequest: (() => void) | undefined;
+    const oldRequest = new Promise<void>((resolve) => { resolveOldRequest = resolve; });
+    server.use(
+      http.get("/api/stores/accessible", () => HttpResponse.json([
+        { id: 1, name: "一店", timezone: "Europe/Rome", company_settlement_enabled: true },
+        { id: 2, name: "二店", timezone: "Europe/Rome", company_settlement_enabled: true },
+      ])),
+      http.get("/api/settlements/:storeId", ({ params }) => HttpResponse.json({
+        store_id: Number(params.storeId),
+        store_name: params.storeId === "1" ? "一店" : "二店",
+        company_settlement_enabled: true,
+      })),
+      http.get("/api/settlements/:storeId/companies", ({ params, request }) => {
+        if (new URL(request.url).searchParams.get("archived") === "true") return HttpResponse.json([]);
+        return HttpResponse.json(params.storeId === "1"
+          ? [{ id: 1, name: "一店公司", is_active: true }]
+          : [{ id: 2, name: "二店公司", is_active: true }]);
+      }),
+      http.post("/api/settlements/1/companies", async () => {
+        creates += 1;
+        if (creates === 1) return HttpResponse.json({ detail: "一店保存失败" }, { status: 503 });
+        await oldRequest;
+        return HttpResponse.json({ id: 3, name: "一店草稿", is_active: true }, { status: 201 });
+      }),
+    );
+    renderApplication("/settlements", { role: "user" });
+
+    expect(await screen.findByText("一店公司")).toBeInTheDocument();
+    const draft = screen.getByRole("textbox", { name: "新结算公司名称" });
+    await userEvent.type(draft, "一店草稿");
+    await userEvent.click(screen.getByRole("button", { name: "新增结算公司" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("一店保存失败");
+    await userEvent.click(screen.getByRole("button", { name: "重命名一店公司" }));
+    expect(screen.getByRole("textbox", { name: "重命名一店公司" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "重试操作" }));
+
+    const picker = within(screen.getByTestId("desktop-store-picker")).getByRole("combobox", { name: "门店" });
+    await userEvent.selectOptions(picker, "2");
+    expect(await screen.findByText("二店公司")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "新结算公司名称" })).toHaveValue("");
+    expect(screen.queryByRole("textbox", { name: "重命名一店公司" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重试操作" })).not.toBeInTheDocument();
+
+    resolveOldRequest?.();
+    await waitFor(() => expect(creates).toBe(2));
+    expect(screen.queryByText("操作成功")).not.toBeInTheDocument();
+    expect(screen.getByText("二店公司")).toBeInTheDocument();
   });
 
   it("loads the approved blue theme tokens from index.css", () => {
