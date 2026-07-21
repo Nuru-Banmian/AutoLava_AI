@@ -1,14 +1,16 @@
 from collections import defaultdict
+from calendar import monthrange
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Literal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.ledger import StoreDailyRecord
+from app.models.settlement import SettlementRecord
 
 
 def _rounded_average(total: int, count: int) -> int:
@@ -57,9 +59,38 @@ def _revenue_kpis(records: list[StoreDailyRecord]) -> dict:
     }
 
 
+def _is_complete_month_range(start: date, end: date) -> bool:
+    return start.day == 1 and end.day == monthrange(end.year, end.month)[1]
+
+
 class AnalyticsService:
     def __init__(self, session: AsyncSession):
         self.session = session
+
+    async def _confirmed_settlement_by_month(
+        self, *, store_id: int, start: date, end: date
+    ) -> dict[str, int]:
+        if not _is_complete_month_range(start, end):
+            return {}
+        rows = (
+            await self.session.execute(
+                select(
+                    SettlementRecord.opening_month,
+                    func.sum(SettlementRecord.amount),
+                )
+                .where(
+                    SettlementRecord.store_id == store_id,
+                    SettlementRecord.status == "confirmed",
+                    SettlementRecord.opening_month >= start,
+                    SettlementRecord.opening_month <= end,
+                )
+                .group_by(SettlementRecord.opening_month)
+            )
+        ).tuples()
+        return {
+            opening_month.strftime("%Y-%m"): int(amount)
+            for opening_month, amount in rows
+        }
 
     async def calculate(
         self,
@@ -96,6 +127,21 @@ class AnalyticsService:
                     .order_by(StoreDailyRecord.date, StoreDailyRecord.id)
                 )
             ).all()
+
+        settlement_by_month = await self._confirmed_settlement_by_month(
+            store_id=store_id, start=start, end=end
+        )
+        comparison_settlement_total = 0
+        if compare_start is not None and compare_end is not None:
+            comparison_settlement_total = sum(
+                (
+                    await self._confirmed_settlement_by_month(
+                        store_id=store_id,
+                        start=compare_start,
+                        end=compare_end,
+                    )
+                ).values()
+            )
 
         selected_ids = None if category_ids is None else set(category_ids)
         included_totals: dict[CompositionKey, int] = defaultdict(int)
@@ -137,12 +183,16 @@ class AnalyticsService:
             key=lambda item: (-item["amount"], item["category_id"]),
         )[:3]
         kpis = _revenue_kpis(records)
+        daily_ledger_revenue = kpis["total_revenue"]
+        confirmed_settlement_income = sum(settlement_by_month.values())
+        monthly_total_income = daily_ledger_revenue + confirmed_settlement_income
+        kpis["total_revenue"] = monthly_total_income
         kpis.update(
             {
                 "primary_categories": primary_categories,
                 "total_wash_count": total_wash,
                 "average_ticket": (
-                    _rounded_average(kpis["total_revenue"], total_wash)
+                    _rounded_average(daily_ledger_revenue, total_wash)
                     if total_wash is not None and total_wash > 0
                     else None
                 ),
@@ -154,7 +204,8 @@ class AnalyticsService:
             comparison_kpis = {
                 "start": compare_start.isoformat(),
                 "end": compare_end.isoformat(),
-                "total_revenue": comparison["total_revenue"],
+                "total_revenue": comparison["total_revenue"]
+                + comparison_settlement_total,
                 "open_days": comparison["open_days"],
                 "average_revenue": comparison["average_revenue"],
             }
@@ -167,6 +218,12 @@ class AnalyticsService:
                 "bucket": bucket,
             },
             "comparison_kpis": comparison_kpis,
+            "income_summary": {
+                "daily_ledger_revenue": daily_ledger_revenue,
+                "confirmed_settlement_income": confirmed_settlement_income,
+                "monthly_total_income": monthly_total_income,
+                "includes_settlement_income": _is_complete_month_range(start, end),
+            },
             "classified_included_total": classified_included_total,
             "daily": [
                 {"date": record.date.isoformat(), "revenue": record.daily_revenue}
@@ -175,8 +232,15 @@ class AnalyticsService:
             "categories": compositions,
             "excluded_categories": excluded_rows,
             "monthly": [
-                {"month": month, "revenue": revenue}
-                for month, revenue in sorted(monthly_totals.items())
+                {
+                    "month": month,
+                    "revenue": monthly_totals[month] + settlement_by_month.get(month, 0),
+                    "daily_ledger_revenue": monthly_totals[month],
+                    "confirmed_settlement_income": settlement_by_month.get(month, 0),
+                    "monthly_total_income": monthly_totals[month]
+                    + settlement_by_month.get(month, 0),
+                }
+                for month in sorted(monthly_totals.keys() | settlement_by_month.keys())
             ],
             "weather": [
                 {

@@ -119,7 +119,15 @@ async def test_analytics_returns_expected_groups(db_session: AsyncSession) -> No
     assert result["kpis"]["total_wash_count"] == 5
     assert result["kpis"]["average_ticket"] == 70
     assert result["daily"][0] == {"date": "2026-07-12", "revenue": 150}
-    assert result["monthly"] == [{"month": "2026-07", "revenue": 350}]
+    assert result["monthly"] == [
+        {
+            "month": "2026-07",
+            "revenue": 350,
+            "daily_ledger_revenue": 350,
+            "confirmed_settlement_income": 0,
+            "monthly_total_income": 350,
+        }
+    ]
     assert {item["weather"] for item in result["weather"]} == {"晴", "未记录"}
     assert [item["weekday"] for item in result["weekday"]] == [0, 6]
 

@@ -138,11 +138,12 @@ export interface ChartsResponse {
   kpis: { total_revenue: number; record_days: number; open_days: number; average_revenue: number; primary_categories: CategoryComposition[]; total_wash_count: number | null; average_ticket: number | null };
   range: { start: string; end: string; bucket: ChartBucket };
   comparison_kpis: ChartComparisonKpis | null;
+  income_summary: { daily_ledger_revenue: number; confirmed_settlement_income: number; monthly_total_income: number; includes_settlement_income: boolean };
   classified_included_total: number;
   daily: { date: string; revenue: number }[];
   categories: CategoryComposition[];
   excluded_categories: CategoryComposition[];
-  monthly: { month: string; revenue: number }[];
+  monthly: { month: string; revenue: number; daily_ledger_revenue: number; confirmed_settlement_income: number; monthly_total_income: number }[];
   weather: { weather: string; average_revenue: number }[];
   weekday: { weekday: number; average_revenue: number }[];
 }

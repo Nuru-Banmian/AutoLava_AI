@@ -15,11 +15,12 @@ function payload(overrides: Partial<ChartsResponse> = {}): ChartsResponse {
     kpis: { total_revenue: 100, record_days: 2, open_days: 2, average_revenue: 50, primary_categories: [], total_wash_count: null, average_ticket: null },
     range: { start: "2026-07-01", end: "2026-07-17", bucket: "day" },
     comparison_kpis: { start: "2026-06-01", end: "2026-06-17", total_revenue: 80, open_days: 2, average_revenue: 40 },
+    income_summary: { daily_ledger_revenue: 100, confirmed_settlement_income: 0, monthly_total_income: 100, includes_settlement_income: false },
     classified_included_total: 100,
     daily: [{ date: "2026-07-01", revenue: 100 }],
     categories: [{ category_id: 1, category_name: "现金收入", amount: 100 }],
     excluded_categories: [{ category_id: 2, category_name: "代收款", amount: 20 }],
-    monthly: [{ month: "2026-07", revenue: 100 }],
+    monthly: [{ month: "2026-07", revenue: 100, daily_ledger_revenue: 100, confirmed_settlement_income: 0, monthly_total_income: 100 }],
     weather: [],
     weekday: [],
     ...overrides,
@@ -91,6 +92,7 @@ describe("BusinessAnalysisCard", () => {
   it("renders the zero-data and retry states", async () => {
     server.use(http.get("/api/charts/1", () => HttpResponse.json(payload({
       kpis: { ...payload().kpis, total_revenue: 0, open_days: 0 },
+      income_summary: { daily_ledger_revenue: 0, confirmed_settlement_income: 0, monthly_total_income: 0, includes_settlement_income: false },
       daily: [],
       categories: [],
       excluded_categories: [],
@@ -123,5 +125,26 @@ describe("BusinessAnalysisCard", () => {
 
     expect(await screen.findByText("上期为 0，暂无可比增幅")).toBeInTheDocument();
     expect(screen.queryByText(/Infinity|NaN/)).not.toBeInTheDocument();
+  });
+
+  it("clearly splits income for a complete-month analysis", async () => {
+    server.use(http.get("/api/charts/1", () => HttpResponse.json(payload({
+      kpis: { ...payload().kpis, total_revenue: 420 },
+      range: { start: "2026-06-01", end: "2026-06-30", bucket: "month" },
+      income_summary: {
+        daily_ledger_revenue: 300,
+        confirmed_settlement_income: 120,
+        monthly_total_income: 420,
+        includes_settlement_income: true,
+      },
+    }))));
+    renderCard();
+
+    expect(await screen.findByText("日常营业额")).toBeInTheDocument();
+    expect(screen.getByText("公司结算收入")).toBeInTheDocument();
+    expect(screen.getByText("月度总收入")).toBeInTheDocument();
+    expect(screen.getByText("€300")).toBeInTheDocument();
+    expect(screen.getByText("€120")).toBeInTheDocument();
+    expect(screen.getByText("€420")).toBeInTheDocument();
   });
 });

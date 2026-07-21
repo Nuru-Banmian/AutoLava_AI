@@ -84,6 +84,10 @@ async function mockResponsiveApi(page: Page) {
         start: "2026-06-01", end: "2026-06-17", total_revenue: 80,
         open_days: 1, average_revenue: 80,
       },
+      income_summary: {
+        daily_ledger_revenue: 100, confirmed_settlement_income: 0,
+        monthly_total_income: 100, includes_settlement_income: false,
+      },
       classified_included_total: 100,
       daily: [{ date: "2026-07-14", revenue: 100 }],
       categories: categories.slice(0, 6).map((category, index) => ({
@@ -96,7 +100,7 @@ async function mockResponsiveApi(page: Page) {
         category_name: category.name,
         amount: 5,
       })),
-      monthly: [{ month: "2026-07", revenue: 100 }],
+      monthly: [{ month: "2026-07", revenue: 100, daily_ledger_revenue: 100, confirmed_settlement_income: 0, monthly_total_income: 100 }],
       weather: [],
       weekday: [],
     });

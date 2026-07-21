@@ -158,6 +158,10 @@ async function mockMergedFlow(page: Page) {
           start: "2026-06-01", end: "2026-06-17", total_revenue: 80,
           open_days: 1, average_revenue: 80,
         },
+        income_summary: {
+          daily_ledger_revenue: 100, confirmed_settlement_income: 0,
+          monthly_total_income: 100, includes_settlement_income: false,
+        },
         classified_included_total: 100,
         daily: [{ date: "2026-07-14", revenue: 100 }],
         categories: categories.slice(0, 7).map((category, index) => ({
@@ -170,7 +174,7 @@ async function mockMergedFlow(page: Page) {
           category_name: category.name,
           amount: 5,
         })),
-        monthly: [{ month: "2026-07", revenue: 100 }],
+        monthly: [{ month: "2026-07", revenue: 100, daily_ledger_revenue: 100, confirmed_settlement_income: 0, monthly_total_income: 100 }],
         weather: [],
         weekday: [],
       });
@@ -187,6 +191,12 @@ function recordRows(page: Page, mobile: boolean) {
     : page.getByRole("table").locator("tbody tr");
 }
 
+async function fillIncomeItems(page: Page, firstAmount: string) {
+  for (const [index, category] of categories.entries()) {
+    await page.getByLabel(category.name).fill(index === 0 ? firstAmount : "0");
+  }
+}
+
 for (const viewport of [
   { name: "desktop", width: 1280, height: 900 },
   { name: "320px", width: 320, height: 700 },
@@ -198,7 +208,7 @@ for (const viewport of [
     const requests = await mockMergedFlow(page);
 
     await page.goto(`/ledger?date=${today}`);
-    await page.getByLabel(categories[0].name).fill("100");
+    await fillIncomeItems(page, "100");
     await page.getByRole("button", { name: "保存今日记录" }).click();
     await expect(page.getByRole("status")).toContainText("保存成功");
 
@@ -276,7 +286,7 @@ test("desktop: multi-date ledger snapshots, markers, dirty guards, and permanent
   const flow = await mockMergedFlow(page);
 
   await page.goto(`/ledger?date=${today}`);
-  await page.getByLabel(categories[0].name).fill("123");
+  await fillIncomeItems(page, "123");
   await page.getByRole("button", { name: "保存今日记录" }).click();
   await expect(page.getByRole("status")).toContainText("保存成功");
 

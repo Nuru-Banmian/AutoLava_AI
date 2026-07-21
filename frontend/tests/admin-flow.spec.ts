@@ -8,12 +8,13 @@ type Capture = {
   updatedStore?: unknown;
 };
 
-const store = { id: 1, name: "Roma", address: "Roma, Italia", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true };
+const store = { id: 1, name: "Roma", address: "Roma, Italia", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true, company_settlement_enabled: false };
 const alternateStore = { id: 2, name: "Milano Nord", address: "Milano, Italia", latitude: "45.4642", longitude: "9.19", timezone: "Europe/Rome", is_active: true };
 
 async function mockAdminApi(page: Page, capture: Capture) {
   let authenticated = false;
   let users: unknown[] = [];
+  let companySettlementEnabled = false;
   let accessibleStoresFailed = false;
   let accessibleStoreFailures = 0;
   await page.addInitScript(() => {
@@ -40,9 +41,11 @@ async function mockAdminApi(page: Page, capture: Capture) {
         accessibleStoreFailures += 1;
         return json({ detail: "Stores unavailable" }, 500);
       }
-      return json([store, alternateStore]);
+      return json([{ ...store, company_settlement_enabled: companySettlementEnabled }, alternateStore]);
     }
-    if (path === "/api/admin/stores" && request.method() === "GET") return json([store]);
+    if (path === "/api/admin/stores" && request.method() === "GET") {
+      return json([{ ...store, company_settlement_enabled: companySettlementEnabled }]);
+    }
     if (path === "/api/admin/users" && request.method() === "GET") return json(users);
     if (path === "/api/admin/users" && request.method() === "POST") {
       capture.createdUser = request.postDataJSON();
@@ -68,7 +71,11 @@ async function mockAdminApi(page: Page, capture: Capture) {
     }
     if (path === "/api/admin/stores/1" && request.method() === "PATCH") {
       capture.updatedStore = request.postDataJSON();
-      return json({ ...store, ...(capture.updatedStore as object) });
+      const update = capture.updatedStore as { company_settlement_enabled?: boolean };
+      if (typeof update.company_settlement_enabled === "boolean") {
+        companySettlementEnabled = update.company_settlement_enabled;
+      }
+      return json({ ...store, company_settlement_enabled: companySettlementEnabled, ...update });
     }
     if (path === "/api/admin/stores/geocode") return json([{ name: "Milano", country: "Italia", latitude: 45.4642, longitude: 9.19, timezone: "Europe/Rome" }]);
     if (path === "/api/admin/stores/timezone") return json({ timezone: "Europe/Rome" });
@@ -123,6 +130,10 @@ test("owner configures shared-store income, a user membership, and a mapped stor
   await expect(incomeItems.getByRole("button", { name: "保存", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "保存门店资料" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "保存并发布" })).toHaveCount(0);
+  const settlementToggle = storeDetails.getByLabel("为此门店启用公司结算");
+  await settlementToggle.click();
+  await expect.poll(() => capture.updatedStore).toMatchObject({ company_settlement_enabled: true });
+  await expect(settlementToggle).toBeChecked();
   await storeDetails.getByLabel("门店名称 Roma").fill("Roma Centro");
   await storeDetails.getByRole("button", { name: "保存", exact: true }).click();
   await expect.poll(() => capture.updatedStore).toMatchObject({ name: "Roma Centro", address: "Roma, Italia" });

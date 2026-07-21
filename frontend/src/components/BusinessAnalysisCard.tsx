@@ -64,7 +64,7 @@ export function BusinessAnalysisCard({ storeId, today }: BusinessAnalysisCardPro
   const trend = data ? (data.range.bucket === "day"
     ? data.daily.map((row) => ({ label: row.date, revenue: row.revenue }))
     : data.monthly.map((row) => ({ label: row.month, revenue: row.revenue }))) : [];
-  const hasBusinessData = (data?.kpis.total_revenue ?? 0) !== 0;
+  const hasBusinessData = (data?.income_summary.monthly_total_income ?? 0) !== 0;
 
   return <Card>
     <CardHeader className="gap-4">
@@ -83,11 +83,19 @@ export function BusinessAnalysisCard({ storeId, today }: BusinessAnalysisCardPro
       {charts.error && !data && <div role="alert" className="flex items-center gap-3"><span>经营分析加载失败</span><Button type="button" size="sm" variant="outline" onClick={() => void charts.refetch()}>重试经营分析</Button></div>}
       {charts.isRefetchError && data && <p role="alert">刷新失败</p>}
       {data && <>
-        <div className="grid gap-2 sm:grid-cols-3">
-          <Kpi title="总营业额" value={formatWholeEuro(data.kpis.total_revenue)} />
-          <Kpi title="营业天数" value={`${data.kpis.open_days} 天`} />
-          <Kpi title="营业日均" value={formatWholeEuro(data.kpis.average_revenue)} />
-        </div>
+        {data.income_summary.includes_settlement_income ? (
+          <div className="grid min-w-0 gap-2 sm:grid-cols-3" aria-label="月度收入汇总" role="region">
+            <Kpi title="日常营业额" value={formatWholeEuro(data.income_summary.daily_ledger_revenue)} />
+            <Kpi title="公司结算收入" value={formatWholeEuro(data.income_summary.confirmed_settlement_income)} />
+            <Kpi title="月度总收入" value={formatWholeEuro(data.income_summary.monthly_total_income)} />
+          </div>
+        ) : (
+          <div className="grid gap-2 sm:grid-cols-3">
+            <Kpi title="总营业额" value={formatWholeEuro(data.kpis.total_revenue)} />
+            <Kpi title="营业天数" value={`${data.kpis.open_days} 天`} />
+            <Kpi title="营业日均" value={formatWholeEuro(data.kpis.average_revenue)} />
+          </div>
+        )}
         <div className="grid gap-1 text-sm text-muted-foreground">
           <p>当前区间：{data.range.start} 至 {data.range.end}（按{data.range.bucket === "day" ? "日" : "月"}）</p>
           {data.comparison_kpis && <p>比较区间：{data.comparison_kpis.start} 至 {data.comparison_kpis.end}</p>}
@@ -95,7 +103,7 @@ export function BusinessAnalysisCard({ storeId, today }: BusinessAnalysisCardPro
         </div>
         {!hasBusinessData && <p>该范围暂无经营数据</p>}
         <ChartPanel embedded title="营业额趋势" kind="line" data={trend} xKey="label" valueKey="revenue" emptyMessage="暂无趋势数据" heightClassName="h-64 min-h-64" />
-        <IncomeComposition included={data.categories} excluded={data.excluded_categories} classifiedIncludedTotal={data.classified_included_total} totalRevenue={data.kpis.total_revenue} />
+        <IncomeComposition included={data.categories} excluded={data.excluded_categories} classifiedIncludedTotal={data.classified_included_total} totalRevenue={data.income_summary.daily_ledger_revenue} />
       </>}
     </CardContent>
   </Card>;
