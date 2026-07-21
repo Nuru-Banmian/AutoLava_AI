@@ -137,14 +137,21 @@ describe("BusinessAnalysisCard", () => {
         total_income: 420,
         includes_settlement_income: true,
       },
+      classified_included_total: 420,
+      categories: [
+        { category_id: 1, category_name: "现金收入", amount: 300 },
+        { category_id: null, category_name: "公司结算", amount: 120 },
+      ],
     }))));
     renderCard();
 
     expect(await screen.findByText("日常营业额")).toBeInTheDocument();
     expect(screen.getByText("公司结算收入")).toBeInTheDocument();
     expect(screen.getByText("月度总收入")).toBeInTheDocument();
-    expect(screen.getByText("€300")).toBeInTheDocument();
-    expect(screen.getByText("€120")).toBeInTheDocument();
+    expect(screen.getAllByText("€300")).toHaveLength(2);
+    expect(screen.getAllByText("€120")).toHaveLength(2);
     expect(screen.getByText("€420")).toBeInTheDocument();
+    expect(screen.getByLabelText("收入分类")).toHaveTextContent("公司结算");
+    expect(screen.getByLabelText("公司结算 占比 28.6%")).toBeInTheDocument();
   });
 });

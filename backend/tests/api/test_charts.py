@@ -300,10 +300,14 @@ async def test_charts_complete_calendar_month_includes_confirmed_settlement_hist
     await _confirmed_settlement(
         db_session, store, opening_month=date(2026, 6, 1), amount=300
     )
+    await _confirmed_settlement(
+        db_session, store, opening_month=date(2026, 5, 1), amount=100
+    )
     assert store.company_settlement_enabled is False
 
     response = await auth_client.get(
         f"/api/charts/{store.id}?start=2026-06-01&end=2026-06-30&bucket=month"
+        "&compare_start=2026-05-01&compare_end=2026-05-31"
     )
 
     assert response.status_code == 200
@@ -314,9 +318,15 @@ async def test_charts_complete_calendar_month_includes_confirmed_settlement_hist
         "total_income": 425,
         "includes_settlement_income": True,
     }
-    assert payload["kpis"]["total_revenue"] == 125
+    assert payload["kpis"]["total_revenue"] == 425
     assert payload["kpis"]["average_revenue"] == 125
     assert payload["kpis"]["average_ticket"] == 25
+    assert payload["categories"] == [
+        {"category_id": category.id, "category_name": "Cash", "amount": 25},
+        {"category_id": None, "category_name": "公司结算", "amount": 300},
+    ]
+    assert payload["classified_included_total"] == 325
+    assert payload["comparison_kpis"]["total_revenue"] == 100
     assert payload["daily"] == [{"date": "2026-06-12", "revenue": 125}]
     assert payload["monthly"] == [
         {
@@ -393,5 +403,5 @@ async def test_charts_complete_multi_month_range_sums_each_month_total(
     assert response.status_code == 200
     payload = response.json()
     assert payload["income_summary"]["total_income"] == 625
-    assert payload["kpis"]["total_revenue"] == 125
+    assert payload["kpis"]["total_revenue"] == 625
     assert [row["monthly_total_income"] for row in payload["monthly"]] == [425, 200]

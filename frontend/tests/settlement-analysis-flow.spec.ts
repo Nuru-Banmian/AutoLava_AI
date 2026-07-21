@@ -131,7 +131,7 @@ async function mockSettlementAnalysis(page: Page) {
         : 0;
       return json({
         kpis: {
-          total_revenue: 900,
+          total_revenue: 900 + confirmed,
           record_days: 1,
           open_days: 1,
           average_revenue: 900,
@@ -151,9 +151,11 @@ async function mockSettlementAnalysis(page: Page) {
           total_income: 900 + confirmed,
           includes_settlement_income: isCompleteJune,
         },
-        classified_included_total: 900,
+        classified_included_total: confirmed,
         daily: [{ date: "2026-06-10", revenue: 900 }],
-        categories: [],
+        categories: confirmed > 0
+          ? [{ category_id: null, category_name: "公司结算", amount: confirmed }]
+          : [],
         excluded_categories: [],
         monthly: [{
           month: "2026-06",
@@ -221,5 +223,8 @@ test("settlement corrections feed complete-month analysis without narrow-screen 
   await expect(summary.getByText("€900")).toBeVisible();
   await expect(summary.getByText("€250")).toBeVisible();
   await expect(summary.getByText(/€1[.,]150/)).toBeVisible();
+  const incomeCategories = page.getByLabel("收入分类");
+  await expect(incomeCategories.getByText("公司结算")).toBeVisible();
+  await expect(incomeCategories.getByText("€250")).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });

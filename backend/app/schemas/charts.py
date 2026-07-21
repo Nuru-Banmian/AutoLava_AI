@@ -24,8 +24,10 @@ class DailyRevenue(BaseModel):
     revenue: int
 
 
-class CategoryComposition(PrimaryCategory):
-    pass
+class CategoryComposition(BaseModel):
+    category_id: int | None
+    category_name: str
+    amount: int
 
 
 class MonthlyRevenue(BaseModel):

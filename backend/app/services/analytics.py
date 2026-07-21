@@ -159,6 +159,11 @@ class AnalyticsService:
         settlement_by_month = await self._confirmed_settlement_by_month(
             store_id=store_id, start=start, end=end
         )
+        comparison_settlement_by_month: dict[str, int] = {}
+        if compare_start is not None and compare_end is not None:
+            comparison_settlement_by_month = await self._confirmed_settlement_by_month(
+                store_id=store_id, start=compare_start, end=compare_end
+            )
         selected_ids = None if category_ids is None else set(category_ids)
         included_totals: dict[CompositionKey, int] = defaultdict(int)
         excluded_totals: dict[CompositionKey, int] = defaultdict(int)
@@ -202,6 +207,16 @@ class AnalyticsService:
         daily_ledger_revenue = kpis["total_revenue"]
         confirmed_settlement_income = sum(settlement_by_month.values())
         total_income = daily_ledger_revenue + confirmed_settlement_income
+        if confirmed_settlement_income:
+            compositions.append(
+                {
+                    "category_id": None,
+                    "category_name": "公司结算",
+                    "amount": confirmed_settlement_income,
+                }
+            )
+            classified_included_total += confirmed_settlement_income
+        kpis["total_revenue"] = total_income
         kpis.update(
             {
                 "primary_categories": primary_categories,
@@ -216,6 +231,9 @@ class AnalyticsService:
         comparison_kpis = None
         if compare_start is not None and compare_end is not None:
             comparison = _revenue_kpis(comparison_records)
+            comparison["total_revenue"] += sum(
+                comparison_settlement_by_month.values()
+            )
             comparison_kpis = {
                 "start": compare_start.isoformat(),
                 "end": compare_end.isoformat(),
