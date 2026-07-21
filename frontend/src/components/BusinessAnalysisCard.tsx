@@ -63,8 +63,9 @@ export function BusinessAnalysisCard({ storeId, today }: BusinessAnalysisCardPro
   const data = charts.data;
   const trend = data ? (data.range.bucket === "day"
     ? data.daily.map((row) => ({ label: row.date, revenue: row.revenue }))
-    : data.monthly.map((row) => ({ label: row.month, revenue: row.revenue }))) : [];
-  const hasBusinessData = (data?.income_summary.monthly_total_income ?? 0) !== 0;
+    : data.monthly.map((row) => ({ label: row.month, revenue: row.monthly_total_income ?? row.revenue }))) : [];
+  const hasBusinessData = (data?.income_summary.total_income ?? 0) !== 0;
+  const isSingleMonth = data?.range.start.slice(0, 7) === data?.range.end.slice(0, 7);
 
   return <Card>
     <CardHeader className="gap-4">
@@ -87,7 +88,7 @@ export function BusinessAnalysisCard({ storeId, today }: BusinessAnalysisCardPro
           <div className="grid min-w-0 gap-2 sm:grid-cols-3" aria-label="月度收入汇总" role="region">
             <Kpi title="日常营业额" value={formatWholeEuro(data.income_summary.daily_ledger_revenue)} />
             <Kpi title="公司结算收入" value={formatWholeEuro(data.income_summary.confirmed_settlement_income)} />
-            <Kpi title="月度总收入" value={formatWholeEuro(data.income_summary.monthly_total_income)} />
+            <Kpi title={isSingleMonth ? "月度总收入" : "月度总收入汇总"} value={formatWholeEuro(data.income_summary.total_income)} />
           </div>
         ) : (
           <div className="grid gap-2 sm:grid-cols-3">

@@ -32,14 +32,14 @@ class MonthlyRevenue(BaseModel):
     month: str
     revenue: int
     daily_ledger_revenue: int
-    confirmed_settlement_income: int
-    monthly_total_income: int
+    confirmed_settlement_income: int | None
+    monthly_total_income: int | None
 
 
 class IncomeSummary(BaseModel):
     daily_ledger_revenue: int
     confirmed_settlement_income: int
-    monthly_total_income: int
+    total_income: int
     includes_settlement_income: bool
 
 

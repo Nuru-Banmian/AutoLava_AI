@@ -160,7 +160,7 @@ async function mockMergedFlow(page: Page) {
         },
         income_summary: {
           daily_ledger_revenue: 100, confirmed_settlement_income: 0,
-          monthly_total_income: 100, includes_settlement_income: false,
+          total_income: 100, includes_settlement_income: false,
         },
         classified_included_total: 100,
         daily: [{ date: "2026-07-14", revenue: 100 }],
@@ -174,7 +174,7 @@ async function mockMergedFlow(page: Page) {
           category_name: category.name,
           amount: 5,
         })),
-        monthly: [{ month: "2026-07", revenue: 100, daily_ledger_revenue: 100, confirmed_settlement_income: 0, monthly_total_income: 100 }],
+        monthly: [{ month: "2026-07", revenue: 100, daily_ledger_revenue: 100, confirmed_settlement_income: null, monthly_total_income: null }],
         weather: [],
         weekday: [],
       });

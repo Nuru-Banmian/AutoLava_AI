@@ -131,7 +131,7 @@ async function mockSettlementAnalysis(page: Page) {
         : 0;
       return json({
         kpis: {
-          total_revenue: 900 + confirmed,
+          total_revenue: 900,
           record_days: 1,
           open_days: 1,
           average_revenue: 900,
@@ -148,7 +148,7 @@ async function mockSettlementAnalysis(page: Page) {
         income_summary: {
           daily_ledger_revenue: 900,
           confirmed_settlement_income: confirmed,
-          monthly_total_income: 900 + confirmed,
+          total_income: 900 + confirmed,
           includes_settlement_income: isCompleteJune,
         },
         classified_included_total: 900,
@@ -157,10 +157,10 @@ async function mockSettlementAnalysis(page: Page) {
         excluded_categories: [],
         monthly: [{
           month: "2026-06",
-          revenue: 900 + confirmed,
+          revenue: 900,
           daily_ledger_revenue: 900,
-          confirmed_settlement_income: confirmed,
-          monthly_total_income: 900 + confirmed,
+          confirmed_settlement_income: isCompleteJune ? confirmed : null,
+          monthly_total_income: isCompleteJune ? 900 + confirmed : null,
         }],
         weather: [],
         weekday: [],
@@ -212,7 +212,6 @@ test("settlement corrections feed complete-month analysis without narrow-screen 
   await expect(page.getByLabel("开票月份")).toHaveValue("2026-07");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 
-  await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/database");
   await page.getByLabel("经营分析日期范围").getByRole("button", { name: "上月" }).click();
   const summary = page.getByRole("region", { name: "月度收入汇总" });
@@ -222,4 +221,5 @@ test("settlement corrections feed complete-month analysis without narrow-screen 
   await expect(summary.getByText("€900")).toBeVisible();
   await expect(summary.getByText("€250")).toBeVisible();
   await expect(summary.getByText(/€1[.,]150/)).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });

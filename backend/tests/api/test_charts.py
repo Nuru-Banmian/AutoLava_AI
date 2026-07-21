@@ -195,7 +195,7 @@ async def test_charts_returns_stable_empty_result(auth_client, db_session, store
         "income_summary": {
             "daily_ledger_revenue": 0,
             "confirmed_settlement_income": 0,
-            "monthly_total_income": 0,
+            "total_income": 0,
             "includes_settlement_income": True,
         },
         "classified_included_total": 0,
@@ -311,17 +311,17 @@ async def test_charts_complete_calendar_month_includes_confirmed_settlement_hist
     assert payload["income_summary"] == {
         "daily_ledger_revenue": 125,
         "confirmed_settlement_income": 300,
-        "monthly_total_income": 425,
+        "total_income": 425,
         "includes_settlement_income": True,
     }
-    assert payload["kpis"]["total_revenue"] == 425
+    assert payload["kpis"]["total_revenue"] == 125
     assert payload["kpis"]["average_revenue"] == 125
     assert payload["kpis"]["average_ticket"] == 25
     assert payload["daily"] == [{"date": "2026-06-12", "revenue": 125}]
     assert payload["monthly"] == [
         {
             "month": "2026-06",
-            "revenue": 425,
+            "revenue": 125,
             "daily_ledger_revenue": 125,
             "confirmed_settlement_income": 300,
             "monthly_total_income": 425,
@@ -358,11 +358,13 @@ async def test_charts_incomplete_range_keeps_daily_ledger_semantics(
     assert payload["income_summary"] == {
         "daily_ledger_revenue": 125,
         "confirmed_settlement_income": 0,
-        "monthly_total_income": 125,
+        "total_income": 125,
         "includes_settlement_income": False,
     }
     assert payload["kpis"]["total_revenue"] == 125
     assert payload["monthly"][0]["revenue"] == 125
+    assert payload["monthly"][0]["confirmed_settlement_income"] is None
+    assert payload["monthly"][0]["monthly_total_income"] is None
 
 
 async def test_charts_complete_multi_month_range_sums_each_month_total(
@@ -377,9 +379,6 @@ async def test_charts_complete_multi_month_range_sums_each_month_total(
     await _record(
         db_session, store, category, record_date=date(2026, 6, 12), revenue=125
     )
-    await _record(
-        db_session, store, category, record_date=date(2026, 7, 12), revenue=75
-    )
     await _confirmed_settlement(
         db_session, store, opening_month=date(2026, 6, 1), amount=300
     )
@@ -393,6 +392,6 @@ async def test_charts_complete_multi_month_range_sums_each_month_total(
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["income_summary"]["monthly_total_income"] == 700
-    assert payload["kpis"]["total_revenue"] == 700
-    assert [row["monthly_total_income"] for row in payload["monthly"]] == [425, 275]
+    assert payload["income_summary"]["total_income"] == 625
+    assert payload["kpis"]["total_revenue"] == 125
+    assert [row["monthly_total_income"] for row in payload["monthly"]] == [425, 200]

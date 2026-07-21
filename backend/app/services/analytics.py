@@ -63,6 +63,34 @@ def _is_complete_month_range(start: date, end: date) -> bool:
     return start.day == 1 and end.day == monthrange(end.year, end.month)[1]
 
 
+def _monthly_revenue_rows(
+    daily_by_month: dict[str, int],
+    settlement_by_month: dict[str, int],
+    *,
+    include_settlement: bool,
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for month in sorted(daily_by_month.keys() | settlement_by_month.keys()):
+        daily_revenue = daily_by_month.get(month, 0)
+        settlement_income = (
+            settlement_by_month.get(month, 0) if include_settlement else None
+        )
+        rows.append(
+            {
+                "month": month,
+                "revenue": daily_revenue,
+                "daily_ledger_revenue": daily_revenue,
+                "confirmed_settlement_income": settlement_income,
+                "monthly_total_income": (
+                    daily_revenue + settlement_income
+                    if settlement_income is not None
+                    else None
+                ),
+            }
+        )
+    return rows
+
+
 class AnalyticsService:
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -131,18 +159,6 @@ class AnalyticsService:
         settlement_by_month = await self._confirmed_settlement_by_month(
             store_id=store_id, start=start, end=end
         )
-        comparison_settlement_total = 0
-        if compare_start is not None and compare_end is not None:
-            comparison_settlement_total = sum(
-                (
-                    await self._confirmed_settlement_by_month(
-                        store_id=store_id,
-                        start=compare_start,
-                        end=compare_end,
-                    )
-                ).values()
-            )
-
         selected_ids = None if category_ids is None else set(category_ids)
         included_totals: dict[CompositionKey, int] = defaultdict(int)
         excluded_totals: dict[CompositionKey, int] = defaultdict(int)
@@ -185,8 +201,7 @@ class AnalyticsService:
         kpis = _revenue_kpis(records)
         daily_ledger_revenue = kpis["total_revenue"]
         confirmed_settlement_income = sum(settlement_by_month.values())
-        monthly_total_income = daily_ledger_revenue + confirmed_settlement_income
-        kpis["total_revenue"] = monthly_total_income
+        total_income = daily_ledger_revenue + confirmed_settlement_income
         kpis.update(
             {
                 "primary_categories": primary_categories,
@@ -204,8 +219,7 @@ class AnalyticsService:
             comparison_kpis = {
                 "start": compare_start.isoformat(),
                 "end": compare_end.isoformat(),
-                "total_revenue": comparison["total_revenue"]
-                + comparison_settlement_total,
+                "total_revenue": comparison["total_revenue"],
                 "open_days": comparison["open_days"],
                 "average_revenue": comparison["average_revenue"],
             }
@@ -221,7 +235,7 @@ class AnalyticsService:
             "income_summary": {
                 "daily_ledger_revenue": daily_ledger_revenue,
                 "confirmed_settlement_income": confirmed_settlement_income,
-                "monthly_total_income": monthly_total_income,
+                "total_income": total_income,
                 "includes_settlement_income": _is_complete_month_range(start, end),
             },
             "classified_included_total": classified_included_total,
@@ -231,17 +245,11 @@ class AnalyticsService:
             ],
             "categories": compositions,
             "excluded_categories": excluded_rows,
-            "monthly": [
-                {
-                    "month": month,
-                    "revenue": monthly_totals[month] + settlement_by_month.get(month, 0),
-                    "daily_ledger_revenue": monthly_totals[month],
-                    "confirmed_settlement_income": settlement_by_month.get(month, 0),
-                    "monthly_total_income": monthly_totals[month]
-                    + settlement_by_month.get(month, 0),
-                }
-                for month in sorted(monthly_totals.keys() | settlement_by_month.keys())
-            ],
+            "monthly": _monthly_revenue_rows(
+                monthly_totals,
+                settlement_by_month,
+                include_settlement=_is_complete_month_range(start, end),
+            ),
             "weather": [
                 {
                     "weather": weather,
