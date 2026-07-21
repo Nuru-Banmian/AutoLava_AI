@@ -10,7 +10,7 @@ from app.core.database import sqlite_short_write
 from app.models.identity import Store
 from app.models.ledger import StoreDailyRecord
 from app.models.settlement import SettlementAuditEvent, SettlementCompany, SettlementRecord
-from app.schemas.settlement import parse_month
+from app.schemas.settlement import SettlementRecordResponse, parse_month
 from app.services.access import require_company_settlement_access
 
 
@@ -172,6 +172,36 @@ class SettlementRecordService:
         )
         return store
 
+    async def get(self, record_id: int) -> SettlementRecord:
+        record = await self.session.scalar(
+            select(SettlementRecord).where(
+                SettlementRecord.id == record_id,
+                SettlementRecord.store_id == self.store_id,
+            )
+        )
+        if record is None:
+            raise HTTPException(404, "当前门店的开票记录不存在")
+        return record
+
+    @staticmethod
+    def require_pending(record: SettlementRecord) -> None:
+        if record.status != "pending":
+            raise HTTPException(409, "已确认开票记录必须先撤销到账确认")
+
+    @staticmethod
+    def require_revision(record: SettlementRecord, revision: int) -> None:
+        if record.revision == revision:
+            return
+        current = SettlementRecordResponse.model_validate(record).model_dump(mode="json")
+        raise HTTPException(
+            409,
+            {
+                "code": "settlement_record_revision_conflict",
+                "message": "开票记录已被其他用户修改，请重新加载后再试",
+                "current_record": current,
+            },
+        )
+
     def validated_month(self, value: str) -> date:
         try:
             month = parse_month(value)
@@ -268,3 +298,67 @@ class SettlementRecordService:
                 )
             )
         return record
+
+    async def update(
+        self,
+        record_id: int,
+        *,
+        company_id: int | None,
+        amount: int | None,
+        revision: int,
+    ) -> SettlementRecord:
+        async with sqlite_short_write(self.session):
+            await self.recheck_access()
+            record = await self.get(record_id)
+            self.require_pending(record)
+            self.require_revision(record, revision)
+            before = record_state(record)
+            if company_id is not None and company_id != record.company_id:
+                company = await self.session.scalar(
+                    select(SettlementCompany).where(
+                        SettlementCompany.id == company_id,
+                        SettlementCompany.store_id == self.store_id,
+                        SettlementCompany.is_active.is_(True),
+                    )
+                )
+                if company is None:
+                    raise HTTPException(404, "当前门店的活动结算公司不存在")
+                record.company_id = company.id
+                record.company_name = company.name
+            if amount is not None:
+                record.amount = amount
+            record.revision += 1
+            record.updated_by = self.actor_id
+            await self.session.flush()
+            self.session.add(
+                SettlementAuditEvent(
+                    store_id=self.store_id,
+                    actor_id=self.actor_id,
+                    action="settlement_record.update",
+                    entity_type="settlement_record",
+                    entity_id=record.id,
+                    before_state=before,
+                    after_state=record_state(record),
+                )
+            )
+        return record
+
+    async def delete(self, record_id: int, *, revision: int) -> None:
+        async with sqlite_short_write(self.session):
+            await self.recheck_access()
+            record = await self.get(record_id)
+            self.require_pending(record)
+            self.require_revision(record, revision)
+            before = record_state(record)
+            await self.session.delete(record)
+            self.session.add(
+                SettlementAuditEvent(
+                    store_id=self.store_id,
+                    actor_id=self.actor_id,
+                    action="settlement_record.delete",
+                    entity_type="settlement_record",
+                    entity_id=record_id,
+                    before_state=before,
+                    after_state=None,
+                )
+            )

@@ -9,6 +9,8 @@ from app.schemas.settlement import (
     CompanyPatch,
     CompanyResponse,
     RecordCreate,
+    RecordPatch,
+    RevisionBody,
     SettlementMonthResponse,
     SettlementRecordResponse,
 )
@@ -80,6 +82,34 @@ async def create_settlement_record(
         opening_month=body.opening_month,
         amount=body.amount,
     )
+
+
+@router.patch("/{store_id}/records/{record_id}", response_model=SettlementRecordResponse)
+async def update_settlement_record(
+    store_id: int,
+    record_id: int,
+    body: RecordPatch,
+    access: EnabledSettlementStore,
+    session: Session,
+) -> SettlementRecordResponse:
+    return await record_service(session, access).update(
+        record_id,
+        company_id=body.company_id,
+        amount=body.amount,
+        revision=body.revision,
+    )
+
+
+@router.delete("/{store_id}/records/{record_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_settlement_record(
+    store_id: int,
+    record_id: int,
+    body: RevisionBody,
+    access: EnabledSettlementStore,
+    session: Session,
+) -> Response:
+    await record_service(session, access).delete(record_id, revision=body.revision)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/{store_id}/companies", response_model=list[CompanyResponse])

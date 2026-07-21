@@ -33,6 +33,17 @@ async def create_company(client: AsyncClient, store_id: int, name: str = "Alpha"
     return response.json()
 
 
+async def create_record(
+    client: AsyncClient, store_id: int, company_id: int, month: str, amount: int = 120
+) -> dict:
+    response = await client.post(
+        f"/api/settlements/{store_id}/records",
+        json={"company_id": company_id, "opening_month": month, "amount": amount},
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
 async def test_create_pending_records_allows_duplicates_snapshots_name_and_audits(
     client: AsyncClient, record_context, db_session: AsyncSession
 ) -> None:
@@ -197,6 +208,7 @@ async def test_record_reads_and_writes_recheck_membership_and_feature_flag(
     user_id, store_id = user.id, store.id
     company = await create_company(client, store_id)
     month = datetime.now(ZoneInfo(store.timezone)).strftime("%Y-%m")
+    record = await create_record(client, store_id, company["id"], month)
     membership = await db_session.scalar(
         select(StoreMember).where(
             StoreMember.store_id == store_id, StoreMember.user_id == user_id
@@ -212,6 +224,19 @@ async def test_record_reads_and_writes_recheck_membership_and_feature_flag(
             json={"company_id": company["id"], "opening_month": month, "amount": 10},
         )
     ).status_code == 403
+    assert (
+        await client.patch(
+            f"/api/settlements/{store_id}/records/{record['id']}",
+            json={"amount": 20, "revision": 1},
+        )
+    ).status_code == 403
+    assert (
+        await client.request(
+            "DELETE",
+            f"/api/settlements/{store_id}/records/{record['id']}",
+            json={"revision": 1},
+        )
+    ).status_code == 403
 
     db_session.add(StoreMember(store_id=store_id, user_id=user_id))
     fresh_store = await db_session.get(type(store), store_id)
@@ -219,3 +244,222 @@ async def test_record_reads_and_writes_recheck_membership_and_feature_flag(
     fresh_store.company_settlement_enabled = False
     await db_session.commit()
     assert (await client.get(f"/api/settlements/{store_id}/months/{month}")).status_code == 403
+    assert (
+        await client.patch(
+            f"/api/settlements/{store_id}/records/{record['id']}",
+            json={"amount": 20, "revision": 1},
+        )
+    ).status_code == 403
+    assert (
+        await client.request(
+            "DELETE",
+            f"/api/settlements/{store_id}/records/{record['id']}",
+            json={"revision": 1},
+        )
+    ).status_code == 403
+
+
+async def test_update_pending_record_changes_company_snapshot_amount_revision_and_audits(
+    client: AsyncClient, record_context, db_session: AsyncSession
+) -> None:
+    user, store = record_context
+    month = datetime.now(ZoneInfo(store.timezone)).strftime("%Y-%m")
+    alpha = await create_company(client, store.id, "Alpha")
+    beta = await create_company(client, store.id, "Beta")
+    original = await create_record(client, store.id, alpha["id"], month)
+    unchanged = await create_record(client, store.id, alpha["id"], month, amount=80)
+
+    response = await client.patch(
+        f"/api/settlements/{store.id}/records/{original['id']}",
+        json={"company_id": beta["id"], "amount": 250, "revision": 1},
+    )
+
+    assert response.status_code == 200
+    assert response.json() | {"created_at": "ignored"} == {
+        "id": original["id"],
+        "company_id": beta["id"],
+        "company_name": "Beta",
+        "opening_month": month,
+        "amount": 250,
+        "status": "pending",
+        "revision": 2,
+        "created_at": "ignored",
+    }
+    audit = await db_session.scalar(
+        select(SettlementAuditEvent).where(
+            SettlementAuditEvent.action == "settlement_record.update",
+            SettlementAuditEvent.entity_id == original["id"],
+        )
+    )
+    assert audit is not None
+    assert audit.actor_id == user.id
+    assert audit.before_state["company_name"] == "Alpha"
+    assert audit.after_state["company_name"] == "Beta"
+    historical = await db_session.get(SettlementRecord, unchanged["id"])
+    assert historical is not None
+    assert historical.company_name == "Alpha"
+
+
+async def test_update_with_stale_revision_returns_canonical_record_without_overwrite(
+    client: AsyncClient, record_context
+) -> None:
+    _, store = record_context
+    store_id = store.id
+    month = datetime.now(ZoneInfo(store.timezone)).strftime("%Y-%m")
+    company = await create_company(client, store_id)
+    original = await create_record(client, store_id, company["id"], month)
+    first = await client.patch(
+        f"/api/settlements/{store_id}/records/{original['id']}",
+        json={"amount": 200, "revision": 1},
+    )
+    assert first.status_code == 200
+
+    stale = await client.patch(
+        f"/api/settlements/{store_id}/records/{original['id']}",
+        json={"amount": 999, "revision": 1},
+    )
+
+    assert stale.status_code == 409
+    assert stale.json()["detail"] == {
+        "code": "settlement_record_revision_conflict",
+        "message": "开票记录已被其他用户修改，请重新加载后再试",
+        "current_record": first.json(),
+    }
+    listed = (await client.get(f"/api/settlements/{store_id}/months/{month}")).json()
+    assert listed["records"][0]["amount"] == 200
+
+
+async def test_delete_pending_record_requires_current_revision_and_audits(
+    client: AsyncClient, record_context, db_session: AsyncSession
+) -> None:
+    user, store = record_context
+    store_id = store.id
+    month = datetime.now(ZoneInfo(store.timezone)).strftime("%Y-%m")
+    company = await create_company(client, store_id)
+    original = await create_record(client, store_id, company["id"], month)
+
+    stale = await client.request(
+        "DELETE",
+        f"/api/settlements/{store_id}/records/{original['id']}",
+        json={"revision": 2},
+    )
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["current_record"]["revision"] == 1
+
+    deleted = await client.request(
+        "DELETE",
+        f"/api/settlements/{store_id}/records/{original['id']}",
+        json={"revision": 1},
+    )
+    assert deleted.status_code == 204
+    assert await db_session.get(SettlementRecord, original["id"]) is None
+    audit = await db_session.scalar(
+        select(SettlementAuditEvent).where(
+            SettlementAuditEvent.action == "settlement_record.delete",
+            SettlementAuditEvent.entity_id == original["id"],
+        )
+    )
+    assert audit is not None
+    assert audit.actor_id == user.id
+    assert audit.before_state["revision"] == 1
+    assert audit.after_state is None
+
+
+async def test_confirmed_record_rejects_direct_update_and_delete(
+    client: AsyncClient, record_context, db_session: AsyncSession
+) -> None:
+    _, store = record_context
+    store_id = store.id
+    month = datetime.now(ZoneInfo(store.timezone)).strftime("%Y-%m")
+    company = await create_company(client, store_id)
+    original = await create_record(client, store_id, company["id"], month)
+    record = await db_session.get(SettlementRecord, original["id"])
+    assert record is not None
+    record.status = "confirmed"
+    await db_session.commit()
+
+    updated = await client.patch(
+        f"/api/settlements/{store_id}/records/{original['id']}",
+        json={"amount": 200, "revision": 1},
+    )
+    deleted = await client.request(
+        "DELETE",
+        f"/api/settlements/{store_id}/records/{original['id']}",
+        json={"revision": 1},
+    )
+
+    assert updated.status_code == deleted.status_code == 409
+    assert updated.json()["detail"] == "已确认开票记录必须先撤销到账确认"
+    assert deleted.json()["detail"] == "已确认开票记录必须先撤销到账确认"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"revision": 1},
+        {"amount": 0, "revision": 1},
+        {"amount": -1, "revision": 1},
+        {"amount": 1.5, "revision": 1},
+        {"amount": "20", "revision": 1},
+        {"amount": 10_000_000_000, "revision": 1},
+        {"amount": 20, "revision": 1.5},
+    ],
+)
+async def test_update_rejects_missing_changes_or_invalid_amount_and_revision(
+    client: AsyncClient, record_context, body: dict[str, object]
+) -> None:
+    _, store = record_context
+    month = datetime.now(ZoneInfo(store.timezone)).strftime("%Y-%m")
+    company = await create_company(client, store.id)
+    record = await create_record(client, store.id, company["id"], month)
+
+    response = await client.patch(
+        f"/api/settlements/{store.id}/records/{record['id']}", json=body
+    )
+
+    assert response.status_code == 422
+
+
+async def test_update_and_delete_reject_records_owned_by_another_store(
+    client: AsyncClient, record_context, store_factory, db_session: AsyncSession
+) -> None:
+    user, store = record_context
+    store_id = store.id
+    other = await store_factory(name="Foreign Records")
+    other.company_settlement_enabled = True
+    company = SettlementCompany(
+        store_id=other.id,
+        name="Foreign",
+        normalized_name="foreign",
+        is_active=True,
+        created_by=user.id,
+        updated_by=user.id,
+    )
+    db_session.add(company)
+    await db_session.flush()
+    foreign_record = SettlementRecord(
+        store_id=other.id,
+        company_id=company.id,
+        company_name=company.name,
+        opening_month=date(2026, 7, 1),
+        amount=100,
+        status="pending",
+        revision=1,
+        created_by=user.id,
+        updated_by=user.id,
+    )
+    db_session.add(foreign_record)
+    await db_session.commit()
+    foreign_record_id = foreign_record.id
+
+    updated = await client.patch(
+        f"/api/settlements/{store_id}/records/{foreign_record_id}",
+        json={"amount": 200, "revision": 1},
+    )
+    deleted = await client.request(
+        "DELETE",
+        f"/api/settlements/{store_id}/records/{foreign_record_id}",
+        json={"revision": 1},
+    )
+
+    assert updated.status_code == deleted.status_code == 404

@@ -2,7 +2,15 @@ import re
 from datetime import date, datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, BeforeValidator, Field, StrictInt, StringConstraints, field_serializer
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    Field,
+    StrictInt,
+    StringConstraints,
+    field_serializer,
+    model_validator,
+)
 
 
 def _name(value: str) -> str:
@@ -79,10 +87,16 @@ class SettlementMonthResponse(BaseModel):
 
 
 class RecordPatch(BaseModel):
-    company_id: int | None = None
-    amount: int | None = Field(default=None, gt=0)
-    revision: int = Field(gt=0)
+    company_id: StrictInt | None = Field(default=None, gt=0)
+    amount: StrictInt | None = Field(default=None, gt=0, le=MAX_SETTLEMENT_AMOUNT)
+    revision: StrictInt = Field(gt=0)
+
+    @model_validator(mode="after")
+    def requires_change(self) -> "RecordPatch":
+        if self.company_id is None and self.amount is None:
+            raise ValueError("company_id or amount is required")
+        return self
 
 
 class RevisionBody(BaseModel):
-    revision: int = Field(gt=0)
+    revision: StrictInt = Field(gt=0)

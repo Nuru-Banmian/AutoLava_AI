@@ -3,7 +3,25 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
 import { api, friendlyApiError } from "@/api/client";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useStore } from "@/stores/StoreProvider";
 
@@ -66,6 +84,22 @@ interface CompanyMutation {
   retry: () => void;
 }
 
+interface RecordMutationVariables {
+  storeId: number;
+  month: string;
+  recordId: number;
+  companyId: number;
+  amount: number;
+  revision: number;
+}
+
+interface RecordDeleteVariables {
+  storeId: number;
+  month: string;
+  recordId: number;
+  revision: number;
+}
+
 function CompanyList({ companies, archived, busy, onRename, onLifecycle, onDelete }: {
   companies: SettlementCompany[];
   archived: boolean;
@@ -114,6 +148,11 @@ export function CompanySettlementPage() {
   const [amount, setAmount] = useState("");
   const [inlineCompanyName, setInlineCompanyName] = useState("");
   const [recordError, setRecordError] = useState("");
+  const [recordMessage, setRecordMessage] = useState("");
+  const [editingRecord, setEditingRecord] = useState<SettlementRecord | null>(null);
+  const [editCompanyId, setEditCompanyId] = useState("");
+  const [editAmount, setEditAmount] = useState("");
+  const [recordToDelete, setRecordToDelete] = useState<SettlementRecord | null>(null);
   const enabled = selected?.company_settlement_enabled === true;
   const workspace = useQuery({
     queryKey: ["settlements", selected?.id],
@@ -187,6 +226,55 @@ export function CompanySettlementPage() {
       if (selected?.id === variables.storeId) setRecordError(friendlyApiError(error, "结算公司新增失败，请重试"));
     },
   });
+  const editRecordMutation = useMutation({
+    mutationFn: (variables: RecordMutationVariables) => api<SettlementRecord>(
+      `/settlements/${variables.storeId}/records/${variables.recordId}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          company_id: variables.companyId,
+          amount: variables.amount,
+          revision: variables.revision,
+        }),
+      },
+    ),
+    onSuccess: async (_record, variables) => {
+      if (selected?.id === variables.storeId) {
+        setEditingRecord(null);
+        setRecordError("");
+        setRecordMessage("开票记录已修改");
+      }
+      await queryClient.invalidateQueries({ queryKey: ["settlement-month", variables.storeId, variables.month] });
+    },
+    onError: async (error, variables) => {
+      if (selected?.id === variables.storeId) {
+        setRecordError(friendlyApiError(error, "开票记录修改失败，请重试"));
+        setRecordMessage("");
+      }
+      await queryClient.invalidateQueries({ queryKey: ["settlement-month", variables.storeId, variables.month] });
+    },
+  });
+  const deleteRecordMutation = useMutation({
+    mutationFn: (variables: RecordDeleteVariables) => api<void>(
+      `/settlements/${variables.storeId}/records/${variables.recordId}`,
+      { method: "DELETE", body: JSON.stringify({ revision: variables.revision }) },
+    ),
+    onSuccess: async (_result, variables) => {
+      if (selected?.id === variables.storeId) {
+        setRecordToDelete(null);
+        setRecordError("");
+        setRecordMessage("开票记录已永久删除");
+      }
+      await queryClient.invalidateQueries({ queryKey: ["settlement-month", variables.storeId, variables.month] });
+    },
+    onError: async (error, variables) => {
+      if (selected?.id === variables.storeId) {
+        setRecordError(friendlyApiError(error, "开票记录删除失败，请重试"));
+        setRecordMessage("");
+      }
+      await queryClient.invalidateQueries({ queryKey: ["settlement-month", variables.storeId, variables.month] });
+    },
+  });
   useEffect(() => {
     setName("");
     setMessage("");
@@ -196,10 +284,48 @@ export function CompanySettlementPage() {
     setAmount("");
     setInlineCompanyName("");
     setRecordError("");
+    setRecordMessage("");
+    setEditingRecord(null);
+    setEditCompanyId("");
+    setEditAmount("");
+    setRecordToDelete(null);
     mutate.reset();
     recordMutation.reset();
     inlineCompanyMutation.reset();
+    editRecordMutation.reset();
+    deleteRecordMutation.reset();
   }, [selected?.id]);
+
+  const openRecordEditor = (record: SettlementRecord) => {
+    setEditingRecord(record);
+    setEditCompanyId(String(record.company_id));
+    setEditAmount(String(record.amount));
+    setRecordError("");
+    setRecordMessage("");
+    editRecordMutation.reset();
+  };
+
+  const submitRecordEdit = () => {
+    if (!selected || !editingRecord || !validAmount(editAmount) || !editCompanyId) return;
+    editRecordMutation.mutate({
+      storeId: selected.id,
+      month: editingRecord.opening_month,
+      recordId: editingRecord.id,
+      companyId: Number(editCompanyId),
+      amount: Number(editAmount),
+      revision: editingRecord.revision,
+    });
+  };
+
+  const submitRecordDelete = () => {
+    if (!selected || !recordToDelete) return;
+    deleteRecordMutation.mutate({
+      storeId: selected.id,
+      month: recordToDelete.opening_month,
+      recordId: recordToDelete.id,
+      revision: recordToDelete.revision,
+    });
+  };
   const submitCreate = (storeId: number, submittedName: string) => {
     const retry = () => submitCreate(storeId, submittedName);
     mutate.mutate({
@@ -301,10 +427,61 @@ export function CompanySettlementPage() {
               <span className="min-w-0 break-words font-medium">{record.company_name}</span>
               <span>{euro(record.amount)}</span>
               <span className="rounded-full bg-muted px-2 py-1 text-sm">{record.status === "pending" ? "待到账" : "已确认"}</span>
+              {record.status === "pending" && <div className="flex flex-wrap gap-2">
+                <Button aria-label={`编辑${record.company_name}开票记录`} disabled={editRecordMutation.isPending || deleteRecordMutation.isPending} onClick={() => openRecordEditor(record)} type="button" variant="outline">编辑</Button>
+                <Button aria-label={`删除${record.company_name}开票记录`} disabled={editRecordMutation.isPending || deleteRecordMutation.isPending} onClick={() => {
+                  setRecordError("");
+                  setRecordMessage("");
+                  deleteRecordMutation.reset();
+                  setRecordToDelete(record);
+                }} type="button" variant="destructive">删除</Button>
+              </div>}
             </li>)}
           </ul> : <p>本月暂无开票记录。</p>}
+          {recordMessage && <p role="status">{recordMessage}</p>}
         </>}
       </section>
+      <Dialog open={editingRecord !== null} onOpenChange={(open) => {
+        if (!open && !editRecordMutation.isPending) setEditingRecord(null);
+      }}>
+        <DialogContent aria-label="修改开票记录">
+          <DialogHeader>
+            <DialogTitle>修改开票记录</DialogTitle>
+            <DialogDescription>开票月份保持为 {editingRecord?.opening_month}；只能修改待到账记录。</DialogDescription>
+          </DialogHeader>
+          <label className="grid gap-1 text-sm font-medium">
+            编辑结算公司
+            <select aria-label="编辑结算公司" className="h-9 rounded-md border border-input bg-transparent px-3 text-sm" disabled={editRecordMutation.isPending} onChange={(event) => setEditCompanyId(event.target.value)} value={editCompanyId}>
+              {(active.data ?? []).map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
+            </select>
+          </label>
+          <label className="grid gap-1 text-sm font-medium">
+            编辑金额（整数欧元）
+            <Input aria-label="编辑金额（整数欧元）" disabled={editRecordMutation.isPending} inputMode="numeric" max={MAX_SETTLEMENT_AMOUNT} min="1" onChange={(event) => setEditAmount(event.target.value)} pattern="[0-9]+" required step="1" type="number" value={editAmount} />
+          </label>
+          {editingRecord && recordError && <div role="alert">{recordError}</div>}
+          <DialogFooter>
+            <DialogClose asChild><Button disabled={editRecordMutation.isPending} type="button" variant="outline">取消修改</Button></DialogClose>
+            {editRecordMutation.isError && <Button disabled={editRecordMutation.isPending} onClick={submitRecordEdit} type="button" variant="outline">重试修改</Button>}
+            <Button disabled={editRecordMutation.isPending || !editCompanyId || !validAmount(editAmount)} onClick={submitRecordEdit} type="button">保存开票记录修改</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <AlertDialog open={recordToDelete !== null} onOpenChange={(open) => {
+        if (!open && !deleteRecordMutation.isPending) setRecordToDelete(null);
+      }}>
+        <AlertDialogContent aria-label="永久删除开票记录？">
+          <AlertDialogHeader>
+            <AlertDialogTitle>永久删除开票记录？</AlertDialogTitle>
+            <AlertDialogDescription>将永久删除 {recordToDelete?.company_name} 的待到账开票记录，此操作无法撤销。</AlertDialogDescription>
+          </AlertDialogHeader>
+          {recordToDelete && recordError && <div role="alert">{recordError}</div>}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteRecordMutation.isPending}>取消删除</AlertDialogCancel>
+            <Button aria-label="确认永久删除开票记录" disabled={deleteRecordMutation.isPending} onClick={submitRecordDelete} type="button" variant="destructive">确认永久删除</Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <section className="grid gap-3" aria-labelledby="active-companies-title">
         <h2 className="text-xl font-semibold" id="active-companies-title">活动结算公司</h2>
         <form className="flex min-w-0 flex-wrap gap-2" onSubmit={create}>
