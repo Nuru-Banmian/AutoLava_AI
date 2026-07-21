@@ -1,12 +1,18 @@
+import asyncio
 from datetime import date, datetime
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 import pytest
-from httpx import AsyncClient
-from sqlalchemy import select
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.identity import StoreMember
+from app.core.database import async_session_factory, engine
+from app.core.security import create_access_token
+from app.main import create_app
+from app.models.base import Base
+from app.models.identity import Store, StoreMember, User
 from app.models.ledger import StoreDailyRecord
 from app.models.settlement import SettlementAuditEvent, SettlementCompany, SettlementRecord
 
@@ -237,6 +243,18 @@ async def test_record_reads_and_writes_recheck_membership_and_feature_flag(
             json={"revision": 1},
         )
     ).status_code == 403
+    assert (
+        await client.post(
+            f"/api/settlements/{store_id}/records/{record['id']}/confirm",
+            json={"revision": 1},
+        )
+    ).status_code == 403
+    assert (
+        await client.post(
+            f"/api/settlements/{store_id}/records/{record['id']}/revoke-confirmation",
+            json={"revision": 1},
+        )
+    ).status_code == 403
 
     db_session.add(StoreMember(store_id=store_id, user_id=user_id))
     fresh_store = await db_session.get(type(store), store_id)
@@ -254,6 +272,18 @@ async def test_record_reads_and_writes_recheck_membership_and_feature_flag(
         await client.request(
             "DELETE",
             f"/api/settlements/{store_id}/records/{record['id']}",
+            json={"revision": 1},
+        )
+    ).status_code == 403
+    assert (
+        await client.post(
+            f"/api/settlements/{store_id}/records/{record['id']}/confirm",
+            json={"revision": 1},
+        )
+    ).status_code == 403
+    assert (
+        await client.post(
+            f"/api/settlements/{store_id}/records/{record['id']}/revoke-confirmation",
             json={"revision": 1},
         )
     ).status_code == 403
@@ -391,6 +421,211 @@ async def test_confirmed_record_rejects_direct_update_and_delete(
     assert updated.status_code == deleted.status_code == 409
     assert updated.json()["detail"] == "已确认开票记录必须先撤销到账确认"
     assert deleted.json()["detail"] == "已确认开票记录必须先撤销到账确认"
+
+
+async def test_confirm_payment_updates_status_audit_and_opening_month_summary(
+    client: AsyncClient, record_context, db_session: AsyncSession
+) -> None:
+    user, store = record_context
+    month = datetime.now(ZoneInfo(store.timezone)).strftime("%Y-%m")
+    company = await create_company(client, store.id)
+    original = await create_record(client, store.id, company["id"], month, amount=420)
+
+    response = await client.post(
+        f"/api/settlements/{store.id}/records/{original['id']}/confirm",
+        json={"revision": 1},
+    )
+
+    assert response.status_code == 200
+    assert response.json() | {"created_at": "ignored"} == {
+        **original,
+        "status": "confirmed",
+        "revision": 2,
+        "created_at": "ignored",
+    }
+    summary = (await client.get(f"/api/settlements/{store.id}/months/{month}")).json()
+    assert summary["confirmed_settlement_income"] == 420
+    assert summary["pending_amount"] == 0
+    assert summary["monthly_total"] == summary["daily_ledger_revenue"] + 420
+    audit = await db_session.scalar(
+        select(SettlementAuditEvent).where(
+            SettlementAuditEvent.action == "settlement_record.confirm",
+            SettlementAuditEvent.entity_id == original["id"],
+        )
+    )
+    assert audit is not None
+    assert audit.actor_id == user.id
+    assert audit.before_state["status"] == "pending"
+    assert audit.after_state["status"] == "confirmed"
+    assert audit.after_state["revision"] == 2
+
+
+async def test_revoke_confirmation_restores_pending_editability_and_audits(
+    client: AsyncClient, record_context, db_session: AsyncSession
+) -> None:
+    user, store = record_context
+    month = datetime.now(ZoneInfo(store.timezone)).strftime("%Y-%m")
+    company = await create_company(client, store.id)
+    original = await create_record(client, store.id, company["id"], month, amount=420)
+    confirmed = await client.post(
+        f"/api/settlements/{store.id}/records/{original['id']}/confirm",
+        json={"revision": 1},
+    )
+    assert confirmed.status_code == 200
+
+    revoked = await client.post(
+        f"/api/settlements/{store.id}/records/{original['id']}/revoke-confirmation",
+        json={"revision": 2},
+    )
+
+    assert revoked.status_code == 200
+    assert revoked.json()["status"] == "pending"
+    assert revoked.json()["revision"] == 3
+    summary = (await client.get(f"/api/settlements/{store.id}/months/{month}")).json()
+    assert summary["confirmed_settlement_income"] == 0
+    assert summary["pending_amount"] == 420
+    updated = await client.patch(
+        f"/api/settlements/{store.id}/records/{original['id']}",
+        json={"amount": 500, "revision": 3},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["amount"] == 500
+    audit = await db_session.scalar(
+        select(SettlementAuditEvent).where(
+            SettlementAuditEvent.action == "settlement_record.revoke_confirmation",
+            SettlementAuditEvent.entity_id == original["id"],
+        )
+    )
+    assert audit is not None
+    assert audit.actor_id == user.id
+    assert audit.before_state["status"] == "confirmed"
+    assert audit.after_state["status"] == "pending"
+
+
+async def test_repeated_transitions_return_canonical_state_without_double_counting(
+    client: AsyncClient, record_context
+) -> None:
+    _, store = record_context
+    store_id = store.id
+    month = datetime.now(ZoneInfo(store.timezone)).strftime("%Y-%m")
+    company = await create_company(client, store_id)
+    original = await create_record(client, store_id, company["id"], month, amount=420)
+    path = f"/api/settlements/{store_id}/records/{original['id']}"
+    assert (await client.post(f"{path}/confirm", json={"revision": 1})).status_code == 200
+
+    stale_retry = await client.post(f"{path}/confirm", json={"revision": 1})
+    current_retry = await client.post(f"{path}/confirm", json={"revision": 2})
+
+    assert stale_retry.status_code == current_retry.status_code == 409
+    assert stale_retry.json()["detail"]["current_record"]["revision"] == 2
+    assert current_retry.json()["detail"] | {"current_record": {}} == {
+        "code": "settlement_record_state_conflict",
+        "message": "开票记录已经确认到账",
+        "current_record": {},
+    }
+    summary = (await client.get(f"/api/settlements/{store_id}/months/{month}")).json()
+    assert summary["confirmed_settlement_income"] == 420
+    assert summary["monthly_total"] == summary["daily_ledger_revenue"] + 420
+
+    assert (
+        await client.post(f"{path}/revoke-confirmation", json={"revision": 2})
+    ).status_code == 200
+    repeated_revoke = await client.post(
+        f"{path}/revoke-confirmation", json={"revision": 3}
+    )
+    assert repeated_revoke.status_code == 409
+    assert repeated_revoke.json()["detail"]["current_record"]["status"] == "pending"
+    summary = (await client.get(f"/api/settlements/{store_id}/months/{month}")).json()
+    assert summary["confirmed_settlement_income"] == 0
+    assert summary["pending_amount"] == 420
+
+
+async def test_concurrent_confirm_and_revoke_requests_each_apply_once() -> None:
+    async with engine.begin() as connection:
+        for table in reversed(Base.metadata.sorted_tables):
+            await connection.execute(table.delete())
+    async with async_session_factory() as setup:
+        user = User(
+            username="concurrent-settlement",
+            password_hash="unused",
+            role="admin",
+            is_active=True,
+        )
+        store = Store(
+            name="Concurrent settlement",
+            address="Concurrent settlement",
+            latitude=Decimal("45"),
+            longitude=Decimal("9"),
+            timezone="Europe/Rome",
+            is_active=True,
+            company_settlement_enabled=True,
+        )
+        setup.add_all([user, store])
+        await setup.flush()
+        company = SettlementCompany(
+            store_id=store.id,
+            name="Alpha",
+            normalized_name="alpha",
+            is_active=True,
+            created_by=user.id,
+            updated_by=user.id,
+        )
+        setup.add(company)
+        await setup.flush()
+        record = SettlementRecord(
+            store_id=store.id,
+            company_id=company.id,
+            company_name=company.name,
+            opening_month=date(2026, 7, 1),
+            amount=420,
+            status="pending",
+            revision=1,
+            created_by=user.id,
+            updated_by=user.id,
+        )
+        setup.add(record)
+        await setup.commit()
+        user_id, store_id, record_id = user.id, store.id, record.id
+
+    token, _ = create_access_token(user_id)
+    path = f"/api/settlements/{store_id}/records/{record_id}"
+    app = create_app()
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://testserver",
+        cookies={"access_token": token},
+    ) as concurrent_client:
+        confirmations = await asyncio.gather(
+            concurrent_client.post(f"{path}/confirm", json={"revision": 1}),
+            concurrent_client.post(f"{path}/confirm", json={"revision": 1}),
+        )
+        revocations = await asyncio.gather(
+            concurrent_client.post(f"{path}/revoke-confirmation", json={"revision": 2}),
+            concurrent_client.post(f"{path}/revoke-confirmation", json={"revision": 2}),
+        )
+
+    assert sorted(response.status_code for response in confirmations) == [200, 409]
+    assert sorted(response.status_code for response in revocations) == [200, 409]
+    async with async_session_factory() as verification:
+        current = await verification.get(SettlementRecord, record_id)
+        assert current is not None
+        assert (current.status, current.revision) == ("pending", 3)
+        actions = list(
+            await verification.scalars(
+                select(SettlementAuditEvent.action)
+                .where(SettlementAuditEvent.entity_id == record_id)
+                .order_by(SettlementAuditEvent.id)
+            )
+        )
+        assert actions == [
+            "settlement_record.confirm",
+            "settlement_record.revoke_confirmation",
+        ]
+        assert await verification.scalar(
+            select(func.count())
+            .select_from(SettlementRecord)
+            .where(SettlementRecord.id == record_id)
+        ) == 1
 
 
 @pytest.mark.parametrize(

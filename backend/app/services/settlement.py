@@ -362,3 +362,67 @@ class SettlementRecordService:
                     after_state=None,
                 )
             )
+
+    async def _transition(
+        self,
+        record_id: int,
+        *,
+        revision: int,
+        expected_status: str,
+        target_status: str,
+        conflict_message: str,
+        action: str,
+    ) -> SettlementRecord:
+        async with sqlite_short_write(self.session):
+            await self.recheck_access()
+            record = await self.get(record_id)
+            self.require_revision(record, revision)
+            if record.status != expected_status:
+                current = SettlementRecordResponse.model_validate(record).model_dump(mode="json")
+                raise HTTPException(
+                    409,
+                    {
+                        "code": "settlement_record_state_conflict",
+                        "message": conflict_message,
+                        "current_record": current,
+                    },
+                )
+            before = record_state(record)
+            record.status = target_status
+            record.revision += 1
+            record.updated_by = self.actor_id
+            await self.session.flush()
+            self.session.add(
+                SettlementAuditEvent(
+                    store_id=self.store_id,
+                    actor_id=self.actor_id,
+                    action=action,
+                    entity_type="settlement_record",
+                    entity_id=record.id,
+                    before_state=before,
+                    after_state=record_state(record),
+                )
+            )
+        return record
+
+    async def confirm(self, record_id: int, *, revision: int) -> SettlementRecord:
+        return await self._transition(
+            record_id,
+            revision=revision,
+            expected_status="pending",
+            target_status="confirmed",
+            conflict_message="开票记录已经确认到账",
+            action="settlement_record.confirm",
+        )
+
+    async def revoke_confirmation(
+        self, record_id: int, *, revision: int
+    ) -> SettlementRecord:
+        return await self._transition(
+            record_id,
+            revision=revision,
+            expected_status="confirmed",
+            target_status="pending",
+            conflict_message="开票记录当前为待到账状态",
+            action="settlement_record.revoke_confirmation",
+        )

@@ -112,6 +112,36 @@ async def delete_settlement_record(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.post(
+    "/{store_id}/records/{record_id}/confirm",
+    response_model=SettlementRecordResponse,
+)
+async def confirm_settlement_record(
+    store_id: int,
+    record_id: int,
+    body: RevisionBody,
+    access: EnabledSettlementStore,
+    session: Session,
+) -> SettlementRecordResponse:
+    return await record_service(session, access).confirm(record_id, revision=body.revision)
+
+
+@router.post(
+    "/{store_id}/records/{record_id}/revoke-confirmation",
+    response_model=SettlementRecordResponse,
+)
+async def revoke_settlement_record_confirmation(
+    store_id: int,
+    record_id: int,
+    body: RevisionBody,
+    access: EnabledSettlementStore,
+    session: Session,
+) -> SettlementRecordResponse:
+    return await record_service(session, access).revoke_confirmation(
+        record_id, revision=body.revision
+    )
+
+
 @router.get("/{store_id}/companies", response_model=list[CompanyResponse])
 async def list_companies(
     store_id: int,

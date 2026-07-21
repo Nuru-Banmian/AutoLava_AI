@@ -90,6 +90,83 @@ afterEach(() => {
 afterAll(() => server.close());
 
 describe("CompanySettlementPage record corrections", () => {
+  it("confirms the whole record after an explicit prompt and refreshes its month", async () => {
+    let submitted: unknown;
+    let current = record();
+    renderPage([
+      http.get("/api/settlements/1/months/:month", () => HttpResponse.json({
+        ...monthResponse([current]),
+        confirmed_settlement_income: current.status === "confirmed" ? current.amount : 0,
+        pending_amount: current.status === "pending" ? current.amount : 0,
+        monthly_total: current.status === "confirmed" ? 1020 : 900,
+      })),
+      http.post("/api/settlements/1/records/20/confirm", async ({ request }) => {
+        submitted = await request.json();
+        current = record({ status: "confirmed", revision: 2 });
+        return HttpResponse.json(current);
+      }),
+    ]);
+
+    fireEvent.click(await screen.findByRole("button", { name: "确认Alpha开票记录到账" }));
+    expect(screen.getByRole("alertdialog", { name: "确认整笔到账？" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "确认到账" }));
+
+    await waitFor(() => expect(submitted).toEqual({ revision: 1 }));
+    expect(await screen.findByRole("status")).toHaveTextContent("开票记录已确认到账");
+    expect(await screen.findByRole("button", { name: "撤销Alpha开票记录到账确认" })).toBeInTheDocument();
+    expect(screen.getByText("€120", { selector: "dd" })).toBeInTheDocument();
+  });
+
+  it("adopts an already-confirmed canonical state after a concurrent confirmation", async () => {
+    let current = record();
+    renderPage([
+      http.get("/api/settlements/1/months/:month", () => HttpResponse.json(monthResponse([current]))),
+      http.post("/api/settlements/1/records/20/confirm", () => {
+        current = record({ status: "confirmed", revision: 2 });
+        return HttpResponse.json({
+          detail: {
+            code: "settlement_record_state_conflict",
+            message: "开票记录已经确认到账",
+            current_record: current,
+          },
+        }, { status: 409 });
+      }),
+    ]);
+
+    fireEvent.click(await screen.findByRole("button", { name: "确认Alpha开票记录到账" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认到账" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent("记录状态已同步：已确认到账");
+    expect(screen.queryByRole("alertdialog", { name: "确认整笔到账？" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "撤销Alpha开票记录到账确认" })).toBeInTheDocument();
+  });
+
+  it("keeps a failed revocation open for a safe retry", async () => {
+    let requests = 0;
+    let current = record({ status: "confirmed", revision: 2 });
+    renderPage([
+      http.get("/api/settlements/1/months/:month", () => HttpResponse.json(monthResponse([current]))),
+      http.post("/api/settlements/1/records/20/revoke-confirmation", () => {
+        requests += 1;
+        if (requests === 1) {
+          return HttpResponse.json({ detail: "Internal Server Error" }, { status: 500 });
+        }
+        current = record({ status: "pending", revision: 3 });
+        return HttpResponse.json(current);
+      }),
+    ]);
+
+    fireEvent.click(await screen.findByRole("button", { name: "撤销Alpha开票记录到账确认" }));
+    expect(screen.getByRole("alertdialog", { name: "撤销到账确认？" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "确认撤销到账确认" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("服务器暂时不可用，请稍后重试");
+
+    fireEvent.click(screen.getByRole("button", { name: "确认撤销到账确认" }));
+    await waitFor(() => expect(requests).toBe(2));
+    expect(await screen.findByRole("status")).toHaveTextContent("已撤销开票记录到账确认");
+    expect(await screen.findByRole("button", { name: "编辑Alpha开票记录" })).toBeInTheDocument();
+  });
+
   it("edits a pending record with its revision and keeps its opening month", async () => {
     let submitted: unknown;
     let current = record();

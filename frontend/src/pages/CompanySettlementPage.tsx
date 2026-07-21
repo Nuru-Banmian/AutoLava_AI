@@ -96,6 +96,35 @@ interface RecordEditVariables extends RecordTarget {
   amount: number;
 }
 
+type RecordTransitionKind = "confirm" | "revoke";
+
+interface RecordTransition extends RecordTarget { kind: RecordTransitionKind }
+
+const recordTransitionConfig = {
+  confirm: {
+    path: "confirm",
+    targetStatus: "confirmed",
+    successMessage: "开票记录已确认到账",
+    syncMessage: "记录状态已同步：已确认到账",
+    errorMessage: "到账确认失败，请重试",
+    dialogTitle: "确认整笔到账？",
+    actionLabel: "确认到账",
+    variant: "default",
+    description: (record: SettlementRecord) => `${record.company_name} 的 ${euro(record.amount)} 将全部计入 ${record.opening_month} 的月度总收入，不记录单独到账日期。`,
+  },
+  revoke: {
+    path: "revoke-confirmation",
+    targetStatus: "pending",
+    successMessage: "已撤销开票记录到账确认",
+    syncMessage: "记录状态已同步：待到账",
+    errorMessage: "撤销到账确认失败，请重试",
+    dialogTitle: "撤销到账确认？",
+    actionLabel: "确认撤销到账确认",
+    variant: "destructive",
+    description: (record: SettlementRecord) => `${record.company_name} 的 ${euro(record.amount)} 将从 ${record.opening_month} 的月度总收入中扣除，并恢复为可修改、可删除的待到账记录。`,
+  },
+} as const;
+
 function canonicalConflictRecord(error: unknown): SettlementRecord | null {
   if (!(error instanceof ApiError) || error.status !== 409) return null;
   const response = error.responseBody;
@@ -164,6 +193,10 @@ export function CompanySettlementPage() {
   const [editCompanyId, setEditCompanyId] = useState("");
   const [editAmount, setEditAmount] = useState("");
   const [recordToDelete, setRecordToDelete] = useState<SettlementRecord | null>(null);
+  const [recordTransition, setRecordTransition] = useState<{
+    record: SettlementRecord;
+    kind: RecordTransitionKind;
+  } | null>(null);
   const enabled = selected?.company_settlement_enabled === true;
   const workspace = useQuery({
     queryKey: ["settlements", selected?.id],
@@ -290,6 +323,43 @@ export function CompanySettlementPage() {
       await queryClient.invalidateQueries({ queryKey: ["settlement-month", variables.storeId, variables.month] });
     },
   });
+  const transitionRecordMutation = useMutation({
+    mutationFn: (variables: RecordTransition) => {
+      const config = recordTransitionConfig[variables.kind];
+      return api<SettlementRecord>(
+        `/settlements/${variables.storeId}/records/${variables.recordId}/${config.path}`,
+        { method: "POST", body: JSON.stringify({ revision: variables.revision }) },
+      );
+    },
+    onSuccess: async (_record, variables) => {
+      if (selected?.id === variables.storeId) {
+        setRecordTransition(null);
+        setRecordError("");
+        setRecordMessage(recordTransitionConfig[variables.kind].successMessage);
+      }
+      await queryClient.invalidateQueries({ queryKey: ["settlement-month", variables.storeId, variables.month] });
+    },
+    onError: async (error, variables) => {
+      if (selected?.id === variables.storeId) {
+        const config = recordTransitionConfig[variables.kind];
+        const current = canonicalConflictRecord(error);
+        const targetReached = current?.id === variables.recordId
+          && current.status === config.targetStatus;
+        if (targetReached) {
+          setRecordTransition(null);
+          setRecordError("");
+          setRecordMessage(config.syncMessage);
+        } else {
+          if (current?.id === variables.recordId) {
+            setRecordTransition({ record: current, kind: variables.kind });
+          }
+          setRecordError(friendlyApiError(error, config.errorMessage));
+          setRecordMessage("");
+        }
+      }
+      await queryClient.invalidateQueries({ queryKey: ["settlement-month", variables.storeId, variables.month] });
+    },
+  });
   useEffect(() => {
     setName("");
     setMessage("");
@@ -304,11 +374,13 @@ export function CompanySettlementPage() {
     setEditCompanyId("");
     setEditAmount("");
     setRecordToDelete(null);
+    setRecordTransition(null);
     mutate.reset();
     recordMutation.reset();
     inlineCompanyMutation.reset();
     editRecordMutation.reset();
     deleteRecordMutation.reset();
+    transitionRecordMutation.reset();
   }, [selected?.id]);
 
   const openRecordEditor = (record: SettlementRecord) => {
@@ -339,6 +411,16 @@ export function CompanySettlementPage() {
       month: recordToDelete.opening_month,
       recordId: recordToDelete.id,
       revision: recordToDelete.revision,
+    });
+  };
+  const submitRecordTransition = () => {
+    if (!selected || !recordTransition) return;
+    transitionRecordMutation.mutate({
+      storeId: selected.id,
+      month: recordTransition.record.opening_month,
+      recordId: recordTransition.record.id,
+      revision: recordTransition.record.revision,
+      kind: recordTransition.kind,
     });
   };
   const submitCreate = (storeId: number, submittedName: string) => {
@@ -438,11 +520,20 @@ export function CompanySettlementPage() {
             <div className="rounded-lg border p-3"><dt className="text-sm text-muted-foreground">月度总收入</dt><dd className="text-lg font-semibold">{euro(monthSummary.data.monthly_total)}</dd></div>
           </dl>
           {monthSummary.data.records.length ? <ul aria-label={`${month}开票记录`} className="grid gap-2">
-            {monthSummary.data.records.map((record) => <li className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg border p-3" key={record.id}>
+            {monthSummary.data.records.map((record) => {
+              const transitionKind: RecordTransitionKind = record.status === "pending" ? "confirm" : "revoke";
+              return <li className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg border p-3" key={record.id}>
               <span className="min-w-0 break-words font-medium">{record.company_name}</span>
               <span>{euro(record.amount)}</span>
               <span className="rounded-full bg-muted px-2 py-1 text-sm">{record.status === "pending" ? "待到账" : "已确认"}</span>
-              {record.status === "pending" && <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2">
+                <Button aria-label={record.status === "pending" ? `确认${record.company_name}开票记录到账` : `撤销${record.company_name}开票记录到账确认`} disabled={transitionRecordMutation.isPending || editRecordMutation.isPending || deleteRecordMutation.isPending} onClick={() => {
+                  setRecordError("");
+                  setRecordMessage("");
+                  transitionRecordMutation.reset();
+                  setRecordTransition({ record, kind: transitionKind });
+                }} type="button" variant="outline">{transitionKind === "confirm" ? "确认到账" : "撤销到账确认"}</Button>
+              {record.status === "pending" && <>
                 <Button aria-label={`编辑${record.company_name}开票记录`} disabled={editRecordMutation.isPending || deleteRecordMutation.isPending} onClick={() => openRecordEditor(record)} type="button" variant="outline">编辑</Button>
                 <Button aria-label={`删除${record.company_name}开票记录`} disabled={editRecordMutation.isPending || deleteRecordMutation.isPending} onClick={() => {
                   setRecordError("");
@@ -450,8 +541,10 @@ export function CompanySettlementPage() {
                   deleteRecordMutation.reset();
                   setRecordToDelete(record);
                 }} type="button" variant="destructive">删除</Button>
-              </div>}
-            </li>)}
+              </>}
+              </div>
+            </li>;
+            })}
           </ul> : <p>本月暂无开票记录。</p>}
           {recordMessage && <p role="status">{recordMessage}</p>}
         </>}
@@ -494,6 +587,29 @@ export function CompanySettlementPage() {
           <AlertDialogFooter>
             <AlertDialogCancel disabled={deleteRecordMutation.isPending}>取消删除</AlertDialogCancel>
             <Button aria-label="确认永久删除开票记录" disabled={deleteRecordMutation.isPending} onClick={submitRecordDelete} type="button" variant="destructive">确认永久删除</Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={recordTransition !== null} onOpenChange={(open) => {
+        if (!open && !transitionRecordMutation.isPending) {
+          setRecordTransition(null);
+          setRecordError("");
+          transitionRecordMutation.reset();
+        }
+      }}>
+        <AlertDialogContent aria-label={recordTransition ? recordTransitionConfig[recordTransition.kind].dialogTitle : undefined}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{recordTransition && recordTransitionConfig[recordTransition.kind].dialogTitle}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {recordTransition && recordTransitionConfig[recordTransition.kind].description(recordTransition.record)}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {recordTransition && recordError && <div role="alert">{recordError}</div>}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={transitionRecordMutation.isPending}>取消</AlertDialogCancel>
+            <Button disabled={transitionRecordMutation.isPending} onClick={submitRecordTransition} type="button" variant={recordTransition ? recordTransitionConfig[recordTransition.kind].variant : "default"}>
+              {recordTransition && recordTransitionConfig[recordTransition.kind].actionLabel}
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
