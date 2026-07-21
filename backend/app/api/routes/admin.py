@@ -14,6 +14,7 @@ from app.core.security import hash_password
 from app.models.identity import Store, StoreMember, User
 from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
 from app.models.operations import DailyBriefing, ScheduledTaskLog, SystemAlert
+from app.models.settlement import SettlementAuditEvent
 from app.schemas.admin import (
     CategoryCreate,
     CategoryPatch,
@@ -76,6 +77,7 @@ def _store_payload(store: Store) -> dict[str, Any]:
         "longitude": _decimal(store.longitude),
         "timezone": store.timezone,
         "is_active": store.is_active,
+        "company_settlement_enabled": store.company_settlement_enabled,
     }
 
 
@@ -385,14 +387,31 @@ async def patch_store(
 ) -> dict[str, Any]:
     actor_id = actor.id
     async with sqlite_short_write(session):
-        await require_fresh_user(
+        fresh_actor = await require_fresh_user(
             session, user_id=actor_id, capability="stores.manage"
         )
         store = await session.get(Store, store_id, populate_existing=True)
         if store is None or not store.is_active:
             raise HTTPException(404, "Store not found")
-        for field, value in body.model_dump(exclude_none=True).items():
+        changes = body.model_dump(exclude_none=True)
+        previous_settlement_enabled = store.company_settlement_enabled
+        for field, value in changes.items():
             setattr(store, field, value)
+        if (
+            "company_settlement_enabled" in changes
+            and store.company_settlement_enabled != previous_settlement_enabled
+        ):
+            session.add(
+                SettlementAuditEvent(
+                    store_id=store.id,
+                    actor_id=fresh_actor.id,
+                    action="company_settlement.toggle",
+                    entity_type="store",
+                    entity_id=store.id,
+                    before_state={"company_settlement_enabled": previous_settlement_enabled},
+                    after_state={"company_settlement_enabled": store.company_settlement_enabled},
+                )
+            )
         response = _store_payload(store)
     return response
 

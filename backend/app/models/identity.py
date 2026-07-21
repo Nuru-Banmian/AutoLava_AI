@@ -37,6 +37,9 @@ class Store(Base):
     timezone: Mapped[str] = mapped_column(String(64), default="Europe/Rome")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     income_items_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    company_settlement_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0"
+    )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
 

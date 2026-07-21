@@ -57,6 +57,7 @@ class StorePatch(BaseModel):
     longitude: Longitude | None = None
     timezone: TimeZoneName | None = None
     is_active: bool | None = None
+    company_settlement_enabled: bool | None = None
 
 
 class MemberReplace(BaseModel):

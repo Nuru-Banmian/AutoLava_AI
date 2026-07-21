@@ -113,7 +113,10 @@ export function StoreWorkspace() {
         }}
         onDirtyChange={updateDetailsDirty}
         onSaved={() => {
-          if (selectionRef.current === capturedStoreId) updateDetailsDirty(false);
+          if (selectionRef.current === capturedStoreId) {
+            updateDetailsDirty(false);
+            stores.refetch().catch(() => undefined);
+          }
         }}
         store={selectedStore}
       />

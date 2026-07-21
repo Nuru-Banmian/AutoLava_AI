@@ -1,4 +1,5 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
@@ -152,6 +153,65 @@ describe("App", () => {
       "营业记录",
       "管理中心",
     ]);
+  });
+
+  it("shows company settlement in the enabled store only and keeps mobile bottom navigation stable", async () => {
+    server.use(
+      http.get("/api/stores/accessible", () => HttpResponse.json([
+        { id: 1, name: "已启用", timezone: "Europe/Rome", company_settlement_enabled: true },
+        { id: 2, name: "未启用", timezone: "Europe/Rome", company_settlement_enabled: false },
+      ])),
+      http.get("/api/settlements/1", () => HttpResponse.json({ store_id: 1, store_name: "已启用", company_settlement_enabled: true })),
+    );
+    renderApplication("/more", { role: "user" });
+
+    const desktop = await screen.findByRole("navigation", { name: "主导航" });
+    const desktopStorePicker = within(screen.getByTestId("desktop-store-picker")).getByRole("combobox", { name: "门店" });
+    await within(desktopStorePicker).findByRole("option", { name: "已启用" });
+    await userEvent.selectOptions(desktopStorePicker, "1");
+    await waitFor(() => expect(within(desktop).getByRole("link", { name: "公司结算" })).toBeInTheDocument());
+    expect(within(desktop).getAllByRole("link").map((link) => link.textContent)).toEqual([
+      "首页", "每日记账", "公司结算", "营业记录",
+    ]);
+    const mobile = screen.getByRole("navigation", { name: "移动导航" });
+    expect(within(mobile).getAllByRole("link")).toHaveLength(4);
+    expect(within(screen.getByRole("navigation", { name: "更多功能" })).getByRole("link", { name: "公司结算" })).toBeInTheDocument();
+
+    await userEvent.selectOptions(
+      desktopStorePicker,
+      "2",
+    );
+    await waitFor(() => expect(within(desktop).queryByRole("link", { name: "公司结算" })).not.toBeInTheDocument());
+    expect(within(screen.getByRole("navigation", { name: "更多功能" })).queryByRole("link", { name: "公司结算" })).not.toBeInTheDocument();
+  });
+
+  it("rejects a direct company settlement visit for a disabled store", async () => {
+    renderApplication("/settlements", { role: "user" });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("当前门店未启用公司结算");
+    expect(screen.getByRole("link", { name: "返回首页" })).toHaveAttribute("href", "/");
+  });
+
+  it("offers an accessible retry when the settlement gate read fails", async () => {
+    let reads = 0;
+    server.use(
+      http.get("/api/stores/accessible", () => HttpResponse.json([
+        { id: 1, name: "已启用", timezone: "Europe/Rome", company_settlement_enabled: true },
+      ])),
+      http.get("/api/settlements/1", () => {
+        reads += 1;
+        return reads === 1
+          ? HttpResponse.json({ detail: "暂时失败" }, { status: 503 })
+          : HttpResponse.json({ store_id: 1, store_name: "已启用", company_settlement_enabled: true });
+      }),
+    );
+    renderApplication("/settlements", { role: "user" });
+
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("暂时失败"));
+    await userEvent.click(screen.getByRole("button", { name: "重试公司结算" }));
+
+    expect(await screen.findByText("已启用的公司结算")).toBeInTheDocument();
+    expect(reads).toBe(2);
   });
 
   it("loads the approved blue theme tokens from index.css", () => {

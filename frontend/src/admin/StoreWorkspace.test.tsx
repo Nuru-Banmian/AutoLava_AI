@@ -117,6 +117,37 @@ it("selects the first store on initial load and renders income before details", 
   expect(screen.queryByText("请选择门店")).not.toBeInTheDocument();
 });
 
+it("saves the company settlement switch only for the selected store", async () => {
+  const stores = [
+    { ...roma, company_settlement_enabled: false },
+    { ...milano, company_settlement_enabled: false },
+  ];
+  let patchedBody: unknown;
+  mockStoreWorkspace({
+    stores,
+    patchStore: async () => {
+      patchedBody = { company_settlement_enabled: true };
+      stores[0] = { ...stores[0], company_settlement_enabled: true };
+      return HttpResponse.json(stores[0]);
+    },
+  });
+  server.use(http.patch("/api/admin/stores/9", async ({ request }) => {
+    patchedBody = await request.json();
+    stores[0] = { ...stores[0], company_settlement_enabled: true };
+    return HttpResponse.json(stores[0]);
+  }));
+  renderWorkspace();
+
+  const toggle = await screen.findByRole("checkbox", { name: /为此门店启用公司结算/ });
+  expect(toggle).not.toBeChecked();
+  await userEvent.click(toggle);
+
+  await waitFor(() => expect(patchedBody).toEqual({ company_settlement_enabled: true }));
+  expect(await screen.findByRole("checkbox", { name: /为此门店启用公司结算/ })).toBeChecked();
+  await userEvent.click(screen.getByRole("button", { name: /Milano/ }));
+  expect(await screen.findByRole("checkbox", { name: /为此门店启用公司结算/ })).not.toBeChecked();
+});
+
 it("keeps the store selector blank in create mode without a selectable prompt", async () => {
   mockStoreWorkspace({ stores: [roma] });
   renderWorkspace();

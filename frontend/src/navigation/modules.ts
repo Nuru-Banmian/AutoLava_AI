@@ -16,12 +16,14 @@ export const mobileModules = [
 const desktopModules = [
   { to: "/", label: "首页", end: true },
   { to: "/ledger", label: "每日记账" },
+  { to: "/settlements", label: "公司结算", capability: "company_settlement" },
   { to: "/database", label: "营业记录" },
 ] as const;
 
 const adminModule = { to: "/admin", label: "管理中心" } as const;
 
-export function navigationFor(role: UserRole, surface: "desktop" | "mobile"): readonly NavigationModule[] {
+export function navigationFor(role: UserRole, surface: "desktop" | "mobile", companySettlementEnabled = false): readonly NavigationModule[] {
   if (surface === "mobile") return mobileModules;
-  return role === "admin" ? [...desktopModules, adminModule] : desktopModules;
+  const availableModules = desktopModules.filter((module) => !("capability" in module) || companySettlementEnabled);
+  return role === "admin" ? [...availableModules, adminModule] : availableModules;
 }

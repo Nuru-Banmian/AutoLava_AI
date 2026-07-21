@@ -1,4 +1,4 @@
-import { BookOpen, Database, Home, LogOut, Menu, Settings } from "lucide-react";
+import { BookOpen, Building2, Database, Home, LogOut, Menu, Settings } from "lucide-react";
 import type { ComponentType, SVGProps } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 
@@ -14,6 +14,7 @@ type Icon = ComponentType<SVGProps<SVGSVGElement>>;
 const icons: Record<string, Icon> = {
   "/": Home,
   "/ledger": BookOpen,
+  "/settlements": Building2,
   "/database": Database,
   "/admin": Settings,
   "/more": Menu,
@@ -21,10 +22,11 @@ const icons: Record<string, Icon> = {
 
 function Navigation({ surface }: { surface: "desktop" | "mobile" }) {
   const { user } = useAuth();
+  const { selected } = useStore();
   if (!user) return null;
 
   return <>
-    {navigationFor(user.role, surface).map(({ to, label, end }) => {
+    {navigationFor(user.role, surface, selected?.company_settlement_enabled).map(({ to, label, end }) => {
       const Icon = icons[to];
       return <NavLink
         key={to}

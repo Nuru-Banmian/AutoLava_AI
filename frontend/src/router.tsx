@@ -9,6 +9,7 @@ import { LedgerPage } from "@/pages/LedgerPage";
 import { MorePage } from "@/pages/MorePage";
 import { BusinessRecordsPage } from "@/pages/BusinessRecordsPage";
 import { AccountPasswordPage } from "@/pages/AccountPasswordPage";
+import { CompanySettlementPage } from "@/pages/CompanySettlementPage";
 import { StoreProvider } from "@/stores/StoreProvider";
 
 function AuthLoading() {
@@ -41,6 +42,7 @@ const routes: RouteObject[] = [{
     { element: <ProtectedShell />, children: [
       { index: true, element: <HomePage /> },
       { path: "ledger", element: <LedgerPage /> },
+      { path: "settlements", element: <CompanySettlementPage /> },
       { path: "database", element: <BusinessRecordsPage /> },
       { path: "more", element: <MoreRoute /> },
       { path: "account/password", element: <AccountPasswordPage /> },

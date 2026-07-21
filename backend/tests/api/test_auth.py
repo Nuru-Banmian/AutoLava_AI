@@ -357,7 +357,13 @@ async def test_assigned_store_is_exposed(client, user_factory, store_factory, db
     response = await client.get("/api/stores/accessible")
     assert response.status_code == 200
     assert response.json() == [
-        {"id": assigned.id, "name": assigned.name, "timezone": assigned.timezone, "is_active": True}
+        {
+            "id": assigned.id,
+            "name": assigned.name,
+            "timezone": assigned.timezone,
+            "is_active": True,
+            "company_settlement_enabled": False,
+        }
     ]
 
 

@@ -59,6 +59,12 @@ async def me(user: CurrentUser) -> dict:
 async def accessible_stores(user: CurrentUser, session: Session) -> list[dict]:
     stores = await list_accessible_stores(session, user)
     return [
-        {"id": store.id, "name": store.name, "timezone": store.timezone, "is_active": store.is_active}
+        {
+            "id": store.id,
+            "name": store.name,
+            "timezone": store.timezone,
+            "is_active": store.is_active,
+            "company_settlement_enabled": store.company_settlement_enabled,
+        }
         for store in stores
     ]
