@@ -398,7 +398,7 @@ describe("LedgerPage", () => {
       state: {
         returnToBusinessRecords: {
           storeId: 1,
-          recordMode: "current-month",
+          recordMode: "month",
           range: { start: "2026-07-01", end: "2026-07-31" },
           page: 1,
           selectedDate: "2026-07-15",
@@ -423,7 +423,7 @@ describe("LedgerPage", () => {
       state: {
         returnToBusinessRecords: {
           storeId: 1,
-          recordMode: "previous-month",
+          recordMode: "month",
           range: { start: "2026-06-01", end: "2026-06-30" },
           page: 1,
           selectedDate: null,
@@ -477,7 +477,7 @@ describe("LedgerPage", () => {
       state: {
         returnToBusinessRecords: {
           storeId: 1,
-          recordMode: "current-month",
+          recordMode: "month",
           range: { start: "2026-07-01", end: "2026-07-31" },
           page: 1,
           selectedDate: "2026-07-15",

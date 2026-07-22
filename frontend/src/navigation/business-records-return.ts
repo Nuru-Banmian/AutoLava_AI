@@ -18,7 +18,7 @@ export interface BusinessRecordsLocationState {
   restoreBusinessRecords?: BusinessRecordsViewState;
 }
 
-const recordRangeModes = new Set<RecordRangeMode>(["current-month", "previous-month", "month", "custom"]);
+const recordRangeModes = new Set<RecordRangeMode>(["month", "custom"]);
 
 function isRecordRangeMode(value: unknown): value is RecordRangeMode {
   return typeof value === "string" && recordRangeModes.has(value as RecordRangeMode);

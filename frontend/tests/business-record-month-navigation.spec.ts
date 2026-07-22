@@ -11,7 +11,11 @@ const stores = [
   { id: 2, name: "Adak 门店", timezone: "America/Adak" },
 ];
 
-async function mockBusinessRecords(page: Page, requests: { records: RangeRequest[]; charts: RangeRequest[] }) {
+async function mockBusinessRecords(page: Page, requests: {
+  records: RangeRequest[];
+  charts: RangeRequest[];
+  pagedRecords?: Array<RangeRequest & { page: number }>;
+}) {
   await page.route(/^http:\/\/127\.0\.0\.1:4173\/api\//, async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -28,12 +32,16 @@ async function mockBusinessRecords(page: Page, requests: { records: RangeRequest
 
     const recordMatch = url.pathname.match(/^\/api\/database\/(\d+)\/records$/);
     if (recordMatch) {
-      requests.records.push({
+      const range = {
         storeId: Number(recordMatch[1]),
         start: url.searchParams.get("start") ?? "",
         end: url.searchParams.get("end") ?? "",
-      });
-      return json({ items: [], categories: [], sum_daily_revenue: 0, total: 0, page: 1, page_size: 200 });
+      };
+      const pageNumber = Number(url.searchParams.get("page"));
+      requests.records.push(range);
+      requests.pagedRecords?.push({ ...range, page: pageNumber });
+      const total = range.start === "2025-01-01" && range.end === "2025-12-31" ? 201 : 0;
+      return json({ items: [], categories: [], sum_daily_revenue: 0, total, page: pageNumber, page_size: 200 });
     }
 
     const chartMatch = url.pathname.match(/^\/api\/charts\/(\d+)$/);
@@ -145,4 +153,24 @@ test("uses month-bounded custom ranges and blocks reversed or future queries at 
   await end.focus();
   await expect(end).toBeFocused();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
+});
+
+test("loads every record page for a long custom month range", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
+  const requests = {
+    records: [] as RangeRequest[],
+    charts: [] as RangeRequest[],
+    pagedRecords: [] as Array<RangeRequest & { page: number }>,
+  };
+  await mockBusinessRecords(page, requests);
+  await page.goto("/database");
+
+  const filters = page.getByRole("region", { name: "记录筛选" });
+  await filters.getByRole("button", { name: "自定义范围" }).click();
+  await filters.getByLabel("开始月份", { exact: true }).fill("2025-01");
+  await filters.getByLabel("结束月份", { exact: true }).fill("2025-12");
+
+  await expect.poll(() => requests.pagedRecords.filter((request) => (
+    request.start === "2025-01-01" && request.end === "2025-12-31"
+  )).map((request) => request.page)).toEqual([1, 2]);
 });

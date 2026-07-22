@@ -3,8 +3,8 @@ import { eachDayOfInterval, format, parseISO } from "date-fns";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
-import { api, friendlyApiError } from "@/api/client";
-import type { DatabaseResponse, RecordSnapshot } from "@/api/types";
+import { friendlyApiError } from "@/api/client";
+import type { RecordSnapshot } from "@/api/types";
 import { useAuth } from "@/auth/AuthProvider";
 import { BusinessAnalysisCard } from "@/components/BusinessAnalysisCard";
 import { DeleteRecordDialog } from "@/components/DeleteRecordDialog";
@@ -15,9 +15,9 @@ import { RecordFilters } from "@/components/RecordFilters";
 import { RecordPagination } from "@/components/RecordPagination";
 import { RecordTable, type RecordTableRow } from "@/components/RecordTable";
 import type { DateRange, RecordRangeMode } from "@/lib/business-record-ranges";
-import { recordRange } from "@/lib/business-record-ranges";
+import { monthRange } from "@/lib/business-record-ranges";
 import { downloadBusinessRecords } from "@/lib/business-record-export";
-import { databaseKey, storeLocalToday } from "@/lib/user-api";
+import { databaseKey, loadBusinessRecords, storeLocalToday } from "@/lib/user-api";
 import { useStore } from "@/stores/StoreProvider";
 import { restoredBusinessRecordsState, type BusinessRecordsViewState } from "@/navigation/business-records-return";
 
@@ -34,7 +34,7 @@ export function BusinessRecordsPage() {
   const restored = useRef(restoredBusinessRecordsState(location.state, selected?.id)).current;
   const hasRestoreEnvelope = Boolean(location.state && typeof location.state === "object" && "restoreBusinessRecords" in location.state);
   const [recordMode, setRecordMode] = useState<RecordRangeMode>(restored?.recordMode ?? "month");
-  const [range, setRange] = useState<DateRange>(() => restored?.range ?? recordRange("current-month", today));
+  const [range, setRange] = useState<DateRange>(() => restored?.range ?? monthRange(today.slice(0, 7)));
   const [page, setPage] = useState(restored?.page ?? 1);
   const [selectedDate, setSelectedDate] = useState<string | null>(restored?.selectedDate ?? null);
   const [mobileRecord, setMobileRecord] = useState<RecordDetail | null>(null);
@@ -61,7 +61,7 @@ export function BusinessRecordsPage() {
     }
     setRecordStoreId(selected.id);
     setRecordMode("month");
-    setRange(recordRange("current-month", storeLocalToday(selected)));
+    setRange(monthRange(storeLocalToday(selected).slice(0, 7)));
     setPage(1);
     setSelectedDate(null);
     setMobileRecord(null);
@@ -86,7 +86,7 @@ export function BusinessRecordsPage() {
   const records = useQuery({
     queryKey: recordStateReady ? databaseKey(selected.id, recordQueryString) : ["database", "records", "pending", selected?.id ?? null],
     enabled: recordStateReady,
-    queryFn: () => api<DatabaseResponse>(`/database/${selected!.id}/records?${recordQueryString}`),
+    queryFn: ({ signal }) => loadBusinessRecords(selected!.id, range.start, range.end, signal),
   });
 
   useEffect(() => {

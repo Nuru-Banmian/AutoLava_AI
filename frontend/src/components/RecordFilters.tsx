@@ -4,8 +4,8 @@ import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import type { DateRange, RecordRangeMode } from "@/lib/business-record-ranges";
-import { customMonthRange, monthRange } from "@/lib/business-record-ranges";
+import type { DateRange, MonthSelection, MonthSelectionIssue, RecordRangeMode } from "@/lib/business-record-ranges";
+import { customMonthRange, monthRange, monthSelectionIssue } from "@/lib/business-record-ranges";
 
 interface RecordFiltersProps {
   mode: RecordRangeMode;
@@ -17,15 +17,22 @@ interface RecordFiltersProps {
   onExport(): void;
 }
 
+const monthSelectionMessages: Record<MonthSelectionIssue, string> = {
+  missing: "请选择开始月份和结束月份",
+  invalid: "请选择有效月份",
+  future: "未来月份不可选择",
+  reversed: "结束月份不能早于开始月份",
+};
+
 export function RecordFilters({ mode, range, today, exporting, exportError, onChange, onExport }: RecordFiltersProps) {
   const currentMonth = today.slice(0, 7);
   const selectedMonth = range.start.slice(0, 7);
-  const [customDraft, setCustomDraft] = useState({ start: selectedMonth, end: range.end.slice(0, 7) });
+  const [customDraft, setCustomDraft] = useState<MonthSelection>({ startMonth: selectedMonth, endMonth: range.end.slice(0, 7) });
   const [customOpen, setCustomOpen] = useState(mode === "custom");
   const [validationError, setValidationError] = useState("");
 
   useEffect(() => {
-    setCustomDraft({ start: range.start.slice(0, 7), end: range.end.slice(0, 7) });
+    setCustomDraft({ startMonth: range.start.slice(0, 7), endMonth: range.end.slice(0, 7) });
     setValidationError("");
   }, [range.start, range.end]);
   useEffect(() => {
@@ -52,24 +59,18 @@ export function RecordFilters({ mode, range, today, exporting, exportError, onCh
     chooseMonth(next);
   };
   const openCustom = () => {
-    const next = { start: selectedMonth, end: selectedMonth };
+    const next = { startMonth: selectedMonth, endMonth: selectedMonth };
     setCustomDraft(next);
     setValidationError("");
     setCustomOpen(true);
-    onChange("custom", customMonthRange(next.start, next.end, today));
+    onChange("custom", customMonthRange(next, today));
   };
-  const customValidation = (next: { start: string; end: string }) => {
-    if (!next.start || !next.end) return "请选择开始月份和结束月份";
-    if (next.start > currentMonth || next.end > currentMonth) return "未来月份不可选择";
-    if (next.start > next.end) return "结束月份不能早于开始月份";
-    return "";
-  };
-  const updateCustom = (patch: Partial<{ start: string; end: string }>) => {
+  const updateCustom = (patch: Partial<MonthSelection>) => {
     const next = { ...customDraft, ...patch };
-    const error = customValidation(next);
+    const issue = monthSelectionIssue(next, currentMonth);
     setCustomDraft(next);
-    setValidationError(error);
-    if (!error) onChange("custom", customMonthRange(next.start, next.end, today));
+    setValidationError(issue ? monthSelectionMessages[issue] : "");
+    if (!issue) onChange("custom", customMonthRange(next, today));
   };
   const returnToMonth = () => {
     setCustomOpen(false);
@@ -94,10 +95,10 @@ export function RecordFilters({ mode, range, today, exporting, exportError, onCh
       {customOpen && (
         <div className="grid min-w-0 grid-cols-2 gap-2 md:col-span-2" data-testid="record-filter-months">
           <label className="grid min-w-0 gap-1 text-sm font-medium">开始月份
-            <Input aria-label="开始月份" className="h-10 min-w-0 px-2" max={currentMonth} onChange={(event) => updateCustom({ start: event.target.value })} type="month" value={customDraft.start} />
+            <Input aria-label="开始月份" className="h-10 min-w-0 px-2" max={currentMonth} onChange={(event) => updateCustom({ startMonth: event.target.value })} type="month" value={customDraft.startMonth} />
           </label>
           <label className="grid min-w-0 gap-1 text-sm font-medium">结束月份
-            <Input aria-label="结束月份" className="h-10 min-w-0 px-2" max={currentMonth} onChange={(event) => updateCustom({ end: event.target.value })} type="month" value={customDraft.end} />
+            <Input aria-label="结束月份" className="h-10 min-w-0 px-2" max={currentMonth} onChange={(event) => updateCustom({ endMonth: event.target.value })} type="month" value={customDraft.endMonth} />
           </label>
         </div>
       )}
