@@ -188,6 +188,58 @@ test("owner configures shared-store income, a user membership, and a mapped stor
   await expect(globalStorePicker.locator("option:checked")).toHaveText("Milano Nord");
 });
 
+test("store and user creation stays attached to each list across admin breakpoints", async ({ page }) => {
+  await mockAdminApi(page, {});
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto("/login");
+  await page.getByLabel("用户名").fill("administrator");
+  await page.getByLabel("密码", { exact: true }).fill("password-123");
+  await page.getByRole("button", { name: "登录" }).click();
+  await page.goto("/admin");
+
+  for (const view of [
+    { tab: "门店与收入", toolbar: "门店列表操作", list: "门店列表", button: "新建门店", heading: "新建门店" },
+    { tab: "用户与权限", toolbar: "用户列表操作", list: "用户列表", button: "新建用户", heading: "新建用户" },
+  ]) {
+    await page.getByRole("tab", { name: view.tab }).click();
+    const toolbar = page.getByRole("toolbar", { name: view.toolbar });
+    const list = page.getByRole("complementary", { name: view.list });
+    const button = toolbar.getByRole("button", { name: view.button });
+    await expect(toolbar).toBeVisible();
+    await expect(list).toBeVisible();
+    await button.focus();
+    await expect(button).toBeFocused();
+    const [toolbarBox, listBox] = await Promise.all([toolbar.boundingBox(), list.boundingBox()]);
+    expect(toolbarBox).not.toBeNull();
+    expect(listBox).not.toBeNull();
+    expect(Math.abs(toolbarBox!.x - listBox!.x)).toBeLessThanOrEqual(1);
+    expect(toolbarBox!.y + toolbarBox!.height).toBeLessThanOrEqual(listBox!.y);
+    await button.click();
+    await expect(page.getByRole("heading", { name: view.heading })).toBeVisible();
+  }
+
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto("/admin");
+    for (const view of [
+      { tab: "门店与收入", toolbar: "门店列表操作", selector: "门店", button: "新建门店", heading: "新建门店" },
+      { tab: "用户与权限", toolbar: "用户列表操作", selector: "用户", button: "新建用户", heading: "新建用户" },
+    ]) {
+      await page.getByRole("tab", { name: view.tab }).click();
+      const toolbar = page.getByRole("toolbar", { name: view.toolbar });
+      const selector = toolbar.getByRole("combobox", { name: view.selector });
+      const button = toolbar.getByRole("button", { name: view.button });
+      const [selectorBox, buttonBox] = await Promise.all([selector.boundingBox(), button.boundingBox()]);
+      expect(selectorBox).not.toBeNull();
+      expect(buttonBox).not.toBeNull();
+      expect(Math.abs(selectorBox!.y - buttonBox!.y)).toBeLessThanOrEqual(1);
+      await button.click();
+      await expect(page.getByRole("heading", { name: view.heading })).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
+    }
+  }
+});
+
 test("admin keeps a failed global store load hidden until the user leaves", async ({ page }) => {
   const api = await mockAdminApi(page, {});
   await page.setViewportSize({ width: 1280, height: 900 });

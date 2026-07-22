@@ -125,22 +125,27 @@ export function StoreWorkspace() {
 
   return <div className="space-y-4">
     {stores.error && <p role="alert" className="text-sm text-destructive">{friendlyApiError(stores.error, "门店加载失败")}</p>}
-    <div className="flex items-center gap-2">
-      <select
-        aria-label="门店"
-        className="h-9 min-w-0 flex-1 rounded-md border bg-background px-2 md:hidden"
-        onChange={(event) => {
-          if (event.target.value) select(Number(event.target.value));
-        }}
-        value={typeof selection === "number" ? selection : ""}
+    <div className="grid min-w-0 gap-4 md:grid-cols-[14rem_minmax(0,1fr)] md:grid-rows-[auto_1fr]">
+      <div
+        aria-label="门店列表操作"
+        className="flex min-w-0 items-center gap-2 md:col-start-1 md:row-start-1"
+        role="toolbar"
       >
-        <option hidden value="" />
-        {list.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
-      </select>
-      <Button type="button" onClick={() => select("new")}>新建门店</Button>
-    </div>
-    <div className="gap-4 md:grid md:grid-cols-[14rem_minmax(0,1fr)]">
-      <aside className="hidden md:block">
+        <span className="hidden min-w-0 flex-1 text-sm font-medium md:block">门店列表</span>
+        <select
+          aria-label="门店"
+          className="h-9 min-w-0 flex-1 rounded-md border bg-background px-2 md:hidden"
+          onChange={(event) => {
+            if (event.target.value) select(Number(event.target.value));
+          }}
+          value={typeof selection === "number" ? selection : ""}
+        >
+          <option hidden value="" />
+          {list.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
+        </select>
+        <Button type="button" onClick={() => select("new")}>新建门店</Button>
+      </div>
+      <aside aria-label="门店列表" className="hidden md:col-start-1 md:row-start-2 md:block">
         <ul className="divide-y rounded-lg border bg-card">
           {list.map((store) => <li key={store.id}>
             <button className="w-full p-3 text-left hover:bg-accent" onClick={() => select(store.id)} type="button">
@@ -150,7 +155,7 @@ export function StoreWorkspace() {
           </li>)}
         </ul>
       </aside>
-      <main>{cards}</main>
+      <main className="min-w-0 md:col-start-2 md:row-span-2 md:row-start-1">{cards}</main>
     </div>
   </div>;
 }

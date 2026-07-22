@@ -160,6 +160,18 @@ it("keeps the store selector blank in create mode without a selectable prompt", 
   expect(screen.getByLabelText("门店名称")).toBeInTheDocument();
 });
 
+it("starts store creation from the store list toolbar", async () => {
+  mockStoreWorkspace({ stores: [roma] });
+  renderWorkspace();
+  await screen.findByLabelText("门店名称 Roma");
+
+  const toolbar = screen.getByRole("toolbar", { name: "门店列表操作" });
+  expect(within(toolbar).getByRole("combobox", { name: "门店" })).toBeInTheDocument();
+  await userEvent.click(within(toolbar).getByRole("button", { name: "新建门店" }));
+
+  expect(screen.getByRole("heading", { name: "新建门店" })).toBeInTheDocument();
+});
+
 it("does not invent a store selection for an empty list", async () => {
   mockStoreWorkspace({ stores: [] });
   renderWorkspace();
