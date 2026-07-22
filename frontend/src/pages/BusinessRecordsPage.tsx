@@ -33,7 +33,7 @@ export function BusinessRecordsPage() {
   const isAdmin = user?.role === "admin";
   const restored = useRef(restoredBusinessRecordsState(location.state, selected?.id)).current;
   const hasRestoreEnvelope = Boolean(location.state && typeof location.state === "object" && "restoreBusinessRecords" in location.state);
-  const [recordMode, setRecordMode] = useState<RecordRangeMode>(restored?.recordMode ?? "current-month");
+  const [recordMode, setRecordMode] = useState<RecordRangeMode>(restored?.recordMode ?? "month");
   const [range, setRange] = useState<DateRange>(() => restored?.range ?? recordRange("current-month", today));
   const [page, setPage] = useState(restored?.page ?? 1);
   const [selectedDate, setSelectedDate] = useState<string | null>(restored?.selectedDate ?? null);
@@ -60,7 +60,7 @@ export function BusinessRecordsPage() {
       return;
     }
     setRecordStoreId(selected.id);
-    setRecordMode("current-month");
+    setRecordMode("month");
     setRange(recordRange("current-month", storeLocalToday(selected)));
     setPage(1);
     setSelectedDate(null);

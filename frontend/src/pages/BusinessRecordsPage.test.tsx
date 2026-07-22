@@ -133,9 +133,9 @@ describe("BusinessRecordsPage", () => {
     );
     renderPage();
 
-    fireEvent.click(within(screen.getByRole("region", { name: "记录筛选" })).getByRole("button", { name: "自定义" }));
-    fireEvent.change(screen.getByLabelText("开始日期"), { target: { value: "2026-06-01" } });
-    fireEvent.change(screen.getByLabelText("结束日期"), { target: { value: "2026-06-30" } });
+    fireEvent.click(within(screen.getByRole("region", { name: "记录筛选" })).getByRole("button", { name: "自定义范围" }));
+    fireEvent.change(screen.getByLabelText("开始月份"), { target: { value: "2026-06" } });
+    fireEvent.change(screen.getByLabelText("结束月份"), { target: { value: "2026-06" } });
     await screen.findByRole("heading", { name: "2026年6月15日" });
     fireEvent.click(screen.getByRole("button", { name: "下一页" }));
     fireEvent.click(screen.getByRole("button", { name: "2026年6月15日，营业，€100" }));
@@ -320,7 +320,7 @@ describe("BusinessRecordsPage", () => {
     expect(screen.getAllByText("暂无可查看记录")).toHaveLength(1);
     expect(chartRequests).toHaveLength(1);
 
-    fireEvent.click(within(screen.getByLabelText("记录筛选")).getByRole("button", { name: "上月" }));
+    fireEvent.click(within(screen.getByLabelText("记录筛选")).getByRole("button", { name: "前一月" }));
     expect(await screen.findByRole("heading", { name: "2026年6月30日" })).toBeInTheDocument();
     expect(recordRequests.at(-1)?.searchParams.get("page")).toBe("1");
     await waitFor(() => expect(chartRequests.at(-1)?.searchParams.get("start")).toBe("2026-06-01"));

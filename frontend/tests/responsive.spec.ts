@@ -108,26 +108,14 @@ async function mockResponsiveApi(page: Page) {
   });
 }
 
-async function expectNativeDateInput(input: ReturnType<Page["getByLabel"]>, expected: {
+async function expectNativeMonthInput(input: ReturnType<Page["getByLabel"]>, expected: {
   ariaLabel: string;
-  min: string | null;
   max: string;
 }) {
-  await expect(input).toHaveAttribute("type", "date");
+  await expect(input).toHaveAttribute("type", "month");
   await expect(input).toHaveAttribute("aria-label", expected.ariaLabel);
-  if (expected.min === null) await expect(input).not.toHaveAttribute("min");
-  else await expect(input).toHaveAttribute("min", expected.min);
   await expect(input).toHaveAttribute("max", expected.max);
   await expect.poll(() => input.evaluate((node) => node.getBoundingClientRect().height)).toBe(40);
-}
-
-async function expectCalendarTrigger(page: Page, name: string) {
-  const trigger = page.getByRole("button", { name });
-  await expect(trigger).toBeVisible();
-  await expect.poll(() => trigger.evaluate((node) => {
-    const { height, width } = node.getBoundingClientRect();
-    return { height, width };
-  })).toEqual({ height: 40, width: 40 });
 }
 
 test("desktop record browser keeps a sticky independently scrollable detail rail", async ({ page }) => {
@@ -155,9 +143,9 @@ test("global store picker switches cleanly between mobile and desktop without he
 
   await expect(page.getByTestId("mobile-store-picker").getByRole("combobox", { name: "门店" })).toBeVisible();
   await expect(page.getByTestId("desktop-store-picker")).toBeHidden();
-  const presets = page.getByLabel("日期范围预设").getByRole("button");
-  await expect(presets).toHaveCount(3);
-  for (const control of await presets.all()) {
+  const monthControls = page.getByLabel("月份导航").locator("button, input");
+  await expect(monthControls).toHaveCount(3);
+  for (const control of await monthControls.all()) {
     expect((await control.boundingBox())?.height).toBe(40);
   }
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
@@ -181,16 +169,16 @@ test("320px record list, bottom sheet, and analysis remain reachable without cli
   await page.goto("/database");
 
   const recordFilters = page.getByRole("region", { name: "记录筛选" });
-  await expect(recordFilters.getByTestId("record-filter-dates")).toHaveCount(0);
-  await expect(recordFilters.getByLabel("开始日期", { exact: true })).toHaveCount(0);
-  await expect(recordFilters.getByLabel("结束日期", { exact: true })).toHaveCount(0);
-  await recordFilters.getByRole("button", { name: "自定义" }).click();
-  const dates = recordFilters.getByTestId("record-filter-dates");
+  await expect(recordFilters.getByTestId("record-filter-months")).toHaveCount(0);
+  await expect(recordFilters.getByLabel("开始月份", { exact: true })).toHaveCount(0);
+  await expect(recordFilters.getByLabel("结束月份", { exact: true })).toHaveCount(0);
+  await recordFilters.getByRole("button", { name: "自定义范围" }).click();
+  const dates = recordFilters.getByTestId("record-filter-months");
   const exportButton = recordFilters.getByRole("button", { name: "导出当前范围" });
   const [filterBox, datesBox, exportBox, startBox, endBox] = await Promise.all([
     recordFilters.boundingBox(), dates.boundingBox(), exportButton.boundingBox(),
-    recordFilters.getByLabel("开始日期", { exact: true }).boundingBox(),
-    recordFilters.getByLabel("结束日期", { exact: true }).boundingBox(),
+    recordFilters.getByLabel("开始月份", { exact: true }).boundingBox(),
+    recordFilters.getByLabel("结束月份", { exact: true }).boundingBox(),
   ]);
   expect(filterBox).not.toBeNull();
   expect(datesBox).not.toBeNull();
@@ -204,7 +192,8 @@ test("320px record list, bottom sheet, and analysis remain reachable without cli
   expect(startBox!.x).toBeGreaterThanOrEqual(datesBox!.x);
   expect(endBox!.x + endBox!.width).toBeLessThanOrEqual(datesBox!.x + datesBox!.width);
   expect(exportBox!.y).toBeGreaterThanOrEqual(datesBox!.y + datesBox!.height + 8);
-  expect(exportBox!.width).toBe(filterBox!.width);
+  expect(exportBox!.width).toBeGreaterThanOrEqual(120);
+  expect(exportBox!.x + exportBox!.width).toBeLessThanOrEqual(filterBox!.x + filterBox!.width);
 
   await expect.poll(() => page.evaluate(() => ({
     document: document.documentElement.scrollWidth,
@@ -263,7 +252,7 @@ test("320px record list, bottom sheet, and analysis remain reachable without cli
   }))).toEqual({ document: 320, body: 320, viewport: 320 });
 });
 
-test("database desktop keeps the wide analysis rail, compact trend, and accessible custom dates", async ({ page }) => {
+test("database desktop keeps the wide analysis rail, compact trend, and accessible custom months", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
   await page.setViewportSize({ width: 1280, height: 900 });
   await mockResponsiveApi(page);
@@ -279,15 +268,13 @@ test("database desktop keeps the wide analysis rail, compact trend, and accessib
   await expect.poll(() => trend.evaluate((node) => node.getBoundingClientRect().height)).toBe(256);
 
   const recordFilters = page.getByRole("region", { name: "记录筛选" });
-  await recordFilters.getByRole("button", { name: "自定义" }).click();
+  await recordFilters.getByRole("button", { name: "自定义范围" }).click();
 
-  await expectNativeDateInput(page.getByLabel("开始日期", { exact: true }), { ariaLabel: "开始日期", min: null, max: "2026-07-17" });
-  await expectNativeDateInput(page.getByLabel("结束日期", { exact: true }), { ariaLabel: "结束日期", min: null, max: "2026-07-17" });
-  await expectCalendarTrigger(page, "打开开始日期日历");
-  await expectCalendarTrigger(page, "打开结束日期日历");
+  await expectNativeMonthInput(page.getByLabel("开始月份", { exact: true }), { ariaLabel: "开始月份", max: "2026-07" });
+  await expectNativeMonthInput(page.getByLabel("结束月份", { exact: true }), { ariaLabel: "结束月份", max: "2026-07" });
 });
 
-test("database at 390px exposes all custom date inputs without horizontal overflow", async ({ page }) => {
+test("database at 390px exposes all custom month inputs without horizontal overflow", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
   await page.setViewportSize({ width: 390, height: 844 });
   await mockResponsiveApi(page);
@@ -296,16 +283,16 @@ test("database at 390px exposes all custom date inputs without horizontal overfl
   const recordFilters = page.getByRole("region", { name: "记录筛选" });
   const analysisRail = page.locator("main > section > div > aside");
   await expect(analysisRail).toHaveCount(1);
-  await expect(recordFilters.getByTestId("record-filter-dates")).toHaveCount(0);
-  await expect(recordFilters.getByLabel("开始日期", { exact: true })).toHaveCount(0);
-  await expect(recordFilters.getByLabel("结束日期", { exact: true })).toHaveCount(0);
-  await recordFilters.getByRole("button", { name: "自定义" }).click();
-  const dates = recordFilters.getByTestId("record-filter-dates");
+  await expect(recordFilters.getByTestId("record-filter-months")).toHaveCount(0);
+  await expect(recordFilters.getByLabel("开始月份", { exact: true })).toHaveCount(0);
+  await expect(recordFilters.getByLabel("结束月份", { exact: true })).toHaveCount(0);
+  await recordFilters.getByRole("button", { name: "自定义范围" }).click();
+  const dates = recordFilters.getByTestId("record-filter-months");
   const exportButton = recordFilters.getByRole("button", { name: "导出当前范围" });
   const [filterBox, datesBox, exportBox, startBox, endBox] = await Promise.all([
     recordFilters.boundingBox(), dates.boundingBox(), exportButton.boundingBox(),
-    recordFilters.getByLabel("开始日期", { exact: true }).boundingBox(),
-    recordFilters.getByLabel("结束日期", { exact: true }).boundingBox(),
+    recordFilters.getByLabel("开始月份", { exact: true }).boundingBox(),
+    recordFilters.getByLabel("结束月份", { exact: true }).boundingBox(),
   ]);
   expect(filterBox).not.toBeNull();
   expect(datesBox).not.toBeNull();
@@ -319,11 +306,10 @@ test("database at 390px exposes all custom date inputs without horizontal overfl
   expect(startBox!.x).toBeGreaterThanOrEqual(datesBox!.x);
   expect(endBox!.x + endBox!.width).toBeLessThanOrEqual(datesBox!.x + datesBox!.width);
   expect(exportBox!.y).toBeGreaterThanOrEqual(datesBox!.y + datesBox!.height + 8);
-  expect(exportBox!.width).toBe(filterBox!.width);
-  await expectNativeDateInput(page.getByLabel("开始日期", { exact: true }), { ariaLabel: "开始日期", min: null, max: "2026-07-17" });
-  await expectNativeDateInput(page.getByLabel("结束日期", { exact: true }), { ariaLabel: "结束日期", min: null, max: "2026-07-17" });
-  await expectCalendarTrigger(page, "打开开始日期日历");
-  await expectCalendarTrigger(page, "打开结束日期日历");
+  expect(exportBox!.width).toBeGreaterThanOrEqual(120);
+  expect(exportBox!.x + exportBox!.width).toBeLessThanOrEqual(filterBox!.x + filterBox!.width);
+  await expectNativeMonthInput(page.getByLabel("开始月份", { exact: true }), { ariaLabel: "开始月份", max: "2026-07" });
+  await expectNativeMonthInput(page.getByLabel("结束月份", { exact: true }), { ariaLabel: "结束月份", max: "2026-07" });
   await expect.poll(() => page.evaluate(() => ({
     document: document.documentElement.scrollWidth,
     viewport: window.innerWidth,

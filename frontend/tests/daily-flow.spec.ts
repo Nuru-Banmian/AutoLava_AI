@@ -241,7 +241,7 @@ for (const viewport of [
       await expect(page.getByRole("heading", { name: "2026年7月2日" })).toBeVisible();
     }
 
-    await page.getByRole("button", { name: "上月", exact: true }).first().click();
+    await page.getByRole("button", { name: "前一月", exact: true }).click();
     await expect(page.getByText("第 1 / 2 页")).toBeVisible();
     const previousMonthFirst = recordRows(page, mobile).first();
     await expect(previousMonthFirst).toContainText("2026年6月30日");
