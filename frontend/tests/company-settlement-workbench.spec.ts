@@ -62,11 +62,39 @@ async function mockSettlementWorkbench(page: Page) {
   return requestedMonths;
 }
 
-test("1280x900 monthly workbench keeps summaries and record columns aligned", async ({ page }) => {
+async function openSettlementWorkbench(page: Page, width: number, height: number) {
   await page.clock.install({ time: new Date("2026-07-21T10:00:00Z") });
-  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.setViewportSize({ width, height });
   const requestedMonths = await mockSettlementWorkbench(page);
   await page.goto("/settlements");
+  return requestedMonths;
+}
+
+async function expectWorkbenchOrder(page: Page) {
+  const workbenchSections = [
+    page.getByRole("heading", { name: "公司结算" }).locator("../.."),
+    page.getByRole("region", { name: "月度汇总" }),
+    page.getByRole("form", { name: "登记开票记录" }).locator(".."),
+    page.getByRole("region", { name: "开票记录列表" }),
+    page.getByRole("region", { name: "活动结算公司" }),
+    page.getByRole("region", { name: "归档结算公司" }),
+  ];
+  const boxes = await Promise.all(workbenchSections.map((section) => section.boundingBox()));
+  expect(boxes.every((box) => box !== null)).toBe(true);
+  expect(boxes.slice(0, -1).every((box, index) => (
+    box!.y + box!.height <= boxes[index + 1]!.y + 1
+  ))).toBe(true);
+}
+
+async function expectNoHorizontalOverflow(page: Page) {
+  await expect.poll(() => page.evaluate(() => ({
+    documentFits: document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+    bodyFits: document.body.scrollWidth <= document.body.clientWidth,
+  }))).toEqual({ documentFits: true, bodyFits: true });
+}
+
+test("1280x900 monthly workbench keeps summaries and record columns aligned", async ({ page }) => {
+  const requestedMonths = await openSettlementWorkbench(page, 1280, 900);
 
   const summary = page.getByRole("region", { name: "月度汇总" });
   const recordsRegion = page.getByRole("region", { name: "开票记录列表" });
@@ -97,14 +125,12 @@ test("1280x900 monthly workbench keeps summaries and record columns aligned", as
   await page.getByRole("button", { name: "前一月" }).click();
   await expect(page.getByRole("textbox", { name: "开票月份" })).toHaveValue("2026-06");
   await expect.poll(() => requestedMonths).toContain("2026-06");
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  await expectWorkbenchOrder(page);
+  await expectNoHorizontalOverflow(page);
 });
 
 test("390x844 record cards preserve states, actions, and keyboard company management", async ({ page }) => {
-  await page.clock.install({ time: new Date("2026-07-21T10:00:00Z") });
-  await page.setViewportSize({ width: 390, height: 844 });
-  await mockSettlementWorkbench(page);
-  await page.goto("/settlements");
+  await openSettlementWorkbench(page, 390, 844);
 
   const recordsRegion = page.getByRole("region", { name: "开票记录列表" });
   await expect(recordsRegion.getByText("公司名称")).toBeHidden();
@@ -127,14 +153,12 @@ test("390x844 record cards preserve states, actions, and keyboard company manage
   await page.keyboard.press("Enter");
   await expect(activeCompanies).toHaveAttribute("aria-expanded", "true");
   await expect(page.getByRole("button", { name: "新增结算公司" })).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  await expectWorkbenchOrder(page);
+  await expectNoHorizontalOverflow(page);
 });
 
 test("320px workbench wraps summaries and controls without horizontal overflow", async ({ page }) => {
-  await page.clock.install({ time: new Date("2026-07-21T10:00:00Z") });
-  await page.setViewportSize({ width: 320, height: 844 });
-  await mockSettlementWorkbench(page);
-  await page.goto("/settlements");
+  await openSettlementWorkbench(page, 320, 844);
 
   const summaryValues = page.getByRole("region", { name: "月度汇总" }).locator("dd");
   await expect(summaryValues).toHaveCount(4);
@@ -147,8 +171,6 @@ test("320px workbench wraps summaries and controls without horizontal overflow",
   expect(monthNavigationBox!.x + monthNavigationBox!.width).toBeLessThanOrEqual(320);
   await expect(page.getByRole("button", { name: "确认Alpha Fleet Services开票记录到账" })).toBeVisible();
   await expect(page.getByRole("button", { name: "撤销Beta Logistics开票记录到账确认" })).toBeVisible();
-  expect(await page.evaluate(() => ({
-    documentFits: document.documentElement.scrollWidth <= document.documentElement.clientWidth,
-    bodyFits: document.body.scrollWidth <= document.body.clientWidth,
-  }))).toEqual({ documentFits: true, bodyFits: true });
+  await expectWorkbenchOrder(page);
+  await expectNoHorizontalOverflow(page);
 });

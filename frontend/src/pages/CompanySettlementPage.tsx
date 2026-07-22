@@ -77,6 +77,7 @@ function euro(value: number) {
 }
 
 const MAX_SETTLEMENT_AMOUNT = 9_999_999_999;
+const recordGridColumns = "md:grid-cols-[minmax(0,1fr)_8rem_7rem_minmax(19rem,auto)]";
 
 function validAmount(value: string) {
   const amount = Number(value);
@@ -522,13 +523,13 @@ export function CompanySettlementPage() {
         </div>
         {monthSummary.isLoading ? <p role="status">正在加载开票记录…</p> : monthSummary.error ? <p role="alert">开票记录暂时无法显示。</p> : monthSummary.data && <>
           {monthSummary.data.records.length ? <div>
-            <div aria-hidden="true" className="mb-2 hidden grid-cols-[minmax(0,1fr)_8rem_7rem_minmax(19rem,auto)] gap-3 px-3 text-sm font-medium text-muted-foreground md:grid">
+            <div aria-hidden="true" className={`mb-2 hidden gap-3 px-3 text-sm font-medium text-muted-foreground md:grid ${recordGridColumns}`}>
               <span>公司名称</span><span className="text-right">金额</span><span>状态</span><span className="text-right">操作</span>
             </div>
             <ul aria-label={`${month}开票记录`} className="grid gap-2">
             {monthSummary.data.records.map((record) => {
               const transitionKind: RecordTransitionKind = record.status === "pending" ? "confirm" : "revoke";
-              return <li className="grid min-w-0 gap-3 rounded-lg border p-3 md:grid-cols-[minmax(0,1fr)_8rem_7rem_minmax(19rem,auto)] md:items-center" key={record.id}>
+              return <li className={`grid min-w-0 gap-3 rounded-lg border p-3 md:items-center ${recordGridColumns}`} key={record.id}>
               <div className="grid min-w-0 gap-1"><span className="text-xs text-muted-foreground md:hidden">结算公司</span><span className="min-w-0 break-words font-medium">{record.company_name}</span></div>
               <div className="flex items-baseline justify-between gap-3 md:block md:text-right"><span className="text-xs text-muted-foreground md:hidden">金额</span><span className="font-medium tabular-nums">{euro(record.amount)}</span></div>
               <div><span className={`inline-flex rounded-full px-2.5 py-1 text-sm font-medium ring-1 ring-inset ${record.status === "pending" ? "bg-amber-50 text-amber-800 ring-amber-200" : "bg-emerald-50 text-emerald-800 ring-emerald-200"}`}>{record.status === "pending" ? "待到账" : "已确认"}</span></div>
