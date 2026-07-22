@@ -175,7 +175,7 @@ export function BusinessRecordsPage() {
   }
 
   return (
-    <section className="grid w-full gap-4">
+    <section className="grid w-full gap-4 lg:min-h-0 lg:flex-1 lg:grid-rows-[auto_auto_minmax(0,1fr)]">
       <header><h1 className="text-2xl font-semibold">营业记录</h1></header>
       <RecordFilters
         mode={recordMode}
@@ -186,9 +186,9 @@ export function BusinessRecordsPage() {
         onChange={handleRecordRangeChange}
         onExport={() => exportMutation.mutate({ storeId: selected.id, requestedRange: range })}
       />
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(30rem,32rem)] lg:items-start">
-        <div className="min-w-0 overflow-x-hidden">
-          <div className="hidden lg:block">
+      <div className="grid gap-4 lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_minmax(30rem,32rem)]">
+        <div className="min-w-0 overflow-x-hidden lg:flex lg:min-h-0 lg:flex-col">
+          <div className="hidden lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:block">
             <RecordTable
               records={pagedTableRows}
               selectedDate={selectedDate}
@@ -222,7 +222,7 @@ export function BusinessRecordsPage() {
             onPageChange={handlePageChange}
           />
         </div>
-        <aside className="grid gap-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
+        <aside className="grid gap-4 lg:min-h-0 lg:overflow-y-auto">
           <div className="hidden lg:block">
             {selectedTableRow ? (
               <RecordDetailPanel

@@ -118,21 +118,47 @@ async function expectNativeMonthInput(input: ReturnType<Page["getByLabel"]>, exp
   await expect.poll(() => input.evaluate((node) => node.getBoundingClientRect().height)).toBe(40);
 }
 
-test("desktop record browser keeps a sticky independently scrollable detail rail", async ({ page }) => {
+test("desktop record and analysis workspaces share the viewport without outer scrolling", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
-  await page.setViewportSize({ width: 1280, height: 700 });
+  await page.setViewportSize({ width: 1280, height: 900 });
   await mockResponsiveApi(page);
   await page.goto("/database");
 
-  const detailRail = page.locator("main").getByRole("complementary");
+  const analysisWorkspace = page.locator("main").getByRole("complementary");
+  const recordWorkspace = analysisWorkspace.locator("xpath=preceding-sibling::*[1]");
   await expect(page.getByRole("table")).toBeVisible();
-  await expect(detailRail).toBeVisible();
-  await expect.poll(() => detailRail.evaluate((node) => getComputedStyle(node).position)).toBe("sticky");
+  await expect(analysisWorkspace).toBeVisible();
   await expect(page.getByRole("heading", { name: "2026年7月17日" })).toBeVisible();
-  await expect.poll(() => detailRail.evaluate((node) => ({
+  const [recordBox, analysisBox] = await Promise.all([
+    recordWorkspace.boundingBox(),
+    analysisWorkspace.boundingBox(),
+  ]);
+  expect(recordBox).not.toBeNull();
+  expect(analysisBox).not.toBeNull();
+  expect(Math.abs(recordBox!.y - analysisBox!.y)).toBeLessThanOrEqual(1);
+  expect(Math.abs(recordBox!.y + recordBox!.height - analysisBox!.y - analysisBox!.height)).toBeLessThanOrEqual(1);
+  expect(Math.abs(analysisBox!.y + analysisBox!.height - (900 - 24))).toBeLessThanOrEqual(1);
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThanOrEqual(900);
+
+  await expect.poll(() => analysisWorkspace.evaluate((node) => ({
     overflowY: getComputedStyle(node).overflowY,
     independentlyScrollable: node.scrollHeight > node.clientHeight,
   }))).toEqual({ overflowY: "auto", independentlyScrollable: true });
+
+  const outerScrollBefore = await page.evaluate(() => window.scrollY);
+  await analysisWorkspace.evaluate((node) => node.scrollTo({ top: node.scrollHeight }));
+  const analysisCard = analysisWorkspace.locator(":scope > *").last();
+  await expect.poll(async () => {
+    const [workspaceBox, cardBox] = await Promise.all([
+      analysisWorkspace.boundingBox(),
+      analysisCard.boundingBox(),
+    ]);
+    return analysisWorkspace.evaluate((node, bottomGap) => ({
+      atEnd: Math.abs(node.scrollTop - (node.scrollHeight - node.clientHeight)) <= 1,
+      bottomGap,
+    }), Math.round((workspaceBox?.y ?? 0) + (workspaceBox?.height ?? 0) - (cardBox?.y ?? 0) - (cardBox?.height ?? 0)));
+  }).toEqual({ atEnd: true, bottomGap: 0 });
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(outerScrollBefore);
 });
 
 test("global store picker switches cleanly between mobile and desktop without header overflow", async ({ page }) => {
@@ -168,6 +194,11 @@ test("320px record list, bottom sheet, and analysis remain reachable without cli
   await mockResponsiveApi(page);
   await page.goto("/database");
 
+  const analysisWorkspace = page.locator("main").getByRole("complementary");
+  await expect.poll(() => analysisWorkspace.evaluate((node) => ({
+    overflowY: getComputedStyle(node).overflowY,
+    expandsToContent: node.scrollHeight === node.clientHeight,
+  }))).toEqual({ overflowY: "visible", expandsToContent: true });
   const recordFilters = page.getByRole("region", { name: "记录筛选" });
   await expect(recordFilters.getByTestId("record-filter-months")).toHaveCount(0);
   await expect(recordFilters.getByLabel("开始月份", { exact: true })).toHaveCount(0);
@@ -227,6 +258,17 @@ test("320px record list, bottom sheet, and analysis remain reachable without cli
   await expect(sheet).toBeHidden();
   await expect(firstRow).toBeFocused();
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(scrollBeforeOpen);
+  await page.keyboard.press("Tab");
+  const secondRow = page.locator('main button[aria-label^="2026年7月16日"]').first();
+  await expect(secondRow).toBeFocused();
+  const [focusedRowBox, focusedNavigationBox] = await Promise.all([
+    secondRow.boundingBox(),
+    page.getByRole("navigation", { name: "移动导航" }).boundingBox(),
+  ]);
+  expect(focusedRowBox).not.toBeNull();
+  expect(focusedNavigationBox).not.toBeNull();
+  expect(focusedRowBox!.y).toBeGreaterThanOrEqual(0);
+  expect(focusedRowBox!.y + focusedRowBox!.height).toBeLessThanOrEqual(focusedNavigationBox!.y);
 
   const pagination = page.getByRole("navigation", { name: "记录分页" });
   const analysis = page.getByRole("heading", { name: "经营分析" });
@@ -240,6 +282,9 @@ test("320px record list, bottom sheet, and analysis remain reachable without cli
   const lastContent = page.getByText(categories.at(-1)!.name);
   const bottomNavigation = page.getByRole("navigation", { name: "移动导航" });
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await expect.poll(() => page.evaluate(() => Math.abs(
+    window.scrollY - (document.documentElement.scrollHeight - window.innerHeight),
+  ))).toBeLessThanOrEqual(1);
   await expect(lastContent).toBeVisible();
   const [contentBox, navigationBox] = await Promise.all([lastContent.boundingBox(), bottomNavigation.boundingBox()]);
   expect(contentBox).not.toBeNull();
@@ -308,6 +353,18 @@ test("database at 390px exposes all custom month inputs without horizontal overf
   expect(exportBox!.y).toBeGreaterThanOrEqual(datesBox!.y + datesBox!.height + 8);
   expect(exportBox!.width).toBeGreaterThanOrEqual(120);
   expect(exportBox!.x + exportBox!.width).toBeLessThanOrEqual(filterBox!.x + filterBox!.width);
+  await recordFilters.getByRole("button", { name: "单月浏览" }).focus();
+  await page.keyboard.press("Shift+Tab");
+  const endMonthInput = recordFilters.getByLabel("结束月份", { exact: true });
+  await expect(endMonthInput).toBeFocused();
+  const [focusedInputBox, mobileNavigationBox] = await Promise.all([
+    endMonthInput.boundingBox(),
+    page.getByRole("navigation", { name: "移动导航" }).boundingBox(),
+  ]);
+  expect(focusedInputBox).not.toBeNull();
+  expect(mobileNavigationBox).not.toBeNull();
+  expect(focusedInputBox!.y).toBeGreaterThanOrEqual(0);
+  expect(focusedInputBox!.y + focusedInputBox!.height).toBeLessThanOrEqual(mobileNavigationBox!.y);
   await expectNativeMonthInput(page.getByLabel("开始月份", { exact: true }), { ariaLabel: "开始月份", max: "2026-07" });
   await expectNativeMonthInput(page.getByLabel("结束月份", { exact: true }), { ariaLabel: "结束月份", max: "2026-07" });
   await expect.poll(() => page.evaluate(() => ({
