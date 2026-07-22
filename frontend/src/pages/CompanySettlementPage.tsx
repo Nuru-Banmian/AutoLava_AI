@@ -193,12 +193,14 @@ export function CompanySettlementPage() {
   const [editCompanyId, setEditCompanyId] = useState("");
   const [editAmount, setEditAmount] = useState("");
   const [recordToDelete, setRecordToDelete] = useState<SettlementRecord | null>(null);
+  const [activeCompaniesStoreId, setActiveCompaniesStoreId] = useState<number | null>(null);
   const [archivedCompaniesStoreId, setArchivedCompaniesStoreId] = useState<number | null>(null);
   const [recordTransition, setRecordTransition] = useState<{
     record: SettlementRecord;
     kind: RecordTransitionKind;
   } | null>(null);
   const enabled = selected?.company_settlement_enabled === true;
+  const activeCompaniesOpen = activeCompaniesStoreId === selected?.id;
   const archivedCompaniesOpen = archivedCompaniesStoreId === selected?.id;
   const workspace = useQuery({
     queryKey: ["settlements", selected?.id],
@@ -590,15 +592,23 @@ export function CompanySettlementPage() {
         </AlertDialogContent>
       </AlertDialog>
       <section className="grid gap-3" aria-labelledby="active-companies-title">
-        <h2 className="text-xl font-semibold" id="active-companies-title">活动结算公司</h2>
-        <form className="flex min-w-0 flex-wrap gap-2" onSubmit={create}>
-          <label className="min-w-0 flex-1">
-            <span className="sr-only">新结算公司名称</span>
-            <Input maxLength={120} placeholder="输入结算公司名称" value={name} onChange={(event) => setName(event.target.value)} />
-          </label>
-          <Button disabled={mutate.isPending} type="submit">新增结算公司</Button>
-        </form>
-        {active.isLoading ? <p role="status">加载活动公司…</p> : active.error ? <div role="alert"><p>{friendlyApiError(active.error, "活动公司加载失败")}</p><Button onClick={() => void active.refetch()} type="button" variant="outline">重试活动公司</Button></div> : <CompanyList key={`${selected.id}:active`} companies={active.data ?? []} archived={false} busy={mutate.isPending} onRename={(company, next) => act(selected.id, `/settlements/${selected.id}/companies/${company.id}`, "PATCH", { name: next })} onLifecycle={(company) => act(selected.id, `/settlements/${selected.id}/companies/${company.id}/archive`, "POST")} onDelete={(company) => act(selected.id, `/settlements/${selected.id}/companies/${company.id}`, "DELETE")} />}
+        <h2 id="active-companies-title">
+          <button aria-expanded={activeCompaniesOpen} className="group flex w-full items-center gap-3 py-2 text-left text-xl font-semibold text-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" onClick={() => setActiveCompaniesStoreId((storeId) => storeId === selected.id ? null : selected.id)} type="button">
+            <span>活动结算公司</span>
+            <span aria-hidden="true" className="h-px flex-1 bg-border" />
+            <ChevronDown aria-hidden="true" className={`size-5 shrink-0 text-muted-foreground transition-transform duration-200 ${activeCompaniesOpen ? "rotate-180" : ""}`} />
+          </button>
+        </h2>
+        {activeCompaniesOpen && <>
+          <form className="flex min-w-0 flex-wrap gap-2" onSubmit={create}>
+            <label className="min-w-0 flex-1">
+              <span className="sr-only">新结算公司名称</span>
+              <Input maxLength={120} placeholder="输入结算公司名称" value={name} onChange={(event) => setName(event.target.value)} />
+            </label>
+            <Button disabled={mutate.isPending} type="submit">新增结算公司</Button>
+          </form>
+          {active.isLoading ? <p role="status">加载活动公司…</p> : active.error ? <div role="alert"><p>{friendlyApiError(active.error, "活动公司加载失败")}</p><Button onClick={() => void active.refetch()} type="button" variant="outline">重试活动公司</Button></div> : <CompanyList key={`${selected.id}:active`} companies={active.data ?? []} archived={false} busy={mutate.isPending} onRename={(company, next) => act(selected.id, `/settlements/${selected.id}/companies/${company.id}`, "PATCH", { name: next })} onLifecycle={(company) => act(selected.id, `/settlements/${selected.id}/companies/${company.id}/archive`, "POST")} onDelete={(company) => act(selected.id, `/settlements/${selected.id}/companies/${company.id}`, "DELETE")} />}
+        </>}
       </section>
       <section className="grid gap-3" aria-labelledby="archived-companies-title">
         <h2 id="archived-companies-title">

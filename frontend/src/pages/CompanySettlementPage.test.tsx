@@ -100,6 +100,13 @@ describe("CompanySettlementPage record corrections", () => {
     expect(companySelect).not.toHaveTextContent("（活动）");
     expect(screen.queryByText("登记时新增公司")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "新增并选择" })).not.toBeInTheDocument();
+
+    const activeCompanies = screen.getByRole("button", { name: "活动结算公司" });
+    expect(activeCompanies).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("button", { name: "重命名Alpha" })).not.toBeInTheDocument();
+
+    fireEvent.click(activeCompanies);
+    expect(activeCompanies).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByRole("button", { name: "重命名Alpha" })).toHaveTextContent(/^重命名$/);
     expect(screen.getByRole("button", { name: "归档Alpha" })).toHaveTextContent(/^归档$/);
     expect(screen.getByRole("button", { name: "永久删除Alpha" })).toHaveTextContent(/^永久删除$/);

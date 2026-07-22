@@ -16,8 +16,8 @@ export const mobileModules = [
 const desktopModules = [
   { to: "/", label: "首页", end: true },
   { to: "/ledger", label: "每日记账" },
-  { to: "/settlements", label: "公司结算", capability: "company_settlement" },
   { to: "/database", label: "营业记录" },
+  { to: "/settlements", label: "公司结算", capability: "company_settlement" },
 ] as const;
 
 const adminModule = { to: "/admin", label: "管理中心" } as const;

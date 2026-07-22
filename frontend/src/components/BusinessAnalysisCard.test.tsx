@@ -1,12 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { render, screen, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import type { ChartsResponse } from "@/api/types";
 import { BusinessAnalysisCard } from "@/components/BusinessAnalysisCard";
+import type { DateRange } from "@/lib/business-record-ranges";
 
 const server = setupServer();
 
@@ -27,10 +27,10 @@ function payload(overrides: Partial<ChartsResponse> = {}): ChartsResponse {
   };
 }
 
-function renderCard() {
+function renderCard(range: DateRange = { start: "2026-07-01", end: "2026-07-17" }) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(<QueryClientProvider client={client}><BusinessAnalysisCard storeId={1} today="2026-07-17" /></QueryClientProvider>);
-  return client;
+  const view = render(<QueryClientProvider client={client}><BusinessAnalysisCard storeId={1} range={range} /></QueryClientProvider>);
+  return { ...view, client };
 }
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
@@ -38,55 +38,24 @@ afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
 describe("BusinessAnalysisCard", () => {
-  it("drives KPI, trend, and both composition groups from one range query", async () => {
+  it("drives all analysis content from the supplied record-table range without separate controls", async () => {
     const requests: URL[] = [];
     server.use(http.get("/api/charts/1", ({ request }) => {
       const url = new URL(request.url);
       requests.push(url);
-      const isSixMonths = url.searchParams.get("bucket") === "month";
-      const isCustom = url.searchParams.get("start") === "2026-07-02";
-      const response: Partial<ChartsResponse> = isSixMonths ? {
-        kpis: { ...payload().kpis, total_revenue: 600 },
-        range: { start: "2026-02-01", end: "2026-07-17", bucket: "month" },
-        categories: [{ category_id: 3, category_name: "月度收入", amount: 600 }],
-        excluded_categories: [{ category_id: 4, category_name: "月度排除", amount: 30 }],
-      } : isCustom ? {
-        kpis: { ...payload().kpis, total_revenue: 200 },
-        range: { start: "2026-07-02", end: "2026-07-03", bucket: "day" },
-        comparison_kpis: null,
-        categories: [{ category_id: 5, category_name: "自定义收入", amount: 200 }],
-        excluded_categories: [{ category_id: 6, category_name: "自定义排除", amount: 5 }],
-      } : payload();
-      return HttpResponse.json(payload(response));
+      return HttpResponse.json(payload());
     }));
 
-    const user = userEvent.setup();
     renderCard();
 
     await screen.findByText("现金收入");
     expect(screen.getByTestId("chart-panel-plot")).toHaveClass("h-64", "min-h-64");
-    expect(requests[0].pathname + requests[0].search).toBe("/api/charts/1?start=2026-07-01&end=2026-07-17&bucket=day&compare_start=2026-06-01&compare_end=2026-06-17");
+    expect(requests[0].pathname + requests[0].search).toBe("/api/charts/1?start=2026-07-01&end=2026-07-17&bucket=day");
+    expect(screen.queryByLabelText("经营分析日期范围")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("分析开始日期")).not.toBeInTheDocument();
     expect(screen.getByText("比较区间：2026-06-01 至 2026-06-17")).toBeInTheDocument();
     expect(screen.getByText(/按日/)).toBeInTheDocument();
     expect(screen.getByText("代收款")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "近 6 月" }));
-    await screen.findByText("月度收入");
-    expect(requests.at(-1)?.searchParams.get("bucket")).toBe("month");
-    expect(screen.getAllByText("€600").length).toBeGreaterThan(0);
-    expect(screen.getByText("月度排除")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "自定义" }));
-    expect(screen.getByLabelText("分析开始日期")).toHaveClass("h-10", "min-w-0", "pr-10");
-    expect(screen.getByLabelText("分析结束日期")).toHaveClass("h-10", "min-w-0", "pr-10");
-    fireEvent.change(screen.getByLabelText("分析开始日期"), { target: { value: "2026-07-02" } });
-    fireEvent.change(screen.getByLabelText("分析结束日期"), { target: { value: "2026-07-03" } });
-    await screen.findByText("自定义收入");
-    const customRequest = requests.at(-1)!;
-    expect(customRequest.searchParams.get("compare_start")).toBeNull();
-    expect(customRequest.searchParams.get("compare_end")).toBeNull();
-    expect(screen.getAllByText("€200").length).toBeGreaterThan(0);
-    expect(screen.getByText("自定义排除")).toBeInTheDocument();
   });
 
   it("renders the zero-data and retry states", async () => {
@@ -98,19 +67,19 @@ describe("BusinessAnalysisCard", () => {
       excluded_categories: [],
     }))));
 
-    renderCard();
+    const first = renderCard();
     expect(await screen.findByText("该范围暂无经营数据")).toBeInTheDocument();
+    first.unmount();
 
     server.use(http.get("/api/charts/1", () => HttpResponse.json({ detail: "failed" }, { status: 500 })));
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "近 6 月" }));
+    renderCard({ start: "2026-06-01", end: "2026-06-30" });
     expect(await screen.findByRole("button", { name: "重试经营分析" })).toBeInTheDocument();
   });
 
   it("keeps cached content visible and labels a failed refresh", async () => {
     let fail = false;
     server.use(http.get("/api/charts/1", () => fail ? HttpResponse.json({ detail: "failed" }, { status: 500 }) : HttpResponse.json(payload())));
-    const client = renderCard();
+    const { client } = renderCard();
 
     expect((await screen.findAllByText("€100")).length).toBeGreaterThan(0);
     fail = true;

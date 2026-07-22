@@ -228,8 +228,12 @@ test("320px record list, bottom sheet, and analysis remain reachable without cli
   await expect(sheet.getByRole("heading", { name: "2026年7月17日" })).toBeVisible();
   await expect.poll(() => sheet.evaluate((node) => ({
     position: getComputedStyle(node).position,
+    top: node.getBoundingClientRect().top,
     bottom: getComputedStyle(node).bottom,
-  }))).toEqual({ position: "fixed", bottom: "0px" });
+    height: node.getBoundingClientRect().height,
+  }))).toEqual({ position: "fixed", top: 16, bottom: "0px", height: 684 });
+  await expect.poll(() => sheet.getByRole("heading", { name: "2026年7月17日" }).evaluate((node) => getComputedStyle(node).fontSize)).toBe("24px");
+  await expect.poll(() => sheet.getByText("€100", { exact: true }).first().evaluate((node) => getComputedStyle(node).fontSize)).toBe("18px");
   await sheet.getByRole("button", { name: "Close" }).click();
   await expect(sheet).toBeHidden();
   await expect(firstRow).toBeFocused();
@@ -276,16 +280,11 @@ test("database desktop keeps the wide analysis rail, compact trend, and accessib
 
   const recordFilters = page.getByRole("region", { name: "记录筛选" });
   await recordFilters.getByRole("button", { name: "自定义" }).click();
-  await analysisRail.getByRole("button", { name: "自定义" }).click();
 
   await expectNativeDateInput(page.getByLabel("开始日期", { exact: true }), { ariaLabel: "开始日期", min: null, max: "2026-07-17" });
   await expectNativeDateInput(page.getByLabel("结束日期", { exact: true }), { ariaLabel: "结束日期", min: null, max: "2026-07-17" });
-  await expectNativeDateInput(page.getByLabel("分析开始日期", { exact: true }), { ariaLabel: "分析开始日期", min: null, max: "2026-07-17" });
-  await expectNativeDateInput(page.getByLabel("分析结束日期", { exact: true }), { ariaLabel: "分析结束日期", min: "2026-07-01", max: "2026-07-17" });
   await expectCalendarTrigger(page, "打开开始日期日历");
   await expectCalendarTrigger(page, "打开结束日期日历");
-  await expectCalendarTrigger(page, "打开分析开始日期日历");
-  await expectCalendarTrigger(page, "打开分析结束日期日历");
 });
 
 test("database at 390px exposes all custom date inputs without horizontal overflow", async ({ page }) => {
@@ -321,17 +320,10 @@ test("database at 390px exposes all custom date inputs without horizontal overfl
   expect(endBox!.x + endBox!.width).toBeLessThanOrEqual(datesBox!.x + datesBox!.width);
   expect(exportBox!.y).toBeGreaterThanOrEqual(datesBox!.y + datesBox!.height + 8);
   expect(exportBox!.width).toBe(filterBox!.width);
-  await analysisRail.getByRole("button", { name: "自定义" }).scrollIntoViewIfNeeded();
-  await analysisRail.getByRole("button", { name: "自定义" }).click();
-
   await expectNativeDateInput(page.getByLabel("开始日期", { exact: true }), { ariaLabel: "开始日期", min: null, max: "2026-07-17" });
   await expectNativeDateInput(page.getByLabel("结束日期", { exact: true }), { ariaLabel: "结束日期", min: null, max: "2026-07-17" });
-  await expectNativeDateInput(page.getByLabel("分析开始日期", { exact: true }), { ariaLabel: "分析开始日期", min: null, max: "2026-07-17" });
-  await expectNativeDateInput(page.getByLabel("分析结束日期", { exact: true }), { ariaLabel: "分析结束日期", min: "2026-07-01", max: "2026-07-17" });
   await expectCalendarTrigger(page, "打开开始日期日历");
   await expectCalendarTrigger(page, "打开结束日期日历");
-  await expectCalendarTrigger(page, "打开分析开始日期日历");
-  await expectCalendarTrigger(page, "打开分析结束日期日历");
   await expect.poll(() => page.evaluate(() => ({
     document: document.documentElement.scrollWidth,
     viewport: window.innerWidth,

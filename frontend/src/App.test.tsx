@@ -180,7 +180,7 @@ describe("App", () => {
     await userEvent.selectOptions(desktopStorePicker, "1");
     await waitFor(() => expect(within(desktop).getByRole("link", { name: "公司结算" })).toBeInTheDocument());
     expect(within(desktop).getAllByRole("link").map((link) => link.textContent)).toEqual([
-      "首页", "每日记账", "公司结算", "营业记录",
+      "首页", "每日记账", "营业记录", "公司结算",
     ]);
     const mobile = screen.getByRole("navigation", { name: "移动导航" });
     expect(within(mobile).getAllByRole("link")).toHaveLength(4);
@@ -253,6 +253,7 @@ describe("App", () => {
     );
     renderApplication("/settlements", { role: "user" });
 
+    await userEvent.click(await screen.findByRole("button", { name: "活动结算公司" }));
     expect(await screen.findByRole("button", { name: "重命名Alpha Fleet" })).toBeInTheDocument();
     expect(screen.queryByText("Old Fleet")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "归档结算公司" }));
@@ -307,6 +308,7 @@ describe("App", () => {
     );
     renderApplication("/settlements", { role: "user" });
 
+    await userEvent.click(await screen.findByRole("button", { name: "活动结算公司" }));
     expect(await screen.findByRole("button", { name: "重命名一店公司" })).toBeInTheDocument();
     const draft = screen.getByRole("textbox", { name: "新结算公司名称" });
     await userEvent.type(draft, "一店草稿");
@@ -318,6 +320,7 @@ describe("App", () => {
 
     const picker = within(screen.getByTestId("desktop-store-picker")).getByRole("combobox", { name: "门店" });
     await userEvent.selectOptions(picker, "2");
+    await userEvent.click(await screen.findByRole("button", { name: "活动结算公司" }));
     expect(await screen.findByRole("button", { name: "重命名二店公司" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "新结算公司名称" })).toHaveValue("");
     expect(screen.queryByRole("textbox", { name: "重命名一店公司" })).not.toBeInTheDocument();
@@ -374,6 +377,7 @@ describe("App", () => {
     await waitFor(() => expect(screen.getByText("日常营业额").nextElementSibling).toHaveTextContent("€1,000"));
     expect(screen.getByText("月度总收入").nextElementSibling).toHaveTextContent("€1,000");
 
+    await userEvent.click(screen.getByRole("button", { name: "活动结算公司" }));
     await userEvent.type(screen.getByRole("textbox", { name: "新结算公司名称" }), "Beta Fleet");
     await userEvent.click(screen.getByRole("button", { name: "新增结算公司" }));
     const companyInput = screen.getByRole("combobox", { name: "结算公司" });

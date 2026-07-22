@@ -174,7 +174,7 @@ describe("BusinessRecordsPage", () => {
     expect(within(sheet).queryByRole("button", { name: "管理这天记录" })).not.toBeInTheDocument();
   });
 
-  it("selects the new page or range's first record while analysis and record controls stay independent", async () => {
+  it("selects the new page or range's first record and keeps analysis synchronized with record filters", async () => {
     const recordRequests: URL[] = [];
     const chartRequests: URL[] = [];
     server.use(
@@ -193,21 +193,22 @@ describe("BusinessRecordsPage", () => {
     );
     renderPage();
     await screen.findByRole("heading", { name: "2026年7月14日" });
+    await waitFor(() => expect(chartRequests).toHaveLength(1));
+    expect(chartRequests[0].searchParams.get("start")).toBe("2026-07-01");
+    expect(chartRequests[0].searchParams.get("end")).toBe("2026-07-31");
+    expect(screen.queryByLabelText("经营分析日期范围")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "下一页" }));
     expect(await screen.findByText("第 2 / 2 页")).toBeInTheDocument();
     expect(screen.getAllByText("暂无可查看记录")).toHaveLength(1);
+    expect(chartRequests).toHaveLength(1);
 
-    const requestsBeforeAnalysisChange = recordRequests.length;
-    fireEvent.click(within(screen.getByLabelText("经营分析日期范围")).getByRole("button", { name: "近 6 月" }));
-    await waitFor(() => expect(chartRequests.at(-1)?.searchParams.get("bucket")).toBe("month"));
-    expect(recordRequests).toHaveLength(requestsBeforeAnalysisChange);
-
-    const chartRequestBeforeRecordChange = chartRequests.at(-1)?.href;
     fireEvent.click(within(screen.getByLabelText("记录筛选")).getByRole("button", { name: "上月" }));
     expect(await screen.findByRole("heading", { name: "2026年6月30日" })).toBeInTheDocument();
     expect(recordRequests.at(-1)?.searchParams.get("page")).toBe("1");
-    expect(chartRequests.at(-1)?.href).toBe(chartRequestBeforeRecordChange);
+    await waitFor(() => expect(chartRequests.at(-1)?.searchParams.get("start")).toBe("2026-06-01"));
+    expect(chartRequests.at(-1)?.searchParams.get("end")).toBe("2026-06-30");
+    expect(chartRequests.at(-1)?.searchParams.get("bucket")).toBe("day");
   });
 
   it("keeps analysis usable when records fail and keeps records usable when analysis fails", async () => {

@@ -184,6 +184,7 @@ test("settlement corrections feed current partial-month analysis without narrow-
   await mockSettlementAnalysis(page);
   await page.goto("/settlements");
 
+  await page.getByRole("button", { name: "活动结算公司" }).click();
   await page.getByPlaceholder("输入结算公司名称").fill("Alpha");
   await page.getByRole("button", { name: "新增结算公司" }).click();
   await expect(page.getByLabel("结算公司", { exact: true }).locator("option").last()).toHaveText("Alpha");

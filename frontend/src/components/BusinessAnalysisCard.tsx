@@ -1,27 +1,19 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "@/api/client";
 import type { ChartsResponse } from "@/api/types";
 import { ChartPanel } from "@/components/ChartPanel";
 import { IncomeComposition } from "@/components/IncomeComposition";
-import { NativeDateInput } from "@/components/NativeDateInput";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { analysisRange, analysisSearchParams, type AnalysisRangeMode, type DateRange } from "@/lib/business-record-ranges";
+import { analysisRange, analysisSearchParams, type DateRange } from "@/lib/business-record-ranges";
 import { chartsKey, formatWholeEuro } from "@/lib/user-api";
 
 interface BusinessAnalysisCardProps {
   storeId: number;
-  today: string;
+  range: DateRange;
 }
-
-const rangeModes: { mode: AnalysisRangeMode; label: string }[] = [
-  { mode: "current-month", label: "本月" },
-  { mode: "previous-month", label: "上月" },
-  { mode: "six-months", label: "近 6 月" },
-  { mode: "custom", label: "自定义" },
-];
 
 function comparisonText(data: ChartsResponse): string | null {
   const previous = data.comparison_kpis;
@@ -44,16 +36,14 @@ function Kpi({ title, value }: { title: string; value: string }) {
   </div>;
 }
 
-export function BusinessAnalysisCard({ storeId, today }: BusinessAnalysisCardProps) {
-  const [mode, setMode] = useState<AnalysisRangeMode>("current-month");
-  const [custom, setCustom] = useState<DateRange>(() => ({ start: `${today.slice(0, 7)}-01`, end: today }));
+export function BusinessAnalysisCard({ storeId, range }: BusinessAnalysisCardProps) {
   const resolved = useMemo(() => {
     try {
-      return analysisRange(mode, today, custom);
+      return analysisRange("custom", range.end, range);
     } catch {
       return null;
     }
-  }, [mode, today, custom]);
+  }, [range.end, range.start]);
   const queryString = resolved ? analysisSearchParams(resolved).toString() : "invalid";
   const charts = useQuery({
     queryKey: chartsKey(storeId, queryString),
@@ -68,15 +58,8 @@ export function BusinessAnalysisCard({ storeId, today }: BusinessAnalysisCardPro
   const isSingleMonth = data?.range.start.slice(0, 7) === data?.range.end.slice(0, 7);
 
   return <Card>
-    <CardHeader className="gap-4">
+    <CardHeader>
       <CardTitle>经营分析</CardTitle>
-      <div className="flex flex-wrap gap-2" aria-label="经营分析日期范围">
-        {rangeModes.map(({ mode: nextMode, label }) => <Button key={nextMode} type="button" variant={mode === nextMode ? "default" : "outline"} size="sm" aria-pressed={mode === nextMode} onClick={() => setMode(nextMode)}>{label}</Button>)}
-      </div>
-      {mode === "custom" && <div className="flex flex-wrap gap-3">
-        <label className="grid gap-1 text-sm">开始日期<NativeDateInput aria-label="分析开始日期" value={custom.start} max={custom.end || today} onChange={(event) => setCustom((value) => ({ ...value, start: event.target.value }))} /></label>
-        <label className="grid gap-1 text-sm">结束日期<NativeDateInput aria-label="分析结束日期" value={custom.end} min={custom.start} max={today} onChange={(event) => setCustom((value) => ({ ...value, end: event.target.value }))} /></label>
-      </div>}
     </CardHeader>
     <CardContent className="grid gap-5">
       {!resolved && <p role="alert">请选择有效的日期范围</p>}

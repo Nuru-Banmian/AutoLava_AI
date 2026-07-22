@@ -13,14 +13,14 @@ export function MobileRecordSheet({ open, record, canEdit, canManage, onManage, 
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="bottom"
-        className="max-h-[90vh] overflow-y-auto rounded-t-2xl p-4 pb-[calc(1rem+env(safe-area-inset-bottom))]"
+        className="h-[calc(100dvh-1rem)] max-h-[calc(100dvh-1rem)] overflow-y-auto rounded-t-3xl p-4 pt-6 pb-[calc(1rem+env(safe-area-inset-bottom))] [&>button]:right-4 [&>button]:top-4 [&>button]:grid [&>button]:size-11 [&>button]:place-items-center [&>button_svg]:size-6"
         onCloseAutoFocus={(event) => {
           event.preventDefault();
           returnFocusTo?.focus();
         }}
       >
         <SheetTitle className="sr-only">{record.date} 营业记录详情</SheetTitle>
-        <RecordDetailPanel record={record} canEdit={canEdit} canManage={canManage} onManage={onManage} />
+        <RecordDetailPanel mobile record={record} canEdit={canEdit} canManage={canManage} onManage={onManage} />
       </SheetContent>
     </Sheet>
   );

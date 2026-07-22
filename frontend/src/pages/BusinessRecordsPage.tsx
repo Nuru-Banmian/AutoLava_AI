@@ -200,7 +200,7 @@ export function BusinessRecordsPage() {
               </div>
             )}
           </div>
-          <BusinessAnalysisCard key={selected.id} storeId={selected.id} today={today} />
+          <BusinessAnalysisCard key={selected.id} storeId={selected.id} range={range} />
         </aside>
       </div>
       {mobileRecord && (mobileRecord.id === null || mobileRecord.store_id === selected.id) && (

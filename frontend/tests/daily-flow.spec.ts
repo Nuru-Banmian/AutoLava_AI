@@ -252,11 +252,11 @@ for (const viewport of [
       await expect(page.getByRole("heading", { name: "2026年6月30日" })).toBeVisible();
     }
 
-    await page.getByRole("button", { name: "近 6 月" }).click();
-    await expect(page.getByRole("button", { name: "近 6 月" })).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByText("第 1 / 2 页")).toBeVisible();
     await expect(recordRows(page, mobile).first()).toContainText("2026年6月30日");
-    await expect.poll(() => requests.chartRequests.at(-1)?.searchParams.get("bucket")).toBe("month");
+    await expect.poll(() => requests.chartRequests.at(-1)?.searchParams.get("start")).toBe("2026-06-01");
+    await expect.poll(() => requests.chartRequests.at(-1)?.searchParams.get("end")).toBe("2026-06-30");
+    await expect.poll(() => requests.chartRequests.at(-1)?.searchParams.get("bucket")).toBe("day");
     await expect.poll(() => requests.databaseRequests.at(-1)?.searchParams.get("start")).toBe("2026-06-01");
 
     const included = page.getByRole("region", { name: "收入分类" });
