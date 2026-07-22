@@ -191,9 +191,10 @@ function recordRows(page: Page, mobile: boolean) {
     : page.getByRole("table").locator("tbody tr");
 }
 
-async function fillIncomeItems(page: Page, firstAmount: string) {
-  for (const [index, category] of categories.entries()) {
-    await page.getByLabel(category.name).fill(index === 0 ? firstAmount : "0");
+async function fillNewRecordAmounts(page: Page, firstAmount: string) {
+  await page.getByLabel(categories[0].name).fill(firstAmount);
+  for (const category of categories.slice(1)) {
+    await page.getByLabel(category.name).fill("0");
   }
 }
 
@@ -208,7 +209,7 @@ for (const viewport of [
     const requests = await mockMergedFlow(page);
 
     await page.goto(`/ledger?date=${today}`);
-    await fillIncomeItems(page, "100");
+    await fillNewRecordAmounts(page, "100");
     await page.getByRole("button", { name: "保存今日记录" }).click();
     await expect(page.getByRole("status")).toContainText("保存成功");
 
@@ -260,17 +261,17 @@ for (const viewport of [
     await expect.poll(() => requests.databaseRequests.at(-1)?.searchParams.get("start")).toBe("2026-06-01");
 
     const included = page.getByRole("region", { name: "收入分类" });
-    const excluded = page.getByRole("region", { name: "未计入总额" });
+    const excluded = page.getByRole("region", { name: "其他数据" });
     await expect(included.getByText(categories[5].name)).toBeHidden();
     await expect(excluded.getByText(categories[12].name)).toBeHidden();
     await included.getByRole("button", { name: /展开收入分类/ }).click();
     await expect(included.getByText(categories[5].name)).toBeVisible();
     await expect(excluded.getByText(categories[12].name)).toBeHidden();
-    await excluded.getByRole("button", { name: /展开未计入总额/ }).click();
+    await excluded.getByRole("button", { name: /展开其他数据/ }).click();
     await expect(excluded.getByText(categories[12].name)).toBeVisible();
     await expect(included.getByRole("button", { name: "收起收入分类" })).toBeVisible();
     await expect(excluded.getByTestId("composition-proportion")).toHaveCount(0);
-    await expect(page.getByText("未计入总额的金额不会计入总营业额、增幅或平均值。")).toBeVisible();
+    await expect(page.getByText(/未计入总额|历史总额记录/)).toHaveCount(0);
 
     await page.getByRole("button", { name: "导出当前范围" }).click();
     await expect.poll(() => requests.exportRequests.length).toBe(1);
@@ -286,7 +287,7 @@ test("desktop: multi-date ledger snapshots, markers, dirty guards, and permanent
   const flow = await mockMergedFlow(page);
 
   await page.goto(`/ledger?date=${today}`);
-  await fillIncomeItems(page, "123");
+  await fillNewRecordAmounts(page, "123");
   await page.getByRole("button", { name: "保存今日记录" }).click();
   await expect(page.getByRole("status")).toContainText("保存成功");
 
@@ -329,8 +330,7 @@ test("desktop: multi-date ledger snapshots, markers, dirty guards, and permanent
   await navigation.getByRole("link", { name: "营业记录" }).click();
   const targetRow = page.getByRole("table").locator("tbody tr").filter({ hasText: "2026年7月15日" });
   await targetRow.click();
-  await page.getByRole("button", { name: "管理这天记录" }).click();
-  await page.getByRole("button", { name: "永久删除这天记录" }).click();
+  await page.getByRole("button", { name: "删除这天记录" }).click();
   await page.getByRole("button", { name: "确认永久删除" }).click();
   await expect.poll(() => flow.ledgerDeletes).toContain("2026-07-15");
   await expect(page.getByRole("table").locator("tbody tr").filter({ hasText: "2026年7月15日" })).toContainText("未录入");

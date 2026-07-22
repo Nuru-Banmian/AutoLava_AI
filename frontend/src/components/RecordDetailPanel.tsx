@@ -11,12 +11,13 @@ export type RecordDetail = RecordSnapshot | { id: null; date: string };
 export interface RecordDetailPanelProps {
   record: RecordDetail;
   canEdit: boolean;
-  canManage: boolean;
-  onManage(): void;
+  canDelete: boolean;
+  onEdit?(date: string): void;
+  onDelete(): void;
   mobile?: boolean;
 }
 
-export function RecordDetailPanel({ record, canEdit, canManage, onManage, mobile = false }: RecordDetailPanelProps) {
+export function RecordDetailPanel({ record, canEdit, canDelete, onEdit, onDelete, mobile = false }: RecordDetailPanelProps) {
   const isUnrecorded = record.id === null;
   const composedItems = !isUnrecorded && record.income_mode === "composed" ? record.items : [];
   const summaryItemClass = "rounded-xl bg-muted/50 p-3";
@@ -56,8 +57,8 @@ export function RecordDetailPanel({ record, canEdit, canManage, onManage, mobile
 
         {!isUnrecorded && record.activity && <p className="rounded-lg border px-3 py-2.5 text-base"><span className="text-muted-foreground">活动：</span>{record.activity}</p>}
         <div className={`flex flex-wrap gap-2 border-t pt-4 ${mobile ? "" : "items-center"}`}>
-          {canEdit && <Button asChild className={mobile ? "h-11 w-full text-base" : "h-10 text-base"}><Link to={`/ledger?date=${record.date}`}>修改这天记录</Link></Button>}
-          {canManage && !isUnrecorded && <Button className={mobile ? "h-11 w-full text-base" : "h-10 text-base"} type="button" variant="outline" onClick={onManage}>管理这天记录</Button>}
+          {canEdit && <Button asChild className={mobile ? "h-11 w-full text-base" : "h-10 text-base"}><Link to={`/ledger?date=${record.date}`} onClick={onEdit ? (event) => { event.preventDefault(); onEdit(record.date); } : undefined}>修改这天记录</Link></Button>}
+          {canDelete && !isUnrecorded && <Button className={mobile ? "h-11 w-full text-base" : "h-10 text-base"} type="button" variant="destructive" onClick={onDelete}>删除这天记录</Button>}
         </div>
       </CardContent>
     </Card>

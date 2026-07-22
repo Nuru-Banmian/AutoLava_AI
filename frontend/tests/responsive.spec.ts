@@ -247,8 +247,8 @@ test("320px record list, bottom sheet, and analysis remain reachable without cli
   expect(analysisBox!.y).toBeGreaterThanOrEqual(paginationBox!.y + paginationBox!.height);
 
   await page.getByRole("region", { name: "收入分类" }).getByRole("button", { name: /展开收入分类/ }).click();
-  await page.getByRole("region", { name: "未计入总额" }).getByRole("button", { name: /展开未计入总额/ }).click();
-  const lastContent = page.getByText("未计入总额的金额不会计入总营业额、增幅或平均值。");
+  await page.getByRole("region", { name: "其他数据" }).getByRole("button", { name: /展开其他数据/ }).click();
+  const lastContent = page.getByText(categories.at(-1)!.name);
   const bottomNavigation = page.getByRole("navigation", { name: "移动导航" });
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
   await expect(lastContent).toBeVisible();
