@@ -13,51 +13,45 @@ export const databaseKey = (storeId: number, query: string) => ["database", "rec
 
 const DATABASE_PAGE_SIZE = 200;
 
-export async function loadBusinessRecords(storeId: number, start: string, end: string, signal?: AbortSignal): Promise<DatabaseResponse> {
-  const items: DatabaseResponse["items"] = [];
-  const categories = new Map<number, CategoryDescriptor>();
-  let firstPage: DatabaseResponse | null = null;
+async function loadRecordPages(storeId: number, start: string, end: string, signal?: AbortSignal): Promise<DatabaseResponse[]> {
+  const pages: DatabaseResponse[] = [];
   let page = 1;
   let total = 0;
 
   do {
     const query = new URLSearchParams({ start, end, page: String(page), page_size: String(DATABASE_PAGE_SIZE) });
     const response = await api<DatabaseResponse>(`/database/${storeId}/records?${query}`, { signal });
-    firstPage ??= response;
-    items.push(...response.items);
-    response.categories.forEach((category) => categories.set(category.id, category));
+    pages.push(response);
     total = response.total;
     page += 1;
   } while ((page - 1) * DATABASE_PAGE_SIZE < total);
 
+  return pages;
+}
+
+function mergedCategories(pages: DatabaseResponse[]): CategoryDescriptor[] {
+  const categories = new Map<number, CategoryDescriptor>();
+  pages.forEach((response) => response.categories.forEach((category) => categories.set(category.id, category)));
+  return [...categories.values()].sort((left, right) => left.sort_order - right.sort_order || left.id - right.id);
+}
+
+export async function loadBusinessRecords(storeId: number, start: string, end: string, signal?: AbortSignal): Promise<DatabaseResponse> {
+  const pages = await loadRecordPages(storeId, start, end, signal);
   return {
-    ...firstPage!,
-    items,
-    categories: [...categories.values()].sort((left, right) => left.sort_order - right.sort_order || left.id - right.id),
+    ...pages[0],
+    items: pages.flatMap((response) => response.items),
+    categories: mergedCategories(pages),
     page: 1,
     page_size: DATABASE_PAGE_SIZE,
   };
 }
 
 export async function loadCategoryCatalog(storeId: number, start: string, end: string, signal?: AbortSignal): Promise<DatabaseResponse> {
-  const categories = new Map<number, CategoryDescriptor>();
-  let firstPage: DatabaseResponse | null = null;
-  let page = 1;
-  let total = 0;
-
-  do {
-    const query = new URLSearchParams({ start, end, page: String(page), page_size: "200" });
-    const response = await api<DatabaseResponse>(`/database/${storeId}/records?${query}`, { signal });
-    firstPage ??= response;
-    total = Math.max(total, response.total);
-    response.categories.forEach((category) => categories.set(category.id, category));
-    page += 1;
-  } while ((page - 1) * 200 < total);
+  const pages = await loadRecordPages(storeId, start, end, signal);
 
   return {
-    ...firstPage!,
-    categories: [...categories.values()].sort((left, right) => left.sort_order - right.sort_order || left.id - right.id),
-    total,
+    ...pages[0],
+    categories: mergedCategories(pages),
   };
 }
 
