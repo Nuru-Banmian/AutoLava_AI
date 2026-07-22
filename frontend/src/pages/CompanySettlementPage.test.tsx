@@ -91,6 +91,57 @@ afterEach(() => {
 afterAll(() => server.close());
 
 describe("CompanySettlementPage record corrections", () => {
+  it("navigates adjacent opening months and stops at the current month", async () => {
+    const requestedMonths: string[] = [];
+    renderPage([
+      http.get("/api/settlements/1/months/:month", ({ params }) => {
+        requestedMonths.push(String(params.month));
+        return HttpResponse.json(monthResponse([]));
+      }),
+    ]);
+
+    const monthInput = await screen.findByLabelText("开票月份");
+    const previousMonth = screen.getByRole("button", { name: "前一月" });
+    const nextMonth = screen.getByRole("button", { name: "后一月" });
+    await waitFor(() => expect(monthInput).toHaveValue("2026-07"));
+    expect(nextMonth).toBeDisabled();
+
+    fireEvent.click(previousMonth);
+
+    await waitFor(() => expect(monthInput).toHaveValue("2026-06"));
+    await waitFor(() => expect(requestedMonths).toContain("2026-06"));
+    expect(nextMonth).not.toBeDisabled();
+
+    fireEvent.click(nextMonth);
+
+    await waitFor(() => expect(monthInput).toHaveValue("2026-07"));
+    expect(nextMonth).toBeDisabled();
+  });
+
+  it("presents the monthly workbench in task order with textual record states", async () => {
+    renderPage([
+      http.get("/api/settlements/1/months/:month", () => HttpResponse.json(monthResponse([
+        record(),
+        record({ id: 21, company_id: 11, company_name: "Beta", amount: 300, status: "confirmed" }),
+      ]))),
+    ]);
+
+    const pageTitle = await screen.findByRole("heading", { name: "公司结算" });
+    const monthNavigation = await screen.findByRole("group", { name: "月份导航" });
+    const summary = await screen.findByRole("region", { name: "月度汇总" });
+    const registration = screen.getByRole("form", { name: "登记开票记录" });
+    const records = screen.getByRole("region", { name: "开票记录列表" });
+    const activeCompanies = screen.getByRole("region", { name: "活动结算公司" });
+    const archivedCompanies = screen.getByRole("region", { name: "归档结算公司" });
+    const ordered = [pageTitle, monthNavigation, summary, registration, records, activeCompanies, archivedCompanies];
+
+    ordered.slice(0, -1).forEach((node, index) => {
+      expect(node.compareDocumentPosition(ordered[index + 1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+    expect(records).toHaveTextContent("待到账");
+    expect(records).toHaveTextContent("已确认");
+  });
+
   it("shows streamlined company labels and keeps company creation in one place", async () => {
     renderPage();
 
@@ -195,7 +246,9 @@ describe("CompanySettlementPage record corrections", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "撤销Alpha开票记录到账确认" }));
     expect(screen.getByRole("alertdialog", { name: "撤销到账确认？" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "确认撤销到账确认" }));
+    const confirmRevocation = screen.getByRole("button", { name: "确认撤销到账确认" });
+    expect(confirmRevocation).not.toHaveClass("bg-destructive");
+    fireEvent.click(confirmRevocation);
     expect(await screen.findByRole("alert")).toHaveTextContent("服务器暂时不可用，请稍后重试");
 
     fireEvent.click(screen.getByRole("button", { name: "确认撤销到账确认" }));

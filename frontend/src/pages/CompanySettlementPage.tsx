@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { api, ApiError, friendlyApiError } from "@/api/client";
@@ -66,6 +66,12 @@ export function monthInTimezone(timezone: string, now = new Date()) {
   return `${value.year}-${value.month}`;
 }
 
+function shiftMonth(value: string, offset: number) {
+  const [year, month] = value.split("-").map(Number);
+  const shifted = new Date(Date.UTC(year, month - 1 + offset, 1));
+  return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
 function euro(value: number) {
   return new Intl.NumberFormat("zh-CN", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(value);
 }
@@ -121,7 +127,7 @@ const recordTransitionConfig = {
     errorMessage: "撤销到账确认失败，请重试",
     dialogTitle: "撤销到账确认？",
     actionLabel: "确认撤销到账确认",
-    variant: "destructive",
+    variant: "outline",
     description: (record: SettlementRecord) => `${record.company_name} 的 ${euro(record.amount)} 将从 ${record.opening_month} 的月度总收入中扣除，并恢复为可修改、可删除的待到账记录。`,
   },
 } as const;
@@ -202,6 +208,7 @@ export function CompanySettlementPage() {
   const enabled = selected?.company_settlement_enabled === true;
   const activeCompaniesOpen = activeCompaniesStoreId === selected?.id;
   const archivedCompaniesOpen = archivedCompaniesStoreId === selected?.id;
+  const currentMonth = selected ? monthInTimezone(selected.timezone) : "";
   const workspace = useQuery({
     queryKey: ["settlements", selected?.id],
     queryFn: () => api<SettlementWorkspace>(`/settlements/${selected!.id}`),
@@ -453,20 +460,37 @@ export function CompanySettlementPage() {
   </div>;
 
   return <section className="grid min-w-0 gap-6" aria-labelledby="settlement-title">
-    <h1 id="settlement-title" className="text-2xl font-semibold">公司结算</h1>
+    <header className="flex min-w-0 flex-wrap items-end justify-between gap-4">
+      <div>
+        <h1 id="settlement-title" className="text-2xl font-semibold">公司结算</h1>
+        <p className="mt-1 text-sm text-muted-foreground">按开票月份登记记录并跟踪到账状态。</p>
+      </div>
+      <div className="flex min-w-0 items-end gap-2" role="group" aria-label="月份导航">
+        <Button aria-label="前一月" onClick={() => setMonth((value) => shiftMonth(value, -1))} size="icon" type="button" variant="outline">
+          <ChevronLeft aria-hidden="true" />
+        </Button>
+        <label className="grid min-w-0 gap-1 text-sm font-medium">
+          开票月份
+          <Input aria-label="开票月份" className="min-w-0" max={currentMonth} onChange={(event) => setMonth(event.target.value)} required type="month" value={month} />
+        </label>
+        <Button aria-label="后一月" disabled={!month || month >= currentMonth} onClick={() => setMonth((value) => shiftMonth(value, 1))} size="icon" type="button" variant="outline">
+          <ChevronRight aria-hidden="true" />
+        </Button>
+      </div>
+    </header>
     {workspace.data && <>
-      <section className="grid gap-4" aria-labelledby="records-title">
-        <div className="flex min-w-0 flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 className="text-xl font-semibold" id="records-title">开票记录</h2>
-            <p className="text-sm text-muted-foreground">按开票月份登记；到账确认不会记录单独日期。</p>
-          </div>
-          <label className="grid gap-1 text-sm font-medium">
-            开票月份
-            <Input aria-label="开票月份" max={selected ? monthInTimezone(selected.timezone) : undefined} onChange={(event) => setMonth(event.target.value)} required type="month" value={month} />
-          </label>
-        </div>
-        <form className="grid min-w-0 gap-3 rounded-lg border p-4 sm:grid-cols-2 lg:grid-cols-3" onSubmit={(event) => {
+      <section className="grid gap-4 rounded-xl border bg-card p-4 shadow-sm" aria-labelledby="monthly-summary-title">
+        <h2 className="text-lg font-semibold" id="monthly-summary-title">月度汇总</h2>
+        {monthSummary.isLoading ? <p role="status">正在加载月份记录…</p> : monthSummary.error ? <div role="alert"><p>{friendlyApiError(monthSummary.error, "月份记录加载失败")}</p><Button onClick={() => void monthSummary.refetch()} type="button" variant="outline">重试月份记录</Button></div> : monthSummary.data && <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-xl bg-muted/50 p-3"><dt className="text-sm text-muted-foreground">日常营业额</dt><dd className="mt-1 text-lg font-semibold tabular-nums">{euro(monthSummary.data.daily_ledger_revenue)}</dd></div>
+          <div className="rounded-xl bg-muted/50 p-3"><dt className="text-sm text-muted-foreground">已确认公司结算</dt><dd className="mt-1 text-lg font-semibold tabular-nums">{euro(monthSummary.data.confirmed_settlement_income)}</dd></div>
+          <div className="rounded-xl bg-muted/50 p-3"><dt className="text-sm text-muted-foreground">待到账金额</dt><dd className="mt-1 text-lg font-semibold tabular-nums">{euro(monthSummary.data.pending_amount)}</dd></div>
+          <div className="rounded-xl bg-muted/50 p-3"><dt className="text-sm text-muted-foreground">月度总收入</dt><dd className="mt-1 text-lg font-semibold tabular-nums">{euro(monthSummary.data.monthly_total)}</dd></div>
+        </dl>}
+      </section>
+      <section className="grid gap-4 rounded-xl border bg-card p-4 shadow-sm" aria-labelledby="record-registration-title">
+        <h2 className="text-lg font-semibold" id="record-registration-title">登记开票记录</h2>
+        <form aria-labelledby="record-registration-title" className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(12rem,1fr)_minmax(12rem,1fr)_auto]" onSubmit={(event) => {
           event.preventDefault();
           if (!selected || !month || !companyId || !validAmount(amount)) return;
           setRecordError("");
@@ -484,33 +508,37 @@ export function CompanySettlementPage() {
             <Input aria-label="金额（整数欧元）" inputMode="numeric" max={MAX_SETTLEMENT_AMOUNT} min="1" onChange={(event) => setAmount(event.target.value)} pattern="[0-9]+" required step="1" type="number" value={amount} />
           </label>
           <div className="flex items-end">
-            <Button className="w-full" disabled={recordMutation.isPending || !month || !companyId || !validAmount(amount)} type="submit">登记待到账记录</Button>
+            <Button className="w-full lg:w-auto" disabled={recordMutation.isPending || !month || !companyId || !validAmount(amount)} type="submit">登记待到账记录</Button>
           </div>
         </form>
         {recordError && <div role="alert">{recordError}<Button className="ml-2" disabled={recordMutation.isPending} onClick={() => {
           if (recordMutation.isError && selected && month && companyId && validAmount(amount)) recordMutation.mutate({ storeId: selected.id, month, companyId: Number(companyId), amount: Number(amount) });
         }} type="button" variant="outline">重试保存</Button></div>}
-        {monthSummary.isLoading ? <p role="status">正在加载月份记录…</p> : monthSummary.error ? <div role="alert"><p>{friendlyApiError(monthSummary.error, "月份记录加载失败")}</p><Button onClick={() => void monthSummary.refetch()} type="button" variant="outline">重试月份记录</Button></div> : monthSummary.data && <>
-          <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="rounded-lg border p-3"><dt className="text-sm text-muted-foreground">日常营业额</dt><dd className="text-lg font-semibold">{euro(monthSummary.data.daily_ledger_revenue)}</dd></div>
-            <div className="rounded-lg border p-3"><dt className="text-sm text-muted-foreground">已确认公司结算</dt><dd className="text-lg font-semibold">{euro(monthSummary.data.confirmed_settlement_income)}</dd></div>
-            <div className="rounded-lg border p-3"><dt className="text-sm text-muted-foreground">待到账金额</dt><dd className="text-lg font-semibold">{euro(monthSummary.data.pending_amount)}</dd></div>
-            <div className="rounded-lg border p-3"><dt className="text-sm text-muted-foreground">月度总收入</dt><dd className="text-lg font-semibold">{euro(monthSummary.data.monthly_total)}</dd></div>
-          </dl>
-          {monthSummary.data.records.length ? <ul aria-label={`${month}开票记录`} className="grid gap-2">
+      </section>
+      <section className="grid gap-4 rounded-xl border bg-card p-4 shadow-sm" aria-labelledby="records-title">
+        <div>
+          <h2 className="text-lg font-semibold" id="records-title">开票记录列表</h2>
+          <p className="mt-1 text-sm text-muted-foreground">到账确认不会记录单独日期。</p>
+        </div>
+        {monthSummary.isLoading ? <p role="status">正在加载开票记录…</p> : monthSummary.error ? <p role="alert">开票记录暂时无法显示。</p> : monthSummary.data && <>
+          {monthSummary.data.records.length ? <div>
+            <div aria-hidden="true" className="mb-2 hidden grid-cols-[minmax(0,1fr)_8rem_7rem_minmax(19rem,auto)] gap-3 px-3 text-sm font-medium text-muted-foreground md:grid">
+              <span>公司名称</span><span className="text-right">金额</span><span>状态</span><span className="text-right">操作</span>
+            </div>
+            <ul aria-label={`${month}开票记录`} className="grid gap-2">
             {monthSummary.data.records.map((record) => {
               const transitionKind: RecordTransitionKind = record.status === "pending" ? "confirm" : "revoke";
-              return <li className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg border p-3" key={record.id}>
-              <span className="min-w-0 break-words font-medium">{record.company_name}</span>
-              <span>{euro(record.amount)}</span>
-              <span className="rounded-full bg-muted px-2 py-1 text-sm">{record.status === "pending" ? "待到账" : "已确认"}</span>
-              <div className="flex flex-wrap gap-2">
+              return <li className="grid min-w-0 gap-3 rounded-lg border p-3 md:grid-cols-[minmax(0,1fr)_8rem_7rem_minmax(19rem,auto)] md:items-center" key={record.id}>
+              <div className="grid min-w-0 gap-1"><span className="text-xs text-muted-foreground md:hidden">结算公司</span><span className="min-w-0 break-words font-medium">{record.company_name}</span></div>
+              <div className="flex items-baseline justify-between gap-3 md:block md:text-right"><span className="text-xs text-muted-foreground md:hidden">金额</span><span className="font-medium tabular-nums">{euro(record.amount)}</span></div>
+              <div><span className={`inline-flex rounded-full px-2.5 py-1 text-sm font-medium ring-1 ring-inset ${record.status === "pending" ? "bg-amber-50 text-amber-800 ring-amber-200" : "bg-emerald-50 text-emerald-800 ring-emerald-200"}`}>{record.status === "pending" ? "待到账" : "已确认"}</span></div>
+              <div className="flex flex-wrap gap-2 md:justify-end">
                 <Button aria-label={record.status === "pending" ? `确认${record.company_name}开票记录到账` : `撤销${record.company_name}开票记录到账确认`} disabled={transitionRecordMutation.isPending || editRecordMutation.isPending || deleteRecordMutation.isPending} onClick={() => {
                   setRecordError("");
                   setRecordMessage("");
                   transitionRecordMutation.reset();
                   setRecordTransition({ record, kind: transitionKind });
-                }} type="button" variant="outline">{transitionKind === "confirm" ? "确认到账" : "撤销到账确认"}</Button>
+                }} type="button" variant={transitionKind === "confirm" ? "default" : "outline"}>{transitionKind === "confirm" ? "确认到账" : "撤销到账确认"}</Button>
               {record.status === "pending" && <>
                 <Button aria-label={`编辑${record.company_name}开票记录`} disabled={editRecordMutation.isPending || deleteRecordMutation.isPending} onClick={() => openRecordEditor(record)} type="button" variant="outline">编辑</Button>
                 <Button aria-label={`删除${record.company_name}开票记录`} disabled={editRecordMutation.isPending || deleteRecordMutation.isPending} onClick={() => {
@@ -523,7 +551,8 @@ export function CompanySettlementPage() {
               </div>
             </li>;
             })}
-          </ul> : <p>本月暂无开票记录。</p>}
+            </ul>
+          </div> : <p>本月暂无开票记录。</p>}
           {recordMessage && <p role="status">{recordMessage}</p>}
         </>}
       </section>
