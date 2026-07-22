@@ -60,7 +60,7 @@ function fillBlankLedgerAmounts() {
 
 async function chooseRecordWeather(value: string) {
   fireEvent.pointerDown(screen.getByRole("combobox", { name: "天气" }), { button: 0, ctrlKey: false, pointerType: "mouse" });
-  await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(28));
+  await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(10));
   const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((candidate) => candidate.textContent === value);
   expect(option).toBeDefined();
   fireEvent.click(option!);
@@ -179,6 +179,15 @@ describe("LedgerPage", () => {
     expect(screen.getByRole("button", { name: "洗车数量 / 活动" })).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByLabelText("洗车数量")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "保存今日记录" })).toBeEnabled();
+  });
+
+  it("does not render or request the removed recent-seven-days area", async () => {
+    let recentRequests = 0;
+    renderLedger([http.get("/api/ledger/1/recent", () => { recentRequests += 1; return HttpResponse.json([]); })]);
+
+    expect(await screen.findByRole("button", { name: "保存今日记录" })).toBeEnabled();
+    expect(screen.queryByRole("heading", { name: "最近七天" })).not.toBeInTheDocument();
+    expect(recentRequests).toBe(0);
   });
 
   it("opens the shared calendar and selects a recorded historical date", async () => {
@@ -568,23 +577,24 @@ describe("LedgerPage", () => {
   });
 
   it("confirms before discarding edits when changing the ledger date", async () => {
-    renderLedger([http.get("/api/ledger/1/recent", () => HttpResponse.json([{ id: 8, date: "2026-07-13", is_open: "营业" }]))]);
+    renderLedger();
     fireEvent.change(await screen.findByLabelText("现金"), { target: { value: "88" } });
 
-    fireEvent.click(screen.getByRole("button", { name: /2026-07-13/ }));
+    fireEvent.click(screen.getByRole("button", { name: "选择台账日期：2026年7月15日" }));
+    fireEvent.click(screen.getByRole("button", { name: "2026年7月13日" }));
     expect(await screen.findByRole("alertdialog", { name: "放弃未保存的修改？" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "继续编辑" }));
     expect(screen.getByRole("button", { name: "选择台账日期：2026年7月15日" })).toBeInTheDocument();
     expect(screen.getByLabelText("现金")).toHaveValue("88");
 
-    fireEvent.click(screen.getByRole("button", { name: /2026-07-13/ }));
+    fireEvent.click(screen.getByRole("button", { name: "选择台账日期：2026年7月15日" }));
+    fireEvent.click(screen.getByRole("button", { name: "2026年7月13日" }));
     fireEvent.click(await screen.findByRole("button", { name: "放弃修改" }));
     expect(await screen.findByRole("button", { name: "选择台账日期：2026年7月13日" })).toBeInTheDocument();
   });
 
   it("stops blocking navigation after a successful save", async () => {
     renderLedger([
-      http.get("/api/ledger/1/recent", () => HttpResponse.json([{ id: 8, date: "2026-07-13", is_open: "营业" }])),
       http.put("/api/ledger/1/:date", () => HttpResponse.json({ id: 9, date: "2026-07-15" })),
     ]);
     fireEvent.change(await screen.findByLabelText("现金"), { target: { value: "66" } });
@@ -598,7 +608,8 @@ describe("LedgerPage", () => {
     const savedEvent = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(savedEvent);
     expect(savedEvent.defaultPrevented).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: /2026-07-13/ }));
+    fireEvent.click(screen.getByRole("button", { name: "选择台账日期：2026年7月15日" }));
+    fireEvent.click(screen.getByRole("button", { name: "2026年7月13日" }));
     expect(screen.queryByRole("alertdialog", { name: "放弃未保存的修改？" })).not.toBeInTheDocument();
   });
 
@@ -800,9 +811,4 @@ describe("LedgerPage", () => {
     expect(screen.queryByText(/覆盖已有记录/)).not.toBeInTheDocument();
   });
 
-  it("shows recent loading failures separately and retries them", async () => {
-    let calls = 0;
-    renderLedger([http.get("/api/ledger/1/recent", () => { calls += 1; return calls === 1 ? HttpResponse.json({ detail: "Recent unavailable" }, { status: 500 }) : HttpResponse.json([]); })]);
-    expect(await screen.findByRole("alert")).toHaveTextContent("服务器暂时不可用，请稍后重试"); fireEvent.click(screen.getByRole("button", { name: "重试最近记录" })); await waitFor(() => expect(calls).toBe(2)); expect(screen.getByText("暂无记录")).toBeInTheDocument();
-  });
 });

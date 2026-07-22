@@ -199,6 +199,59 @@ async function fillNewRecordAmounts(page: Page, firstAmount: string) {
 }
 
 for (const viewport of [
+  { name: "desktop", width: 1280, height: 900, desktop: true },
+  { name: "390px", width: 390, height: 844, desktop: false },
+  { name: "320px", width: 320, height: 700, desktop: false },
+]) {
+  test(`${viewport.name}: daily ledger uses the responsive wide-card form`, async ({ page }) => {
+    await page.clock.install({ time: new Date(`${today}T12:00:00Z`) });
+    await page.setViewportSize(viewport);
+    const flow = await mockMergedFlow(page);
+    await page.goto(`/ledger?date=${today}`);
+
+    const card = page.getByRole("region", { name: "每日台账录入" });
+    const statusAndWeatherGroup = page.getByRole("group", { name: "状态与天气" });
+    const status = page.getByLabel("状态", { exact: true });
+    const weather = page.getByRole("combobox", { name: "天气" });
+    const firstIncome = page.getByLabel(categories[0].name);
+    const secondIncome = page.getByLabel(categories[1].name);
+    await expect(card).toBeVisible();
+    await expect(page.getByRole("heading", { name: "最近七天" })).toHaveCount(0);
+
+    const [mainBox, cardBox, statusAndWeatherBox, statusBox, weatherBox, firstIncomeBox, secondIncomeBox] = await Promise.all([
+      page.locator("main").boundingBox(), card.boundingBox(), statusAndWeatherGroup.boundingBox(), status.boundingBox(), weather.boundingBox(),
+      firstIncome.boundingBox(), secondIncome.boundingBox(),
+    ]);
+    for (const box of [mainBox, cardBox, statusAndWeatherBox, statusBox, weatherBox, firstIncomeBox, secondIncomeBox]) expect(box).not.toBeNull();
+    expect(statusBox!.height).toBeGreaterThanOrEqual(44);
+    expect(weatherBox!.height).toBeGreaterThanOrEqual(44);
+    expect(firstIncomeBox!.height).toBeGreaterThanOrEqual(44);
+
+    if (viewport.desktop) {
+      expect(cardBox!.width).toBeGreaterThanOrEqual(800);
+      expect(cardBox!.width).toBeLessThanOrEqual(900);
+      expect(Math.abs(cardBox!.x + cardBox!.width / 2 - (mainBox!.x + mainBox!.width / 2))).toBeLessThanOrEqual(1);
+      expect(Math.abs(statusBox!.y - weatherBox!.y)).toBeLessThanOrEqual(1);
+      expect(Math.abs(firstIncomeBox!.y - secondIncomeBox!.y)).toBeLessThanOrEqual(1);
+    } else {
+      expect(weatherBox!.y).toBeGreaterThanOrEqual(statusBox!.y + statusBox!.height + 8);
+      expect(secondIncomeBox!.y).toBeGreaterThanOrEqual(firstIncomeBox!.y + firstIncomeBox!.height + 8);
+      await expect.poll(() => page.evaluate(() => ({
+        body: document.body.scrollWidth,
+        document: document.documentElement.scrollWidth,
+        viewport: window.innerWidth,
+      }))).toEqual({ body: viewport.width, document: viewport.width, viewport: viewport.width });
+    }
+
+    await fillNewRecordAmounts(page, "100");
+    await expect(page.getByText("合计 €100", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "保存今日记录" }).click();
+    await expect(page.getByRole("status")).toContainText("保存成功");
+    expect(flow.ledgerWrites.at(-1)).toMatchObject({ date: today });
+  });
+}
+
+for (const viewport of [
   { name: "desktop", width: 1280, height: 900 },
   { name: "320px", width: 320, height: 700 },
 ]) {
@@ -312,18 +365,21 @@ test("desktop: multi-date ledger snapshots, markers, dirty guards, and permanent
     { date: "2026-07-15", amount: 215 },
   ]);
 
-  await page.getByRole("button", { name: /2026-07-16/ }).click();
+  await page.getByRole("button", { name: "选择台账日期：2026年7月15日" }).click();
+  await page.getByRole("button", { name: "2026年7月16日，已有记录" }).click();
   await expect(page.getByRole("button", { name: "选择台账日期：2026年7月16日" })).toBeVisible();
   await expect(page.getByRole("alertdialog", { name: "放弃未保存的修改？" })).toHaveCount(0);
   await expect(page.getByLabel(categories[0].name)).toHaveValue("100");
 
   await page.getByLabel(categories[0].name).fill("333");
-  await page.getByRole("button", { name: /2026-07-15/ }).click();
+  await page.getByRole("button", { name: "选择台账日期：2026年7月16日" }).click();
+  await page.getByRole("button", { name: "2026年7月15日，已有记录" }).click();
   const dirtyGuard = page.getByRole("alertdialog", { name: "放弃未保存的修改？" });
   await expect(dirtyGuard).toBeVisible();
   await dirtyGuard.getByRole("button", { name: "继续编辑" }).click();
   await expect(page.getByLabel(categories[0].name)).toHaveValue("333");
-  await page.getByRole("button", { name: /2026-07-15/ }).click();
+  await page.getByRole("button", { name: "选择台账日期：2026年7月16日" }).click();
+  await page.getByRole("button", { name: "2026年7月15日，已有记录" }).click();
   await dirtyGuard.getByRole("button", { name: "放弃修改" }).click();
 
   const navigation = page.getByRole("navigation", { name: "主导航" });

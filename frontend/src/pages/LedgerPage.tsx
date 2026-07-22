@@ -6,7 +6,7 @@ import { api, ApiError, friendlyApiError } from "@/api/client";
 import type { DatabaseResponse, IncomeConfigResponse, LedgerBody, LedgerSaveResponse, RecordSnapshot, WeatherResponse } from "@/api/types";
 import { LedgerDatePicker } from "@/components/LedgerDatePicker";
 import { LedgerForm } from "@/components/LedgerForm";
-import { categoryCatalogKey, incomeConfigKey, invalidateUserData, ledgerMonthKey, ledgerRecordKey, recentKey, storeLocalToday } from "@/lib/user-api";
+import { categoryCatalogKey, incomeConfigKey, invalidateUserData, ledgerMonthKey, ledgerRecordKey, storeLocalToday } from "@/lib/user-api";
 import { useStore } from "@/stores/StoreProvider";
 import { useUnsavedChanges } from "@/navigation/UnsavedChanges";
 import { ledgerReturnState } from "@/navigation/business-records-return";
@@ -35,7 +35,6 @@ export function LedgerPage() {
     const end = format(endOfMonth(monthDate), "yyyy-MM-dd");
     return api<DatabaseResponse>(`/database/${selected!.id}/records?start=${start}&end=${end}&page=1&page_size=200`, { signal });
   } });
-  const recent = useQuery({ queryKey: selected ? recentKey(selected.id) : ["ledger", "recent", "none"], enabled: Boolean(selected), queryFn: () => api<RecordSnapshot[]>(`/ledger/${selected!.id}/recent?days=7`) });
   const weather = useQuery({ queryKey: ["weather", selected?.id, date], enabled: Boolean(selected && date), retry: false, queryFn: () => api<WeatherResponse>(`/weather/${selected!.id}/${date}`) });
   useEffect(() => {
     if (!savedSubmission?.canonicalRequested || savedSubmission.canonicalReady || !record.isSuccess || !record.data) return;
@@ -77,10 +76,14 @@ export function LedgerPage() {
     },
   });
   if (!selected) return <section><h1 className="text-2xl font-semibold">每日台账</h1><p role="status">请先选择门店。</p></section>;
-  return <section className="grid min-w-0 gap-6"><header className="flex min-w-0 flex-wrap items-center justify-between gap-3"><h1 className="text-2xl font-semibold">每日台账</h1><LedgerDatePicker value={date || today} today={today} recordedDates={recordedDates} onChange={chooseDate} onMonthChange={setVisibleMonth} onOpenChange={setCalendarOpen} /></header>
-    {selected.is_active === false ? <p role="status">该门店已归档，台账仅供查看；可在历史记录和经营分析中查看数据。</p> : catalog.isLoading || config.isLoading || record.isLoading ? <p role="status">加载台账…</p> : config.error ? <div role="alert"><span>{friendlyApiError(config.error, "收入配置加载失败，请稍后重试")}</span><button className="ml-2 underline" onClick={() => void config.refetch()}>重试收入配置</button></div> : catalog.error || (record.error && !record.data && !currentSavedSubmission) ? <p role="alert">{friendlyApiError(catalog.error ?? record.error, "台账加载失败，请稍后重试")}</p> : <LedgerForm key={`${selected.id}:${date}`} categories={catalog.data?.categories ?? []} config={config.data!} record={record.data ?? undefined} recordRevision={record.dataUpdatedAt} weather={weather.data} saving={save.isPending} submitLabel={record.data ? "保存修改" : date === today ? "保存今日记录" : "补记历史记录"} savedSubmission={currentSavedSubmission} onDirtyChange={markDirty} onSave={(body) => { setMessage(""); save.mutate({ storeId: selected.id, date, body }); }} />}
-    {record.error && (record.data || currentSavedSubmission) && <p role="alert">台账刷新失败，请稍后重试<button className="ml-2 underline" onClick={() => void record.refetch()}>重试台账</button></p>}
-    {message && <p role={message === "保存成功" ? "status" : "alert"}>{message}</p>}
-    <aside><h2 className="text-lg font-semibold">最近七天</h2>{recent.isLoading ? <p role="status">加载最近记录…</p> : recent.error ? <div role="alert"><span>{friendlyApiError(recent.error, "最近记录加载失败，请稍后重试")}</span><button className="ml-2 underline" onClick={() => void recent.refetch()}>重试最近记录</button></div> : recent.data?.length ? <ul>{recent.data.map((item) => <li key={item.id}><button className="underline" onClick={() => chooseDate(item.date)}>{item.date} · {item.is_open}</button></li>)}</ul> : <p>暂无记录</p>}</aside>
+  return <section className="min-w-0">
+    <div className="mx-auto grid w-full max-w-4xl min-w-0 gap-4">
+      <header className="flex min-w-0 flex-wrap items-center justify-between gap-3"><h1 className="text-2xl font-semibold">每日台账</h1><LedgerDatePicker value={date || today} today={today} recordedDates={recordedDates} onChange={chooseDate} onMonthChange={setVisibleMonth} onOpenChange={setCalendarOpen} /></header>
+      <div role="region" aria-label="每日台账录入" className="grid min-w-0 gap-4 rounded-xl border bg-card p-4 text-card-foreground shadow-sm sm:p-6">
+        {selected.is_active === false ? <p role="status">该门店已归档，台账仅供查看；可在历史记录和经营分析中查看数据。</p> : catalog.isLoading || config.isLoading || record.isLoading ? <p role="status">加载台账…</p> : config.error ? <div role="alert"><span>{friendlyApiError(config.error, "收入配置加载失败，请稍后重试")}</span><button className="ml-2 underline" onClick={() => void config.refetch()}>重试收入配置</button></div> : catalog.error || (record.error && !record.data && !currentSavedSubmission) ? <p role="alert">{friendlyApiError(catalog.error ?? record.error, "台账加载失败，请稍后重试")}</p> : <LedgerForm key={`${selected.id}:${date}`} categories={catalog.data?.categories ?? []} config={config.data!} record={record.data ?? undefined} recordRevision={record.dataUpdatedAt} weather={weather.data} saving={save.isPending} submitLabel={record.data ? "保存修改" : date === today ? "保存今日记录" : "补记历史记录"} savedSubmission={currentSavedSubmission} onDirtyChange={markDirty} onSave={(body) => { setMessage(""); save.mutate({ storeId: selected.id, date, body }); }} />}
+        {record.error && (record.data || currentSavedSubmission) && <p role="alert">台账刷新失败，请稍后重试<button className="ml-2 underline" onClick={() => void record.refetch()}>重试台账</button></p>}
+        {message && <p role={message === "保存成功" ? "status" : "alert"}>{message}</p>}
+      </div>
+    </div>
   </section>;
 }
