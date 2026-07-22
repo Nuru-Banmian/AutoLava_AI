@@ -466,7 +466,7 @@ export function CompanySettlementPage() {
         <h1 id="settlement-title" className="text-2xl font-semibold">公司结算</h1>
         <p className="mt-1 text-sm text-muted-foreground">按开票月份登记记录并跟踪到账状态。</p>
       </div>
-      <div className="flex min-w-0 items-end gap-2" role="group" aria-label="月份导航">
+      {workspace.data && <div className="flex min-w-0 items-end gap-2" role="group" aria-label="月份导航">
         <Button aria-label="前一月" onClick={() => setMonth((value) => shiftMonth(value, -1))} size="icon" type="button" variant="outline">
           <ChevronLeft aria-hidden="true" />
         </Button>
@@ -477,7 +477,7 @@ export function CompanySettlementPage() {
         <Button aria-label="后一月" disabled={!month || month >= currentMonth} onClick={() => setMonth((value) => shiftMonth(value, 1))} size="icon" type="button" variant="outline">
           <ChevronRight aria-hidden="true" />
         </Button>
-      </div>
+      </div>}
     </header>
     {workspace.data && <>
       <section className="grid gap-4 rounded-xl border bg-card p-4 shadow-sm" aria-labelledby="monthly-summary-title">
