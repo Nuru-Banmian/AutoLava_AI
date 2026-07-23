@@ -193,9 +193,11 @@ test("settlement corrections feed current partial-month analysis without narrow-
   await page.getByLabel("结算公司", { exact: true }).selectOption({ label: "Alpha" });
   await page.getByLabel("金额（整数欧元）").fill("120");
   await page.getByRole("button", { name: "登记待到账记录" }).click();
-  await expect(page.getByRole("button", { name: "编辑Alpha开票记录" })).toBeVisible();
+  const recordActions = page.getByRole("button", { name: "Alpha开票记录更多操作" });
+  await expect(recordActions).toBeVisible();
 
-  await page.getByRole("button", { name: "编辑Alpha开票记录" }).click();
+  await recordActions.click();
+  await page.getByRole("menuitem", { name: "编辑Alpha开票记录" }).click();
   await page.getByLabel("编辑金额（整数欧元）").fill("250");
   await page.getByRole("button", { name: "保存开票记录修改" }).click();
   await expect(page.getByText("开票记录已修改", { exact: true })).toBeVisible();
@@ -203,7 +205,8 @@ test("settlement corrections feed current partial-month analysis without narrow-
   await page.getByRole("button", { name: "确认Alpha开票记录到账" }).click();
   await page.getByRole("button", { name: "确认到账", exact: true }).click();
   await expect(page.getByText("€1,150")).toBeVisible();
-  await page.getByRole("button", { name: "撤销Alpha开票记录到账确认" }).click();
+  await page.getByRole("button", { name: "Alpha开票记录更多操作" }).click();
+  await page.getByRole("menuitem", { name: "撤销Alpha开票记录到账确认" }).click();
   await page.getByRole("button", { name: "确认撤销到账确认" }).click();
   await expect(page.getByText("€900").last()).toBeVisible();
   await page.getByRole("button", { name: "确认Alpha开票记录到账" }).click();
