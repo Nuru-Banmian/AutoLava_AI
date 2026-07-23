@@ -11,8 +11,13 @@ type Capture = {
 const store = { id: 1, name: "Roma", address: "Roma, Italia", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true, company_settlement_enabled: false };
 const alternateStore = { id: 2, name: "Milano Nord", address: "Milano, Italia", latitude: "45.4642", longitude: "9.19", timezone: "Europe/Rome", is_active: true };
 
-async function mockAdminApi(page: Page, capture: Capture) {
+async function mockAdminApi(
+  page: Page,
+  capture: Capture,
+  { isOwner = true }: { isOwner?: boolean } = {},
+) {
   let authenticated = false;
+  let databaseBackupRequests = 0;
   let users: unknown[] = [];
   let companySettlementEnabled = false;
   let accessibleStoresFailed = false;
@@ -34,8 +39,8 @@ async function mockAdminApi(page: Page, capture: Capture) {
     const path = url.pathname;
     const json = (value: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(value) });
 
-    if (path === "/api/auth/me") return authenticated ? json({ id: 1, username: "administrator", role: "admin", is_owner: true }) : json({ detail: "Authentication required" }, 401);
-    if (path === "/api/auth/login" && request.method() === "POST") { authenticated = true; return json({ id: 1, username: "administrator", role: "admin", is_owner: true }); }
+    if (path === "/api/auth/me") return authenticated ? json({ id: 1, username: "administrator", role: "admin", is_owner: isOwner }) : json({ detail: "Authentication required" }, 401);
+    if (path === "/api/auth/login" && request.method() === "POST") { authenticated = true; return json({ id: 1, username: "administrator", role: "admin", is_owner: isOwner }); }
     if (path === "/api/stores/accessible") {
       if (accessibleStoresFailed) {
         accessibleStoreFailures += 1;
@@ -59,6 +64,18 @@ async function mockAdminApi(page: Page, capture: Capture) {
     }
     if (path === "/api/admin/alerts") return json([]);
     if (path === "/api/admin/task-logs") return json([{ id: 1, store_id: 1, task_type: "weather", status: "success", message: null, retry_count: 0, started_at: "2026-07-16T08:00:00Z", finished_at: "2026-07-16T08:05:00Z", created_at: "2026-07-16T08:00:00Z" }]);
+    if (path === "/api/admin/database-backup") {
+      databaseBackupRequests += 1;
+      return route.fulfill({
+        status: 200,
+        contentType: "application/vnd.sqlite3",
+        headers: {
+          "Content-Disposition": 'attachment; filename="autolava-backup-20260723-210000.sqlite3"',
+          "Cache-Control": "no-store",
+        },
+        body: "sqlite-snapshot",
+      });
+    }
     if (/^\/api\/dashboard\/\d+$/.test(path)) return json([{ card_type: "today", state: "recorded", revenue: 100, weather: "晴", weekday: null, temperature_max: null, temperature_min: null, precipitation: null, hint: null, generated_at: "2026-07-16T08:30:00Z" }]);
     if (path === "/api/income-config/1/current") return json({ store_id: 1, enabled: true, formula: "营业额 = 现金", items: [{ id: 1, store_id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 0, archived_at: null }] });
     if (path === "/api/admin/income-categories") return json([{ id: 1, store_id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 0, archived_at: null }]);
@@ -88,8 +105,49 @@ async function mockAdminApi(page: Page, capture: Capture) {
   return {
     failAccessibleStores: () => { accessibleStoresFailed = true; },
     accessibleStoreFailures: () => accessibleStoreFailures,
+    databaseBackupRequests: () => databaseBackupRequests,
   };
 }
+
+test("final administrator confirms the sensitive database backup download", async ({ page }) => {
+  const api = await mockAdminApi(page, {});
+  await page.goto("/login");
+  await page.getByLabel("用户名").fill("administrator");
+  await page.getByLabel("密码", { exact: true }).fill("password-123");
+  await page.getByRole("button", { name: "登录" }).click();
+  await page.goto("/admin?tab=status");
+
+  await page.getByRole("button", { name: "下载数据库备份" }).click();
+  const dialog = page.getByRole("alertdialog", { name: "下载完整数据库备份？" });
+  await expect(dialog).toContainText("经营数据");
+  await expect(dialog).toContainText("账号信息");
+  await expect(dialog).toContainText("密码哈希");
+  await expect(dialog.locator('input[type="password"]')).toHaveCount(0);
+  await dialog.getByRole("button", { name: "取消" }).click();
+  expect(api.databaseBackupRequests()).toBe(0);
+
+  await page.getByRole("button", { name: "下载数据库备份" }).click();
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "确认并下载" }).click();
+  const download = await downloadPromise;
+
+  expect(download.suggestedFilename()).toBe(
+    "autolava-backup-20260723-210000.sqlite3",
+  );
+  expect(api.databaseBackupRequests()).toBe(1);
+});
+
+test("ordinary administrator cannot see the database backup entry", async ({ page }) => {
+  await mockAdminApi(page, {}, { isOwner: false });
+  await page.goto("/login");
+  await page.getByLabel("用户名").fill("administrator");
+  await page.getByLabel("密码", { exact: true }).fill("password-123");
+  await page.getByRole("button", { name: "登录" }).click();
+  await page.goto("/admin?tab=status");
+
+  await expect(page.getByRole("heading", { name: "系统管理" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "下载数据库备份" })).toHaveCount(0);
+});
 
 test("owner configures shared-store income, a user membership, and a mapped store", async ({ page }) => {
   const capture: Capture = {};

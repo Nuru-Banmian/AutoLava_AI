@@ -7,12 +7,41 @@ from pathlib import Path
 
 
 _BACKUP_NAME = re.compile(r"^autolava-(\d{8})\.sqlite3$")
+_REPRESENTATIVE_READS = (
+    "SELECT id, name FROM stores ORDER BY id LIMIT 1",
+    "SELECT id, username, password_hash FROM users ORDER BY id LIMIT 1",
+    (
+        "SELECT id, store_id, date, daily_revenue "
+        "FROM store_daily_records ORDER BY id LIMIT 1"
+    ),
+)
 
 
 def _integrity_result(path: Path) -> str:
     with closing(sqlite3.connect(path)) as connection:
         row = connection.execute("PRAGMA integrity_check").fetchone()
     return "" if row is None else str(row[0])
+
+
+def create_verified_snapshot(source: Path, snapshot: Path) -> Path:
+    source_uri = f"{source.resolve().as_uri()}?mode=ro"
+    snapshot.unlink(missing_ok=True)
+    try:
+        with closing(sqlite3.connect(source_uri, uri=True)) as source_connection:
+            with closing(sqlite3.connect(snapshot)) as snapshot_connection:
+                source_connection.backup(snapshot_connection)
+        with closing(sqlite3.connect(snapshot)) as snapshot_connection:
+            integrity_rows = snapshot_connection.execute(
+                "PRAGMA integrity_check"
+            ).fetchall()
+            if integrity_rows != [("ok",)]:
+                raise RuntimeError("SQLite backup integrity check failed")
+            for statement in _REPRESENTATIVE_READS:
+                snapshot_connection.execute(statement).fetchone()
+        return snapshot
+    except BaseException:
+        snapshot.unlink(missing_ok=True)
+        raise
 
 
 def has_valid_backup(destination: Path, today: date) -> bool:

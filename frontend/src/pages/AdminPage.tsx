@@ -1,12 +1,15 @@
 import { useSearchParams } from "react-router-dom";
 
 import { AdminLayout, isAdminTab, type AdminTab } from "@/admin/AdminLayout";
+import { DatabaseBackupPanel } from "@/admin/DatabaseBackupPanel";
 import { StoreWorkspace } from "@/admin/StoreWorkspace";
 import { SystemStatusPanel } from "@/admin/SystemStatusPanel";
 import { UsersPanel } from "@/admin/UsersPanel";
+import { useAuth } from "@/auth/AuthProvider";
 import { useUnsavedChanges } from "@/navigation/UnsavedChanges";
 
 export function AdminPage() {
+  const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const { requestTransition } = useUnsavedChanges();
   const requestedTab = searchParams.get("tab");
@@ -24,6 +27,9 @@ export function AdminPage() {
   return <AdminLayout tab={tab} onTabChange={selectTab} panels={{
     stores: <StoreWorkspace />,
     users: <UsersPanel />,
-    status: <SystemStatusPanel />,
+    status: <>
+      <SystemStatusPanel />
+      {user?.is_owner && <DatabaseBackupPanel />}
+    </>,
   }} />;
 }

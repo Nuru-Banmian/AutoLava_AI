@@ -73,4 +73,25 @@ describe("AdminPage", () => {
     renderAdmin("/admin?tab=unknown");
     expect(screen.getByRole("tab", { name: "门店与收入" })).toHaveAttribute("aria-selected", "true");
   });
+
+  it("shows the database backup entry only to the final administrator", async () => {
+    server.use(...emptyLists);
+    const owner = renderAdmin("/admin?tab=status");
+    expect(await screen.findByRole("button", { name: "下载数据库备份" })).toBeInTheDocument();
+    owner.unmount();
+
+    vi.mocked(useAuth).mockReturnValue({
+      user: { id: 2, username: "secondary-admin", role: "admin", is_owner: false },
+      isLoading: false,
+      error: null,
+      login: vi.fn(),
+      logout: vi.fn(),
+      isLoggingIn: false,
+      isLoggingOut: false,
+      logoutError: null,
+    });
+    renderAdmin("/admin?tab=status");
+
+    expect(screen.queryByRole("button", { name: "下载数据库备份" })).not.toBeInTheDocument();
+  });
 });

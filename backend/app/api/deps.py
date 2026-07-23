@@ -11,6 +11,7 @@ from app.core.database import get_session
 from app.core.security import decode_access_token
 from app.models.identity import Store, StoreMember, User
 from app.services.access import Capability, has_capability
+from app.services.owner import is_owner
 
 Session = Annotated[AsyncSession, Depends(get_session)]
 
@@ -32,6 +33,12 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 async def require_admin(user: CurrentUser) -> User:
     if user.role != "admin":
         raise HTTPException(403, "Administrator access required")
+    return user
+
+
+async def require_final_admin(user: CurrentUser) -> User:
+    if user.role != "admin" or not is_owner(user):
+        raise HTTPException(403, "Final administrator access required")
     return user
 
 
