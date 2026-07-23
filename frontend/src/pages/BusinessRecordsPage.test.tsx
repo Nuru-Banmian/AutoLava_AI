@@ -256,7 +256,7 @@ describe("BusinessRecordsPage", () => {
     const detailCard = detailTitle.parentElement?.parentElement;
     expect(within(detailCard!).getByText("未录入", { exact: true })).toBeInTheDocument();
     expect(within(detailCard!).getByRole("link", { name: "修改这天记录" })).toHaveAttribute("href", "/ledger?date=2026-07-17");
-    expect(within(detailCard!).queryByRole("button", { name: "删除这天记录" })).not.toBeInTheDocument();
+    expect(within(detailCard!).queryByRole("button", { name: "删除记录" })).not.toBeInTheDocument();
   });
 
   it("opens an editable mobile sheet for an unrecorded date", async () => {
@@ -272,7 +272,7 @@ describe("BusinessRecordsPage", () => {
     const sheet = await screen.findByRole("dialog");
     expect(within(sheet).getByText("未录入", { exact: true })).toBeInTheDocument();
     expect(within(sheet).getByRole("link", { name: "修改这天记录" })).toHaveAttribute("href", "/ledger?date=2026-07-17");
-    expect(within(sheet).queryByRole("button", { name: "删除这天记录" })).not.toBeInTheDocument();
+    expect(within(sheet).queryByRole("button", { name: "删除记录" })).not.toBeInTheDocument();
   });
 
   it("opens the final delete confirmation directly from the mobile detail", async () => {
@@ -285,7 +285,7 @@ describe("BusinessRecordsPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "2026年7月14日，营业，€100" }));
     const sheet = await screen.findByRole("dialog", { name: "2026-07-14 营业记录详情" });
-    fireEvent.click(within(sheet).getByRole("button", { name: "删除这天记录" }));
+    fireEvent.click(within(sheet).getByRole("button", { name: "删除记录" }));
 
     expect(await screen.findByRole("alertdialog", { name: "确认永久删除记录？" })).toBeInTheDocument();
     expect(screen.queryByText(/管理 2026-07-14 记录/)).not.toBeInTheDocument();
@@ -384,7 +384,7 @@ describe("BusinessRecordsPage", () => {
     );
     const view = renderPage();
     await screen.findByRole("heading", { name: "2026年7月14日" });
-    fireEvent.click(screen.getAllByRole("button", { name: "删除这天记录" }).at(-1)!);
+    fireEvent.click(screen.getAllByRole("button", { name: "删除记录" }).at(-1)!);
     expect(await screen.findByRole("heading", { name: "确认永久删除记录？" })).toBeInTheDocument();
     void view.client.invalidateQueries({ queryKey: ["database", "records", 1] });
     await waitFor(() => expect(storeOneRequests).toBe(2));
@@ -432,7 +432,7 @@ describe("BusinessRecordsPage", () => {
     await screen.findByRole("heading", { name: "2026年7月14日" });
 
     expect(screen.getByRole("link", { name: "修改这天记录" })).toHaveAttribute("href", "/ledger?date=2026-07-14");
-    expect(screen.queryByRole("button", { name: "删除这天记录" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "删除记录" })).not.toBeInTheDocument();
     fireEvent.click(within(screen.getByRole("table")).getByText("2026年7月15日").closest("tr")!);
     expect(await screen.findByRole("heading", { name: "2026年7月15日" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "修改这天记录" })).toHaveAttribute("href", "/ledger?date=2026-07-15");
@@ -441,9 +441,13 @@ describe("BusinessRecordsPage", () => {
   it("lets administrators permanently delete without history, rollback, or version requests", async () => {
     let deleted = false;
     let deleteUrl = "";
+    let chartRequests = 0;
     server.use(
       http.get("/api/database/1/records", () => HttpResponse.json(databaseResponse(deleted ? [] : [record]))),
-      http.get("/api/charts/1", () => HttpResponse.json(chartsPayload)),
+      http.get("/api/charts/1", () => {
+        chartRequests += 1;
+        return HttpResponse.json(chartsPayload);
+      }),
       http.delete("/api/ledger/1/2026-07-14", ({ request }) => {
         deleteUrl = request.url;
         deleted = true;
@@ -452,7 +456,8 @@ describe("BusinessRecordsPage", () => {
     );
     renderPage();
     await screen.findByRole("heading", { name: "2026年7月14日" });
-    fireEvent.click(screen.getByRole("button", { name: "删除这天记录" }));
+    await waitFor(() => expect(chartRequests).toBe(1));
+    fireEvent.click(screen.getByRole("button", { name: "删除记录" }));
     expect(await screen.findByRole("heading", { name: "确认永久删除记录？" })).toBeInTheDocument();
     expect(screen.queryByText(/管理 2026-07-14 记录/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "确认永久删除" }));
@@ -460,6 +465,8 @@ describe("BusinessRecordsPage", () => {
     expect(new URL(deleteUrl).search).toBe("");
     expect(await screen.findByRole("status")).toHaveTextContent("删除成功");
     expect((await screen.findAllByText("暂无可查看记录")).length).toBeGreaterThan(0);
+    await waitFor(() => expect(chartRequests).toBe(2));
+    expect(screen.queryByRole("heading", { name: "2026年7月14日" })).not.toBeInTheDocument();
     expect(screen.queryByText(/历史|回滚/)).not.toBeInTheDocument();
   });
 
@@ -475,7 +482,7 @@ describe("BusinessRecordsPage", () => {
     );
     renderPage();
     await screen.findByRole("heading", { name: "2026年7月14日" });
-    fireEvent.click(screen.getByRole("button", { name: "删除这天记录" }));
+    fireEvent.click(screen.getByRole("button", { name: "删除记录" }));
     expect(await screen.findByRole("heading", { name: "确认永久删除记录？" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "确认永久删除" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("数据已经发生变化，请刷新后重试");

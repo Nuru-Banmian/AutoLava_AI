@@ -16,11 +16,12 @@ export interface DeleteRecordDialogProps {
   storeId: number;
   record: RecordSnapshot | null;
   open: boolean;
+  returnFocusTo?: HTMLButtonElement | null;
   onOpenChange(open: boolean): void;
   onCompleted(): void;
 }
 
-export function DeleteRecordDialog({ storeId, record, open, onOpenChange, onCompleted }: DeleteRecordDialogProps) {
+export function DeleteRecordDialog({ storeId, record, open, returnFocusTo, onOpenChange, onCompleted }: DeleteRecordDialogProps) {
   const client = useQueryClient();
   const [message, setMessage] = useState("");
   const targetDate = record?.date ?? null;
@@ -50,18 +51,27 @@ export function DeleteRecordDialog({ storeId, record, open, onOpenChange, onComp
       if (matchesCurrentScope(scope)) setMessage(friendlyApiError(error, "删除失败，请重试"));
     },
   });
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen && remove.isPending) return;
+    onOpenChange(nextOpen);
+  };
 
   return <>
-    {record && <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent>
+    {record && <AlertDialog open={open} onOpenChange={handleOpenChange}>
+      <AlertDialogContent onCloseAutoFocus={(event) => {
+        event.preventDefault();
+        returnFocusTo?.focus();
+      }}>
         <AlertDialogHeader>
           <AlertDialogTitle>确认永久删除记录？</AlertDialogTitle>
           <AlertDialogDescription>删除后无法恢复。</AlertDialogDescription>
         </AlertDialogHeader>
         {message && message !== "删除成功" && <p role="alert">{message}</p>}
         <AlertDialogFooter>
-          <AlertDialogCancel>取消</AlertDialogCancel>
-          <Button type="button" variant="destructive" disabled={remove.isPending} onClick={() => remove.mutate({ storeId, date: record.date })}>确认永久删除</Button>
+          <AlertDialogCancel disabled={remove.isPending}>取消</AlertDialogCancel>
+          <Button type="button" variant="destructive" disabled={remove.isPending} onClick={() => remove.mutate({ storeId, date: record.date })}>
+            {remove.isPending ? "正在删除…" : "确认永久删除"}
+          </Button>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>}

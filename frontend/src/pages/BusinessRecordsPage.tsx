@@ -39,6 +39,7 @@ export function BusinessRecordsPage() {
   const [selectedDate, setSelectedDate] = useState<string | null>(restored?.selectedDate ?? null);
   const [mobileRecord, setMobileRecord] = useState<RecordDetail | null>(null);
   const [returnFocusTo, setReturnFocusTo] = useState<HTMLButtonElement | null>(null);
+  const [returnDeleteFocusTo, setReturnDeleteFocusTo] = useState<HTMLButtonElement | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [recordStoreId, setRecordStoreId] = useState<number | null>(selected?.id ?? null);
   const selectedRecordRef = useRef<RecordSnapshot | null>(null);
@@ -56,6 +57,7 @@ export function BusinessRecordsPage() {
       setSelectedDate(null);
       setMobileRecord(null);
       setReturnFocusTo(null);
+      setReturnDeleteFocusTo(null);
       setDeleteOpen(false);
       return;
     }
@@ -66,6 +68,7 @@ export function BusinessRecordsPage() {
     setSelectedDate(null);
     setMobileRecord(null);
     setReturnFocusTo(null);
+    setReturnDeleteFocusTo(null);
     setDeleteOpen(false);
     pendingMobileRestoreDate.current = null;
   }, [selected?.id, today]);
@@ -230,8 +233,9 @@ export function BusinessRecordsPage() {
                 canEdit
                 canDelete={isAdmin && selectedTableRow.id !== null}
                 onEdit={editRecord}
-                onDelete={() => {
+                onDelete={(trigger) => {
                   if (selectedTableRow.id === null) return;
+                  setReturnDeleteFocusTo(trigger);
                   setDeleteOpen(true);
                 }}
               />
@@ -258,8 +262,9 @@ export function BusinessRecordsPage() {
           onOpenChange={(open) => {
             if (!open) setMobileRecord(null);
           }}
-          onDelete={() => {
+          onDelete={(trigger) => {
             if (mobileRecord.id === null) return;
+            setReturnDeleteFocusTo(trigger);
             setDeleteOpen(true);
           }}
         />
@@ -269,8 +274,12 @@ export function BusinessRecordsPage() {
         storeId={selected.id}
         record={selectedRecord}
         open={recordStateReady && deleteOpen}
+        returnFocusTo={returnDeleteFocusTo}
         onOpenChange={setDeleteOpen}
-        onCompleted={() => setMobileRecord(null)}
+        onCompleted={() => {
+          setSelectedDate(null);
+          setMobileRecord(null);
+        }}
       />
     </section>
   );

@@ -28,7 +28,7 @@ describe("RecordDetailPanel", () => {
     expect(screen.getByText("未录入", { exact: true })).toBeInTheDocument();
     expect(screen.getAllByText("—", { exact: true })).toHaveLength(3);
     expect(screen.getByRole("link", { name: "修改这天记录" })).toHaveAttribute("href", "/ledger?date=2026-07-15");
-    expect(screen.queryByRole("button", { name: "删除这天记录" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "删除记录" })).not.toBeInTheDocument();
   });
 
   it("renders rest records without fabricating an open status", () => {
@@ -49,14 +49,14 @@ describe("RecordDetailPanel", () => {
     expect(screen.getByRole("heading", { name: "收入明细" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "修改这天记录" })).toHaveAttribute("href", "/ledger?date=2026-07-14");
     expect(screen.getByRole("link", { name: "修改这天记录" })).toHaveClass("h-10", "text-base");
-    expect(screen.queryByRole("button", { name: "删除这天记录" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "删除记录" })).not.toBeInTheDocument();
   });
 
   it("shows a destructive delete action for a saved record when allowed", () => {
     const onDelete = vi.fn();
     renderPanel(record, true, onDelete);
 
-    const action = screen.getByRole("button", { name: "删除这天记录" });
+    const action = screen.getByRole("button", { name: "删除记录" });
     expect(action.className).toContain("destructive");
     action.click();
     expect(onDelete).toHaveBeenCalledOnce();

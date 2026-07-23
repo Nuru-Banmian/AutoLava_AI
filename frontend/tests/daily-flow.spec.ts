@@ -280,7 +280,21 @@ for (const viewport of [
       : page.getByRole("heading", { name: "2026年7月17日" }).locator("../..");
     await expect(detail.getByText("€100", { exact: true }).first()).toBeVisible();
     await expect(detail.getByRole("link", { name: "修改这天记录" })).toBeVisible();
-    if (mobile) await page.getByRole("button", { name: "Close" }).click();
+    if (mobile) {
+      const deleteButton = detail.getByRole("button", { name: "删除记录" });
+      await deleteButton.focus();
+      await page.keyboard.press("Enter");
+      const deleteDialog = page.getByRole("alertdialog", { name: "确认永久删除记录？" });
+      await expect(deleteDialog).toBeVisible();
+      await expect(deleteDialog).toContainText("删除后无法恢复。");
+      const cancelDelete = deleteDialog.getByRole("button", { name: "取消" });
+      await expect(cancelDelete).toBeFocused();
+      await page.keyboard.press("Enter");
+      await expect(deleteDialog).toBeHidden();
+      await expect(deleteButton).toBeFocused();
+      expect(requests.ledgerDeletes).toEqual([]);
+      await page.getByRole("button", { name: "Close" }).click();
+    }
 
     await page.getByRole("button", { name: "下一页" }).click();
     await expect(page.getByText("第 2 / 2 页")).toBeVisible();
@@ -386,10 +400,20 @@ test("desktop: multi-date ledger snapshots, markers, dirty guards, and permanent
   await navigation.getByRole("link", { name: "营业记录" }).click();
   const targetRow = page.getByRole("table").locator("tbody tr").filter({ hasText: "2026年7月15日" });
   await targetRow.click();
-  await page.getByRole("button", { name: "删除这天记录" }).click();
-  await page.getByRole("button", { name: "确认永久删除" }).click();
+  const chartRequestsBeforeDelete = flow.chartRequests.length;
+  const deleteButton = page.getByRole("button", { name: "删除记录" });
+  await deleteButton.focus();
+  await page.keyboard.press("Enter");
+  const deleteDialog = page.getByRole("alertdialog", { name: "确认永久删除记录？" });
+  await expect(deleteDialog).toContainText("删除后无法恢复。");
+  await expect(deleteDialog.getByRole("button", { name: "取消" })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(deleteDialog.getByRole("button", { name: "确认永久删除" })).toBeFocused();
+  await page.keyboard.press("Enter");
   await expect.poll(() => flow.ledgerDeletes).toContain("2026-07-15");
   await expect(page.getByRole("table").locator("tbody tr").filter({ hasText: "2026年7月15日" })).toContainText("未录入");
+  await expect.poll(() => flow.chartRequests.length).toBeGreaterThan(chartRequestsBeforeDelete);
+  await expect(page.getByRole("heading", { name: "2026年7月15日" })).toHaveCount(0);
 
   await navigation.getByRole("link", { name: "每日记账" }).click();
   await page.getByRole("button", { name: "选择台账日期：2026年7月17日" }).click();

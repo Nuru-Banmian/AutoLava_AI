@@ -13,7 +13,7 @@ export interface RecordDetailPanelProps {
   canEdit: boolean;
   canDelete: boolean;
   onEdit?(date: string): void;
-  onDelete(): void;
+  onDelete(trigger: HTMLButtonElement): void;
   mobile?: boolean;
 }
 
@@ -58,7 +58,7 @@ export function RecordDetailPanel({ record, canEdit, canDelete, onEdit, onDelete
         {!isUnrecorded && record.activity && <p className="rounded-lg border px-3 py-2.5 text-base"><span className="text-muted-foreground">活动：</span>{record.activity}</p>}
         <div className={`flex flex-wrap gap-2 border-t pt-4 ${mobile ? "" : "items-center"}`}>
           {canEdit && <Button asChild className={mobile ? "h-11 w-full text-base" : "h-10 text-base"}><Link to={`/ledger?date=${record.date}`} onClick={onEdit ? (event) => { event.preventDefault(); onEdit(record.date); } : undefined}>修改这天记录</Link></Button>}
-          {canDelete && !isUnrecorded && <Button className={mobile ? "h-11 w-full text-base" : "h-10 text-base"} type="button" variant="destructive" onClick={onDelete}>删除这天记录</Button>}
+          {canDelete && !isUnrecorded && <Button className={mobile ? "h-11 w-full text-base" : "h-10 text-base"} type="button" variant="destructive" onClick={(event) => onDelete(event.currentTarget)}>删除记录</Button>}
         </div>
       </CardContent>
     </Card>
