@@ -172,6 +172,25 @@ class SettlementRecordService:
         )
         return store
 
+    def audit(
+        self,
+        action: str,
+        record_id: int,
+        before: dict[str, object] | None,
+        after: dict[str, object] | None,
+    ) -> None:
+        self.session.add(
+            SettlementAuditEvent(
+                store_id=self.store_id,
+                actor_id=self.actor_id,
+                action=action,
+                entity_type="settlement_record",
+                entity_id=record_id,
+                before_state=before,
+                after_state=after,
+            )
+        )
+
     async def get(self, record_id: int) -> SettlementRecord:
         record = await self.session.scalar(
             select(SettlementRecord).where(
@@ -286,17 +305,7 @@ class SettlementRecordService:
             )
             self.session.add(record)
             await self.session.flush()
-            self.session.add(
-                SettlementAuditEvent(
-                    store_id=self.store_id,
-                    actor_id=self.actor_id,
-                    action="settlement_record.create",
-                    entity_type="settlement_record",
-                    entity_id=record.id,
-                    before_state=None,
-                    after_state=record_state(record),
-                )
-            )
+            self.audit("settlement_record.create", record.id, None, record_state(record))
         return record
 
     async def update(
@@ -330,17 +339,7 @@ class SettlementRecordService:
             record.revision += 1
             record.updated_by = self.actor_id
             await self.session.flush()
-            self.session.add(
-                SettlementAuditEvent(
-                    store_id=self.store_id,
-                    actor_id=self.actor_id,
-                    action="settlement_record.update",
-                    entity_type="settlement_record",
-                    entity_id=record.id,
-                    before_state=before,
-                    after_state=record_state(record),
-                )
-            )
+            self.audit("settlement_record.update", record.id, before, record_state(record))
         return record
 
     async def delete(self, record_id: int, *, revision: int) -> None:
@@ -351,17 +350,7 @@ class SettlementRecordService:
             self.require_revision(record, revision)
             before = record_state(record)
             await self.session.delete(record)
-            self.session.add(
-                SettlementAuditEvent(
-                    store_id=self.store_id,
-                    actor_id=self.actor_id,
-                    action="settlement_record.delete",
-                    entity_type="settlement_record",
-                    entity_id=record_id,
-                    before_state=before,
-                    after_state=None,
-                )
-            )
+            self.audit("settlement_record.delete", record_id, before, None)
 
     async def _transition(
         self,
@@ -392,17 +381,7 @@ class SettlementRecordService:
             record.revision += 1
             record.updated_by = self.actor_id
             await self.session.flush()
-            self.session.add(
-                SettlementAuditEvent(
-                    store_id=self.store_id,
-                    actor_id=self.actor_id,
-                    action=action,
-                    entity_type="settlement_record",
-                    entity_id=record.id,
-                    before_state=before,
-                    after_state=record_state(record),
-                )
-            )
+            self.audit(action, record.id, before, record_state(record))
         return record
 
     async def confirm(self, record_id: int, *, revision: int) -> SettlementRecord:

@@ -233,7 +233,7 @@ export function CompanySettlementPage() {
   const refresh = async (storeId: number) => {
     await queryClient.invalidateQueries({ queryKey: ["settlement-companies", storeId] });
   };
-  const mutate = useMutation({
+  const companyMutation = useMutation({
     mutationFn: ({ path, method, body }: CompanyMutation) => api<SettlementCompany | void>(path, { method, body }),
     onSuccess: async (_result, variables) => {
       if (selected?.id === variables.storeId) {
@@ -379,7 +379,7 @@ export function CompanySettlementPage() {
     setRecordToDelete(null);
     setArchivedCompaniesStoreId(null);
     setRecordTransition(null);
-    mutate.reset();
+    companyMutation.reset();
     recordMutation.reset();
     editRecordMutation.reset();
     deleteRecordMutation.reset();
@@ -428,7 +428,7 @@ export function CompanySettlementPage() {
   };
   const submitCreate = (storeId: number, submittedName: string) => {
     const retry = () => submitCreate(storeId, submittedName);
-    mutate.mutate({
+    companyMutation.mutate({
       storeId,
       path: `/settlements/${storeId}/companies`,
       method: "POST",
@@ -441,9 +441,9 @@ export function CompanySettlementPage() {
     if (!selected) return;
     submitCreate(selected.id, name);
   };
-  const act = (storeId: number, path: string, method: string, body?: object) => {
-    const retry = () => act(storeId, path, method, body);
-    mutate.mutate({ storeId, path, method, body: body ? JSON.stringify(body) : undefined, retry });
+  const runCompanyAction = (storeId: number, path: string, method: string, body?: object) => {
+    const retry = () => runCompanyAction(storeId, path, method, body);
+    companyMutation.mutate({ storeId, path, method, body: body ? JSON.stringify(body) : undefined, retry });
   };
 
   if (isLoading) return <p role="status">正在加载门店…</p>;
@@ -635,9 +635,9 @@ export function CompanySettlementPage() {
               <span className="sr-only">新结算公司名称</span>
               <Input maxLength={120} placeholder="输入结算公司名称" value={name} onChange={(event) => setName(event.target.value)} />
             </label>
-            <Button disabled={mutate.isPending} type="submit">新增结算公司</Button>
+            <Button disabled={companyMutation.isPending} type="submit">新增结算公司</Button>
           </form>
-          {active.isLoading ? <p role="status">加载活动公司…</p> : active.error ? <div role="alert"><p>{friendlyApiError(active.error, "活动公司加载失败")}</p><Button onClick={() => void active.refetch()} type="button" variant="outline">重试活动公司</Button></div> : <CompanyList key={`${selected.id}:active`} companies={active.data ?? []} archived={false} busy={mutate.isPending} onRename={(company, next) => act(selected.id, `/settlements/${selected.id}/companies/${company.id}`, "PATCH", { name: next })} onLifecycle={(company) => act(selected.id, `/settlements/${selected.id}/companies/${company.id}/archive`, "POST")} onDelete={(company) => act(selected.id, `/settlements/${selected.id}/companies/${company.id}`, "DELETE")} />}
+          {active.isLoading ? <p role="status">加载活动公司…</p> : active.error ? <div role="alert"><p>{friendlyApiError(active.error, "活动公司加载失败")}</p><Button onClick={() => void active.refetch()} type="button" variant="outline">重试活动公司</Button></div> : <CompanyList key={`${selected.id}:active`} companies={active.data ?? []} archived={false} busy={companyMutation.isPending} onRename={(company, next) => runCompanyAction(selected.id, `/settlements/${selected.id}/companies/${company.id}`, "PATCH", { name: next })} onLifecycle={(company) => runCompanyAction(selected.id, `/settlements/${selected.id}/companies/${company.id}/archive`, "POST")} onDelete={(company) => runCompanyAction(selected.id, `/settlements/${selected.id}/companies/${company.id}`, "DELETE")} />}
         </>}
       </section>
       <section className="grid gap-3" aria-labelledby="archived-companies-title">
@@ -648,7 +648,7 @@ export function CompanySettlementPage() {
             <ChevronDown aria-hidden="true" className={`size-5 shrink-0 text-muted-foreground transition-transform duration-200 ${archivedCompaniesOpen ? "rotate-180" : ""}`} />
           </button>
         </h2>
-        {archivedCompaniesOpen && (archived.isLoading ? <p role="status">加载归档公司…</p> : archived.error ? <div role="alert"><p>{friendlyApiError(archived.error, "归档公司加载失败")}</p><Button onClick={() => void archived.refetch()} type="button" variant="outline">重试归档公司</Button></div> : <CompanyList key={`${selected.id}:archived`} companies={archived.data ?? []} archived busy={mutate.isPending} onRename={(company, next) => act(selected.id, `/settlements/${selected.id}/companies/${company.id}`, "PATCH", { name: next })} onLifecycle={(company) => act(selected.id, `/settlements/${selected.id}/companies/${company.id}/restore`, "POST")} onDelete={(company) => act(selected.id, `/settlements/${selected.id}/companies/${company.id}`, "DELETE")} />)}
+        {archivedCompaniesOpen && (archived.isLoading ? <p role="status">加载归档公司…</p> : archived.error ? <div role="alert"><p>{friendlyApiError(archived.error, "归档公司加载失败")}</p><Button onClick={() => void archived.refetch()} type="button" variant="outline">重试归档公司</Button></div> : <CompanyList key={`${selected.id}:archived`} companies={archived.data ?? []} archived busy={companyMutation.isPending} onRename={(company, next) => runCompanyAction(selected.id, `/settlements/${selected.id}/companies/${company.id}`, "PATCH", { name: next })} onLifecycle={(company) => runCompanyAction(selected.id, `/settlements/${selected.id}/companies/${company.id}/restore`, "POST")} onDelete={(company) => runCompanyAction(selected.id, `/settlements/${selected.id}/companies/${company.id}`, "DELETE")} />)}
       </section>
       {message && <div role="alert">{message}{failedAction && <Button className="ml-2" onClick={failedAction} type="button" variant="outline">重试操作</Button>}</div>}
     </>}

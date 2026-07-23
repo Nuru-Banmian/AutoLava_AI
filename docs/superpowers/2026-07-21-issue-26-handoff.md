@@ -1,4 +1,4 @@
-# Issue #26 交接：把公司结算收入纳入整月经营分析
+# Issue #26 交接：把公司结算收入纳入经营分析
 
 > 2026-07-22 更新：本文记录的“仅完整自然月纳入”规则已被后续产品决定取代。当前规则是查询区间只要与开票月份有重叠，就纳入该月全部已确认公司结算。
 
@@ -12,9 +12,9 @@
 
 ## 已实现内容
 
-1. 后端经营分析按完整自然月边界聚合已确认公司结算收入；不依赖功能开关，因此关闭公司结算后历史金额仍保留。
-2. 完整单月和完整多月区间返回每日台账、已确认公司结算与区间总收入；每个月的趋势行包含月度总收入。
-3. 任意不完整日期区间不计入公司结算，并把月粒度字段返回为 `null`，避免把部分月份伪装成月度总收入。
+1. 后端经营分析按与查询区间重叠的自然月聚合已确认公司结算收入；不依赖功能开关，因此关闭公司结算后历史金额仍保留。
+2. 单月、多月和部分月份区间均返回每日台账、重叠月份的已确认公司结算与区间总收入；每个月的趋势行包含月度总收入。
+3. 部分月份区间中的每日台账只统计所选日期，公司结算则按重叠月份整笔纳入；公司结算仍不分配到具体日期。
 4. 既有 `kpis.total_revenue`、`comparison_kpis.total_revenue`、每日趋势、分类构成、营业日均和客单价继续保持每日台账语义。
 5. 营业记录中的完整月汇总展示“日常营业额 / 公司结算收入 / 月度总收入”；多月时使用“月度总收入汇总”。汇总容器是有可访问名称的 `region`。
 6. 新增 Playwright 回归，覆盖创建结算公司、登记/修正开票记录、到账确认、撤销到账确认、月份/门店切换、月度总收入等式，以及 320px 下公司结算页和营业记录汇总无水平滚动。
@@ -37,7 +37,7 @@
 
 - 顶层改为 `income_summary.total_income`；单月 UI 才称“月度总收入”，多月称“月度总收入汇总”。
 - 恢复既有 KPI 字段语义。
-- 部分区间的月粒度结算与月度总收入字段为 `null`。
+- 后续产品决定已把部分区间改为纳入所有重叠月份的整笔公司结算；当前实现与 `CONTEXT.md` 保持一致。
 - 月度趋势按 `monthly_total_income ?? revenue` 选择正确值。
 - 新增 `IncomeSummary` / `MonthlyRevenue` TypeScript 类型，并抽取后端月度行构造函数。
 - E2E 在 320px 下进入 `/database` 验证三项汇总和无溢出。
@@ -69,22 +69,25 @@
    git log -2 --oneline
    ```
 
-2. 在审查修正后重新执行最终完整门禁。后端 pytest 必须把临时目录放到仓库可写位置：
+2. 在审查修正后按 `README.md` 重新执行最终完整门禁。后端测试使用一次性数据库，并把临时目录放到仓库可写位置：
 
    ```powershell
    $testTemp = 'D:\work\myself\AI-try\AutoLava-AI\.scratch\pytest-final-26'
    New-Item -ItemType Directory -Force -Path $testTemp | Out-Null
    $env:TEMP = $testTemp
    $env:TMP = $testTemp
+   $env:AUTOLAVA_DATABASE_PATH = Join-Path $testTemp 'autolava-test.sqlite3'
    Set-Location backend
-   & '.\.venv\Scripts\python.exe' -m pytest -q -p no:cacheprovider
-   & '.\.venv\Scripts\python.exe' -m ruff check app tests
+   uv run --extra dev ruff check .
+   uv run --extra dev pytest --cov=app --cov-report=term-missing
    ```
 
    ```powershell
    Set-Location frontend
+   npm ci
    npm test
    npm run build
+   npx playwright install chromium
    npx playwright test --reporter=line
    ```
 
