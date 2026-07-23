@@ -23,19 +23,24 @@ def _integrity_result(path: Path) -> str:
     return "" if row is None else str(row[0])
 
 
-def create_verified_snapshot(source: Path, snapshot: Path) -> Path:
+def _copy_verified_database(source: Path, snapshot: Path) -> None:
     source_uri = f"{source.resolve().as_uri()}?mode=ro"
     snapshot.unlink(missing_ok=True)
     try:
         with closing(sqlite3.connect(source_uri, uri=True)) as source_connection:
             with closing(sqlite3.connect(snapshot)) as snapshot_connection:
                 source_connection.backup(snapshot_connection)
+        if _integrity_result(snapshot) != "ok":
+            raise RuntimeError("SQLite backup integrity check failed")
+    except BaseException:
+        snapshot.unlink(missing_ok=True)
+        raise
+
+
+def create_verified_snapshot(source: Path, snapshot: Path) -> Path:
+    try:
+        _copy_verified_database(source, snapshot)
         with closing(sqlite3.connect(snapshot)) as snapshot_connection:
-            integrity_rows = snapshot_connection.execute(
-                "PRAGMA integrity_check"
-            ).fetchall()
-            if integrity_rows != [("ok",)]:
-                raise RuntimeError("SQLite backup integrity check failed")
             for statement in _REPRESENTATIVE_READS:
                 snapshot_connection.execute(statement).fetchone()
         return snapshot
@@ -75,14 +80,9 @@ def backup_sqlite(source: Path, destination: Path, today: date) -> Path:
     destination.mkdir(parents=True, exist_ok=True)
     final_path = destination / f"autolava-{today:%Y%m%d}.sqlite3"
     temporary_path = final_path.with_suffix(".sqlite3.tmp")
-    source_uri = f"{source.resolve().as_uri()}?mode=ro"
     temporary_path.unlink(missing_ok=True)
     try:
-        with closing(sqlite3.connect(source_uri, uri=True)) as source_connection:
-            with closing(sqlite3.connect(temporary_path)) as backup_connection:
-                source_connection.backup(backup_connection)
-        if _integrity_result(temporary_path) != "ok":
-            raise RuntimeError("SQLite backup integrity check failed")
+        _copy_verified_database(source, temporary_path)
         os.replace(temporary_path, final_path)
         _prune_old_backups(destination, today)
         return final_path

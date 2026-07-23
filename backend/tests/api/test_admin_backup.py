@@ -164,3 +164,37 @@ async def test_failed_snapshot_is_cleaned_without_touching_scheduled_backups(
     assert response.json() == {"detail": "Database backup could not be prepared"}
     assert list(manual_temp.iterdir()) == []
     assert list(scheduled_backups.iterdir()) == [sentinel]
+
+
+async def test_failed_file_response_cleans_the_verified_snapshot(
+    client,
+    user_factory,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    source = tmp_path / "live.sqlite3"
+    _create_representative_database(source).close()
+    manual_temp = tmp_path / "manual-temp"
+    manual_temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(manual_temp))
+    monkeypatch.setenv("AUTOLAVA_BOOTSTRAP_USERNAME", "configured-final-admin")
+    monkeypatch.setenv("AUTOLAVA_DATABASE_PATH", str(source))
+    get_settings.cache_clear()
+    await user_factory(
+        username="configured-final-admin",
+        password="secret123",
+        role="admin",
+    )
+    login = await client.post(
+        "/api/auth/login",
+        json={"username": "configured-final-admin", "password": "secret123"},
+    )
+    assert login.status_code == 200
+
+    response = await client.get(
+        "/api/admin/database-backup",
+        headers={"Range": "not-a-valid-byte-range"},
+    )
+
+    assert response.status_code in {400, 416}
+    assert list(manual_temp.iterdir()) == []
