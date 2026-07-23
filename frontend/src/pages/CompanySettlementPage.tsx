@@ -488,6 +488,13 @@ export function CompanySettlementPage() {
     editRecordMutation.reset();
   };
 
+  const openRecordTransition = (record: SettlementRecord, kind: RecordTransitionKind) => {
+    setRecordError("");
+    setRecordMessage("");
+    transitionRecordMutation.reset();
+    setRecordTransition({ record, kind });
+  };
+
   const submitRecordEdit = () => {
     if (!selected || !editingRecord || !validAmount(editAmount) || !editCompanyId) return;
     editRecordMutation.mutate({
@@ -628,27 +635,17 @@ export function CompanySettlementPage() {
               <div className="text-right"><span className="font-medium tabular-nums">{euro(record.amount)}</span></div>
               <div><span className={`inline-flex rounded-full px-2 py-0.5 text-sm font-medium ring-1 ring-inset ${record.status === "pending" ? "bg-amber-50 text-amber-800 ring-amber-200" : "bg-emerald-50 text-emerald-800 ring-emerald-200"}`}>{record.status === "pending" ? "待到账" : "已确认"}</span></div>
               <div className="col-span-3 flex justify-end gap-2 md:col-span-1">
-                {record.status === "pending" && <Button aria-label={`确认${record.company_name}开票记录到账`} disabled={actionsDisabled} onClick={() => {
-                  setRecordError("");
-                  setRecordMessage("");
-                  transitionRecordMutation.reset();
-                  setRecordTransition({ record, kind: transitionKind });
-                }} type="button">确认到账</Button>}
+                {record.status === "pending" && <Button aria-label={`确认${record.company_name}开票记录到账`} disabled={actionsDisabled} onClick={() => openRecordTransition(record, transitionKind)} type="button">确认到账</Button>}
                 <RecordActionsMenu
                   disabled={actionsDisabled}
                   onDelete={() => {
-                        setRecordError("");
-                        setRecordMessage("");
-                        deleteRecordMutation.reset();
-                        setRecordToDelete(record);
+                    setRecordError("");
+                    setRecordMessage("");
+                    deleteRecordMutation.reset();
+                    setRecordToDelete(record);
                   }}
                   onEdit={() => openRecordEditor(record)}
-                  onRevoke={() => {
-                      setRecordError("");
-                      setRecordMessage("");
-                      transitionRecordMutation.reset();
-                      setRecordTransition({ record, kind: transitionKind });
-                  }}
+                  onRevoke={() => openRecordTransition(record, transitionKind)}
                   record={record}
                 />
               </div>

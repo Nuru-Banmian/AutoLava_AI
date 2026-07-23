@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 const records = [
   {
@@ -93,6 +93,13 @@ async function expectNoHorizontalOverflow(page: Page) {
   }))).toEqual({ documentFits: true, bodyFits: true });
 }
 
+async function expectRecordRowsUseAtMostTwoLines(rows: Locator) {
+  for (const row of await rows.all()) {
+    const cellBoxes = await row.locator(":scope > *").evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().toJSON()));
+    expect(new Set(cellBoxes.map((box) => Math.round(box.y + box.height / 2))).size).toBeLessThanOrEqual(2);
+  }
+}
+
 test("1280x900 monthly workbench keeps summaries and record columns aligned", async ({ page }) => {
   const requestedMonths = await openSettlementWorkbench(page, 1280, 900);
 
@@ -147,10 +154,7 @@ test("390x844 record items stay within two rows and expose a keyboard-operable a
   await expect(recordsRegion.getByText("公司名称")).toBeHidden();
   const rows = recordsRegion.getByRole("listitem");
   await expect(rows).toHaveCount(2);
-  for (const row of await rows.all()) {
-    const cellBoxes = await row.locator(":scope > *").evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().toJSON()));
-    expect(new Set(cellBoxes.map((box) => Math.round(box.y + box.height / 2))).size).toBeLessThanOrEqual(2);
-  }
+  await expectRecordRowsUseAtMostTwoLines(rows);
 
   await expect(page.getByRole("button", { name: "确认Alpha Fleet Services开票记录到账" })).toBeVisible();
   await expect(page.getByRole("button", { name: "编辑Alpha Fleet Services开票记录" })).toHaveCount(0);
@@ -198,10 +202,7 @@ test("320px workbench wraps summaries and controls without horizontal overflow",
   expect(monthNavigationBox!.x + monthNavigationBox!.width).toBeLessThanOrEqual(320);
   await expect(page.getByRole("button", { name: "确认Alpha Fleet Services开票记录到账" })).toBeVisible();
   const rows = page.getByRole("region", { name: "开票记录列表" }).getByRole("listitem");
-  for (const row of await rows.all()) {
-    const cellBoxes = await row.locator(":scope > *").evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().toJSON()));
-    expect(new Set(cellBoxes.map((box) => Math.round(box.y + box.height / 2))).size).toBeLessThanOrEqual(2);
-  }
+  await expectRecordRowsUseAtMostTwoLines(rows);
   await expect(page.getByRole("button", { name: "Beta Logistics开票记录更多操作" })).toBeVisible();
   await expectWorkbenchOrder(page);
   await expectNoHorizontalOverflow(page);
