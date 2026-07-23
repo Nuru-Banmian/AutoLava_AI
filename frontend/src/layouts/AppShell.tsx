@@ -1,4 +1,4 @@
-import { BookOpen, Database, Home, LogOut, Menu, Settings } from "lucide-react";
+import { BookOpen, Building2, Database, Home, LogOut, Menu, Settings } from "lucide-react";
 import type { ComponentType, SVGProps } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 
@@ -14,6 +14,7 @@ type Icon = ComponentType<SVGProps<SVGSVGElement>>;
 const icons: Record<string, Icon> = {
   "/": Home,
   "/ledger": BookOpen,
+  "/settlements": Building2,
   "/database": Database,
   "/admin": Settings,
   "/more": Menu,
@@ -21,10 +22,11 @@ const icons: Record<string, Icon> = {
 
 function Navigation({ surface }: { surface: "desktop" | "mobile" }) {
   const { user } = useAuth();
+  const { selected } = useStore();
   if (!user) return null;
 
   return <>
-    {navigationFor(user.role, surface).map(({ to, label, end }) => {
+    {navigationFor(user.role, surface, selected?.company_settlement_enabled).map(({ to, label, end }) => {
       const Icon = icons[to];
       return <NavLink
         key={to}
@@ -46,6 +48,7 @@ export function AppShell() {
   const { error: storeError, refetch: refetchStores } = useStore();
   const { pathname } = useLocation();
   const isAdminRoute = pathname === "/admin" || pathname.startsWith("/admin/");
+  const isBusinessRecordsRoute = pathname === "/database";
 
   return (
     <div className="min-h-screen bg-muted/20 md:pl-64">
@@ -65,7 +68,7 @@ export function AppShell() {
           </div>
         </div>
       </aside>
-      <main className="mx-auto max-w-7xl p-4 pb-24 md:p-6 md:pb-6">
+      <main className={`mx-auto max-w-7xl p-4 pb-24 md:p-6 md:pb-6 ${isBusinessRecordsRoute ? "lg:flex lg:h-dvh lg:flex-col lg:overflow-hidden" : ""}`}>
         {logoutError && <p className="mb-4 text-sm text-destructive" role="alert">退出失败，请重试</p>}
         {!isAdminRoute && storeError && <div className="mb-4 flex flex-wrap items-center gap-2 text-sm text-destructive" role="alert"><span>门店加载失败，请重试</span><Button aria-label="重试门店" onClick={() => { void refetchStores(); }} size="sm" variant="outline">重试</Button></div>}
         <Outlet />

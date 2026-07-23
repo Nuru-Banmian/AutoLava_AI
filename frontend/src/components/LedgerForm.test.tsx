@@ -170,14 +170,36 @@ describe("LedgerForm", () => {
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ weather: null }));
   });
 
-  it("offers exactly the six record-weather choices", async () => {
+  it("offers only the ten configured record weather values for manual selection", async () => {
     render(<LedgerForm categories={[]} config={directConfig} onSave={vi.fn()} />);
 
     fireEvent.pointerDown(screen.getByRole("combobox", { name: "天气" }), { button: 0, ctrlKey: false, pointerType: "mouse" });
 
-    await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(6));
+    await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(10));
     const weatherOptions = [...document.querySelectorAll('[role="option"]')];
-    expect(weatherOptions.map((option) => option.textContent)).toEqual(["晴", "多云", "雾", "雨", "雪", "雷雨"]);
+    expect(weatherOptions.map((option) => option.textContent)).toEqual([
+      "晴", "少云", "多云", "阴", "雾", "小雨", "中雨", "大雨", "阵雨", "雷雨",
+    ]);
     expect(weatherOptions.some((option) => /未选择|请选择天气/.test(option.textContent ?? ""))).toBe(false);
+  });
+
+  it.each([
+    { source: "saved record", props: { record: savedRecord({ weather: "大雪" }) } },
+    { source: "automatic weather", props: { weather: { weather: "大雪", weather_code: 75, temperature_max: 2, temperature_min: -1, precipitation: 8 } } },
+  ])("displays and preserves weather outside manual options from $source", async ({ props }) => {
+    const onSave = vi.fn();
+    render(<LedgerForm categories={[]} config={directConfig} {...props} onSave={onSave} />);
+
+    expect(screen.getByRole("combobox", { name: "天气" })).toHaveTextContent("大雪");
+    fireEvent.pointerDown(screen.getByRole("combobox", { name: "天气" }), { button: 0, ctrlKey: false, pointerType: "mouse" });
+    await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(10));
+    expect([...document.querySelectorAll('[role="option"]')].map((option) => option.textContent)).not.toContain("大雪");
+    fireEvent.keyDown(screen.getByRole("listbox"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("listbox")).not.toBeInTheDocument());
+
+    const directAmount = screen.queryByLabelText("当日营业额");
+    if (directAmount) fireEvent.change(directAmount, { target: { value: "12" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ weather: "大雪", weather_edited: false }));
   });
 });

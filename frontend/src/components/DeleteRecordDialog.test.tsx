@@ -84,6 +84,34 @@ describe("DeleteRecordDialog", () => {
     await waitFor(() => expect(requests).toBe(2));
   });
 
+  it("prevents duplicate actions while permanent deletion is pending", async () => {
+    let requests = 0;
+    let finishDelete!: () => void;
+    const deletePending = new Promise<void>((resolve) => {
+      finishDelete = resolve;
+    });
+    server.use(http.delete("/api/ledger/1/2026-07-14", async () => {
+      requests += 1;
+      await deletePending;
+      return new HttpResponse(null, { status: 204 });
+    }));
+    renderDialog();
+
+    const confirm = screen.getByRole("button", { name: "确认永久删除" });
+    fireEvent.click(confirm);
+    await waitFor(() => expect(requests).toBe(1));
+    expect(confirm).toBeDisabled();
+    expect(confirm).toHaveTextContent("正在删除…");
+    const cancel = screen.getByRole("button", { name: "取消" });
+    expect(cancel).toBeDisabled();
+    fireEvent.click(confirm);
+    fireEvent.click(cancel);
+    expect(requests).toBe(1);
+
+    finishDelete();
+    await waitFor(() => expect(screen.getByRole("status", { hidden: true })).toHaveTextContent("删除成功"));
+  });
+
   it("renders no confirmation when there is no saved record", () => {
     renderDialog(null);
 

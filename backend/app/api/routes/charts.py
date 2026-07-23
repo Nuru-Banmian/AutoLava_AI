@@ -48,6 +48,7 @@ async def get_charts(
         start=start,
         end=end,
         category_ids=selected_ids,
+        company_settlement_enabled=access.store.company_settlement_enabled,
         compare_start=compare_start,
         compare_end=compare_end,
         bucket=bucket,

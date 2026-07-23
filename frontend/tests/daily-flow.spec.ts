@@ -158,6 +158,10 @@ async function mockMergedFlow(page: Page) {
           start: "2026-06-01", end: "2026-06-17", total_revenue: 80,
           open_days: 1, average_revenue: 80,
         },
+        income_summary: {
+          daily_ledger_revenue: 100, confirmed_settlement_income: 0,
+          total_income: 100, includes_settlement_income: false,
+        },
         classified_included_total: 100,
         daily: [{ date: "2026-07-14", revenue: 100 }],
         categories: categories.slice(0, 7).map((category, index) => ({
@@ -170,7 +174,7 @@ async function mockMergedFlow(page: Page) {
           category_name: category.name,
           amount: 5,
         })),
-        monthly: [{ month: "2026-07", revenue: 100 }],
+        monthly: [{ month: "2026-07", revenue: 100, daily_ledger_revenue: 100, confirmed_settlement_income: 0, monthly_total_income: 100 }],
         weather: [],
         weekday: [],
       });
@@ -192,6 +196,59 @@ async function fillNewRecordAmounts(page: Page, firstAmount: string) {
   for (const category of categories.slice(1)) {
     await page.getByLabel(category.name).fill("0");
   }
+}
+
+for (const viewport of [
+  { name: "desktop", width: 1280, height: 900, desktop: true },
+  { name: "390px", width: 390, height: 844, desktop: false },
+  { name: "320px", width: 320, height: 700, desktop: false },
+]) {
+  test(`${viewport.name}: daily ledger uses the responsive wide-card form`, async ({ page }) => {
+    await page.clock.install({ time: new Date(`${today}T12:00:00Z`) });
+    await page.setViewportSize(viewport);
+    const flow = await mockMergedFlow(page);
+    await page.goto(`/ledger?date=${today}`);
+
+    const card = page.getByRole("region", { name: "每日台账录入" });
+    const statusAndWeatherGroup = page.getByRole("group", { name: "状态与天气" });
+    const status = page.getByLabel("状态", { exact: true });
+    const weather = page.getByRole("combobox", { name: "天气" });
+    const firstIncome = page.getByLabel(categories[0].name);
+    const secondIncome = page.getByLabel(categories[1].name);
+    await expect(card).toBeVisible();
+    await expect(page.getByRole("heading", { name: "最近七天" })).toHaveCount(0);
+
+    const [mainBox, cardBox, statusAndWeatherBox, statusBox, weatherBox, firstIncomeBox, secondIncomeBox] = await Promise.all([
+      page.locator("main").boundingBox(), card.boundingBox(), statusAndWeatherGroup.boundingBox(), status.boundingBox(), weather.boundingBox(),
+      firstIncome.boundingBox(), secondIncome.boundingBox(),
+    ]);
+    for (const box of [mainBox, cardBox, statusAndWeatherBox, statusBox, weatherBox, firstIncomeBox, secondIncomeBox]) expect(box).not.toBeNull();
+    expect(statusBox!.height).toBeGreaterThanOrEqual(44);
+    expect(weatherBox!.height).toBeGreaterThanOrEqual(44);
+    expect(firstIncomeBox!.height).toBeGreaterThanOrEqual(44);
+
+    if (viewport.desktop) {
+      expect(cardBox!.width).toBeGreaterThanOrEqual(800);
+      expect(cardBox!.width).toBeLessThanOrEqual(900);
+      expect(Math.abs(cardBox!.x + cardBox!.width / 2 - (mainBox!.x + mainBox!.width / 2))).toBeLessThanOrEqual(1);
+      expect(Math.abs(statusBox!.y - weatherBox!.y)).toBeLessThanOrEqual(1);
+      expect(Math.abs(firstIncomeBox!.y - secondIncomeBox!.y)).toBeLessThanOrEqual(1);
+    } else {
+      expect(weatherBox!.y).toBeGreaterThanOrEqual(statusBox!.y + statusBox!.height + 8);
+      expect(secondIncomeBox!.y).toBeGreaterThanOrEqual(firstIncomeBox!.y + firstIncomeBox!.height + 8);
+      await expect.poll(() => page.evaluate(() => ({
+        body: document.body.scrollWidth,
+        document: document.documentElement.scrollWidth,
+        viewport: window.innerWidth,
+      }))).toEqual({ body: viewport.width, document: viewport.width, viewport: viewport.width });
+    }
+
+    await fillNewRecordAmounts(page, "100");
+    await expect(page.getByText("合计 €100", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "保存今日记录" }).click();
+    await expect(page.getByRole("status")).toContainText("保存成功");
+    expect(flow.ledgerWrites.at(-1)).toMatchObject({ date: today });
+  });
 }
 
 for (const viewport of [
@@ -223,7 +280,21 @@ for (const viewport of [
       : page.getByRole("heading", { name: "2026年7月17日" }).locator("../..");
     await expect(detail.getByText("€100", { exact: true }).first()).toBeVisible();
     await expect(detail.getByRole("link", { name: "修改这天记录" })).toBeVisible();
-    if (mobile) await page.getByRole("button", { name: "Close" }).click();
+    if (mobile) {
+      const deleteButton = detail.getByRole("button", { name: "删除记录" });
+      await deleteButton.focus();
+      await page.keyboard.press("Enter");
+      const deleteDialog = page.getByRole("alertdialog", { name: "确认永久删除记录？" });
+      await expect(deleteDialog).toBeVisible();
+      await expect(deleteDialog).toContainText("删除后无法恢复。");
+      const cancelDelete = deleteDialog.getByRole("button", { name: "取消" });
+      await expect(cancelDelete).toBeFocused();
+      await page.keyboard.press("Enter");
+      await expect(deleteDialog).toBeHidden();
+      await expect(deleteButton).toBeFocused();
+      expect(requests.ledgerDeletes).toEqual([]);
+      await page.getByRole("button", { name: "Close" }).click();
+    }
 
     await page.getByRole("button", { name: "下一页" }).click();
     await expect(page.getByText("第 2 / 2 页")).toBeVisible();
@@ -237,7 +308,7 @@ for (const viewport of [
       await expect(page.getByRole("heading", { name: "2026年7月2日" })).toBeVisible();
     }
 
-    await page.getByRole("button", { name: "上月", exact: true }).first().click();
+    await page.getByRole("button", { name: "前一月", exact: true }).click();
     await expect(page.getByText("第 1 / 2 页")).toBeVisible();
     const previousMonthFirst = recordRows(page, mobile).first();
     await expect(previousMonthFirst).toContainText("2026年6月30日");
@@ -249,11 +320,11 @@ for (const viewport of [
       await expect(page.getByRole("heading", { name: "2026年6月30日" })).toBeVisible();
     }
 
-    await page.getByRole("button", { name: "近 6 月" }).click();
-    await expect(page.getByRole("button", { name: "近 6 月" })).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByText("第 1 / 2 页")).toBeVisible();
     await expect(recordRows(page, mobile).first()).toContainText("2026年6月30日");
-    await expect.poll(() => requests.chartRequests.at(-1)?.searchParams.get("bucket")).toBe("month");
+    await expect.poll(() => requests.chartRequests.at(-1)?.searchParams.get("start")).toBe("2026-06-01");
+    await expect.poll(() => requests.chartRequests.at(-1)?.searchParams.get("end")).toBe("2026-06-30");
+    await expect.poll(() => requests.chartRequests.at(-1)?.searchParams.get("bucket")).toBe("day");
     await expect.poll(() => requests.databaseRequests.at(-1)?.searchParams.get("start")).toBe("2026-06-01");
 
     const included = page.getByRole("region", { name: "收入分类" });
@@ -308,28 +379,41 @@ test("desktop: multi-date ledger snapshots, markers, dirty guards, and permanent
     { date: "2026-07-15", amount: 215 },
   ]);
 
-  await page.getByRole("button", { name: /2026-07-16/ }).click();
+  await page.getByRole("button", { name: "选择台账日期：2026年7月15日" }).click();
+  await page.getByRole("button", { name: "2026年7月16日，已有记录" }).click();
   await expect(page.getByRole("button", { name: "选择台账日期：2026年7月16日" })).toBeVisible();
   await expect(page.getByRole("alertdialog", { name: "放弃未保存的修改？" })).toHaveCount(0);
   await expect(page.getByLabel(categories[0].name)).toHaveValue("100");
 
   await page.getByLabel(categories[0].name).fill("333");
-  await page.getByRole("button", { name: /2026-07-15/ }).click();
+  await page.getByRole("button", { name: "选择台账日期：2026年7月16日" }).click();
+  await page.getByRole("button", { name: "2026年7月15日，已有记录" }).click();
   const dirtyGuard = page.getByRole("alertdialog", { name: "放弃未保存的修改？" });
   await expect(dirtyGuard).toBeVisible();
   await dirtyGuard.getByRole("button", { name: "继续编辑" }).click();
   await expect(page.getByLabel(categories[0].name)).toHaveValue("333");
-  await page.getByRole("button", { name: /2026-07-15/ }).click();
+  await page.getByRole("button", { name: "选择台账日期：2026年7月16日" }).click();
+  await page.getByRole("button", { name: "2026年7月15日，已有记录" }).click();
   await dirtyGuard.getByRole("button", { name: "放弃修改" }).click();
 
   const navigation = page.getByRole("navigation", { name: "主导航" });
   await navigation.getByRole("link", { name: "营业记录" }).click();
   const targetRow = page.getByRole("table").locator("tbody tr").filter({ hasText: "2026年7月15日" });
   await targetRow.click();
-  await page.getByRole("button", { name: "删除这天记录" }).click();
-  await page.getByRole("button", { name: "确认永久删除" }).click();
+  const chartRequestsBeforeDelete = flow.chartRequests.length;
+  const deleteButton = page.getByRole("button", { name: "删除记录" });
+  await deleteButton.focus();
+  await page.keyboard.press("Enter");
+  const deleteDialog = page.getByRole("alertdialog", { name: "确认永久删除记录？" });
+  await expect(deleteDialog).toContainText("删除后无法恢复。");
+  await expect(deleteDialog.getByRole("button", { name: "取消" })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(deleteDialog.getByRole("button", { name: "确认永久删除" })).toBeFocused();
+  await page.keyboard.press("Enter");
   await expect.poll(() => flow.ledgerDeletes).toContain("2026-07-15");
   await expect(page.getByRole("table").locator("tbody tr").filter({ hasText: "2026年7月15日" })).toContainText("未录入");
+  await expect.poll(() => flow.chartRequests.length).toBeGreaterThan(chartRequestsBeforeDelete);
+  await expect(page.getByRole("heading", { name: "2026年7月15日" })).toHaveCount(0);
 
   await navigation.getByRole("link", { name: "每日记账" }).click();
   await page.getByRole("button", { name: "选择台账日期：2026年7月17日" }).click();

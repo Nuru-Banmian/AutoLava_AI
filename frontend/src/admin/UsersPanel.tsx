@@ -260,27 +260,33 @@ export function UsersPanel() {
   return <div className="space-y-4">
     <ErrorMessage error={users.error} />
     <ErrorMessage error={stores.error} />
-    <div className="flex items-center gap-2" data-testid="user-panel-controls">
-      <label className="min-w-0 flex-1 md:hidden">
-        <span className="sr-only">用户</span>
-        <select
-          aria-label="用户"
-          className="h-9 w-full rounded-md border bg-background px-2"
-          onChange={(event) => {
-            if (event.target.value) select(Number(event.target.value));
-          }}
-          value={typeof selection === "number" ? selection : ""}
-        >
-          <option hidden value="" />
-          {list.map((user) => <option key={user.id} value={user.id}>{user.username}</option>)}
-        </select>
-      </label>
-      <Button className="ml-auto" onClick={() => select("new")} type="button">
-        新建用户
-      </Button>
-    </div>
-    <div className="grid gap-4 md:grid-cols-[minmax(13rem,18rem)_minmax(0,1fr)]">
-      <aside className="hidden md:block">
+    <div className="grid min-w-0 gap-4 md:grid-cols-[minmax(13rem,18rem)_minmax(0,1fr)] md:grid-rows-[auto_1fr]">
+      <div
+        aria-label="用户列表操作"
+        className="flex min-w-0 items-center gap-2 md:col-start-1 md:row-start-1"
+        data-testid="user-panel-controls"
+        role="toolbar"
+      >
+        <span className="hidden min-w-0 flex-1 text-sm font-medium md:block">用户列表</span>
+        <label className="min-w-0 flex-1 md:hidden">
+          <span className="sr-only">用户</span>
+          <select
+            aria-label="用户"
+            className="h-9 w-full rounded-md border bg-background px-2"
+            onChange={(event) => {
+              if (event.target.value) select(Number(event.target.value));
+            }}
+            value={typeof selection === "number" ? selection : ""}
+          >
+            <option hidden value="" />
+            {list.map((user) => <option key={user.id} value={user.id}>{user.username}</option>)}
+          </select>
+        </label>
+        <Button className="ml-auto" onClick={() => select("new")} type="button">
+          新建用户
+        </Button>
+      </div>
+      <aside aria-label="用户列表" className="hidden md:col-start-1 md:row-start-2 md:block">
         <ul className="divide-y rounded-lg border bg-card">
           {list.map((user) => <li key={user.id}>
             <button
@@ -298,7 +304,7 @@ export function UsersPanel() {
           </li>)}
         </ul>
       </aside>
-      <main>{editor}</main>
+      <main className="min-w-0 md:col-start-2 md:row-span-2 md:row-start-1">{editor}</main>
     </div>
   </div>;
 }

@@ -1,9 +1,4 @@
-import type { AnalysisRangeMode, DateRange, RecordRangeMode } from "@/lib/business-record-ranges";
-
-export interface BusinessAnalysisViewState {
-  mode: AnalysisRangeMode;
-  custom: DateRange;
-}
+import type { DateRange, RecordRangeMode } from "@/lib/business-record-ranges";
 
 export interface BusinessRecordsViewState {
   storeId: number;
@@ -12,7 +7,6 @@ export interface BusinessRecordsViewState {
   page: number;
   selectedDate: string | null;
   mobileRecordDate: string | null;
-  analysis: BusinessAnalysisViewState;
   scrollY: number;
 }
 
@@ -24,15 +18,10 @@ export interface BusinessRecordsLocationState {
   restoreBusinessRecords?: BusinessRecordsViewState;
 }
 
-const recordRangeModes = new Set<RecordRangeMode>(["current-month", "previous-month", "custom"]);
-const analysisRangeModes = new Set<AnalysisRangeMode>(["current-month", "previous-month", "six-months", "custom"]);
+const recordRangeModes = new Set<RecordRangeMode>(["month", "custom"]);
 
 function isRecordRangeMode(value: unknown): value is RecordRangeMode {
   return typeof value === "string" && recordRangeModes.has(value as RecordRangeMode);
-}
-
-function isAnalysisRangeMode(value: unknown): value is AnalysisRangeMode {
-  return typeof value === "string" && analysisRangeModes.has(value as AnalysisRangeMode);
 }
 
 function isDate(value: unknown): value is string {
@@ -54,16 +43,12 @@ function isDateRange(value: unknown): value is DateRange {
 function isBusinessRecordsViewState(value: unknown): value is BusinessRecordsViewState {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Partial<BusinessRecordsViewState>;
-  const analysis = candidate.analysis as Partial<BusinessAnalysisViewState> | undefined;
   return Number.isInteger(candidate.storeId) && candidate.storeId! > 0
     && isRecordRangeMode(candidate.recordMode)
     && isDateRange(candidate.range)
     && Number.isInteger(candidate.page) && candidate.page! > 0
     && isNullableDate(candidate.selectedDate)
     && isNullableDate(candidate.mobileRecordDate)
-    && Boolean(analysis)
-    && isAnalysisRangeMode(analysis?.mode)
-    && isDateRange(analysis?.custom)
     && typeof candidate.scrollY === "number"
     && Number.isFinite(candidate.scrollY)
     && candidate.scrollY >= 0;

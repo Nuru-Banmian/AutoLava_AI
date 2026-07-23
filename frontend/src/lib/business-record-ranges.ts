@@ -1,13 +1,20 @@
 import { differenceInCalendarDays, endOfMonth, format, parseISO, startOfMonth, subMonths } from "date-fns";
 import type { ChartBucket } from "@/api/types";
 
-export type RecordRangeMode = "current-month" | "previous-month" | "custom";
+export type RecordRangeMode = "month" | "custom";
 export type AnalysisRangeMode = "current-month" | "previous-month" | "six-months" | "custom";
 
 export interface DateRange {
   start: string;
   end: string;
 }
+
+export interface MonthSelection {
+  startMonth: string;
+  endMonth: string;
+}
+
+export type MonthSelectionIssue = "missing" | "invalid" | "future" | "reversed";
 
 export interface ResolvedAnalysisRange extends DateRange {
   compareStart: string | null;
@@ -17,6 +24,13 @@ export interface ResolvedAnalysisRange extends DateRange {
 
 const iso = (value: Date) => format(value, "yyyy-MM-dd");
 
+const parseMonth = (month: string) => {
+  if (!/^\d{4}-\d{2}$/.test(month)) throw new RangeError("month must use yyyy-MM");
+  const value = parseISO(`${month}-01`);
+  if (format(value, "yyyy-MM") !== month) throw new RangeError("month must use yyyy-MM");
+  return value;
+};
+
 const validate = (range: DateRange) => {
   if (!range.start || !range.end || parseISO(range.start) > parseISO(range.end)) {
     throw new RangeError("start must be on or before end");
@@ -24,12 +38,34 @@ const validate = (range: DateRange) => {
   return range;
 };
 
-export function recordRange(mode: RecordRangeMode, today: string, custom?: DateRange): DateRange {
-  const now = parseISO(today);
-  if (mode === "custom") return validate(custom ?? { start: "", end: "" });
+export function monthRange(month: string): DateRange {
+  const value = parseMonth(month);
+  return { start: iso(startOfMonth(value)), end: iso(endOfMonth(value)) };
+}
 
-  const target = mode === "current-month" ? now : subMonths(now, 1);
-  return { start: iso(startOfMonth(target)), end: iso(endOfMonth(target)) };
+export function monthSelectionIssue(selection: MonthSelection, currentMonth: string): MonthSelectionIssue | null {
+  if (!selection.startMonth || !selection.endMonth) return "missing";
+  try {
+    parseMonth(selection.startMonth);
+    parseMonth(selection.endMonth);
+  } catch {
+    return "invalid";
+  }
+  if (selection.startMonth > currentMonth || selection.endMonth > currentMonth) return "future";
+  if (selection.startMonth > selection.endMonth) return "reversed";
+  return null;
+}
+
+export function customMonthRange(selection: MonthSelection, today: string): DateRange {
+  const currentMonth = today.slice(0, 7);
+  const issue = monthSelectionIssue(selection, currentMonth);
+  if (issue) throw new RangeError(issue);
+  const start = parseMonth(selection.startMonth);
+  const end = parseMonth(selection.endMonth);
+  return {
+    start: iso(startOfMonth(start)),
+    end: selection.endMonth === currentMonth ? today : iso(endOfMonth(end)),
+  };
 }
 
 export function analysisRange(

@@ -4,6 +4,7 @@ from app.models.base import Base
 import app.models.identity  # noqa: F401
 import app.models.ledger  # noqa: F401
 import app.models.operations  # noqa: F401
+import app.models.settlement  # noqa: F401
 
 
 def test_final_tables_are_registered() -> None:
@@ -17,6 +18,9 @@ def test_final_tables_are_registered() -> None:
         "daily_briefings",
         "scheduled_task_logs",
         "system_alerts",
+        "settlement_companies",
+        "settlement_records",
+        "settlement_audit_events",
     }
 
 
@@ -27,6 +31,13 @@ def test_business_unique_constraints_exist() -> None:
     assert {c.name for c in Base.metadata.tables["store_daily_records"].constraints} >= {
         "uq_store_daily_records_store_date"
     }
+    company_indexes = {
+        index.name: index for index in Base.metadata.tables["settlement_companies"].indexes
+    }
+    active_names = company_indexes["uq_settlement_companies_active_store_name"]
+    assert active_names.unique is True
+    assert {column.name for column in active_names.columns} == {"store_id", "normalized_name"}
+    assert active_names.dialect_options["sqlite"]["where"] is not None
 
 
 def test_final_schema_columns_and_money_types() -> None:
@@ -35,6 +46,7 @@ def test_final_schema_columns_and_money_types() -> None:
 
     stores = Base.metadata.tables["stores"].c
     assert "income_items_enabled" in stores
+    assert "company_settlement_enabled" in stores
 
     records = Base.metadata.tables["store_daily_records"].c
     assert "income_config_version_id" not in records

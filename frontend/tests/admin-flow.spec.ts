@@ -8,12 +8,13 @@ type Capture = {
   updatedStore?: unknown;
 };
 
-const store = { id: 1, name: "Roma", address: "Roma, Italia", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true };
+const store = { id: 1, name: "Roma", address: "Roma, Italia", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true, company_settlement_enabled: false };
 const alternateStore = { id: 2, name: "Milano Nord", address: "Milano, Italia", latitude: "45.4642", longitude: "9.19", timezone: "Europe/Rome", is_active: true };
 
 async function mockAdminApi(page: Page, capture: Capture) {
   let authenticated = false;
   let users: unknown[] = [];
+  let companySettlementEnabled = false;
   let accessibleStoresFailed = false;
   let accessibleStoreFailures = 0;
   await page.addInitScript(() => {
@@ -40,9 +41,11 @@ async function mockAdminApi(page: Page, capture: Capture) {
         accessibleStoreFailures += 1;
         return json({ detail: "Stores unavailable" }, 500);
       }
-      return json([store, alternateStore]);
+      return json([{ ...store, company_settlement_enabled: companySettlementEnabled }, alternateStore]);
     }
-    if (path === "/api/admin/stores" && request.method() === "GET") return json([store]);
+    if (path === "/api/admin/stores" && request.method() === "GET") {
+      return json([{ ...store, company_settlement_enabled: companySettlementEnabled }]);
+    }
     if (path === "/api/admin/users" && request.method() === "GET") return json(users);
     if (path === "/api/admin/users" && request.method() === "POST") {
       capture.createdUser = request.postDataJSON();
@@ -68,7 +71,11 @@ async function mockAdminApi(page: Page, capture: Capture) {
     }
     if (path === "/api/admin/stores/1" && request.method() === "PATCH") {
       capture.updatedStore = request.postDataJSON();
-      return json({ ...store, ...(capture.updatedStore as object) });
+      const update = capture.updatedStore as { company_settlement_enabled?: boolean };
+      if (typeof update.company_settlement_enabled === "boolean") {
+        companySettlementEnabled = update.company_settlement_enabled;
+      }
+      return json({ ...store, company_settlement_enabled: companySettlementEnabled, ...update });
     }
     if (path === "/api/admin/stores/geocode") return json([{ name: "Milano", country: "Italia", latitude: 45.4642, longitude: 9.19, timezone: "Europe/Rome" }]);
     if (path === "/api/admin/stores/timezone") return json({ timezone: "Europe/Rome" });
@@ -123,6 +130,10 @@ test("owner configures shared-store income, a user membership, and a mapped stor
   await expect(incomeItems.getByRole("button", { name: "保存", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "保存门店资料" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "保存并发布" })).toHaveCount(0);
+  const settlementToggle = storeDetails.getByLabel("为此门店启用公司结算");
+  await settlementToggle.click();
+  await expect.poll(() => capture.updatedStore).toMatchObject({ company_settlement_enabled: true });
+  await expect(settlementToggle).toBeChecked();
   await storeDetails.getByLabel("门店名称 Roma").fill("Roma Centro");
   await storeDetails.getByRole("button", { name: "保存", exact: true }).click();
   await expect.poll(() => capture.updatedStore).toMatchObject({ name: "Roma Centro", address: "Roma, Italia" });
@@ -175,6 +186,58 @@ test("owner configures shared-store income, a user membership, and a mapped stor
   const globalStorePicker = page.getByTestId("desktop-store-picker").getByRole("combobox", { name: "门店" });
   await expect(globalStorePicker).toBeVisible();
   await expect(globalStorePicker.locator("option:checked")).toHaveText("Milano Nord");
+});
+
+test("store and user creation stays attached to each list across admin breakpoints", async ({ page }) => {
+  await mockAdminApi(page, {});
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto("/login");
+  await page.getByLabel("用户名").fill("administrator");
+  await page.getByLabel("密码", { exact: true }).fill("password-123");
+  await page.getByRole("button", { name: "登录" }).click();
+  await page.goto("/admin");
+
+  for (const view of [
+    { tab: "门店与收入", toolbar: "门店列表操作", list: "门店列表", button: "新建门店", heading: "新建门店" },
+    { tab: "用户与权限", toolbar: "用户列表操作", list: "用户列表", button: "新建用户", heading: "新建用户" },
+  ]) {
+    await page.getByRole("tab", { name: view.tab }).click();
+    const toolbar = page.getByRole("toolbar", { name: view.toolbar });
+    const list = page.getByRole("complementary", { name: view.list });
+    const button = toolbar.getByRole("button", { name: view.button });
+    await expect(toolbar).toBeVisible();
+    await expect(list).toBeVisible();
+    await button.focus();
+    await expect(button).toBeFocused();
+    const [toolbarBox, listBox] = await Promise.all([toolbar.boundingBox(), list.boundingBox()]);
+    expect(toolbarBox).not.toBeNull();
+    expect(listBox).not.toBeNull();
+    expect(Math.abs(toolbarBox!.x - listBox!.x)).toBeLessThanOrEqual(1);
+    expect(toolbarBox!.y + toolbarBox!.height).toBeLessThanOrEqual(listBox!.y);
+    await button.click();
+    await expect(page.getByRole("heading", { name: view.heading })).toBeVisible();
+  }
+
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto("/admin");
+    for (const view of [
+      { tab: "门店与收入", toolbar: "门店列表操作", selector: "门店", button: "新建门店", heading: "新建门店" },
+      { tab: "用户与权限", toolbar: "用户列表操作", selector: "用户", button: "新建用户", heading: "新建用户" },
+    ]) {
+      await page.getByRole("tab", { name: view.tab }).click();
+      const toolbar = page.getByRole("toolbar", { name: view.toolbar });
+      const selector = toolbar.getByRole("combobox", { name: view.selector });
+      const button = toolbar.getByRole("button", { name: view.button });
+      const [selectorBox, buttonBox] = await Promise.all([selector.boundingBox(), button.boundingBox()]);
+      expect(selectorBox).not.toBeNull();
+      expect(buttonBox).not.toBeNull();
+      expect(Math.abs(selectorBox!.y - buttonBox!.y)).toBeLessThanOrEqual(1);
+      await button.click();
+      await expect(page.getByRole("heading", { name: view.heading })).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
+    }
+  }
 });
 
 test("admin keeps a failed global store load hidden until the user leaves", async ({ page }) => {

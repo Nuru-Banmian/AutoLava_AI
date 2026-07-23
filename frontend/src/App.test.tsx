@@ -1,12 +1,14 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { buttonVariants } from "./components/ui/button";
 import App, { Application } from "./App";
+import { monthInTimezone } from "./pages/CompanySettlementPage";
 import { createAppRouter } from "./router";
 
 const applicationStyles = readFileSync(resolve(process.cwd(), "src/index.css"), "utf8");
@@ -19,6 +21,14 @@ const server = setupServer(
   ])),
   http.get("/api/admin/stores", () => HttpResponse.json([])),
   http.get("/api/dashboard/:storeId", () => HttpResponse.json([])),
+  http.get("/api/settlements/:storeId/months/:month", ({ params }) => HttpResponse.json({
+    opening_month: params.month,
+    records: [],
+    daily_ledger_revenue: 0,
+    confirmed_settlement_income: 0,
+    pending_amount: 0,
+    monthly_total: 0,
+  })),
 );
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
@@ -152,6 +162,290 @@ describe("App", () => {
       "营业记录",
       "管理中心",
     ]);
+  });
+
+  it("shows company settlement in the enabled store only and keeps mobile bottom navigation stable", async () => {
+    server.use(
+      http.get("/api/stores/accessible", () => HttpResponse.json([
+        { id: 1, name: "已启用", timezone: "Europe/Rome", company_settlement_enabled: true },
+        { id: 2, name: "未启用", timezone: "Europe/Rome", company_settlement_enabled: false },
+      ])),
+      http.get("/api/settlements/1", () => HttpResponse.json({ store_id: 1, store_name: "已启用", company_settlement_enabled: true })),
+    );
+    renderApplication("/more", { role: "user" });
+
+    const desktop = await screen.findByRole("navigation", { name: "主导航" });
+    const desktopStorePicker = within(screen.getByTestId("desktop-store-picker")).getByRole("combobox", { name: "门店" });
+    await within(desktopStorePicker).findByRole("option", { name: "已启用" });
+    await userEvent.selectOptions(desktopStorePicker, "1");
+    await waitFor(() => expect(within(desktop).getByRole("link", { name: "公司结算" })).toBeInTheDocument());
+    expect(within(desktop).getAllByRole("link").map((link) => link.textContent)).toEqual([
+      "首页", "每日记账", "营业记录", "公司结算",
+    ]);
+    const mobile = screen.getByRole("navigation", { name: "移动导航" });
+    expect(within(mobile).getAllByRole("link")).toHaveLength(4);
+    expect(within(screen.getByRole("navigation", { name: "更多功能" })).getByRole("link", { name: "公司结算" })).toBeInTheDocument();
+
+    await userEvent.selectOptions(
+      desktopStorePicker,
+      "2",
+    );
+    await waitFor(() => expect(within(desktop).queryByRole("link", { name: "公司结算" })).not.toBeInTheDocument());
+    expect(within(screen.getByRole("navigation", { name: "更多功能" })).queryByRole("link", { name: "公司结算" })).not.toBeInTheDocument();
+  });
+
+  it("rejects a direct company settlement visit for a disabled store", async () => {
+    renderApplication("/settlements", { role: "user" });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("当前门店未启用公司结算");
+    expect(screen.getByRole("link", { name: "返回首页" })).toHaveAttribute("href", "/");
+  });
+
+  it("offers an accessible retry when the settlement gate read fails", async () => {
+    let reads = 0;
+    server.use(
+      http.get("/api/stores/accessible", () => HttpResponse.json([
+        { id: 1, name: "已启用", timezone: "Europe/Rome", company_settlement_enabled: true },
+      ])),
+      http.get("/api/settlements/1", () => {
+        reads += 1;
+        return reads === 1
+          ? HttpResponse.json({ detail: "暂时失败" }, { status: 503 })
+          : HttpResponse.json({ store_id: 1, store_name: "已启用", company_settlement_enabled: true });
+      }),
+      http.get("/api/settlements/1/companies", () => HttpResponse.json([])),
+    );
+    renderApplication("/settlements", { role: "user" });
+
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("暂时失败"));
+    await userEvent.click(screen.getByRole("button", { name: "重试公司结算" }));
+
+    expect(await screen.findByRole("heading", { name: "公司结算" })).toBeInTheDocument();
+    expect(reads).toBe(2);
+  });
+
+  it("maintains the company directory and preserves a failed inline name for retry", async () => {
+    let creates = 0;
+    const active = [{ id: 1, name: "Alpha Fleet", is_active: true }];
+    const archived = [{ id: 2, name: "Old Fleet", is_active: false }];
+    server.use(
+      http.get("/api/stores/accessible", () => HttpResponse.json([
+        { id: 1, name: "已启用", timezone: "Europe/Rome", company_settlement_enabled: true },
+      ])),
+      http.get("/api/settlements/1", () => HttpResponse.json({ store_id: 1, store_name: "已启用", company_settlement_enabled: true })),
+      http.get("/api/settlements/1/companies", ({ request }) => HttpResponse.json(
+        new URL(request.url).searchParams.get("archived") === "true" ? archived : active,
+      )),
+      http.post("/api/settlements/1/companies", async ({ request }) => {
+        creates += 1;
+        const body = await request.json() as { name: string };
+        if (creates === 1) return HttpResponse.json({ detail: "暂时无法保存" }, { status: 503 });
+        const company = { id: 3, name: body.name.trim().replace(/\s+/g, " "), is_active: true };
+        active.push(company);
+        return HttpResponse.json(company, { status: 201 });
+      }),
+      http.post("/api/settlements/1/companies/1/archive", () => {
+        const [company] = active.splice(0, 1);
+        company.is_active = false;
+        archived.push(company);
+        return HttpResponse.json(company);
+      }),
+    );
+    renderApplication("/settlements", { role: "user" });
+
+    await userEvent.click(await screen.findByRole("button", { name: "活动结算公司" }));
+    expect(await screen.findByRole("button", { name: "重命名Alpha Fleet" })).toBeInTheDocument();
+    expect(screen.queryByText("Old Fleet")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "归档结算公司" }));
+    expect(await screen.findByText("Old Fleet")).toBeInTheDocument();
+    const input = screen.getByRole("textbox", { name: "新结算公司名称" });
+    await userEvent.type(input, "  New   Fleet  ");
+    await userEvent.click(screen.getByRole("button", { name: "新增结算公司" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("暂时无法保存");
+    expect(input).toHaveValue("  New   Fleet  ");
+
+    await userEvent.click(screen.getByRole("button", { name: "重试操作" }));
+    await waitFor(() => expect(input).toHaveValue(""));
+    expect(screen.queryByText("操作成功")).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "重命名New Fleet" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "归档Alpha Fleet" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "归档Alpha Fleet" })).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "恢复Alpha Fleet" })).toBeInTheDocument();
+
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    await userEvent.click(screen.getByRole("button", { name: "永久删除New Fleet" }));
+    expect(confirm).toHaveBeenCalledWith("确定永久删除结算公司“New Fleet”吗？此操作无法撤销。");
+    confirm.mockRestore();
+  });
+
+  it("clears company editing state on store switch and ignores the old store response", async () => {
+    let creates = 0;
+    let resolveOldRequest: (() => void) | undefined;
+    const oldRequest = new Promise<void>((resolve) => { resolveOldRequest = resolve; });
+    server.use(
+      http.get("/api/stores/accessible", () => HttpResponse.json([
+        { id: 1, name: "一店", timezone: "Europe/Rome", company_settlement_enabled: true },
+        { id: 2, name: "二店", timezone: "Europe/Rome", company_settlement_enabled: true },
+      ])),
+      http.get("/api/settlements/:storeId", ({ params }) => HttpResponse.json({
+        store_id: Number(params.storeId),
+        store_name: params.storeId === "1" ? "一店" : "二店",
+        company_settlement_enabled: true,
+      })),
+      http.get("/api/settlements/:storeId/companies", ({ params, request }) => {
+        if (new URL(request.url).searchParams.get("archived") === "true") return HttpResponse.json([]);
+        return HttpResponse.json(params.storeId === "1"
+          ? [{ id: 1, name: "一店公司", is_active: true }]
+          : [{ id: 2, name: "二店公司", is_active: true }]);
+      }),
+      http.post("/api/settlements/1/companies", async () => {
+        creates += 1;
+        if (creates === 1) return HttpResponse.json({ detail: "一店保存失败" }, { status: 503 });
+        await oldRequest;
+        return HttpResponse.json({ id: 3, name: "一店草稿", is_active: true }, { status: 201 });
+      }),
+    );
+    renderApplication("/settlements", { role: "user" });
+
+    await userEvent.click(await screen.findByRole("button", { name: "活动结算公司" }));
+    expect(await screen.findByRole("button", { name: "重命名一店公司" })).toBeInTheDocument();
+    const draft = screen.getByRole("textbox", { name: "新结算公司名称" });
+    await userEvent.type(draft, "一店草稿");
+    await userEvent.click(screen.getByRole("button", { name: "新增结算公司" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("一店保存失败");
+    await userEvent.click(screen.getByRole("button", { name: "重命名一店公司" }));
+    expect(screen.getByRole("textbox", { name: "重命名一店公司" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "重试操作" }));
+
+    const picker = within(screen.getByTestId("desktop-store-picker")).getByRole("combobox", { name: "门店" });
+    await userEvent.selectOptions(picker, "2");
+    await userEvent.click(await screen.findByRole("button", { name: "活动结算公司" }));
+    expect(await screen.findByRole("button", { name: "重命名二店公司" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "新结算公司名称" })).toHaveValue("");
+    expect(screen.queryByRole("textbox", { name: "重命名一店公司" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重试操作" })).not.toBeInTheDocument();
+
+    resolveOldRequest?.();
+    await waitFor(() => expect(creates).toBe(2));
+    expect(screen.queryByText("操作成功")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重命名二店公司" })).toBeInTheDocument();
+  });
+
+  it("uses the store timezone for the opening month boundary", () => {
+    expect(monthInTimezone("Pacific/Honolulu", new Date("2026-08-01T01:00:00Z"))).toBe("2026-07");
+    expect(monthInTimezone("Pacific/Kiritimati", new Date("2026-07-31T12:00:00Z"))).toBe("2026-08");
+  });
+
+  it("registers and summarizes a month while preserving a failed record for retry", async () => {
+    let saves = 0;
+    let created = false;
+    const companies = [{ id: 1, name: "Alpha Fleet", is_active: true }];
+    server.use(
+      http.get("/api/stores/accessible", () => HttpResponse.json([
+        { id: 1, name: "月结门店", timezone: "Pacific/Honolulu", company_settlement_enabled: true },
+      ])),
+      http.get("/api/settlements/1", () => HttpResponse.json({ store_id: 1, store_name: "月结门店", company_settlement_enabled: true })),
+      http.get("/api/settlements/1/companies", ({ request }) => HttpResponse.json(
+        new URL(request.url).searchParams.get("archived") === "true" ? [] : companies,
+      )),
+      http.post("/api/settlements/1/companies", async ({ request }) => {
+        const body = await request.json() as { name: string };
+        const company = { id: 2, name: body.name, is_active: true };
+        companies.push(company);
+        return HttpResponse.json(company, { status: 201 });
+      }),
+      http.get("/api/settlements/1/months/:month", ({ params }) => HttpResponse.json({
+        opening_month: params.month,
+        records: created ? [{ id: 7, company_id: 2, company_name: "Beta Fleet", opening_month: params.month, amount: 250, status: "pending", revision: 1, created_at: "2026-07-01T00:00:00" }] : [],
+        daily_ledger_revenue: 1000,
+        confirmed_settlement_income: 0,
+        pending_amount: created ? 250 : 0,
+        monthly_total: 1000,
+      })),
+      http.post("/api/settlements/1/records", async () => {
+        saves += 1;
+        if (saves === 1) return HttpResponse.json({ detail: "暂时无法登记" }, { status: 503 });
+        created = true;
+        return HttpResponse.json({ id: 7, company_id: 2, company_name: "Beta Fleet", opening_month: "2026-07", amount: 250, status: "pending", revision: 1, created_at: "2026-07-01T00:00:00" }, { status: 201 });
+      }),
+    );
+    renderApplication("/settlements", { role: "user" });
+
+    const monthInput = await screen.findByLabelText("开票月份");
+    expect(monthInput).toHaveValue(monthInTimezone("Pacific/Honolulu"));
+    await waitFor(() => expect(screen.getByText("日常营业额").nextElementSibling).toHaveTextContent("€1,000"));
+    expect(screen.getByText("月度总收入").nextElementSibling).toHaveTextContent("€1,000");
+
+    await userEvent.click(screen.getByRole("button", { name: "活动结算公司" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "新结算公司名称" }), "Beta Fleet");
+    await userEvent.click(screen.getByRole("button", { name: "新增结算公司" }));
+    const companyInput = screen.getByRole("combobox", { name: "结算公司" });
+    await within(companyInput).findByRole("option", { name: "Beta Fleet" });
+    await userEvent.selectOptions(companyInput, "2");
+    const amountInput = screen.getByRole("spinbutton", { name: "金额（整数欧元）" });
+    await userEvent.type(amountInput, "250");
+    await userEvent.click(screen.getByRole("button", { name: "登记待到账记录" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("暂时无法登记");
+    expect(monthInput).toHaveValue(monthInTimezone("Pacific/Honolulu"));
+    expect(screen.getByRole("combobox", { name: "结算公司" })).toHaveValue("2");
+    expect(amountInput).toHaveValue(250);
+
+    await userEvent.click(screen.getByRole("button", { name: "重试保存" }));
+    await waitFor(() => expect(amountInput).toHaveValue(null));
+    expect(within(await screen.findByRole("list", { name: `${monthInTimezone("Pacific/Honolulu")}开票记录` })).getByText("Beta Fleet")).toBeInTheDocument();
+    expect(screen.getByText("待到账金额").nextElementSibling).toHaveTextContent("€250");
+    expect(screen.getByText("月度总收入").nextElementSibling).toHaveTextContent("€1,000");
+    expect(saves).toBe(2);
+  });
+
+  it("clears record drafts and errors when the store changes", async () => {
+    let saves = 0;
+    let oldSaveCompleted = false;
+    let releaseOldSave: (() => void) | undefined;
+    const oldSave = new Promise<void>((resolve) => { releaseOldSave = resolve; });
+    server.use(
+      http.get("/api/stores/accessible", () => HttpResponse.json([
+        { id: 1, name: "一店", timezone: "Europe/Rome", company_settlement_enabled: true },
+        { id: 2, name: "二店", timezone: "Pacific/Honolulu", company_settlement_enabled: true },
+      ])),
+      http.get("/api/settlements/:storeId", ({ params }) => HttpResponse.json({ store_id: Number(params.storeId), store_name: `${params.storeId === "1" ? "一" : "二"}店`, company_settlement_enabled: true })),
+      http.get("/api/settlements/:storeId/companies", ({ params, request }) => HttpResponse.json(
+        new URL(request.url).searchParams.get("archived") === "true" ? [] : [{ id: Number(params.storeId), name: `${params.storeId}号公司`, is_active: true }],
+      )),
+      http.get("/api/settlements/:storeId/months/:month", ({ params }) => HttpResponse.json({
+        opening_month: params.month, records: [], daily_ledger_revenue: params.storeId === "1" ? 100 : 200,
+        confirmed_settlement_income: 0, pending_amount: 0, monthly_total: params.storeId === "1" ? 100 : 200,
+      })),
+      http.post("/api/settlements/1/records", async () => {
+        saves += 1;
+        if (saves === 1) return HttpResponse.json({ detail: "一店保存失败" }, { status: 503 });
+        await oldSave;
+        oldSaveCompleted = true;
+        return HttpResponse.json({ id: 9, company_id: 1, company_name: "1号公司", opening_month: "2026-06", amount: 88, status: "pending", revision: 1, created_at: "2026-06-01T00:00:00" }, { status: 201 });
+      }),
+    );
+    renderApplication("/settlements", { role: "user" });
+    const company = await screen.findByRole("combobox", { name: "结算公司" });
+    await within(company).findByRole("option", { name: "1号公司" });
+    await userEvent.selectOptions(company, "1");
+    await userEvent.clear(screen.getByLabelText("开票月份"));
+    await userEvent.type(screen.getByLabelText("开票月份"), "2026-06");
+    await userEvent.type(screen.getByRole("spinbutton", { name: "金额（整数欧元）" }), "88");
+    await userEvent.click(screen.getByRole("button", { name: "登记待到账记录" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("一店保存失败");
+    await userEvent.click(screen.getByRole("button", { name: "重试保存" }));
+
+    await userEvent.selectOptions(within(screen.getByTestId("desktop-store-picker")).getByRole("combobox", { name: "门店" }), "2");
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "结算公司" })).toHaveValue(""));
+    expect(screen.getByLabelText("开票月份")).toHaveValue(monthInTimezone("Pacific/Honolulu"));
+    expect(screen.getByRole("spinbutton", { name: "金额（整数欧元）" })).toHaveValue(null);
+    expect(screen.queryByRole("button", { name: "重试保存" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("日常营业额").nextElementSibling).toHaveTextContent("€200"));
+    releaseOldSave?.();
+    await waitFor(() => expect(oldSaveCompleted).toBe(true));
+    expect(screen.getByText("日常营业额").nextElementSibling).toHaveTextContent("€200");
+    expect(screen.queryByRole("button", { name: "重试保存" })).not.toBeInTheDocument();
   });
 
   it("loads the approved blue theme tokens from index.css", () => {

@@ -11,25 +11,47 @@ export const dashboardKey = (storeId: number) => ["dashboard", storeId] as const
 export const chartsKey = (storeId: number, query: string) => ["charts", storeId, query] as const;
 export const databaseKey = (storeId: number, query: string) => ["database", "records", storeId, query] as const;
 
-export async function loadCategoryCatalog(storeId: number, start: string, end: string, signal?: AbortSignal): Promise<DatabaseResponse> {
-  const categories = new Map<number, CategoryDescriptor>();
-  let firstPage: DatabaseResponse | null = null;
+const DATABASE_PAGE_SIZE = 200;
+
+async function loadRecordPages(storeId: number, start: string, end: string, signal?: AbortSignal): Promise<DatabaseResponse[]> {
+  const pages: DatabaseResponse[] = [];
   let page = 1;
   let total = 0;
 
   do {
-    const query = new URLSearchParams({ start, end, page: String(page), page_size: "200" });
+    const query = new URLSearchParams({ start, end, page: String(page), page_size: String(DATABASE_PAGE_SIZE) });
     const response = await api<DatabaseResponse>(`/database/${storeId}/records?${query}`, { signal });
-    firstPage ??= response;
-    total = Math.max(total, response.total);
-    response.categories.forEach((category) => categories.set(category.id, category));
+    pages.push(response);
+    total = response.total;
     page += 1;
-  } while ((page - 1) * 200 < total);
+  } while ((page - 1) * DATABASE_PAGE_SIZE < total);
+
+  return pages;
+}
+
+function mergedCategories(pages: DatabaseResponse[]): CategoryDescriptor[] {
+  const categories = new Map<number, CategoryDescriptor>();
+  pages.forEach((response) => response.categories.forEach((category) => categories.set(category.id, category)));
+  return [...categories.values()].sort((left, right) => left.sort_order - right.sort_order || left.id - right.id);
+}
+
+export async function loadBusinessRecords(storeId: number, start: string, end: string, signal?: AbortSignal): Promise<DatabaseResponse> {
+  const pages = await loadRecordPages(storeId, start, end, signal);
+  return {
+    ...pages[0],
+    items: pages.flatMap((response) => response.items),
+    categories: mergedCategories(pages),
+    page: 1,
+    page_size: DATABASE_PAGE_SIZE,
+  };
+}
+
+export async function loadCategoryCatalog(storeId: number, start: string, end: string, signal?: AbortSignal): Promise<DatabaseResponse> {
+  const pages = await loadRecordPages(storeId, start, end, signal);
 
   return {
-    ...firstPage!,
-    categories: [...categories.values()].sort((left, right) => left.sort_order - right.sort_order || left.id - right.id),
-    total,
+    ...pages[0],
+    categories: mergedCategories(pages),
   };
 }
 

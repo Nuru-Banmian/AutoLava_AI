@@ -24,13 +24,28 @@ class DailyRevenue(BaseModel):
     revenue: int
 
 
-class CategoryComposition(PrimaryCategory):
-    pass
+class SettlementComposition(BaseModel):
+    category_id: None = None
+    category_name: Literal["公司结算"]
+    amount: int
+
+
+CategoryComposition = PrimaryCategory | SettlementComposition
 
 
 class MonthlyRevenue(BaseModel):
     month: str
     revenue: int
+    daily_ledger_revenue: int
+    confirmed_settlement_income: int
+    monthly_total_income: int
+
+
+class IncomeSummary(BaseModel):
+    daily_ledger_revenue: int
+    confirmed_settlement_income: int
+    total_income: int
+    includes_settlement_income: bool
 
 
 class WeatherRevenue(BaseModel):
@@ -61,6 +76,7 @@ class ChartsResponse(BaseModel):
     kpis: ChartKpis
     range: ChartRange
     comparison_kpis: ChartComparisonKpis | None
+    income_summary: IncomeSummary
     classified_included_total: int
     daily: list[DailyRevenue]
     categories: list[CategoryComposition]

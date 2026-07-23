@@ -51,11 +51,12 @@ const chartsPayload: ChartsResponse = {
   kpis: { total_revenue: 100, record_days: 1, open_days: 1, average_revenue: 100, primary_categories: [], total_wash_count: null, average_ticket: null },
   range: { start: "2026-07-01", end: "2026-07-17", bucket: "day" },
   comparison_kpis: { start: "2026-06-01", end: "2026-06-17", total_revenue: 80, open_days: 1, average_revenue: 80 },
+  income_summary: { daily_ledger_revenue: 100, confirmed_settlement_income: 0, total_income: 100, includes_settlement_income: false },
   classified_included_total: 100,
   daily: [{ date: "2026-07-14", revenue: 100 }],
   categories: [{ category_id: 1, category_name: "现金", amount: 100 }],
   excluded_categories: [],
-  monthly: [{ month: "2026-07", revenue: 100 }],
+  monthly: [{ month: "2026-07", revenue: 100, daily_ledger_revenue: 100, confirmed_settlement_income: 0, monthly_total_income: 100 }],
   weather: [],
   weekday: [],
 };
@@ -132,16 +133,12 @@ describe("BusinessRecordsPage", () => {
     );
     renderPage();
 
-    fireEvent.click(within(screen.getByRole("region", { name: "记录筛选" })).getByRole("button", { name: "自定义" }));
-    fireEvent.change(screen.getByLabelText("开始日期"), { target: { value: "2026-06-01" } });
-    fireEvent.change(screen.getByLabelText("结束日期"), { target: { value: "2026-06-30" } });
+    fireEvent.click(within(screen.getByRole("region", { name: "记录筛选" })).getByRole("button", { name: "自定义范围" }));
+    fireEvent.change(screen.getByLabelText("开始月份"), { target: { value: "2026-06" } });
+    fireEvent.change(screen.getByLabelText("结束月份"), { target: { value: "2026-06" } });
     await screen.findByRole("heading", { name: "2026年6月15日" });
     fireEvent.click(screen.getByRole("button", { name: "下一页" }));
     fireEvent.click(screen.getByRole("button", { name: "2026年6月15日，营业，€100" }));
-    fireEvent.click(within(screen.getByLabelText("经营分析日期范围", { selector: "div" })).getByRole("button", { name: "自定义", hidden: true }));
-    fireEvent.change(screen.getByLabelText("分析开始日期"), { target: { value: "2026-05-01" } });
-    fireEvent.change(screen.getByLabelText("分析结束日期"), { target: { value: "2026-06-15" } });
-
     const mobileDetail = await screen.findByRole("dialog", { name: "2026-06-15 营业记录详情" });
     fireEvent.click(within(mobileDetail).getByRole("link", { name: "修改这天记录" }));
 
@@ -153,7 +150,7 @@ describe("BusinessRecordsPage", () => {
     expect(routeState).toHaveTextContent('"page":2');
     expect(routeState).toHaveTextContent('"selectedDate":"2026-06-15"');
     expect(routeState).toHaveTextContent('"mobileRecordDate":"2026-06-15"');
-    expect(routeState).toHaveTextContent('"analysis":{"mode":"custom","custom":{"start":"2026-05-01","end":"2026-06-15"}}');
+    expect(routeState).not.toHaveTextContent('"analysis"');
     expect(routeState).toHaveTextContent('"scrollY":240');
   });
 
@@ -183,7 +180,6 @@ describe("BusinessRecordsPage", () => {
           page: 2,
           selectedDate: "2026-06-15",
           mobileRecordDate: "2026-06-15",
-          analysis: { mode: "six-months", custom: { start: "2026-05-01", end: "2026-06-15" } },
           scrollY: 320,
         },
       },
@@ -194,8 +190,10 @@ describe("BusinessRecordsPage", () => {
     expect(recordRequests[0].searchParams.get("end")).toBe("2026-06-30");
     expect(screen.getByRole("heading", { name: "2026年6月15日" })).toBeInTheDocument();
     expect(await screen.findByRole("dialog", { name: "2026-06-15 营业记录详情" })).toBeInTheDocument();
-    expect(within(screen.getByLabelText("经营分析日期范围", { selector: "div" })).getByRole("button", { name: "近 6 月", hidden: true })).toHaveAttribute("aria-pressed", "true");
-    await waitFor(() => expect(chartRequests.at(-1)?.searchParams.get("bucket")).toBe("month"));
+    await waitFor(() => {
+      expect(chartRequests.at(-1)?.searchParams.get("start")).toBe("2026-06-01");
+      expect(chartRequests.at(-1)?.searchParams.get("end")).toBe("2026-06-30");
+    });
     expect(window.scrollTo).toHaveBeenCalledWith({ top: 320 });
     await waitFor(() => expect(screen.getByLabelText("路由状态")).toHaveTextContent("/database|null"));
   });
@@ -258,7 +256,7 @@ describe("BusinessRecordsPage", () => {
     const detailCard = detailTitle.parentElement?.parentElement;
     expect(within(detailCard!).getByText("未录入", { exact: true })).toBeInTheDocument();
     expect(within(detailCard!).getByRole("link", { name: "修改这天记录" })).toHaveAttribute("href", "/ledger?date=2026-07-17");
-    expect(within(detailCard!).queryByRole("button", { name: "删除这天记录" })).not.toBeInTheDocument();
+    expect(within(detailCard!).queryByRole("button", { name: "删除记录" })).not.toBeInTheDocument();
   });
 
   it("opens an editable mobile sheet for an unrecorded date", async () => {
@@ -274,7 +272,7 @@ describe("BusinessRecordsPage", () => {
     const sheet = await screen.findByRole("dialog");
     expect(within(sheet).getByText("未录入", { exact: true })).toBeInTheDocument();
     expect(within(sheet).getByRole("link", { name: "修改这天记录" })).toHaveAttribute("href", "/ledger?date=2026-07-17");
-    expect(within(sheet).queryByRole("button", { name: "删除这天记录" })).not.toBeInTheDocument();
+    expect(within(sheet).queryByRole("button", { name: "删除记录" })).not.toBeInTheDocument();
   });
 
   it("opens the final delete confirmation directly from the mobile detail", async () => {
@@ -287,13 +285,13 @@ describe("BusinessRecordsPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "2026年7月14日，营业，€100" }));
     const sheet = await screen.findByRole("dialog", { name: "2026-07-14 营业记录详情" });
-    fireEvent.click(within(sheet).getByRole("button", { name: "删除这天记录" }));
+    fireEvent.click(within(sheet).getByRole("button", { name: "删除记录" }));
 
     expect(await screen.findByRole("alertdialog", { name: "确认永久删除记录？" })).toBeInTheDocument();
     expect(screen.queryByText(/管理 2026-07-14 记录/)).not.toBeInTheDocument();
   });
 
-  it("selects the new page or range's first record while analysis and record controls stay independent", async () => {
+  it("selects the new page or range's first record and keeps analysis synchronized with record filters", async () => {
     const recordRequests: URL[] = [];
     const chartRequests: URL[] = [];
     server.use(
@@ -312,21 +310,22 @@ describe("BusinessRecordsPage", () => {
     );
     renderPage();
     await screen.findByRole("heading", { name: "2026年7月14日" });
+    await waitFor(() => expect(chartRequests).toHaveLength(1));
+    expect(chartRequests[0].searchParams.get("start")).toBe("2026-07-01");
+    expect(chartRequests[0].searchParams.get("end")).toBe("2026-07-31");
+    expect(screen.queryByLabelText("经营分析日期范围")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "下一页" }));
     expect(await screen.findByText("第 2 / 2 页")).toBeInTheDocument();
     expect(screen.getAllByText("暂无可查看记录")).toHaveLength(1);
+    expect(chartRequests).toHaveLength(1);
 
-    const requestsBeforeAnalysisChange = recordRequests.length;
-    fireEvent.click(within(screen.getByLabelText("经营分析日期范围")).getByRole("button", { name: "近 6 月" }));
-    await waitFor(() => expect(chartRequests.at(-1)?.searchParams.get("bucket")).toBe("month"));
-    expect(recordRequests).toHaveLength(requestsBeforeAnalysisChange);
-
-    const chartRequestBeforeRecordChange = chartRequests.at(-1)?.href;
-    fireEvent.click(within(screen.getByLabelText("记录筛选")).getByRole("button", { name: "上月" }));
+    fireEvent.click(within(screen.getByLabelText("记录筛选")).getByRole("button", { name: "前一月" }));
     expect(await screen.findByRole("heading", { name: "2026年6月30日" })).toBeInTheDocument();
     expect(recordRequests.at(-1)?.searchParams.get("page")).toBe("1");
-    expect(chartRequests.at(-1)?.href).toBe(chartRequestBeforeRecordChange);
+    await waitFor(() => expect(chartRequests.at(-1)?.searchParams.get("start")).toBe("2026-06-01"));
+    expect(chartRequests.at(-1)?.searchParams.get("end")).toBe("2026-06-30");
+    expect(chartRequests.at(-1)?.searchParams.get("bucket")).toBe("day");
   });
 
   it("keeps analysis usable when records fail and keeps records usable when analysis fails", async () => {
@@ -385,7 +384,7 @@ describe("BusinessRecordsPage", () => {
     );
     const view = renderPage();
     await screen.findByRole("heading", { name: "2026年7月14日" });
-    fireEvent.click(screen.getAllByRole("button", { name: "删除这天记录" }).at(-1)!);
+    fireEvent.click(screen.getAllByRole("button", { name: "删除记录" }).at(-1)!);
     expect(await screen.findByRole("heading", { name: "确认永久删除记录？" })).toBeInTheDocument();
     void view.client.invalidateQueries({ queryKey: ["database", "records", 1] });
     await waitFor(() => expect(storeOneRequests).toBe(2));
@@ -433,7 +432,7 @@ describe("BusinessRecordsPage", () => {
     await screen.findByRole("heading", { name: "2026年7月14日" });
 
     expect(screen.getByRole("link", { name: "修改这天记录" })).toHaveAttribute("href", "/ledger?date=2026-07-14");
-    expect(screen.queryByRole("button", { name: "删除这天记录" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "删除记录" })).not.toBeInTheDocument();
     fireEvent.click(within(screen.getByRole("table")).getByText("2026年7月15日").closest("tr")!);
     expect(await screen.findByRole("heading", { name: "2026年7月15日" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "修改这天记录" })).toHaveAttribute("href", "/ledger?date=2026-07-15");
@@ -442,9 +441,13 @@ describe("BusinessRecordsPage", () => {
   it("lets administrators permanently delete without history, rollback, or version requests", async () => {
     let deleted = false;
     let deleteUrl = "";
+    let chartRequests = 0;
     server.use(
       http.get("/api/database/1/records", () => HttpResponse.json(databaseResponse(deleted ? [] : [record]))),
-      http.get("/api/charts/1", () => HttpResponse.json(chartsPayload)),
+      http.get("/api/charts/1", () => {
+        chartRequests += 1;
+        return HttpResponse.json(chartsPayload);
+      }),
       http.delete("/api/ledger/1/2026-07-14", ({ request }) => {
         deleteUrl = request.url;
         deleted = true;
@@ -453,7 +456,8 @@ describe("BusinessRecordsPage", () => {
     );
     renderPage();
     await screen.findByRole("heading", { name: "2026年7月14日" });
-    fireEvent.click(screen.getByRole("button", { name: "删除这天记录" }));
+    await waitFor(() => expect(chartRequests).toBe(1));
+    fireEvent.click(screen.getByRole("button", { name: "删除记录" }));
     expect(await screen.findByRole("heading", { name: "确认永久删除记录？" })).toBeInTheDocument();
     expect(screen.queryByText(/管理 2026-07-14 记录/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "确认永久删除" }));
@@ -461,6 +465,8 @@ describe("BusinessRecordsPage", () => {
     expect(new URL(deleteUrl).search).toBe("");
     expect(await screen.findByRole("status")).toHaveTextContent("删除成功");
     expect((await screen.findAllByText("暂无可查看记录")).length).toBeGreaterThan(0);
+    await waitFor(() => expect(chartRequests).toBe(2));
+    expect(screen.queryByRole("heading", { name: "2026年7月14日" })).not.toBeInTheDocument();
     expect(screen.queryByText(/历史|回滚/)).not.toBeInTheDocument();
   });
 
@@ -476,7 +482,7 @@ describe("BusinessRecordsPage", () => {
     );
     renderPage();
     await screen.findByRole("heading", { name: "2026年7月14日" });
-    fireEvent.click(screen.getByRole("button", { name: "删除这天记录" }));
+    fireEvent.click(screen.getByRole("button", { name: "删除记录" }));
     expect(await screen.findByRole("heading", { name: "确认永久删除记录？" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "确认永久删除" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("数据已经发生变化，请刷新后重试");

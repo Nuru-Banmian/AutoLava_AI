@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { analysisRange, analysisSearchParams, recordRange } from "@/lib/business-record-ranges";
+import { analysisRange, analysisSearchParams, customMonthRange, monthRange, monthSelectionIssue } from "@/lib/business-record-ranges";
 
 describe("business record ranges", () => {
-  it("uses full calendar months for record browsing", () => {
-    expect(recordRange("current-month", "2026-07-17")).toEqual({ start: "2026-07-01", end: "2026-07-31" });
-    expect(recordRange("previous-month", "2026-01-10")).toEqual({ start: "2025-12-01", end: "2025-12-31" });
+  it("resolves selected and custom month boundaries", () => {
+    expect(monthRange("2025-12")).toEqual({ start: "2025-12-01", end: "2025-12-31" });
+    expect(customMonthRange({ startMonth: "2026-05", endMonth: "2026-06" }, "2026-07-17")).toEqual({ start: "2026-05-01", end: "2026-06-30" });
+    expect(customMonthRange({ startMonth: "2026-05", endMonth: "2026-07" }, "2026-07-17")).toEqual({ start: "2026-05-01", end: "2026-07-17" });
+    expect(monthSelectionIssue({ startMonth: "2026-08", endMonth: "2026-08" }, "2026-07")).toBe("future");
+    expect(monthSelectionIssue({ startMonth: "2026-07", endMonth: "2026-06" }, "2026-07")).toBe("reversed");
   });
 
   it("compares month-to-date with the same available prior-month period", () => {

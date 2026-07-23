@@ -37,7 +37,7 @@ function CompositionGroup({ title, rows, expanded, onExpandedChange, showProport
       <span className="text-sm text-muted-foreground">{rows.length} 项</span>
     </div>
     {rows.length === 0 ? <p className="text-sm text-muted-foreground">暂无分类金额</p> : <div className="grid gap-2">
-      {visibleRows.map((row) => <div key={row.category_id} className="grid gap-1">
+      {visibleRows.map((row) => <div key={row.category_id ?? row.category_name} className="grid gap-1">
         <div className="flex items-center justify-between gap-3 text-sm">
           <span className="min-w-0 break-words">{row.category_name}</span>
           <span className="shrink-0 tabular-nums">{formatWholeEuro(row.amount)}</span>

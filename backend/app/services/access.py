@@ -74,6 +74,24 @@ async def require_fresh_store_access(
     return user, store
 
 
+async def require_company_settlement_access(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    store_id: int,
+) -> tuple[User, Store]:
+    """Require live store access and the server-owned settlement capability."""
+    user, store = await require_fresh_store_access(
+        session,
+        user_id=user_id,
+        store_id=store_id,
+        capability="ledger.view",
+    )
+    if not store.company_settlement_enabled:
+        raise HTTPException(403, "当前门店未启用公司结算")
+    return user, store
+
+
 async def list_accessible_stores(session: AsyncSession, user: User) -> list[Store]:
     query = select(Store).order_by(Store.name)
     if user.role != "admin":

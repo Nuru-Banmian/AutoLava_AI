@@ -3,8 +3,8 @@ import { eachDayOfInterval, format, parseISO } from "date-fns";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
-import { api, friendlyApiError } from "@/api/client";
-import type { DatabaseResponse, RecordSnapshot } from "@/api/types";
+import { friendlyApiError } from "@/api/client";
+import type { RecordSnapshot } from "@/api/types";
 import { useAuth } from "@/auth/AuthProvider";
 import { BusinessAnalysisCard } from "@/components/BusinessAnalysisCard";
 import { DeleteRecordDialog } from "@/components/DeleteRecordDialog";
@@ -15,11 +15,11 @@ import { RecordFilters } from "@/components/RecordFilters";
 import { RecordPagination } from "@/components/RecordPagination";
 import { RecordTable, type RecordTableRow } from "@/components/RecordTable";
 import type { DateRange, RecordRangeMode } from "@/lib/business-record-ranges";
-import { recordRange } from "@/lib/business-record-ranges";
+import { monthRange } from "@/lib/business-record-ranges";
 import { downloadBusinessRecords } from "@/lib/business-record-export";
-import { databaseKey, storeLocalToday } from "@/lib/user-api";
+import { databaseKey, loadBusinessRecords, storeLocalToday } from "@/lib/user-api";
 import { useStore } from "@/stores/StoreProvider";
-import { restoredBusinessRecordsState, type BusinessAnalysisViewState, type BusinessRecordsViewState } from "@/navigation/business-records-return";
+import { restoredBusinessRecordsState, type BusinessRecordsViewState } from "@/navigation/business-records-return";
 
 const PAGE_SIZE = 15 as const;
 const FETCH_SIZE = 200 as const;
@@ -33,14 +33,13 @@ export function BusinessRecordsPage() {
   const isAdmin = user?.role === "admin";
   const restored = useRef(restoredBusinessRecordsState(location.state, selected?.id)).current;
   const hasRestoreEnvelope = Boolean(location.state && typeof location.state === "object" && "restoreBusinessRecords" in location.state);
-  const defaultAnalysis = (): BusinessAnalysisViewState => ({ mode: "current-month", custom: { start: `${today.slice(0, 7)}-01`, end: today } });
-  const [recordMode, setRecordMode] = useState<RecordRangeMode>(restored?.recordMode ?? "current-month");
-  const [range, setRange] = useState<DateRange>(() => restored?.range ?? recordRange("current-month", today));
+  const [recordMode, setRecordMode] = useState<RecordRangeMode>(restored?.recordMode ?? "month");
+  const [range, setRange] = useState<DateRange>(() => restored?.range ?? monthRange(today.slice(0, 7)));
   const [page, setPage] = useState(restored?.page ?? 1);
   const [selectedDate, setSelectedDate] = useState<string | null>(restored?.selectedDate ?? null);
-  const [analysisView, setAnalysisView] = useState<BusinessAnalysisViewState>(() => restored?.analysis ?? defaultAnalysis());
   const [mobileRecord, setMobileRecord] = useState<RecordDetail | null>(null);
   const [returnFocusTo, setReturnFocusTo] = useState<HTMLButtonElement | null>(null);
+  const [returnDeleteFocusTo, setReturnDeleteFocusTo] = useState<HTMLButtonElement | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [recordStoreId, setRecordStoreId] = useState<number | null>(selected?.id ?? null);
   const selectedRecordRef = useRef<RecordSnapshot | null>(null);
@@ -58,18 +57,19 @@ export function BusinessRecordsPage() {
       setSelectedDate(null);
       setMobileRecord(null);
       setReturnFocusTo(null);
+      setReturnDeleteFocusTo(null);
       setDeleteOpen(false);
       return;
     }
     setRecordStoreId(selected.id);
-    setRecordMode("current-month");
-    setRange(recordRange("current-month", storeLocalToday(selected)));
+    setRecordMode("month");
+    setRange(monthRange(storeLocalToday(selected).slice(0, 7)));
     setPage(1);
     setSelectedDate(null);
     setMobileRecord(null);
     setReturnFocusTo(null);
+    setReturnDeleteFocusTo(null);
     setDeleteOpen(false);
-    setAnalysisView(defaultAnalysis());
     pendingMobileRestoreDate.current = null;
   }, [selected?.id, today]);
 
@@ -89,7 +89,7 @@ export function BusinessRecordsPage() {
   const records = useQuery({
     queryKey: recordStateReady ? databaseKey(selected.id, recordQueryString) : ["database", "records", "pending", selected?.id ?? null],
     enabled: recordStateReady,
-    queryFn: () => api<DatabaseResponse>(`/database/${selected!.id}/records?${recordQueryString}`),
+    queryFn: ({ signal }) => loadBusinessRecords(selected!.id, range.start, range.end, signal),
   });
 
   useEffect(() => {
@@ -168,7 +168,6 @@ export function BusinessRecordsPage() {
       page,
       selectedDate,
       mobileRecordDate: mobileRecord?.date ?? null,
-      analysis: analysisView,
       scrollY: window.scrollY,
     };
     navigate(`/ledger?date=${targetDate}`, { state: { returnToBusinessRecords } });
@@ -179,7 +178,7 @@ export function BusinessRecordsPage() {
   }
 
   return (
-    <section className="grid w-full gap-4">
+    <section className="grid w-full gap-4 lg:min-h-0 lg:flex-1 lg:grid-rows-[auto_auto_minmax(0,1fr)]">
       <header><h1 className="text-2xl font-semibold">营业记录</h1></header>
       <RecordFilters
         mode={recordMode}
@@ -190,9 +189,9 @@ export function BusinessRecordsPage() {
         onChange={handleRecordRangeChange}
         onExport={() => exportMutation.mutate({ storeId: selected.id, requestedRange: range })}
       />
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(30rem,32rem)] lg:items-start">
-        <div className="min-w-0 overflow-x-hidden">
-          <div className="hidden lg:block">
+      <div className="grid gap-4 lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_minmax(30rem,32rem)]">
+        <div className="min-w-0 overflow-x-hidden lg:flex lg:min-h-0 lg:flex-col">
+          <div className="hidden lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:block">
             <RecordTable
               records={pagedTableRows}
               selectedDate={selectedDate}
@@ -226,7 +225,7 @@ export function BusinessRecordsPage() {
             onPageChange={handlePageChange}
           />
         </div>
-        <aside className="grid gap-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
+        <aside className="grid gap-4 lg:min-h-0 lg:overflow-y-auto">
           <div className="hidden lg:block">
             {selectedTableRow ? (
               <RecordDetailPanel
@@ -234,8 +233,9 @@ export function BusinessRecordsPage() {
                 canEdit
                 canDelete={isAdmin && selectedTableRow.id !== null}
                 onEdit={editRecord}
-                onDelete={() => {
+                onDelete={(trigger) => {
                   if (selectedTableRow.id === null) return;
+                  setReturnDeleteFocusTo(trigger);
                   setDeleteOpen(true);
                 }}
               />
@@ -248,7 +248,7 @@ export function BusinessRecordsPage() {
               </div>
             )}
           </div>
-          {recordStateReady && <BusinessAnalysisCard key={selected.id} storeId={selected.id} today={today} initialViewState={analysisView} onViewStateChange={setAnalysisView} />}
+          {recordStateReady && <BusinessAnalysisCard key={selected.id} storeId={selected.id} range={range} />}
         </aside>
       </div>
       {mobileRecord && (mobileRecord.id === null || mobileRecord.store_id === selected.id) && (
@@ -262,8 +262,9 @@ export function BusinessRecordsPage() {
           onOpenChange={(open) => {
             if (!open) setMobileRecord(null);
           }}
-          onDelete={() => {
+          onDelete={(trigger) => {
             if (mobileRecord.id === null) return;
+            setReturnDeleteFocusTo(trigger);
             setDeleteOpen(true);
           }}
         />
@@ -273,8 +274,12 @@ export function BusinessRecordsPage() {
         storeId={selected.id}
         record={selectedRecord}
         open={recordStateReady && deleteOpen}
+        returnFocusTo={returnDeleteFocusTo}
         onOpenChange={setDeleteOpen}
-        onCompleted={() => setMobileRecord(null)}
+        onCompleted={() => {
+          setSelectedDate(null);
+          setMobileRecord(null);
+        }}
       />
     </section>
   );

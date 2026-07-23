@@ -138,12 +138,12 @@ it("clears an auto-selected user's form and dirty navigation state after a Stric
   expect(screen.getByRole("heading", { name: "新建用户" })).toBeInTheDocument();
 });
 
-it("keeps user controls on one row and leaves the selector blank in create mode", async () => {
+it("starts user creation from the user list toolbar and leaves the selector blank", async () => {
   mockUsers([maria]);
   renderPanel();
   await screen.findByRole("heading", { name: "编辑 maria" });
 
-  const controls = screen.getByTestId("user-panel-controls");
+  const controls = screen.getByRole("toolbar", { name: "用户列表操作" });
   expect(controls).toHaveClass("flex", "items-center");
   expect(within(controls).getByRole("combobox", { name: "用户" })).toBeInTheDocument();
   await userEvent.click(within(controls).getByRole("button", { name: "新建用户" }));
