@@ -363,6 +363,7 @@ async def test_assigned_store_is_exposed(client, user_factory, store_factory, db
             "timezone": assigned.timezone,
             "is_active": True,
             "company_settlement_enabled": False,
+            "wash_count_enabled": True,
         }
     ]
 

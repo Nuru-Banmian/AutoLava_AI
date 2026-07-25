@@ -146,15 +146,15 @@ export function StoreDetailsCard({ mode, store, onDirtyChange, onSaved, onDelete
     }
   }
 
-  async function toggleCompanySettlement() {
+  async function toggleStoreSetting(
+    changes: Partial<Pick<AdminStore, "company_settlement_enabled" | "wash_count_enabled">>,
+  ) {
     if (!store) return;
     const requestId = beginRequest();
     try {
       const saved = await api<AdminStore>(`/admin/stores/${store.id}`, {
         method: "PATCH",
-        body: JSON.stringify({
-          company_settlement_enabled: !store.company_settlement_enabled,
-        }),
+        body: JSON.stringify(changes),
       });
       await invalidateStores();
       if (!isCurrent(requestId)) return;
@@ -228,12 +228,31 @@ export function StoreDetailsCard({ mode, store, onDirtyChange, onSaved, onDelete
           <input
             checked={store.company_settlement_enabled ?? false}
             className="mt-1 size-4"
-            onChange={() => void toggleCompanySettlement()}
+            onChange={() => void toggleStoreSetting({
+              company_settlement_enabled: !store.company_settlement_enabled,
+            })}
             type="checkbox"
           />
           <span>
             <span className="block text-sm font-medium">为此门店启用公司结算</span>
             <span className="block text-sm text-muted-foreground">关闭后保留既有历史，但不再允许新的公司结算业务操作。</span>
+          </span>
+        </label>
+      </section>}
+      {mode === "edit" && store && <section aria-labelledby={`wash-count-setting-${store.id}`} className="border-t pt-4">
+        <h3 id={`wash-count-setting-${store.id}`} className="font-medium">记录洗车数量</h3>
+        <label className="mt-2 flex items-start gap-3">
+          <input
+            checked={store.wash_count_enabled ?? true}
+            className="mt-1 size-4"
+            onChange={() => void toggleStoreSetting({
+              wash_count_enabled: !(store.wash_count_enabled ?? true),
+            })}
+            type="checkbox"
+          />
+          <span>
+            <span className="block text-sm font-medium">为此门店记录洗车数量</span>
+            <span className="block text-sm text-muted-foreground">关闭后保留历史洗车数量，但记账时不再录入；重新开启即可恢复使用。</span>
           </span>
         </label>
       </section>}

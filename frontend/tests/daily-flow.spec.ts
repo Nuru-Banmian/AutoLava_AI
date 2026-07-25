@@ -9,10 +9,10 @@ const categories = Array.from({ length: 13 }, (_, index) => ({
   sort_order: index + 1,
 }));
 
-function snapshot(id: number, date: string, amount = id) {
+function snapshot(id: number, date: string, amount = id, washCount: number | null = null) {
   const now = `${date}T12:00:00`;
   return {
-    id, store_id: 1, date, daily_revenue: amount, wash_count: null, is_open: "营业",
+    id, store_id: 1, date, daily_revenue: amount, wash_count: washCount, is_open: "营业",
     income_mode: "composed",
     weather: null, weather_auto: null, weather_code: null, temperature_max: null,
     temperature_min: null, precipitation: null, activity: null, weather_edited: false,
@@ -37,12 +37,25 @@ function monthRecords(month: "06" | "07", count: number, idBase: number) {
   });
 }
 
-async function mockMergedFlow(page: Page) {
+async function mockMergedFlow(
+  page: Page,
+  {
+    washCountEnabled = true,
+    currentWashCount,
+  }: { washCountEnabled?: boolean; currentWashCount?: number } = {},
+) {
+  let washCountSetting = washCountEnabled;
   let records = [...monthRecords("07", 16, 100), ...monthRecords("06", 18, 200)];
+  if (currentWashCount !== undefined) {
+    records = [
+      snapshot(999, today, 100, currentWashCount),
+      ...records.filter((record) => record.date !== today),
+    ];
+  }
   const databaseRequests: URL[] = [];
   const chartRequests: URL[] = [];
   const exportRequests: URL[] = [];
-  const ledgerWrites: { date: string; body: { items: { category_id: number; amount: number }[] } }[] = [];
+  const ledgerWrites: { date: string; body: { wash_count: number | null; items: { category_id: number; amount: number }[] } }[] = [];
   const ledgerDeletes: string[] = [];
 
   await page.route(/^http:\/\/127\.0\.0\.1:4173\/api\//, async (route) => {
@@ -56,7 +69,7 @@ async function mockMergedFlow(page: Page) {
     });
 
     if (path === "/api/auth/me") return json({ id: 1, username: "administrator", role: "admin", is_owner: true });
-    if (path === "/api/stores/accessible") return json([{ id: 1, name: "Berlin", timezone: "Europe/Berlin" }]);
+    if (path === "/api/stores/accessible") return json([{ id: 1, name: "Berlin", timezone: "Europe/Berlin", wash_count_enabled: washCountSetting }]);
     if (path === "/api/dashboard/1") return json([]);
     if (path === "/api/income-config/1/current") return json({
       store_id: 1,
@@ -87,6 +100,7 @@ async function mockMergedFlow(page: Page) {
       const amount = body.items.find((item) => item.category_id === 1)?.amount ?? 0;
       const existing = records.find((item) => item.date === targetDate);
       const saved = snapshot(existing?.id ?? 999, targetDate, amount);
+      saved.wash_count = washCountSetting ? body.wash_count : existing?.wash_count ?? null;
       saved.items = body.items.map((item, index) => ({
         id: saved.id * 10 + index,
         category_id: item.category_id,
@@ -182,7 +196,16 @@ async function mockMergedFlow(page: Page) {
     return json({ detail: `unmocked ${request.method()} ${path}` }, 500);
   });
 
-  return { databaseRequests, chartRequests, exportRequests, ledgerWrites, ledgerDeletes };
+  return {
+    databaseRequests,
+    chartRequests,
+    exportRequests,
+    ledgerWrites,
+    ledgerDeletes,
+    setWashCountEnabled(value: boolean) {
+      washCountSetting = value;
+    },
+  };
 }
 
 function recordRows(page: Page, mobile: boolean) {
@@ -197,6 +220,30 @@ async function fillNewRecordAmounts(page: Page, firstAmount: string) {
     await page.getByLabel(category.name).fill("0");
   }
 }
+
+test("disabled wash count stays hidden and historical values return after re-enabling", async ({ page }) => {
+  await page.clock.install({ time: new Date(`${today}T12:00:00Z`) });
+  const flow = await mockMergedFlow(page, {
+    washCountEnabled: false,
+    currentWashCount: 7,
+  });
+  await page.goto(`/ledger?date=${today}`);
+
+  await expect(page.getByRole("button", { name: "事件", exact: true })).toBeVisible();
+  await expect(page.getByText("洗车数量", { exact: true })).toHaveCount(0);
+  await page.getByLabel(categories[0].name).fill("125");
+  await page.getByRole("button", { name: "事件", exact: true }).click();
+  await page.getByLabel("事件", { exact: true }).fill("雨天促销");
+  await page.getByRole("button", { name: "保存修改" }).click();
+
+  await expect.poll(() => flow.ledgerWrites.at(-1)?.body.wash_count).toBeNull();
+  flow.setWashCountEnabled(true);
+  await page.reload();
+  const washAndActivity = page.getByRole("button", { name: "洗车数量 / 事件" });
+  await expect(washAndActivity).toBeVisible();
+  await washAndActivity.click();
+  await expect(page.getByLabel("洗车数量")).toHaveValue("7");
+});
 
 for (const viewport of [
   { name: "desktop", width: 1280, height: 900, desktop: true },

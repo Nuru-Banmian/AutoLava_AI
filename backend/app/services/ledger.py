@@ -228,7 +228,15 @@ class LedgerService:
 
         record.is_open = payload["is_open"]
         record.daily_revenue = daily_revenue
-        record.wash_count = 0 if rest_day else payload.get("wash_count")
+        if store.wash_count_enabled:
+            submitted_wash_count = payload.get("wash_count")
+            record.wash_count = (
+                0
+                if rest_day or (created and submitted_wash_count is None)
+                else submitted_wash_count
+            )
+        elif created:
+            record.wash_count = None
         record.weather = payload.get("weather")
         record.weather_edited = payload.get("weather_edited", False)
         for field in (

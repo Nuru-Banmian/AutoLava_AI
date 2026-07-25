@@ -153,6 +153,27 @@ describe("LedgerForm", () => {
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ daily_revenue: 98, items: [] }));
   });
 
+  it("hides disabled wash count without submitting a historical value", () => {
+    const onSave = vi.fn();
+    render(<LedgerForm
+      categories={[]}
+      config={composedConfig}
+      record={savedRecord({ wash_count: 7, activity: "历史事件" })}
+      washCountEnabled={false}
+      onSave={onSave}
+    />);
+
+    expect(screen.queryByText("洗车数量")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "事件" }));
+    expect(screen.getByLabelText("事件")).toHaveValue("历史事件");
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      wash_count: null,
+      activity: "历史事件",
+    }));
+  });
+
   it("absorbs late automatic weather while the form is clean", () => {
     const view = render(<LedgerForm categories={[]} config={directConfig} onSave={vi.fn()} />);
     view.rerender(<LedgerForm categories={[]} config={directConfig} weather={{ weather: "晴", weather_code: 1, temperature_max: 20, temperature_min: 10, precipitation: 0 }} onSave={vi.fn()} />);

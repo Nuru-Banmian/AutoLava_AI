@@ -48,6 +48,7 @@ class StoreCreate(BaseModel):
     latitude: Latitude
     longitude: Longitude
     timezone: TimeZoneName = "Europe/Rome"
+    wash_count_enabled: bool = True
 
 
 class StorePatch(BaseModel):
@@ -58,6 +59,7 @@ class StorePatch(BaseModel):
     timezone: TimeZoneName | None = None
     is_active: bool | None = None
     company_settlement_enabled: bool | None = None
+    wash_count_enabled: bool | None = None
 
 
 class MemberReplace(BaseModel):
