@@ -262,7 +262,7 @@ describe("BusinessRecordsPage", () => {
 
     expect(await screen.findByRole("heading", { name: "2026年7月14日" })).toBeInTheDocument();
     expect(recordRequests[0]).toBe("/api/database/1/records?start=2026-07-01&end=2026-07-31&page=1&page_size=200");
-    expect(screen.getByText("洗车数量 8")).toBeInTheDocument();
+    expect(screen.getByText("洗车 8 辆")).toBeInTheDocument();
     const desktopGrid = [...document.querySelectorAll("div")].find((element) => (
       element.className.includes("lg:grid-cols-[minmax(0,1fr)_minmax(30rem,32rem)]")
     ));

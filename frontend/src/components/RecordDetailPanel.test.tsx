@@ -12,38 +12,56 @@ const record: RecordSnapshot = {
   items: [{ id: 1, category_id: 1, category_name: "现金", include_in_total: true, sort_order: 1, amount: 100, created_at: "", updated_at: "" }],
 };
 
-function renderPanel(value: RecordSnapshot, canDelete = false, onDelete = vi.fn()) {
-  return render(<MemoryRouter><RecordDetailPanel record={value} canEdit canDelete={canDelete} onDelete={onDelete} /></MemoryRouter>);
+function renderPanel(value: RecordSnapshot, canDelete = false, onDelete = vi.fn(), washCountEnabled = true) {
+  return render(
+    <MemoryRouter>
+      <RecordDetailPanel
+        record={value}
+        canEdit
+        canDelete={canDelete}
+        washCountEnabled={washCountEnabled}
+        onDelete={onDelete}
+      />
+    </MemoryRouter>,
+  );
 }
 
 describe("RecordDetailPanel", () => {
   it("renders an unrecorded date with the same edit action position", () => {
     render(
       <MemoryRouter>
-        <RecordDetailPanel record={{ id: null, date: "2026-07-15" }} canEdit canDelete onDelete={vi.fn()} />
+        <RecordDetailPanel
+          record={{ id: null, date: "2026-07-15" }}
+          canEdit
+          canDelete
+          washCountEnabled
+          onDelete={vi.fn()}
+        />
       </MemoryRouter>,
     );
 
     expect(screen.getByRole("heading", { name: "2026年7月15日" })).toBeInTheDocument();
     expect(screen.getByText("未录入", { exact: true })).toBeInTheDocument();
-    expect(screen.getAllByText("—", { exact: true })).toHaveLength(3);
+    expect(screen.getAllByText("—", { exact: true })).toHaveLength(2);
     expect(screen.getByRole("link", { name: "修改这天记录" })).toHaveAttribute("href", "/ledger?date=2026-07-15");
     expect(screen.queryByRole("button", { name: "删除记录" })).not.toBeInTheDocument();
   });
 
-  it("renders rest records without fabricating an open status", () => {
-    renderPanel({ ...record, is_open: "休息", wash_count: 0, activity: "会员日" });
+  it("keeps the date, textual status, revenue, weather, wash count, and event easy to scan", () => {
+    renderPanel({ ...record, is_open: "提前休息", activity: "会员日照常营业" });
 
-    expect(screen.getByRole("heading", { name: "2026年7月14日" })).toHaveClass("text-xl");
-    const statusText = screen.getByText("休息", { exact: true });
-    expect(statusText).toHaveClass("text-lg");
-    expect(statusText.parentElement).toHaveClass("rounded-xl", "bg-muted/50", "p-3");
-    const statusValue = statusText.closest("p");
-    expect(statusValue).not.toBeNull();
-    expect(statusValue?.querySelector('[aria-hidden="true"]')).toBeNull();
-    expect(screen.queryByText("营业", { exact: true })).not.toBeInTheDocument();
-    expect(screen.getByText("洗车数量 0")).toBeInTheDocument();
-    expect(screen.getByText(/会员日/)).toBeInTheDocument();
+    const heading = screen.getByRole("heading", { name: "2026年7月14日" });
+    expect(heading.parentElement).toHaveClass("flex-row", "flex-wrap");
+    expect(heading.parentElement).toHaveTextContent("2026年7月14日提前休息");
+    expect(screen.getByText("提前休息", { exact: true })).toBeInTheDocument();
+    expect(screen.queryByText("营业状态", { exact: true })).not.toBeInTheDocument();
+    expect(screen.getByText("营业额", { exact: true }).parentElement).toHaveTextContent("营业额€100");
+    expect(screen.getByText("晴", { exact: true })).toBeInTheDocument();
+    expect(screen.getByText("洗车 8 辆", { exact: true })).toBeInTheDocument();
+    expect(screen.queryByText("洗车数量", { exact: true })).not.toBeInTheDocument();
+    expect(screen.getByText("事件：", { exact: true })).toBeInTheDocument();
+    expect(screen.getByText("会员日照常营业", { exact: true })).toBeInTheDocument();
+    expect(screen.queryByText("活动：", { exact: true })).not.toBeInTheDocument();
     expect(screen.queryByText("计入总营业额")).not.toBeInTheDocument();
     expect(screen.queryByText("独立记录")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "收入明细" })).toBeInTheDocument();
@@ -62,10 +80,22 @@ describe("RecordDetailPanel", () => {
     expect(onDelete).toHaveBeenCalledOnce();
   });
 
-  it.each(["营业", "提前休息"] as const)("shows the actual %s status", (is_open) => {
+  it.each(["营业", "休息", "提前休息"] as const)("shows the actual %s status beside the date heading", (is_open) => {
     renderPanel({ ...record, is_open });
 
-    expect(screen.getByText(is_open, { exact: true })).toBeInTheDocument();
+    const heading = screen.getByRole("heading", { name: "2026年7月14日" });
+    expect(heading.parentElement).toHaveTextContent(`2026年7月14日${is_open}`);
+  });
+
+  it.each([
+    { label: "zero", washCount: 0, enabled: true },
+    { label: "empty", washCount: null, enabled: true },
+    { label: "disabled setting", washCount: 8, enabled: false },
+  ])("does not reserve detail space for wash count when $label", ({ washCount, enabled }) => {
+    renderPanel({ ...record, wash_count: washCount }, false, vi.fn(), enabled);
+
+    expect(screen.queryByText(/洗车 \d+ 辆/)).not.toBeInTheDocument();
+    expect(screen.queryByText("洗车数量", { exact: true })).not.toBeInTheDocument();
   });
 
   it("explains a legacy total-only record", () => {
