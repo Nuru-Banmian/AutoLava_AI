@@ -1,6 +1,6 @@
 import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronLeft, ChevronRight, Ellipsis } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Ellipsis, MoreHorizontal } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { api, ApiError, friendlyApiError } from "@/api/client";
@@ -24,6 +24,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useStore } from "@/stores/StoreProvider";
 
 interface SettlementWorkspace {
@@ -241,38 +242,150 @@ function RecordActionsMenu({ record, disabled, onEdit, onDelete, onRevoke }: {
   </div>;
 }
 
+function CompanyActionMenu({ company, archived, busy, onRename, onLifecycle, onDelete }: {
+  company: SettlementCompany;
+  archived: boolean;
+  busy: boolean;
+  onRename: () => void;
+  onLifecycle: () => void;
+  onDelete: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+    const closeWhenFocusLeaves = (event: FocusEvent) => {
+      const target = event.target;
+      if (target instanceof Node && !menuRef.current?.contains(target) && target !== triggerRef.current) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("focusin", closeWhenFocusLeaves);
+    return () => document.removeEventListener("focusin", closeWhenFocusLeaves);
+  }, [open]);
+
+  const closeAndRun = (action: () => void) => {
+    setOpen(false);
+    triggerRef.current?.focus();
+    action();
+  };
+  const handleMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? []);
+    const current = items.indexOf(document.activeElement as HTMLButtonElement);
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setOpen(false);
+      triggerRef.current?.focus();
+      return;
+    }
+    if (event.key === "Tab") {
+      setOpen(false);
+      return;
+    }
+    let next = current;
+    if (event.key === "ArrowDown") next = (current + 1) % items.length;
+    else if (event.key === "ArrowUp") next = (current - 1 + items.length) % items.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = items.length - 1;
+    else return;
+    event.preventDefault();
+    items[next]?.focus();
+  };
+
+  return <div className="relative shrink-0">
+    <Button
+      aria-expanded={open}
+      aria-haspopup="menu"
+      aria-label={`${company.name}更多操作`}
+      disabled={busy}
+      onClick={() => setOpen((current) => !current)}
+      onKeyDown={(event) => {
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          event.preventDefault();
+          setOpen(true);
+        }
+      }}
+      ref={triggerRef}
+      size="icon"
+      type="button"
+      variant="ghost"
+    >
+      <MoreHorizontal aria-hidden="true" />
+    </Button>
+    {open && <div
+      aria-label={`${company.name}操作`}
+      className="absolute right-0 top-full z-20 mt-1 grid w-44 rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
+      onKeyDown={handleMenuKeyDown}
+      ref={menuRef}
+      role="menu"
+    >
+      <button aria-label={`重命名${company.name}`} className="rounded-sm px-2 py-2 text-left text-sm outline-none hover:bg-accent focus:bg-accent" onClick={() => closeAndRun(onRename)} role="menuitem" type="button">
+        重命名
+      </button>
+      <button aria-label={archived ? `恢复${company.name}` : `归档${company.name}`} className="rounded-sm px-2 py-2 text-left text-sm outline-none hover:bg-accent focus:bg-accent" onClick={() => closeAndRun(onLifecycle)} role="menuitem" type="button">
+        {archived ? "恢复" : "归档"}
+      </button>
+      <button aria-label={`永久删除${company.name}`} className="rounded-sm px-2 py-2 text-left text-sm text-destructive outline-none hover:bg-destructive/10 focus:bg-destructive/10" onClick={() => closeAndRun(onDelete)} role="menuitem" type="button">
+        永久删除
+      </button>
+    </div>}
+  </div>;
+}
+
 function CompanyList({ companies, archived, busy, onRename, onLifecycle, onDelete }: {
   companies: SettlementCompany[];
   archived: boolean;
   busy: boolean;
-  onRename: (company: SettlementCompany, name: string) => void;
-  onLifecycle: (company: SettlementCompany) => void;
-  onDelete: (company: SettlementCompany) => void;
+  onRename: (company: SettlementCompany, name: string) => Promise<boolean>;
+  onLifecycle: (company: SettlementCompany) => Promise<boolean>;
+  onDelete: (company: SettlementCompany) => Promise<boolean>;
 }) {
   const [editing, setEditing] = useState<number | null>(null);
   const [names, setNames] = useState<Record<number, string>>({});
-  if (!companies.length) return <p>{archived ? "暂无归档公司" : "暂无活动公司"}</p>;
-  return <ul className="grid gap-3">
-    {companies.map((company) => <li className="rounded-lg border p-3" key={company.id}>
+  const listRef = useRef<HTMLUListElement>(null);
+  const runRemovingAction = async (company: SettlementCompany, action: (company: SettlementCompany) => Promise<boolean>) => {
+    const companyIndex = companies.findIndex((candidate) => candidate.id === company.id);
+    await action(company);
+    requestAnimationFrame(() => {
+      const triggers = Array.from(listRef.current?.querySelectorAll<HTMLButtonElement>('button[aria-haspopup="menu"]') ?? []);
+      const nextTrigger = triggers[Math.min(Math.max(companyIndex, 0), triggers.length - 1)];
+      if (nextTrigger) nextTrigger.focus();
+      else listRef.current?.closest<HTMLElement>('[role="region"]')?.focus();
+    });
+  };
+  if (!companies.length) return <p className="px-1 py-3 text-sm text-muted-foreground">{archived ? "暂无归档公司" : "暂无使用中的公司"}</p>;
+  return <ul className="grid gap-1" ref={listRef}>
+    {companies.map((company) => <li className="relative min-w-0 rounded-md border px-2 py-1" key={company.id}>
       {editing === company.id ? <form className="flex min-w-0 flex-wrap gap-2" onSubmit={(event) => {
         event.preventDefault();
-        onRename(company, names[company.id] ?? company.name);
+        void onRename(company, names[company.id] ?? company.name).then((saved) => {
+          if (saved) setEditing(null);
+        });
       }}>
         <label className="min-w-0 flex-1">
           <span className="sr-only">重命名{company.name}</span>
-          <Input maxLength={120} value={names[company.id] ?? company.name} onChange={(event) => setNames((current) => ({ ...current, [company.id]: event.target.value }))} />
+          <Input autoFocus maxLength={120} value={names[company.id] ?? company.name} onChange={(event) => setNames((current) => ({ ...current, [company.id]: event.target.value }))} />
         </label>
         <Button disabled={busy} type="submit">保存名称</Button>
         <Button onClick={() => setEditing(null)} type="button" variant="outline">取消</Button>
-      </form> : <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
-        <span className="min-w-0 break-words font-medium">{company.name}</span>
-        <div className="flex flex-wrap gap-2">
-          <Button aria-label={`重命名${company.name}`} disabled={busy} onClick={() => { setNames((current) => ({ ...current, [company.id]: current[company.id] ?? company.name })); setEditing(company.id); }} type="button" variant="outline">重命名</Button>
-          <Button aria-label={archived ? `恢复${company.name}` : `归档${company.name}`} disabled={busy} onClick={() => onLifecycle(company)} type="button" variant="outline">{archived ? "恢复" : "归档"}</Button>
-          <Button aria-label={`永久删除${company.name}`} disabled={busy} onClick={() => {
-            if (window.confirm(`确定永久删除结算公司“${company.name}”吗？此操作无法撤销。`)) onDelete(company);
-          }} type="button" variant="destructive">永久删除</Button>
-        </div>
+      </form> : <div className="flex min-w-0 items-center justify-between gap-2">
+        <span className="min-w-0 truncate text-sm font-medium" title={company.name}>{company.name}</span>
+        <CompanyActionMenu
+          archived={archived}
+          busy={busy}
+          company={company}
+          onDelete={() => {
+            if (window.confirm(`确定永久删除结算公司“${company.name}”吗？此操作无法撤销。`)) void runRemovingAction(company, onDelete);
+          }}
+          onLifecycle={() => { void runRemovingAction(company, onLifecycle); }}
+          onRename={() => {
+            setNames((current) => ({ ...current, [company.id]: current[company.id] ?? company.name }));
+            setEditing(company.id);
+          }}
+        />
       </div>}
     </li>)}
   </ul>;
@@ -293,15 +406,14 @@ export function CompanySettlementPage() {
   const [editCompanyId, setEditCompanyId] = useState("");
   const [editAmount, setEditAmount] = useState("");
   const [recordToDelete, setRecordToDelete] = useState<SettlementRecord | null>(null);
-  const [activeCompaniesStoreId, setActiveCompaniesStoreId] = useState<number | null>(null);
-  const [archivedCompaniesStoreId, setArchivedCompaniesStoreId] = useState<number | null>(null);
+  const [companyManagementStoreId, setCompanyManagementStoreId] = useState<number | null>(null);
+  const [companyTab, setCompanyTab] = useState<"active" | "archived">("active");
   const [recordTransition, setRecordTransition] = useState<{
     record: SettlementRecord;
     kind: RecordTransitionKind;
   } | null>(null);
   const enabled = selected?.company_settlement_enabled === true;
-  const activeCompaniesOpen = activeCompaniesStoreId === selected?.id;
-  const archivedCompaniesOpen = archivedCompaniesStoreId === selected?.id;
+  const companyManagementOpen = companyManagementStoreId === selected?.id;
   const currentMonth = selected ? monthInTimezone(selected.timezone) : "";
   const workspace = useQuery({
     queryKey: ["settlements", selected?.id],
@@ -316,7 +428,7 @@ export function CompanySettlementPage() {
   const archived = useQuery({
     queryKey: ["settlement-companies", selected?.id, "archived"],
     queryFn: () => api<SettlementCompany[]>(`/settlements/${selected!.id}/companies?archived=true`),
-    enabled: Boolean(selected && enabled && workspace.data && archivedCompaniesOpen),
+    enabled: Boolean(selected && enabled && workspace.data && companyManagementOpen),
   });
   const monthSummary = useQuery({
     queryKey: ["settlement-month", selected?.id, month],
@@ -470,7 +582,8 @@ export function CompanySettlementPage() {
     setEditCompanyId("");
     setEditAmount("");
     setRecordToDelete(null);
-    setArchivedCompaniesStoreId(null);
+    setCompanyManagementStoreId(null);
+    setCompanyTab("active");
     setRecordTransition(null);
     companyMutation.reset();
     recordMutation.reset();
@@ -541,9 +654,14 @@ export function CompanySettlementPage() {
     if (!selected) return;
     submitCreate(selected.id, name);
   };
-  const runCompanyAction = (storeId: number, path: string, method: string, body?: object) => {
-    const retry = () => runCompanyAction(storeId, path, method, body);
-    companyMutation.mutate({ storeId, path, method, body: body ? JSON.stringify(body) : undefined, retry });
+  const runCompanyAction = async (storeId: number, path: string, method: string, body?: object) => {
+    const retry = () => void runCompanyAction(storeId, path, method, body);
+    try {
+      await companyMutation.mutateAsync({ storeId, path, method, body: body ? JSON.stringify(body) : undefined, retry });
+      return true;
+    } catch {
+      return false;
+    }
   };
 
   if (isLoading) return <p role="status">正在加载门店…</p>;
@@ -600,7 +718,7 @@ export function CompanySettlementPage() {
           <label className="grid min-w-0 gap-1 text-sm font-medium">
             结算公司
             <select aria-label="结算公司" className="h-9 min-w-0 rounded-md border border-input bg-transparent px-3 text-sm" onChange={(event) => setCompanyId(event.target.value)} required value={companyId}>
-              <option value="">请选择活动结算公司</option>
+              <option value="">请选择使用中的结算公司</option>
               {(active.data ?? []).map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
             </select>
           </label>
@@ -720,34 +838,45 @@ export function CompanySettlementPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <section className="grid gap-3" aria-labelledby="active-companies-title">
-        <h2 id="active-companies-title">
-          <button aria-expanded={activeCompaniesOpen} className="group flex w-full items-center gap-3 py-2 text-left text-xl font-semibold text-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" onClick={() => setActiveCompaniesStoreId((storeId) => storeId === selected.id ? null : selected.id)} type="button">
-            <span>活动结算公司</span>
-            <span aria-hidden="true" className="h-px flex-1 bg-border" />
-            <ChevronDown aria-hidden="true" className={`size-5 shrink-0 text-muted-foreground transition-transform duration-200 ${activeCompaniesOpen ? "rotate-180" : ""}`} />
+      <section className="grid min-w-0 gap-3" aria-labelledby="company-management-title">
+        <h2 id="company-management-title">
+          <button
+            aria-expanded={companyManagementOpen}
+            className="group flex w-full min-w-0 items-center gap-3 py-2 text-left text-xl font-semibold text-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            onClick={() => setCompanyManagementStoreId((storeId) => storeId === selected.id ? null : selected.id)}
+            type="button"
+          >
+            <span className="min-w-0">结算公司管理</span>
+            {companyManagementOpen && <span className="sr-only">
+              ，使用中 {active.data?.length ?? 0}，已归档 {archived.data?.length ?? 0}
+            </span>}
+            <span aria-hidden="true" className="h-px min-w-0 flex-1 bg-border" />
+            <ChevronDown aria-hidden="true" className={`size-5 shrink-0 text-muted-foreground transition-transform duration-200 ${companyManagementOpen ? "rotate-180" : ""}`} />
           </button>
         </h2>
-        {activeCompaniesOpen && <>
-          <form className="flex min-w-0 flex-wrap gap-2" onSubmit={create}>
-            <label className="min-w-0 flex-1">
-              <span className="sr-only">新结算公司名称</span>
-              <Input maxLength={120} placeholder="输入结算公司名称" value={name} onChange={(event) => setName(event.target.value)} />
-            </label>
-            <Button disabled={companyMutation.isPending} type="submit">新增结算公司</Button>
-          </form>
-          {active.isLoading ? <p role="status">加载活动公司…</p> : active.error ? <div role="alert"><p>{friendlyApiError(active.error, "活动公司加载失败")}</p><Button onClick={() => void active.refetch()} type="button" variant="outline">重试活动公司</Button></div> : <CompanyList key={`${selected.id}:active`} companies={active.data ?? []} archived={false} busy={companyMutation.isPending} onRename={(company, next) => runCompanyAction(selected.id, `/settlements/${selected.id}/companies/${company.id}`, "PATCH", { name: next })} onLifecycle={(company) => runCompanyAction(selected.id, `/settlements/${selected.id}/companies/${company.id}/archive`, "POST")} onDelete={(company) => runCompanyAction(selected.id, `/settlements/${selected.id}/companies/${company.id}`, "DELETE")} />}
-        </>}
-      </section>
-      <section className="grid gap-3" aria-labelledby="archived-companies-title">
-        <h2 id="archived-companies-title">
-          <button aria-expanded={archivedCompaniesOpen} className="group flex w-full items-center gap-3 py-2 text-left text-xl font-semibold text-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" onClick={() => setArchivedCompaniesStoreId((storeId) => storeId === selected.id ? null : selected.id)} type="button">
-            <span>归档结算公司</span>
-            <span aria-hidden="true" className="h-px flex-1 bg-border" />
-            <ChevronDown aria-hidden="true" className={`size-5 shrink-0 text-muted-foreground transition-transform duration-200 ${archivedCompaniesOpen ? "rotate-180" : ""}`} />
-          </button>
-        </h2>
-        {archivedCompaniesOpen && (archived.isLoading ? <p role="status">加载归档公司…</p> : archived.error ? <div role="alert"><p>{friendlyApiError(archived.error, "归档公司加载失败")}</p><Button onClick={() => void archived.refetch()} type="button" variant="outline">重试归档公司</Button></div> : <CompanyList key={`${selected.id}:archived`} companies={archived.data ?? []} archived busy={companyMutation.isPending} onRename={(company, next) => runCompanyAction(selected.id, `/settlements/${selected.id}/companies/${company.id}`, "PATCH", { name: next })} onLifecycle={(company) => runCompanyAction(selected.id, `/settlements/${selected.id}/companies/${company.id}/restore`, "POST")} onDelete={(company) => runCompanyAction(selected.id, `/settlements/${selected.id}/companies/${company.id}`, "DELETE")} />)}
+        {companyManagementOpen && <Tabs className="min-w-0" onValueChange={(value) => setCompanyTab(value as "active" | "archived")} value={companyTab}>
+          <TabsList aria-label="结算公司状态" className="grid h-auto w-full grid-cols-2">
+            <TabsTrigger className="min-w-0 px-2" value="active">使用中（{active.data?.length ?? 0}）</TabsTrigger>
+            <TabsTrigger className="min-w-0 px-2" value="archived">已归档（{archived.data?.length ?? 0}）</TabsTrigger>
+          </TabsList>
+          <TabsContent className="min-w-0" value="active">
+            <form className="mb-2 flex min-w-0 flex-wrap gap-2" onSubmit={create}>
+              <label className="min-w-0 flex-1">
+                <span className="sr-only">新结算公司名称</span>
+                <Input maxLength={120} placeholder="输入结算公司名称" value={name} onChange={(event) => setName(event.target.value)} />
+              </label>
+              <Button disabled={companyMutation.isPending} type="submit">新增结算公司</Button>
+            </form>
+            <div aria-label={`使用中结算公司（${active.data?.length ?? 0}）`} className="max-h-64 min-w-0 overflow-y-auto overscroll-contain pr-1" role="region" tabIndex={0}>
+              {active.isLoading ? <p role="status">加载使用中的公司…</p> : active.error ? <div role="alert"><p>{friendlyApiError(active.error, "使用中的公司加载失败")}</p><Button onClick={() => void active.refetch()} type="button" variant="outline">重试使用中的公司</Button></div> : <CompanyList key={`${selected.id}:active`} companies={active.data ?? []} archived={false} busy={companyMutation.isPending} onRename={(company, next) => runCompanyAction(selected.id, `/settlements/${selected.id}/companies/${company.id}`, "PATCH", { name: next })} onLifecycle={(company) => runCompanyAction(selected.id, `/settlements/${selected.id}/companies/${company.id}/archive`, "POST")} onDelete={(company) => runCompanyAction(selected.id, `/settlements/${selected.id}/companies/${company.id}`, "DELETE")} />}
+            </div>
+          </TabsContent>
+          <TabsContent className="min-w-0" value="archived">
+            <div aria-label={`已归档结算公司（${archived.data?.length ?? 0}）`} className="max-h-64 min-w-0 overflow-y-auto overscroll-contain pr-1" role="region" tabIndex={0}>
+              {archived.isLoading ? <p role="status">加载已归档公司…</p> : archived.error ? <div role="alert"><p>{friendlyApiError(archived.error, "已归档公司加载失败")}</p><Button onClick={() => void archived.refetch()} type="button" variant="outline">重试已归档公司</Button></div> : <CompanyList key={`${selected.id}:archived`} companies={archived.data ?? []} archived busy={companyMutation.isPending} onRename={(company, next) => runCompanyAction(selected.id, `/settlements/${selected.id}/companies/${company.id}`, "PATCH", { name: next })} onLifecycle={(company) => runCompanyAction(selected.id, `/settlements/${selected.id}/companies/${company.id}/restore`, "POST")} onDelete={(company) => runCompanyAction(selected.id, `/settlements/${selected.id}/companies/${company.id}`, "DELETE")} />}
+            </div>
+          </TabsContent>
+        </Tabs>}
       </section>
       {message && <div role="alert">{message}{failedAction && <Button className="ml-2" onClick={failedAction} type="button" variant="outline">重试操作</Button>}</div>}
     </>}

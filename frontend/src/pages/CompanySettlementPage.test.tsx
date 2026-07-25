@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { MemoryRouter } from "react-router-dom";
@@ -136,9 +137,8 @@ describe("CompanySettlementPage record corrections", () => {
     const summary = await screen.findByRole("region", { name: "月度汇总" });
     const registration = screen.getByRole("form", { name: "登记开票记录" });
     const records = screen.getByRole("region", { name: "开票记录列表" });
-    const activeCompanies = screen.getByRole("region", { name: "活动结算公司" });
-    const archivedCompanies = screen.getByRole("region", { name: "归档结算公司" });
-    const ordered = [pageTitle, monthNavigation, summary, registration, records, activeCompanies, archivedCompanies];
+    const companyManagement = screen.getByRole("region", { name: "结算公司管理" });
+    const ordered = [pageTitle, monthNavigation, summary, registration, records, companyManagement];
 
     ordered.slice(0, -1).forEach((node, index) => {
       expect(node.compareDocumentPosition(ordered[index + 1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -157,24 +157,24 @@ describe("CompanySettlementPage record corrections", () => {
     expect(screen.queryByText("登记时新增公司")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "新增并选择" })).not.toBeInTheDocument();
 
-    const activeCompanies = screen.getByRole("button", { name: "活动结算公司" });
-    expect(activeCompanies).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByRole("button", { name: "重命名Alpha" })).not.toBeInTheDocument();
+    const companyManagement = screen.getByRole("button", { name: "结算公司管理" });
+    expect(companyManagement).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("tab", { name: "使用中（2）" })).not.toBeInTheDocument();
 
-    fireEvent.click(activeCompanies);
-    expect(activeCompanies).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("button", { name: "重命名Alpha" })).toHaveTextContent(/^重命名$/);
-    expect(screen.getByRole("button", { name: "归档Alpha" })).toHaveTextContent(/^归档$/);
-    expect(screen.getByRole("button", { name: "永久删除Alpha" })).toHaveTextContent(/^永久删除$/);
+    fireEvent.click(companyManagement);
+    expect(companyManagement).toHaveAttribute("aria-expanded", "true");
+    expect(await screen.findByRole("tab", { name: "使用中（2）" })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByRole("tab", { name: "已归档（0）" })).toHaveAttribute("aria-selected", "false");
     expect(screen.getByRole("button", { name: "新增结算公司" })).toBeInTheDocument();
 
-    const archivedCompanies = screen.getByRole("button", { name: "归档结算公司" });
-    expect(archivedCompanies).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByText("暂无归档公司")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Alpha更多操作" }));
+    expect(await screen.findByRole("menuitem", { name: "重命名Alpha" })).toHaveTextContent(/^重命名$/);
+    expect(screen.getByRole("menuitem", { name: "归档Alpha" })).toHaveTextContent(/^归档$/);
+    expect(screen.getByRole("menuitem", { name: "永久删除Alpha" })).toHaveTextContent(/^永久删除$/);
 
-    fireEvent.click(archivedCompanies);
-    expect(archivedCompanies).toHaveAttribute("aria-expanded", "true");
+    await userEvent.click(screen.getByRole("tab", { name: "已归档（0）" }));
     expect(await screen.findByText("暂无归档公司")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "新增结算公司" })).not.toBeInTheDocument();
   });
 
   it("confirms the whole record after an explicit prompt and refreshes its month", async () => {
@@ -410,7 +410,8 @@ describe("CompanySettlementPage record corrections", () => {
     ]);
 
     fireEvent.change(await screen.findByLabelText("开票月份"), { target: { value: "2026-06" } });
-    fireEvent.click(screen.getByRole("button", { name: "归档结算公司" }));
+    fireEvent.click(screen.getByRole("button", { name: "结算公司管理" }));
+    await userEvent.click(await screen.findByRole("tab", { name: "已归档（0）" }));
     expect(await screen.findByText("暂无归档公司")).toBeInTheDocument();
     await openRecordActions("Alpha");
     fireEvent.click(screen.getByRole("menuitem", { name: "编辑Alpha开票记录" }));
@@ -424,6 +425,7 @@ describe("CompanySettlementPage record corrections", () => {
     expect(screen.getByLabelText("开票月份")).toHaveValue("2026-07");
     expect(screen.queryByRole("dialog", { name: "修改开票记录" })).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "结算公司管理" })).toHaveAttribute("aria-expanded", "false");
     expect(romaArchivedReads).toBe(0);
   });
 });
