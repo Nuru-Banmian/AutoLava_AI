@@ -44,6 +44,8 @@ describe("RecordDetailPanel", () => {
     expect(screen.queryByText("营业", { exact: true })).not.toBeInTheDocument();
     expect(screen.getByText("洗车数量 0")).toBeInTheDocument();
     expect(screen.getByText(/会员日/)).toBeInTheDocument();
+    expect(screen.getByText("事件：", { exact: true })).toBeInTheDocument();
+    expect(screen.queryByText("活动：", { exact: true })).not.toBeInTheDocument();
     expect(screen.queryByText("计入总营业额")).not.toBeInTheDocument();
     expect(screen.queryByText("独立记录")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "收入明细" })).toBeInTheDocument();

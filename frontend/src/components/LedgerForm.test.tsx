@@ -67,23 +67,27 @@ describe("LedgerForm", () => {
     expect(screen.queryByRole("group", { name: "收入项目" })).not.toBeInTheDocument();
   });
 
-  it("starts new business and early-close amounts empty in both ledger modes", () => {
-    const direct = render(<LedgerForm categories={[]} config={directConfig} onSave={vi.fn()} />);
-    expect(screen.getByLabelText("当日营业额")).toHaveValue("");
-    fireEvent.change(screen.getByLabelText("状态"), { target: { value: "提前休息" } });
-    expect(screen.getByLabelText("当日营业额")).toHaveValue("");
+  it("starts new ledger values at zero without marking the form dirty", () => {
+    const directDirty = vi.fn();
+    const direct = render(<LedgerForm categories={[]} config={directConfig} onDirtyChange={directDirty} onSave={vi.fn()} />);
+    expect(screen.getByLabelText("当日营业额")).toHaveValue("0");
+    expect(screen.getByLabelText("洗车数量")).toHaveValue("0");
+    expect(directDirty).toHaveBeenLastCalledWith(false);
     direct.unmount();
 
-    render(<LedgerForm categories={[]} config={composedConfig} onSave={vi.fn()} />);
-    expect(screen.getByLabelText("现金")).toHaveValue("");
-    expect(screen.getByLabelText("不计入")).toHaveValue("");
+    const composedDirty = vi.fn();
+    render(<LedgerForm categories={[]} config={composedConfig} onDirtyChange={composedDirty} onSave={vi.fn()} />);
+    expect(screen.getByLabelText("现金")).toHaveValue("0");
+    expect(screen.getByLabelText("不计入")).toHaveValue("0");
+    expect(screen.getByText("合计金额 €0")).toBeInTheDocument();
+    expect(composedDirty).toHaveBeenLastCalledWith(false);
     fireEvent.change(screen.getByLabelText("状态"), { target: { value: "提前休息" } });
-    expect(screen.getByLabelText("现金")).toHaveValue("");
-    expect(screen.getByLabelText("不计入")).toHaveValue("");
+    expect(screen.getByLabelText("现金")).toHaveValue("0");
+    expect(screen.getByLabelText("不计入")).toHaveValue("0");
     fireEvent.change(screen.getByLabelText("状态"), { target: { value: "休息" } });
     fireEvent.change(screen.getByLabelText("状态"), { target: { value: "营业" } });
-    expect(screen.getByLabelText("现金")).toHaveValue("");
-    expect(screen.getByLabelText("不计入")).toHaveValue("");
+    expect(screen.getByLabelText("现金")).toHaveValue("0");
+    expect(screen.getByLabelText("不计入")).toHaveValue("0");
   });
 
   it("submits early-close operating values without normalizing them", () => {
@@ -93,7 +97,6 @@ describe("LedgerForm", () => {
     fireEvent.change(screen.getByLabelText("状态"), { target: { value: "提前休息" } });
     fireEvent.change(screen.getByLabelText("现金"), { target: { value: "125" } });
     fireEvent.change(screen.getByLabelText("不计入"), { target: { value: "9" } });
-    fireEvent.click(screen.getByRole("button", { name: "洗车数量 / 事件" }));
     fireEvent.change(screen.getByLabelText("洗车数量"), { target: { value: "4" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
@@ -126,7 +129,7 @@ describe("LedgerForm", () => {
 
     fireEvent.change(screen.getByLabelText("现金"), { target: { value: "12" } });
     fireEvent.change(screen.getByLabelText("不计入"), { target: { value: "99" } });
-    expect(screen.getByText("合计 €12")).toBeInTheDocument();
+    expect(screen.getByText("合计金额 €12")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
     const body = onSave.mock.calls[0][0] as LedgerBody & Record<string, unknown>;
@@ -155,7 +158,7 @@ describe("LedgerForm", () => {
     const second = screen.getByLabelText("历史第二项");
     expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByLabelText("当前已改名")).not.toBeInTheDocument();
-    expect(screen.getByText("合计 €15")).toBeInTheDocument();
+    expect(screen.getByText("合计金额 €15")).toBeInTheDocument();
   });
 
   it("preserves a direct-mode saved record even when current configuration is composed", () => {
@@ -181,8 +184,7 @@ describe("LedgerForm", () => {
       onSave={onSave}
     />);
 
-    expect(screen.queryByText("洗车数量")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "事件" }));
+    expect(screen.queryByLabelText("洗车数量")).not.toBeInTheDocument();
     expect(screen.getByLabelText("事件")).toHaveValue("历史事件");
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
@@ -190,6 +192,88 @@ describe("LedgerForm", () => {
       wash_count: null,
       activity: "历史事件",
     }));
+  });
+
+  it("keeps the latest valid categorized total while showing a specific input error", () => {
+    render(<LedgerForm categories={[]} config={composedConfig} onSave={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText("现金"), { target: { value: "15" } });
+    expect(screen.getByText("合计金额 €15")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("现金"), { target: { value: "1.5" } });
+    expect(screen.getByRole("alert")).toHaveTextContent("现金：金额必须是大于等于 0 的整数");
+    expect(screen.getByText("合计金额 €15")).toBeInTheDocument();
+  });
+
+  it("blocks a categorized total that exceeds the safe integer range", () => {
+    const onSave = vi.fn();
+    render(<LedgerForm
+      categories={[]}
+      config={{
+        ...composedConfig,
+        items: composedConfig.items.map((item) => ({ ...item, include_in_total: true })),
+      }}
+      onSave={onSave}
+    />);
+
+    fireEvent.change(screen.getByLabelText("现金"), { target: { value: String(Number.MAX_SAFE_INTEGER) } });
+    fireEvent.change(screen.getByLabelText("不计入"), { target: { value: "1" } });
+
+    expect(screen.getByRole("alert")).toHaveTextContent("合计金额超出可安全计算范围");
+    expect(screen.getByText("合计金额 €9.007.199.254.740.991")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("keeps wash count and event visible, validates wash count, and saves blank events as empty", () => {
+    const onSave = vi.fn();
+    render(<LedgerForm categories={[]} config={directConfig} onSave={onSave} />);
+
+    const washCount = screen.getByLabelText("洗车数量");
+    expect(washCount).toHaveAttribute("type", "text");
+    expect(washCount).toHaveAttribute("inputmode", "numeric");
+    expect(screen.getByLabelText("事件")).toHaveAttribute(
+      "placeholder",
+      "记录可能影响经营的特殊情况，如当地活动、泥雨等（选填）",
+    );
+
+    fireEvent.change(washCount, { target: { value: "-1" } });
+    expect(screen.getByRole("alert")).toHaveTextContent("洗车数量必须是大于等于 0 的整数");
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(onSave).not.toHaveBeenCalled();
+
+    fireEvent.change(washCount, { target: { value: "3" } });
+    fireEvent.change(screen.getByLabelText("事件"), { target: { value: "   " } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ wash_count: 3, activity: null }));
+  });
+
+  it("normalizes a legacy empty wash count to zero when saving a rest record", () => {
+    const onSave = vi.fn();
+    render(<LedgerForm
+      categories={[]}
+      config={composedConfig}
+      record={savedRecord({ is_open: "休息", wash_count: null })}
+      onSave={onSave}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ is_open: "休息", wash_count: 0 }));
+  });
+
+  it("preserves unchanged historical event text exactly", () => {
+    const onSave = vi.fn();
+    render(<LedgerForm
+      categories={[]}
+      config={composedConfig}
+      record={savedRecord({ activity: "  历史事件  " })}
+      onSave={onSave}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ activity: "  历史事件  " }));
   });
 
   it("absorbs late automatic weather while the form is clean", () => {
