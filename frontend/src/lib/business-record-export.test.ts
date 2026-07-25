@@ -20,9 +20,15 @@ it("downloads exactly the active range and revokes the object URL", async () => 
   const click = vi.fn();
   vi.spyOn(document, "createElement").mockReturnValue({ href: "", download: "", click } as unknown as HTMLAnchorElement);
 
-  await downloadBusinessRecords(7, { start: "2026-07-01", end: "2026-07-31" });
+  await downloadBusinessRecords(
+    7,
+    { start: "2026-07-01", end: "2026-07-31" },
+    "提前休息",
+  );
 
-  expect(new URL(requested).search).toBe("?start=2026-07-01&end=2026-07-31");
+  expect(new URL(requested).search).toBe(
+    "?start=2026-07-01&end=2026-07-31&status=%E6%8F%90%E5%89%8D%E4%BC%91%E6%81%AF",
+  );
   expect(click).toHaveBeenCalledOnce();
   expect(revoke).toHaveBeenCalledWith("blob:records");
 });

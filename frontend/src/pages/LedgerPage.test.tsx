@@ -215,7 +215,7 @@ describe("LedgerPage", () => {
     const historicalRecord = {
       ...recordSnapshot(101, "周末促销", "中雨"),
       date: "2026-07-14",
-      is_open: "天气停业" as const,
+      is_open: "提前休息" as const,
       wash_count: 17,
       items: [
         { id: 21, category_id: 1, category_name: "现金", include_in_total: true, sort_order: 1, amount: 89, created_at: "2026-07-14T08:00:00", updated_at: "2026-07-14T08:00:00" },
@@ -243,7 +243,7 @@ describe("LedgerPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "2026年7月14日，已有记录" }));
 
     expect(await screen.findByRole("button", { name: "保存修改" })).toBeEnabled();
-    expect(screen.getByLabelText("状态")).toHaveValue("天气停业");
+    expect(screen.getByLabelText("状态")).toHaveValue("提前休息");
     expect(screen.getByLabelText("现金")).toHaveValue("89");
     expect(screen.getByLabelText("刷卡")).toHaveValue("12");
     expect(screen.getByRole("combobox", { name: "天气" })).toHaveTextContent("中雨");
@@ -254,7 +254,7 @@ describe("LedgerPage", () => {
     fillBlankLedgerAmounts();
     fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
     await waitFor(() => expect(submitted).toEqual({
-      is_open: "天气停业", daily_revenue: null,
+      is_open: "提前休息", daily_revenue: null,
       wash_count: 17, weather: "中雨", weather_edited: false, activity: "周末促销",
       items: [{ category_id: 1, amount: 100 }, { category_id: 2, amount: 12 }, { category_id: 3, amount: 5 }],
     }));

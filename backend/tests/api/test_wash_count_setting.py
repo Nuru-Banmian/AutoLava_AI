@@ -121,6 +121,41 @@ async def test_write_rules_preserve_history_while_setting_is_disabled(
     assert (await admin_client.get(first_path)).json()["wash_count"] == 7
 
 
+async def test_rest_clears_historical_wash_count_while_setting_is_disabled(
+    admin_client: AsyncClient, store_factory, db_session: AsyncSession
+) -> None:
+    store = await store_factory(name="Disabled rest normalization")
+    await db_session.commit()
+    path = f"/api/ledger/{store.id}/2026-07-20"
+    body = {
+        "is_open": "营业",
+        "daily_revenue": 120,
+        "wash_count": 7,
+        "weather": None,
+        "weather_edited": False,
+        "activity": None,
+        "items": [],
+    }
+    assert (await admin_client.put(path, json=body)).status_code == 201
+    assert (
+        await admin_client.patch(
+            f"/api/admin/stores/{store.id}",
+            json={"wash_count_enabled": False},
+        )
+    ).status_code == 200
+
+    rested = await admin_client.put(path, json=body | {"is_open": "休息"})
+
+    assert rested.status_code == 200
+    assert (
+        await admin_client.patch(
+            f"/api/admin/stores/{store.id}",
+            json={"wash_count_enabled": True},
+        )
+    ).status_code == 200
+    assert (await admin_client.get(path)).json()["wash_count"] == 0
+
+
 async def test_enabled_new_record_defaults_wash_count_to_zero_and_rejects_negative(
     admin_client: AsyncClient, store_factory, db_session: AsyncSession
 ) -> None:

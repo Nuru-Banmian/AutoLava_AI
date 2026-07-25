@@ -104,7 +104,7 @@ def upgrade() -> None:
         sa.Column("updated_by", sa.Integer(), nullable=False),
         sa.Column("created_at", sa.DateTime(), server_default=sa.func.current_timestamp(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), server_default=sa.func.current_timestamp(), nullable=False),
-        sa.CheckConstraint("is_open in ('营业','休息','天气停业')", name=op.f("ck_store_daily_records_open_status")),
+        sa.CheckConstraint("is_open in ('营业','休息','提前休息')", name=op.f("ck_store_daily_records_open_status")),
         sa.CheckConstraint("daily_revenue >= 0", name=op.f("ck_store_daily_records_daily_revenue_nonnegative")),
         sa.ForeignKeyConstraint(["created_by"], ["users.id"], name=op.f("fk_store_daily_records_created_by_users")),
         sa.ForeignKeyConstraint(["store_id"], ["stores.id"], name=op.f("fk_store_daily_records_store_id_stores")),

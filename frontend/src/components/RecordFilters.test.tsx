@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { RecordFilters } from "@/components/RecordFilters";
@@ -8,9 +8,11 @@ describe("RecordFilters", () => {
     mode: "month" as const,
     range: { start: "2026-07-01", end: "2026-07-31" },
     today: "2026-07-17",
+    status: null,
     exporting: false,
     exportError: "",
     onChange: vi.fn(),
+    onStatusChange: vi.fn(),
     onExport: vi.fn(),
   };
 
@@ -27,6 +29,22 @@ describe("RecordFilters", () => {
     expect(onChange).toHaveBeenCalledWith("month", { start: "2026-06-01", end: "2026-06-30" });
     fireEvent.click(screen.getByRole("button", { name: "导出当前范围" }));
     expect(onExport).toHaveBeenCalledOnce();
+  });
+
+  it("offers only the unified operating statuses", () => {
+    const onStatusChange = vi.fn();
+    render(<RecordFilters {...props} onStatusChange={onStatusChange} />);
+
+    const status = screen.getByLabelText("营业状态");
+    expect(within(status).getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "全部状态",
+      "营业",
+      "休息",
+      "提前休息",
+    ]);
+    expect(within(status).queryByRole("option", { name: "天气停业" })).not.toBeInTheDocument();
+    fireEvent.change(status, { target: { value: "提前休息" } });
+    expect(onStatusChange).toHaveBeenCalledWith("提前休息");
   });
 
   it("directly selects a month and rejects future months", () => {

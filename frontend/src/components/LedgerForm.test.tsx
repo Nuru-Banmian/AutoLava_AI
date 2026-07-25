@@ -81,10 +81,30 @@ describe("LedgerForm", () => {
     expect(screen.getByLabelText("不计入")).toHaveValue("0");
     expect(screen.getByText("合计金额 €0")).toBeInTheDocument();
     expect(composedDirty).toHaveBeenLastCalledWith(false);
+    fireEvent.change(screen.getByLabelText("状态"), { target: { value: "提前休息" } });
+    expect(screen.getByLabelText("现金")).toHaveValue("0");
+    expect(screen.getByLabelText("不计入")).toHaveValue("0");
     fireEvent.change(screen.getByLabelText("状态"), { target: { value: "休息" } });
     fireEvent.change(screen.getByLabelText("状态"), { target: { value: "营业" } });
     expect(screen.getByLabelText("现金")).toHaveValue("0");
     expect(screen.getByLabelText("不计入")).toHaveValue("0");
+  });
+
+  it("submits early-close operating values without normalizing them", () => {
+    const onSave = vi.fn<(body: LedgerBody) => void>();
+    render(<LedgerForm categories={[]} config={composedConfig} onSave={onSave} />);
+
+    fireEvent.change(screen.getByLabelText("状态"), { target: { value: "提前休息" } });
+    fireEvent.change(screen.getByLabelText("现金"), { target: { value: "125" } });
+    fireEvent.change(screen.getByLabelText("不计入"), { target: { value: "9" } });
+    fireEvent.change(screen.getByLabelText("洗车数量"), { target: { value: "4" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      is_open: "提前休息",
+      wash_count: 4,
+      items: [{ category_id: 5, amount: 125 }, { category_id: 6, amount: 9 }],
+    }));
   });
 
   it("accepts only whole non-negative money input", () => {

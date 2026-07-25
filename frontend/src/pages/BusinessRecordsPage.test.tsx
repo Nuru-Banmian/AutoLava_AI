@@ -124,6 +124,35 @@ afterEach(() => {
 afterAll(() => server.close());
 
 describe("BusinessRecordsPage", () => {
+  it("uses the selected early-close status for records and export", async () => {
+    const recordRequests: URL[] = [];
+    server.use(
+      http.get("/api/database/1/records", ({ request }) => {
+        recordRequests.push(new URL(request.url));
+        return HttpResponse.json(databaseResponse([{ ...record, is_open: "提前休息" }]));
+      }),
+      http.get("/api/charts/1", () => HttpResponse.json(chartsPayload)),
+    );
+    renderPage();
+
+    await screen.findByRole("heading", { name: "2026年7月14日" });
+    fireEvent.change(screen.getByLabelText("营业状态"), {
+      target: { value: "提前休息" },
+    });
+    await waitFor(() => {
+      expect(recordRequests.at(-1)?.searchParams.get("status")).toBe("提前休息");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "导出当前范围" }));
+
+    await waitFor(() => {
+      expect(downloadBusinessRecords).toHaveBeenCalledWith(
+        1,
+        { start: "2026-07-01", end: "2026-07-31" },
+        "提前休息",
+      );
+    });
+  });
+
   it("carries the current records workspace when editing a selected day", async () => {
     Object.defineProperty(window, "scrollY", { configurable: true, value: 240 });
     const juneRecord = { ...record, id: 15, date: "2026-06-15" };

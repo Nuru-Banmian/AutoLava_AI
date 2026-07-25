@@ -15,6 +15,16 @@ _CARD_ORDER = {"yesterday": 0, "today": 1, "tomorrow": 2}
 _WEEKDAYS = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
 
 
+def _record_summary(record: StoreDailyRecord | None) -> tuple[str, int | None]:
+    if record is None:
+        return "missing", None
+    if record.is_open == "休息":
+        return "rest", None
+    if record.is_open == "提前休息":
+        return "early_closed", record.daily_revenue
+    return "recorded", record.daily_revenue
+
+
 class BriefingService:
     def __init__(self, session: AsyncSession, weather_service: WeatherService):
         self.session = session
@@ -36,18 +46,7 @@ class BriefingService:
 
     async def build_yesterday(self, *, store_id: int, local_date: date) -> DashboardCardResponse:
         record = await self._record(store_id, local_date - timedelta(days=1))
-        if record is None:
-            state = "missing"
-            revenue = None
-        elif record.is_open == "休息":
-            state = "rest"
-            revenue = None
-        elif record.is_open == "天气停业":
-            state = "weather_closed"
-            revenue = None
-        else:
-            state = "recorded"
-            revenue = record.daily_revenue
+        state, revenue = _record_summary(record)
         return DashboardCardResponse(
             card_type="yesterday",
             state=state,
@@ -65,18 +64,7 @@ class BriefingService:
     ) -> DashboardCardResponse:
         result = None if weather_override is not None else await self._weather(store, local_date)
         record = await self._record(store.id, local_date)
-        if record is None:
-            state = "missing"
-            revenue = None
-        elif record.is_open == "休息":
-            state = "rest"
-            revenue = None
-        elif record.is_open == "天气停业":
-            state = "weather_closed"
-            revenue = None
-        else:
-            state = "recorded"
-            revenue = record.daily_revenue
+        state, revenue = _record_summary(record)
         return DashboardCardResponse(
             card_type="today",
             state=state,
@@ -108,8 +96,8 @@ class BriefingService:
                 return "昨天还没有经营记录，可以在记账页补录。"
             if card.state == "rest":
                 return "昨天休息。"
-            if card.state == "weather_closed":
-                return "昨天因天气停业。"
+            if card.state == "early_closed":
+                return f"昨天提前休息，营业额 €{card.revenue}。"
             return f"昨天营业，营业额 €{card.revenue}。"
         weather = card.weather or "天气暂时不可用"
         if card.card_type == "today":
@@ -120,7 +108,7 @@ class BriefingService:
             elif card.state == "rest":
                 status = "休息"
             else:
-                status = "天气停业"
+                status = f"提前休息，营业额 €{card.revenue}"
             return f"今天：{weather}；{status}。"
         return f"明天（{card.weekday}）：{weather}。"
 

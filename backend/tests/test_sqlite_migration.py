@@ -75,7 +75,7 @@ def test_blank_sqlite_file_migrates_to_final_schema(tmp_path: Path) -> None:
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
-def test_blank_sqlite_schema_rejects_negative_money_values(tmp_path: Path) -> None:
+def test_blank_sqlite_schema_enforces_money_and_status_constraints(tmp_path: Path) -> None:
     database_path = tmp_path / "migration.sqlite3"
     environment = os.environ | {"AUTOLAVA_DATABASE_PATH": str(database_path)}
 
@@ -121,6 +121,26 @@ def test_blank_sqlite_schema_rejects_negative_money_values(tmp_path: Path) -> No
             """,
             (1, "2026-07-19", 0, "legacy_total", "营业", 0, 0, 1, 1),
         )
+        for day, status in ((20, "休息"), (21, "提前休息")):
+            connection.execute(
+                """
+                INSERT INTO store_daily_records (
+                    store_id, date, daily_revenue, income_mode, is_open, weather_edited,
+                    scanned, created_by, updated_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (1, f"2026-07-{day}", 0, "legacy_total", status, 0, 0, 1, 1),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
+            connection.execute(
+                """
+                INSERT INTO store_daily_records (
+                    store_id, date, daily_revenue, income_mode, is_open, weather_edited,
+                    scanned, created_by, updated_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (1, "2026-07-22", 0, "legacy_total", "天气停业", 0, 0, 1, 1),
+            )
         connection.execute(
             """
             INSERT INTO income_categories (
