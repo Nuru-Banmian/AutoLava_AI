@@ -219,3 +219,38 @@ def test_existing_store_and_ledger_survive_company_settlement_upgrade(
         ).fetchone() == ("2026-06-30", 730, "legacy_total", "营业")
         assert connection.execute("SELECT COUNT(*) FROM stores").fetchone() == (1,)
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_applied_revision_0004_remains_a_valid_noop_history_anchor(tmp_path: Path) -> None:
+    database_path = tmp_path / "existing.sqlite3"
+    environment = os.environ | {"AUTOLAVA_DATABASE_PATH": str(database_path)}
+    backend = Path(__file__).parents[1]
+
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "0003"],
+        cwd=backend,
+        env=environment,
+        check=True,
+    )
+    with closing(sqlite3.connect(database_path)) as connection:
+        connection.execute(
+            "INSERT INTO users (username, password_hash, role, is_active) VALUES (?, ?, ?, ?)",
+            ("existing-admin", "hash", "admin", 1),
+        )
+        connection.execute("UPDATE alembic_version SET version_num = '0004'")
+        connection.commit()
+
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=backend,
+        env=environment,
+        check=True,
+    )
+
+    with closing(sqlite3.connect(database_path)) as connection:
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
+            "0004",
+        )
+        assert connection.execute("SELECT username FROM users").fetchall() == [
+            ("existing-admin",)
+        ]
