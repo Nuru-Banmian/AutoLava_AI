@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.routes.admin import router as admin_router
+from app.api.routes.admin_backup import router as admin_backup_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.charts import router as charts_router
 from app.api.routes.database import router as database_router
@@ -14,6 +15,7 @@ api_router = APIRouter(prefix="/api")
 api_router.include_router(auth_router)
 api_router.include_router(charts_router)
 api_router.include_router(admin_router)
+api_router.include_router(admin_backup_router)
 api_router.include_router(income_config_router)
 api_router.include_router(user_income_config_router)
 api_router.include_router(ledger_router)
