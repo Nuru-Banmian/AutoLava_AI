@@ -148,6 +148,30 @@ it("saves the company settlement switch only for the selected store", async () =
   expect(await screen.findByRole("checkbox", { name: /为此门店启用公司结算/ })).not.toBeChecked();
 });
 
+it("saves the wash-count switch only for the selected store", async () => {
+  const stores = [
+    { ...roma, wash_count_enabled: true },
+    { ...milano, wash_count_enabled: true },
+  ];
+  let patchedBody: unknown;
+  mockStoreWorkspace({ stores });
+  server.use(http.patch("/api/admin/stores/9", async ({ request }) => {
+    patchedBody = await request.json();
+    stores[0] = { ...stores[0], wash_count_enabled: false };
+    return HttpResponse.json(stores[0]);
+  }));
+  renderWorkspace();
+
+  const toggle = await screen.findByRole("checkbox", { name: /为此门店记录洗车数量/ });
+  expect(toggle).toBeChecked();
+  await userEvent.click(toggle);
+
+  await waitFor(() => expect(patchedBody).toEqual({ wash_count_enabled: false }));
+  expect(await screen.findByRole("checkbox", { name: /为此门店记录洗车数量/ })).not.toBeChecked();
+  await userEvent.click(screen.getByRole("button", { name: /Milano/ }));
+  expect(await screen.findByRole("checkbox", { name: /为此门店记录洗车数量/ })).toBeChecked();
+});
+
 it("keeps the store selector blank in create mode without a selectable prompt", async () => {
   mockStoreWorkspace({ stores: [roma] });
   renderWorkspace();

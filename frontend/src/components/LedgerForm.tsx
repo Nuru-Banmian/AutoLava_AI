@@ -18,6 +18,7 @@ export interface LedgerFormProps {
   submitLabel?: string;
   savedSubmission?: { revision: number; body: LedgerBody; canonicalReady?: boolean };
   recordRevision?: number;
+  washCountEnabled?: boolean;
 }
 
 function semanticAmount(value: string) {
@@ -25,7 +26,7 @@ function semanticAmount(value: string) {
   return "value" in result ? result.value : `invalid:${value}`;
 }
 
-export function LedgerForm({ categories, config, record, weather, onSave, onDirtyChange, saving = false, submitLabel = "保存", savedSubmission, recordRevision }: LedgerFormProps) {
+export function LedgerForm({ categories, config, record, weather, onSave, onDirtyChange, saving = false, submitLabel = "保存", savedSubmission, recordRevision, washCountEnabled = true }: LedgerFormProps) {
   const resolvedConfig = useMemo(() => config ?? ({
     store_id: record?.store_id ?? 0,
     enabled: record?.income_mode === "composed",
@@ -63,7 +64,7 @@ export function LedgerForm({ categories, config, record, weather, onSave, onDirt
   const semanticSignature = (values: { status: LedgerStatus; wash: string; weatherValue: string; weatherEdited: boolean; activity: string; directTotal: string; amounts: Record<number, string> }) => JSON.stringify({
     is_open: values.status,
     daily_revenue: composed ? null : semanticAmount(values.directTotal),
-    wash_count: values.status === "休息" ? 0 : values.wash === "" ? null : Number(values.wash),
+    wash_count: !washCountEnabled ? null : values.status === "休息" ? 0 : values.wash === "" ? null : Number(values.wash),
     weather: values.weatherValue || null,
     weather_edited: values.weatherEdited,
     activity: values.activity.trim() || null,
@@ -111,13 +112,13 @@ export function LedgerForm({ categories, config, record, weather, onSave, onDirt
     setStatus(next);
     if (next === "休息") setWash("0");
   }
-  return <form aria-label="每日台账表单" className="grid min-w-0 gap-5" onSubmit={(event) => { event.preventDefault(); const items = active.map((category) => ({ category_id: category.id, result: status === "休息" ? { value: 0 } : parseWholeAmount(amounts[category.id] ?? "") })); const directResult = status === "休息" ? { value: 0 } : parseWholeAmount(directTotal); const invalid = (composed ? items.map((item) => item.result) : [directResult]).find((result): result is { error: string } => "error" in result); if (invalid) { setValidationError(invalid.error); return; } setValidationError(""); onSave({ is_open: status, daily_revenue: composed ? null : "value" in directResult ? directResult.value : 0, wash_count: status === "休息" ? 0 : wash === "" ? null : Number(wash), weather: weatherValue || null, weather_edited: weatherEdited, activity: activity.trim() || null, items: composed ? items.map((item) => ({ category_id: item.category_id, amount: "value" in item.result ? item.result.value : 0 })) : [] }); }}>
+  return <form aria-label="每日台账表单" className="grid min-w-0 gap-5" onSubmit={(event) => { event.preventDefault(); const items = active.map((category) => ({ category_id: category.id, result: status === "休息" ? { value: 0 } : parseWholeAmount(amounts[category.id] ?? "") })); const directResult = status === "休息" ? { value: 0 } : parseWholeAmount(directTotal); const invalid = (composed ? items.map((item) => item.result) : [directResult]).find((result): result is { error: string } => "error" in result); if (invalid) { setValidationError(invalid.error); return; } setValidationError(""); onSave({ is_open: status, daily_revenue: composed ? null : "value" in directResult ? directResult.value : 0, wash_count: !washCountEnabled ? null : status === "休息" ? 0 : wash === "" ? null : Number(wash), weather: weatherValue || null, weather_edited: weatherEdited, activity: activity.trim() || null, items: composed ? items.map((item) => ({ category_id: item.category_id, amount: "value" in item.result ? item.result.value : 0 })) : [] }); }}>
     <section role="group" aria-label="状态与天气" className="grid min-w-0 gap-4 md:grid-cols-2">
       <label className="grid min-w-0 gap-1.5 font-medium">状态<select aria-label="状态" value={status} onChange={(event) => changeStatus(event.target.value as LedgerStatus)} className={LEDGER_FIELD_CLASS}><option>营业</option><option>休息</option><option>天气停业</option></select></label>
       <div className="grid min-w-0 gap-1.5"><span className="font-medium">天气</span><Select value={weatherValue} onValueChange={(value) => { setWeatherValue(value); setWeatherEdited(true); }}><SelectTrigger aria-label="天气" className="h-11 text-base"><SelectValue placeholder="请选择天气">{weatherValue || undefined}</SelectValue></SelectTrigger><SelectContent>{MANUAL_RECORD_WEATHER_OPTIONS.map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectContent></Select></div>
     </section>
     {composed ? <fieldset aria-label="收入项目" disabled={status === "休息"} className="grid min-w-0 gap-3"><legend className="font-semibold">收入项目</legend><div className="grid min-w-0 gap-4 md:grid-cols-2">{active.map((category) => <label className="grid min-w-0 gap-1.5 font-medium" key={category.id}>{category.name}<input aria-label={category.name} inputMode="numeric" type="text" value={amounts[category.id] ?? ""} onChange={(event) => setAmounts((old) => ({ ...old, [category.id]: event.target.value }))} className={LEDGER_FIELD_CLASS} /></label>)}</div></fieldset> : <label className="grid min-w-0 gap-1.5 font-medium">当日营业额<input aria-label="当日营业额" inputMode="numeric" type="text" disabled={status === "休息"} value={directTotal} onChange={(event) => setDirectTotal(event.target.value)} className={LEDGER_FIELD_CLASS} /></label>}
-    <section className="min-w-0 overflow-hidden rounded-lg border bg-background"><button type="button" aria-controls="ledger-wash-activity" aria-expanded={washActivityOpen} onClick={() => setWashActivityOpen((open) => !open)} className="flex min-h-11 w-full items-center justify-between px-3 py-2 text-left font-medium outline-none transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">洗车数量 / 活动<span aria-hidden="true">{washActivityOpen ? "−" : "+"}</span></button>{washActivityOpen && <div id="ledger-wash-activity" className="grid min-w-0 gap-4 border-t p-4 md:grid-cols-2"><label className="grid min-w-0 gap-1.5 font-medium">洗车数量<input aria-label="洗车数量" type="number" min="0" disabled={status === "休息"} value={wash} onChange={(event) => setWash(event.target.value)} className={LEDGER_FIELD_CLASS} /></label><label className="grid min-w-0 gap-1.5 font-medium">活动<textarea aria-label="活动" value={activity} onChange={(event) => setActivity(event.target.value)} className={`${LEDGER_FIELD_CLASS} resize-y`} /></label></div>}</section>
+    <section className="min-w-0 overflow-hidden rounded-lg border bg-background"><button type="button" aria-controls="ledger-wash-activity" aria-expanded={washActivityOpen} onClick={() => setWashActivityOpen((open) => !open)} className="flex min-h-11 w-full items-center justify-between px-3 py-2 text-left font-medium outline-none transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">{washCountEnabled ? "洗车数量 / 活动" : "活动"}<span aria-hidden="true">{washActivityOpen ? "−" : "+"}</span></button>{washActivityOpen && <div id="ledger-wash-activity" className={`grid min-w-0 gap-4 border-t p-4 ${washCountEnabled ? "md:grid-cols-2" : ""}`}>{washCountEnabled && <label className="grid min-w-0 gap-1.5 font-medium">洗车数量<input aria-label="洗车数量" type="number" min="0" disabled={status === "休息"} value={wash} onChange={(event) => setWash(event.target.value)} className={LEDGER_FIELD_CLASS} /></label>}<label className="grid min-w-0 gap-1.5 font-medium">活动<textarea aria-label="活动" value={activity} onChange={(event) => setActivity(event.target.value)} className={`${LEDGER_FIELD_CLASS} resize-y`} /></label></div>}</section>
     {validationError && <p role="alert" className="text-sm text-destructive">{validationError}</p>}
     <footer className="flex min-w-0 flex-col gap-4 rounded-lg bg-muted/50 p-4 sm:flex-row sm:items-center sm:justify-between">
       {composed && <p className="text-xl font-semibold tabular-nums">合计 {total === null ? "—" : formatWholeEuro(total)}</p>}

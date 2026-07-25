@@ -78,6 +78,7 @@ def _store_payload(store: Store) -> dict[str, Any]:
         "timezone": store.timezone,
         "is_active": store.is_active,
         "company_settlement_enabled": store.company_settlement_enabled,
+        "wash_count_enabled": store.wash_count_enabled,
     }
 
 

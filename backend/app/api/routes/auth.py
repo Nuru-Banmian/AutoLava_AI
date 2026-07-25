@@ -65,6 +65,7 @@ async def accessible_stores(user: CurrentUser, session: Session) -> list[dict]:
             "timezone": store.timezone,
             "is_active": store.is_active,
             "company_settlement_enabled": store.company_settlement_enabled,
+            "wash_count_enabled": store.wash_count_enabled,
         }
         for store in stores
     ]

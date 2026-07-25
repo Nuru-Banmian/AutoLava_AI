@@ -47,6 +47,8 @@ def test_blank_sqlite_file_migrates_to_final_schema(tmp_path: Path) -> None:
         store_columns = {row[1]: row for row in connection.execute("PRAGMA table_info('stores')")}
         assert store_columns["company_settlement_enabled"][4].strip("'") == "0"
         assert store_columns["company_settlement_enabled"][3] == 1
+        assert store_columns["wash_count_enabled"][4].strip("'") == "1"
+        assert store_columns["wash_count_enabled"][3] == 1
 
         index_names = {
             name
@@ -189,6 +191,9 @@ def test_existing_store_and_ledger_survive_company_settlement_upgrade(
         assert connection.execute(
             "SELECT company_settlement_enabled FROM stores WHERE id = 1"
         ).fetchone() == (0,)
+        assert connection.execute(
+            "SELECT wash_count_enabled FROM stores WHERE id = 1"
+        ).fetchone() == (1,)
         assert connection.execute(
             "SELECT date, daily_revenue, income_mode, is_open FROM store_daily_records WHERE id = 1"
         ).fetchone() == ("2026-06-30", 730, "legacy_total", "营业")

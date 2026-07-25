@@ -8,13 +8,14 @@ type Capture = {
   updatedStore?: unknown;
 };
 
-const store = { id: 1, name: "Roma", address: "Roma, Italia", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true, company_settlement_enabled: false };
-const alternateStore = { id: 2, name: "Milano Nord", address: "Milano, Italia", latitude: "45.4642", longitude: "9.19", timezone: "Europe/Rome", is_active: true };
+const store = { id: 1, name: "Roma", address: "Roma, Italia", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true, company_settlement_enabled: false, wash_count_enabled: true };
+const alternateStore = { id: 2, name: "Milano Nord", address: "Milano, Italia", latitude: "45.4642", longitude: "9.19", timezone: "Europe/Rome", is_active: true, wash_count_enabled: true };
 
 async function mockAdminApi(page: Page, capture: Capture) {
   let authenticated = false;
   let users: unknown[] = [];
   let companySettlementEnabled = false;
+  let washCountEnabled = true;
   let accessibleStoresFailed = false;
   let accessibleStoreFailures = 0;
   await page.addInitScript(() => {
@@ -41,10 +42,10 @@ async function mockAdminApi(page: Page, capture: Capture) {
         accessibleStoreFailures += 1;
         return json({ detail: "Stores unavailable" }, 500);
       }
-      return json([{ ...store, company_settlement_enabled: companySettlementEnabled }, alternateStore]);
+      return json([{ ...store, company_settlement_enabled: companySettlementEnabled, wash_count_enabled: washCountEnabled }, alternateStore]);
     }
     if (path === "/api/admin/stores" && request.method() === "GET") {
-      return json([{ ...store, company_settlement_enabled: companySettlementEnabled }]);
+      return json([{ ...store, company_settlement_enabled: companySettlementEnabled, wash_count_enabled: washCountEnabled }]);
     }
     if (path === "/api/admin/users" && request.method() === "GET") return json(users);
     if (path === "/api/admin/users" && request.method() === "POST") {
@@ -71,11 +72,14 @@ async function mockAdminApi(page: Page, capture: Capture) {
     }
     if (path === "/api/admin/stores/1" && request.method() === "PATCH") {
       capture.updatedStore = request.postDataJSON();
-      const update = capture.updatedStore as { company_settlement_enabled?: boolean };
+      const update = capture.updatedStore as { company_settlement_enabled?: boolean; wash_count_enabled?: boolean };
       if (typeof update.company_settlement_enabled === "boolean") {
         companySettlementEnabled = update.company_settlement_enabled;
       }
-      return json({ ...store, company_settlement_enabled: companySettlementEnabled, ...update });
+      if (typeof update.wash_count_enabled === "boolean") {
+        washCountEnabled = update.wash_count_enabled;
+      }
+      return json({ ...store, company_settlement_enabled: companySettlementEnabled, wash_count_enabled: washCountEnabled, ...update });
     }
     if (path === "/api/admin/stores/geocode") return json([{ name: "Milano", country: "Italia", latitude: 45.4642, longitude: 9.19, timezone: "Europe/Rome" }]);
     if (path === "/api/admin/stores/timezone") return json({ timezone: "Europe/Rome" });
@@ -134,6 +138,11 @@ test("owner configures shared-store income, a user membership, and a mapped stor
   await settlementToggle.click();
   await expect.poll(() => capture.updatedStore).toMatchObject({ company_settlement_enabled: true });
   await expect(settlementToggle).toBeChecked();
+  const washCountToggle = storeDetails.getByLabel("为此门店记录洗车数量");
+  await expect(washCountToggle).toBeChecked();
+  await washCountToggle.click();
+  await expect.poll(() => capture.updatedStore).toMatchObject({ wash_count_enabled: false });
+  await expect(washCountToggle).not.toBeChecked();
   await storeDetails.getByLabel("门店名称 Roma").fill("Roma Centro");
   await storeDetails.getByRole("button", { name: "保存", exact: true }).click();
   await expect.poll(() => capture.updatedStore).toMatchObject({ name: "Roma Centro", address: "Roma, Italia" });
