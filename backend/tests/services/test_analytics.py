@@ -298,6 +298,72 @@ async def test_zero_wash_count_has_no_average_ticket(db_session: AsyncSession) -
     assert result["kpis"]["average_ticket"] is None
 
 
+async def test_wash_metrics_follow_the_requested_store_setting(
+    db_session: AsyncSession,
+) -> None:
+    store, category_ids = await _seed_records(db_session, suffix="-wash-setting")
+    other, _ = await _seed_records(db_session, suffix="-other-wash-setting")
+    store.wash_count_enabled = False
+    other.wash_count_enabled = True
+    await db_session.flush()
+
+    disabled = await AnalyticsService(db_session).calculate(
+        store_id=store.id,
+        start=date(2026, 7, 1),
+        end=date(2026, 7, 31),
+        category_ids=category_ids,
+    )
+
+    assert disabled["kpis"]["total_wash_count"] is None
+    assert disabled["kpis"]["average_ticket"] is None
+
+    store.wash_count_enabled = True
+    await db_session.flush()
+    reenabled = await AnalyticsService(db_session).calculate(
+        store_id=store.id,
+        start=date(2026, 7, 1),
+        end=date(2026, 7, 31),
+        category_ids=category_ids,
+    )
+
+    assert reenabled["kpis"]["total_wash_count"] == 5
+    assert reenabled["kpis"]["average_ticket"] == 70
+
+
+async def test_reenabled_wash_metrics_restore_historical_zero_values(
+    db_session: AsyncSession,
+) -> None:
+    store, category_ids = await _seed_records(
+        db_session, suffix="-reenabled-zero-wash"
+    )
+    records = await db_session.scalars(
+        select(StoreDailyRecord).where(StoreDailyRecord.store_id == store.id)
+    )
+    for record in records:
+        record.wash_count = 0
+    store.wash_count_enabled = False
+    await db_session.flush()
+
+    disabled = await AnalyticsService(db_session).calculate(
+        store_id=store.id,
+        start=date(2026, 7, 1),
+        end=date(2026, 7, 31),
+        category_ids=category_ids,
+    )
+    store.wash_count_enabled = True
+    await db_session.flush()
+    reenabled = await AnalyticsService(db_session).calculate(
+        store_id=store.id,
+        start=date(2026, 7, 1),
+        end=date(2026, 7, 31),
+        category_ids=category_ids,
+    )
+
+    assert disabled["kpis"]["total_wash_count"] is None
+    assert reenabled["kpis"]["total_wash_count"] == 0
+    assert reenabled["kpis"]["average_ticket"] is None
+
+
 async def test_analytics_never_mixes_another_store(db_session: AsyncSession) -> None:
     store, category_ids = await _seed_records(db_session, suffix="-target")
     await _seed_records(db_session, suffix="-other")

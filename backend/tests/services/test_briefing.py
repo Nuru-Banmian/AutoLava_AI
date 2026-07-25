@@ -60,6 +60,35 @@ async def test_yesterday_card_uses_integer_revenue_content_and_payload(
     assert isinstance(cards[0].payload["revenue"], int)
 
 
+async def test_disabled_store_briefing_does_not_expose_historical_wash_count(
+    db_session: AsyncSession, store: Store, user_factory
+) -> None:
+    owner = await user_factory(username="briefing-disabled-wash", password="secret")
+    store.wash_count_enabled = False
+    db_session.add(
+        StoreDailyRecord(
+            store_id=store.id,
+            date=date(2026, 7, 14),
+            daily_revenue=150,
+            wash_count=12,
+            is_open="营业",
+            weather="晴",
+            weather_edited=False,
+            created_by=owner.id,
+            updated_by=owner.id,
+        )
+    )
+    await db_session.flush()
+
+    cards = await BriefingService(db_session, StubWeatherService()).regenerate(
+        store.id, ["yesterday"], local_date=date(2026, 7, 15)
+    )
+
+    assert "wash_count" not in cards[0].payload
+    assert "洗车" not in cards[0].content
+    assert "12" not in cards[0].content
+
+
 @pytest.mark.parametrize(
     ("record_status", "expected_state"),
     [

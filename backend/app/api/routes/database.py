@@ -10,8 +10,8 @@ from app.api.deps import Session, StoreAccess, require_capability, require_store
 from app.models.identity import User
 from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
 from app.schemas.database import DatabaseFilters, DatabasePage
-from app.services.record_payload import record_payload
 from app.services.export import build_ledger_workbook
+from app.services.record_payload import record_payload
 
 router = APIRouter(prefix="/database", tags=["database"])
 
@@ -95,7 +95,12 @@ async def _categories_for_query(
     return [_category_payload(category) for category in categories]
 
 
-async def _record_payloads(session: AsyncSession, records: list[StoreDailyRecord]) -> list[dict]:
+async def _record_payloads(
+    session: AsyncSession,
+    records: list[StoreDailyRecord],
+    *,
+    include_wash_count: bool,
+) -> list[dict]:
     user_ids = {value for record in records for value in (record.created_by, record.updated_by)}
     usernames = (
         {}
@@ -107,7 +112,7 @@ async def _record_payloads(session: AsyncSession, records: list[StoreDailyRecord
         )
     )
     return [
-        record_payload(record)
+        record_payload(record, include_wash_count=include_wash_count)
         | {
             "created_by_name": usernames.get(record.created_by, ""),
             "updated_by_name": usernames.get(record.updated_by, ""),
@@ -153,10 +158,20 @@ async def export_records(
     missing_wash_count: bool = False,
     access: StoreAccess = Depends(require_store_read_access),
 ) -> Response:
-    filters = _filters(start, end, status, weather, activity_query, missing_wash_count)
+    include_wash_count = access.store.wash_count_enabled
+    filters = _filters(
+        start,
+        end,
+        status,
+        weather,
+        activity_query,
+        missing_wash_count and include_wash_count,
+    )
     record_query = build_record_query(store_id, filters)
     records = await _load_records(session, record_query)
-    payloads = await _record_payloads(session, records)
+    payloads = await _record_payloads(
+        session, records, include_wash_count=include_wash_count
+    )
     if start is not None and end is not None:
         suffix = f"{start.isoformat()}-{end.isoformat()}"
     elif start is not None:
@@ -167,7 +182,9 @@ async def export_records(
         suffix = "all"
     filename = f"ledger-{access.store.id}-{suffix}.xlsx"
     return Response(
-        content=build_ledger_workbook(payloads),
+        content=build_ledger_workbook(
+            payloads, include_wash_count=include_wash_count
+        ),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
@@ -191,14 +208,23 @@ async def record_page(
     page_size: Annotated[int, Query(ge=1, le=200)] = 50,
     access: StoreAccess = Depends(require_store_read_access),
 ) -> dict:
-    del access
-    filters = _filters(start, end, status, weather, activity_query, missing_wash_count)
+    include_wash_count = access.store.wash_count_enabled
+    filters = _filters(
+        start,
+        end,
+        status,
+        weather,
+        activity_query,
+        missing_wash_count and include_wash_count,
+    )
     record_query = build_record_query(store_id, filters)
     total, revenue = await _query_summary(session, record_query)
     page_query = record_query.offset((page - 1) * page_size).limit(page_size)
     records = await _load_records(session, page_query)
     return {
-        "items": await _record_payloads(session, records),
+        "items": await _record_payloads(
+            session, records, include_wash_count=include_wash_count
+        ),
         "categories": await _categories_for_query(
             session, store_id=store_id, record_query=page_query
         ),

@@ -1,13 +1,14 @@
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Literal
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.models.identity import Store
 from app.models.ledger import StoreDailyRecord
 from app.models.settlement import SettlementRecord
 
@@ -123,6 +124,9 @@ class AnalyticsService:
         compare_end: date | None = None,
         bucket: Literal["day", "month"] = "day",
     ) -> dict:
+        wash_count_enabled = await self.session.scalar(
+            select(Store.wash_count_enabled).where(Store.id == store_id)
+        )
         records = (
             await self.session.scalars(
                 select(StoreDailyRecord)
@@ -181,9 +185,11 @@ class AnalyticsService:
             weather_totals[record.weather or "未记录"].append(record.daily_revenue)
             weekday_totals[record.date.weekday()].append(record.daily_revenue)
 
-        recorded_wash = [
-            record.wash_count for record in records if record.wash_count is not None
-        ]
+        recorded_wash = (
+            [record.wash_count for record in records if record.wash_count is not None]
+            if wash_count_enabled
+            else []
+        )
         total_wash = sum(recorded_wash) if recorded_wash else None
         included_rows = _composition_rows(included_totals)
         excluded_rows = _composition_rows(excluded_totals)

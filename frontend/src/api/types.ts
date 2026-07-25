@@ -110,7 +110,7 @@ export interface LedgerBody {
 export interface LedgerSaveResponse { id: number; date: string; daily_revenue: number }
 export interface RecordItem extends IncomeItemBody { id: number; category_name: string; include_in_total: boolean; sort_order: number; created_at: string; updated_at: string }
 export interface RecordSnapshot {
-  id: number; store_id: number; date: string; daily_revenue: number; wash_count: number | null; is_open: LedgerStatus;
+  id: number; store_id: number; date: string; daily_revenue: number; wash_count?: number | null; is_open: LedgerStatus;
   income_mode: IncomeMode;
   weather: string | null; weather_auto: string | null; weather_code: number | null; temperature_max: string | null;
   temperature_min: string | null; precipitation: string | null; activity: string | null; weather_edited: boolean; scanned: boolean;

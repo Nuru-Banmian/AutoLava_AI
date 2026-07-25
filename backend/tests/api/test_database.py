@@ -146,7 +146,7 @@ async def test_export_uses_saved_income_item_snapshots_after_current_category_ch
         "总收入",
         "洗车",
         "天气",
-        "活动",
+        "事件",
         "记录人",
         "最后修改人",
     ]
@@ -159,3 +159,69 @@ async def test_export_uses_saved_income_item_snapshots_after_current_category_ch
         150,
     ]
     assert detail.cell(row=2, column=5).number_format == "€#,##0"
+
+
+async def test_database_context_and_export_follow_the_requested_store_wash_setting(
+    auth_client, store_factory, db_session
+) -> None:
+    user = await db_session.scalar(select(User).where(User.username == "authenticated"))
+    assert user is not None
+    store = await store_factory(name="Wash-disabled records")
+    other = await store_factory(name="Wash-enabled records")
+    store.wash_count_enabled = False
+    other.wash_count_enabled = True
+    db_session.add(StoreMember(store_id=store.id, user_id=user.id))
+    db_session.add(
+        StoreDailyRecord(
+            store_id=store.id,
+            date=date(2026, 7, 20),
+            daily_revenue=240,
+            wash_count=8,
+            is_open="营业",
+            weather_edited=False,
+            created_by=user.id,
+            updated_by=user.id,
+        )
+    )
+    await db_session.flush()
+
+    disabled_page = await auth_client.get(
+        f"/api/database/{store.id}/records?missing_wash_count=true"
+    )
+    disabled_export = await auth_client.get(
+        f"/api/database/{store.id}/export.xlsx?missing_wash_count=true"
+    )
+
+    assert disabled_page.status_code == disabled_export.status_code == 200
+    assert disabled_page.json()["total"] == 1
+    assert "wash_count" not in disabled_page.json()["items"][0]
+    disabled_workbook = load_workbook(BytesIO(disabled_export.content), read_only=False)
+    assert [cell.value for cell in disabled_workbook["经营记录"][1]] == [
+        "日期",
+        "状态",
+        "总收入",
+        "天气",
+        "事件",
+        "记录人",
+        "最后修改人",
+    ]
+
+    store.wash_count_enabled = True
+    await db_session.flush()
+    reenabled_page = await auth_client.get(f"/api/database/{store.id}/records")
+    filtered_page = await auth_client.get(
+        f"/api/database/{store.id}/records?missing_wash_count=true"
+    )
+    reenabled_export = await auth_client.get(
+        f"/api/database/{store.id}/export.xlsx"
+    )
+
+    assert reenabled_page.json()["items"][0]["wash_count"] == 8
+    assert filtered_page.json()["total"] == 0
+    reenabled_workbook = load_workbook(BytesIO(reenabled_export.content), read_only=False)
+    assert [cell.value for cell in reenabled_workbook["经营记录"][1]][:4] == [
+        "日期",
+        "状态",
+        "总收入",
+        "洗车",
+    ]
