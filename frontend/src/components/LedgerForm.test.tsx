@@ -205,6 +205,26 @@ describe("LedgerForm", () => {
     expect(screen.getByText("合计金额 €15")).toBeInTheDocument();
   });
 
+  it("blocks a categorized total that exceeds the safe integer range", () => {
+    const onSave = vi.fn();
+    render(<LedgerForm
+      categories={[]}
+      config={{
+        ...composedConfig,
+        items: composedConfig.items.map((item) => ({ ...item, include_in_total: true })),
+      }}
+      onSave={onSave}
+    />);
+
+    fireEvent.change(screen.getByLabelText("现金"), { target: { value: String(Number.MAX_SAFE_INTEGER) } });
+    fireEvent.change(screen.getByLabelText("不计入"), { target: { value: "1" } });
+
+    expect(screen.getByRole("alert")).toHaveTextContent("合计金额超出可安全计算范围");
+    expect(screen.getByText("合计金额 €9.007.199.254.740.991")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
   it("keeps wash count and event visible, validates wash count, and saves blank events as empty", () => {
     const onSave = vi.fn();
     render(<LedgerForm categories={[]} config={directConfig} onSave={onSave} />);
@@ -226,6 +246,20 @@ describe("LedgerForm", () => {
     fireEvent.change(screen.getByLabelText("事件"), { target: { value: "   " } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ wash_count: 3, activity: null }));
+  });
+
+  it("normalizes a legacy empty wash count to zero when saving a rest record", () => {
+    const onSave = vi.fn();
+    render(<LedgerForm
+      categories={[]}
+      config={composedConfig}
+      record={savedRecord({ is_open: "休息", wash_count: null })}
+      onSave={onSave}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ is_open: "休息", wash_count: 0 }));
   });
 
   it("absorbs late automatic weather while the form is clean", () => {
