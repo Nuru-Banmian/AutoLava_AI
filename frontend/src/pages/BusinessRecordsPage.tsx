@@ -262,6 +262,7 @@ export function BusinessRecordsPage() {
                 record={selectedTableRow}
                 canEdit
                 canDelete={isAdmin && selectedTableRow.id !== null}
+                washCountEnabled={selected.wash_count_enabled ?? true}
                 onEdit={editRecord}
                 onDelete={(trigger) => {
                   if (selectedTableRow.id === null) return;
@@ -287,6 +288,7 @@ export function BusinessRecordsPage() {
           record={mobileRecord}
           canEdit
           canDelete={isAdmin && mobileRecord.id !== null}
+          washCountEnabled={selected.wash_count_enabled ?? true}
           onEdit={editRecord}
           returnFocusTo={returnFocusTo}
           onOpenChange={(open) => {

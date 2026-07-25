@@ -8,7 +8,17 @@ export interface MobileRecordSheetProps extends RecordDetailPanelProps {
   onOpenChange(open: boolean): void;
 }
 
-export function MobileRecordSheet({ open, record, canEdit, canDelete, onEdit, onDelete, returnFocusTo, onOpenChange }: MobileRecordSheetProps) {
+export function MobileRecordSheet({
+  open,
+  record,
+  canEdit,
+  canDelete,
+  washCountEnabled,
+  onEdit,
+  onDelete,
+  returnFocusTo,
+  onOpenChange,
+}: MobileRecordSheetProps) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
@@ -20,7 +30,15 @@ export function MobileRecordSheet({ open, record, canEdit, canDelete, onEdit, on
         }}
       >
         <SheetTitle className="sr-only">{record.date} 营业记录详情</SheetTitle>
-        <RecordDetailPanel mobile record={record} canEdit={canEdit} canDelete={canDelete} onEdit={onEdit} onDelete={onDelete} />
+        <RecordDetailPanel
+          mobile
+          record={record}
+          canEdit={canEdit}
+          canDelete={canDelete}
+          washCountEnabled={washCountEnabled}
+          onEdit={onEdit}
+          onDelete={onDelete}
+        />
       </SheetContent>
     </Sheet>
   );

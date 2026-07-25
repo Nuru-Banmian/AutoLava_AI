@@ -18,7 +18,7 @@ function ControlledSheet() {
   const [trigger, setTrigger] = useState<HTMLButtonElement | null>(null);
   return <MemoryRouter>
     <button ref={setTrigger} type="button" onClick={() => setOpen(true)}>打开记录</button>
-    <MobileRecordSheet open={open} record={record} canEdit canDelete={false} onDelete={vi.fn()} returnFocusTo={trigger} onOpenChange={setOpen} />
+    <MobileRecordSheet open={open} record={record} canEdit canDelete={false} washCountEnabled onDelete={vi.fn()} returnFocusTo={trigger} onOpenChange={setOpen} />
   </MemoryRouter>;
 }
 
@@ -32,8 +32,8 @@ describe("MobileRecordSheet", () => {
     expect(dialog.className).toContain("safe-area-inset-bottom");
     expect(dialog).toHaveClass("h-[calc(100dvh-1rem)]");
     expect(screen.getByRole("heading", { name: "2026年7月14日" })).toHaveClass("text-2xl");
-    expect(screen.getByText("营业", { exact: true })).toHaveClass("text-lg");
-    expect(screen.getByText("8", { exact: true })).toHaveClass("text-lg");
+    expect(screen.getByText("营业", { exact: true })).toHaveClass("text-sm");
+    expect(screen.getByText("洗车 8 辆", { exact: true })).toHaveClass("text-sm");
     expect(screen.getByRole("link", { name: "修改这天记录" })).toHaveClass("h-11", "w-full", "text-base");
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));

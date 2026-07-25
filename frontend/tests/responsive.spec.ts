@@ -13,13 +13,18 @@ function record(index: number) {
   const day = 17 - index;
   const date = `2026-07-${String(day).padStart(2, "0")}`;
   const now = `${date}T12:00:00`;
+  const detailVariant = [
+    { is_open: "营业", wash_count: 20 },
+    { is_open: "休息", wash_count: 0 },
+    { is_open: "提前休息", wash_count: null },
+  ][index] ?? { is_open: "营业", wash_count: 20 - index };
   return {
     id: 100 + index,
     store_id: 1,
     date,
     daily_revenue: 100 - index,
-    wash_count: 20 - index,
-    is_open: "营业",
+    wash_count: detailVariant.wash_count,
+    is_open: detailVariant.is_open,
     income_mode: "composed",
     weather: "晴",
     weather_auto: null,
@@ -27,7 +32,7 @@ function record(index: number) {
     temperature_max: null,
     temperature_min: null,
     precipitation: null,
-    activity: null,
+    activity: index === 0 ? "会员日照常营业" : null,
     weather_edited: false,
     scanned: false,
     created_by: 1,
@@ -47,7 +52,7 @@ function record(index: number) {
   };
 }
 
-async function mockResponsiveApi(page: Page) {
+async function mockResponsiveApi(page: Page, { washCountEnabled = true }: { washCountEnabled?: boolean } = {}) {
   const records = Array.from({ length: 16 }, (_, index) => record(index));
   await page.route(/^http:\/\/127\.0\.0\.1:4173\/api\//, async (route) => {
     const request = route.request();
@@ -60,7 +65,9 @@ async function mockResponsiveApi(page: Page) {
     });
 
     if (path === "/api/auth/me") return json({ id: 1, username: "operator", role: "user", is_owner: false });
-    if (path === "/api/stores/accessible") return json([{ id: 1, name: longStoreName, timezone: "Europe/Berlin" }]);
+    if (path === "/api/stores/accessible") {
+      return json([{ id: 1, name: longStoreName, timezone: "Europe/Berlin", wash_count_enabled: washCountEnabled }]);
+    }
     if (path === "/api/database/1/records") {
       const pageNumber = Number(url.searchParams.get("page"));
       const pageSize = Number(url.searchParams.get("page_size"));
@@ -128,7 +135,15 @@ test("desktop record and analysis workspaces share the viewport without outer sc
   const recordWorkspace = analysisWorkspace.locator("xpath=preceding-sibling::*[1]");
   await expect(page.getByRole("table")).toBeVisible();
   await expect(analysisWorkspace).toBeVisible();
-  await expect(page.getByRole("heading", { name: "2026年7月17日" })).toBeVisible();
+  const detailHeading = page.getByRole("heading", { name: "2026年7月17日" });
+  await expect(detailHeading).toBeVisible();
+  await expect(detailHeading.locator("..")).toContainText("营业");
+  const detailSummary = page.getByRole("region", { name: "营业摘要" });
+  await expect(detailSummary).toContainText("营业额€100");
+  await expect(detailSummary).toContainText("天气晴");
+  await expect(page.getByText("洗车 20 辆", { exact: true })).toBeVisible();
+  await expect(page.getByText("洗车数量", { exact: true })).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1280);
   const [recordBox, analysisBox] = await Promise.all([
     recordWorkspace.boundingBox(),
     analysisWorkspace.boundingBox(),
@@ -245,7 +260,15 @@ test("320px record list, bottom sheet, and analysis remain reachable without cli
 
   const sheet = page.getByRole("dialog", { name: "2026-07-17 营业记录详情" });
   await expect(sheet).toBeVisible();
-  await expect(sheet.getByRole("heading", { name: "2026年7月17日" })).toBeVisible();
+  const detailHeading = sheet.getByRole("heading", { name: "2026年7月17日" });
+  await expect(detailHeading).toBeVisible();
+  await expect(detailHeading.locator("..")).toContainText("营业");
+  const summary = sheet.getByRole("region", { name: "营业摘要" });
+  await expect(summary).toContainText("营业额€100");
+  await expect(summary).toContainText("天气晴");
+  await expect(sheet.getByText("洗车 20 辆", { exact: true })).toBeVisible();
+  await expect(sheet.getByText("事件：会员日照常营业", { exact: true })).toBeVisible();
+  await expect(sheet.getByText("洗车数量", { exact: true })).toHaveCount(0);
   await expect.poll(() => sheet.evaluate((node) => ({
     position: getComputedStyle(node).position,
     top: node.getBoundingClientRect().top,
@@ -254,6 +277,7 @@ test("320px record list, bottom sheet, and analysis remain reachable without cli
   }))).toEqual({ position: "fixed", top: 16, bottom: "0px", height: 684 });
   await expect.poll(() => sheet.getByRole("heading", { name: "2026年7月17日" }).evaluate((node) => getComputedStyle(node).fontSize)).toBe("24px");
   await expect.poll(() => sheet.getByText("€100", { exact: true }).first().evaluate((node) => getComputedStyle(node).fontSize)).toBe("18px");
+  await expect.poll(() => sheet.evaluate((node) => node.scrollWidth)).toBeLessThanOrEqual(320);
   await sheet.getByRole("button", { name: "Close" }).click();
   await expect(sheet).toBeHidden();
   await expect(firstRow).toBeFocused();
@@ -269,6 +293,21 @@ test("320px record list, bottom sheet, and analysis remain reachable without cli
   expect(focusedNavigationBox).not.toBeNull();
   expect(focusedRowBox!.y).toBeGreaterThanOrEqual(0);
   expect(focusedRowBox!.y + focusedRowBox!.height).toBeLessThanOrEqual(focusedNavigationBox!.y);
+
+  await secondRow.click();
+  const restSheet = page.getByRole("dialog", { name: "2026-07-16 营业记录详情" });
+  await expect(restSheet.getByRole("heading", { name: "2026年7月16日" }).locator("..")).toContainText("休息");
+  await expect(restSheet.getByText(/洗车 \d+ 辆/)).toHaveCount(0);
+  await restSheet.getByRole("button", { name: "Close" }).click();
+  await expect(secondRow).toBeFocused();
+
+  const thirdRow = page.locator('main button[aria-label^="2026年7月15日"]').first();
+  await thirdRow.click();
+  const earlyCloseSheet = page.getByRole("dialog", { name: "2026-07-15 营业记录详情" });
+  await expect(earlyCloseSheet.getByRole("heading", { name: "2026年7月15日" }).locator("..")).toContainText("提前休息");
+  await expect(earlyCloseSheet.getByText(/洗车 \d+ 辆/)).toHaveCount(0);
+  await earlyCloseSheet.getByRole("button", { name: "Close" }).click();
+  await expect(thirdRow).toBeFocused();
 
   const pagination = page.getByRole("navigation", { name: "记录分页" });
   const analysis = page.getByRole("heading", { name: "经营分析" });
@@ -295,6 +334,17 @@ test("320px record list, bottom sheet, and analysis remain reachable without cli
     body: document.body.scrollWidth,
     viewport: window.innerWidth,
   }))).toEqual({ document: 320, body: 320, viewport: 320 });
+});
+
+test("record detail hides a positive wash count when the store setting is disabled", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await mockResponsiveApi(page, { washCountEnabled: false });
+  await page.goto("/database");
+
+  await expect(page.getByRole("heading", { name: "2026年7月17日" })).toBeVisible();
+  await expect(page.getByText(/洗车 \d+ 辆/)).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "营业摘要" })).toBeVisible();
 });
 
 test("database desktop keeps the wide analysis rail, compact trend, and accessible custom months", async ({ page }) => {
