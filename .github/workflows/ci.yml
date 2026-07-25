@@ -16,8 +16,8 @@ jobs:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -33,8 +33,8 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -54,8 +54,8 @@ jobs:
       AUTOLAVA_BOOTSTRAP_USERNAME: ci-placeholder-admin
       AUTOLAVA_BOOTSTRAP_PASSWORD: ci-placeholder-password
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -75,7 +75,7 @@ jobs:
           docker save autolava-api:latest | gzip -1 > autolava-api.tar.gz
           docker save autolava-web:latest | gzip -1 > autolava-web.tar.gz
       - name: Upload release images
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: autolava-release-images-${{ github.sha }}
           path: |
