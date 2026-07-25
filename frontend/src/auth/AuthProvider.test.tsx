@@ -118,11 +118,11 @@ describe("authenticated application shell", () => {
 
     renderTestRouter("/ledger");
 
-    expect(screen.queryByRole("heading", { name: "每日台账" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "记账" })).not.toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("正在加载");
     await waitFor(() => expect(resolveMe).toBeDefined());
     resolveMe();
-    expect(await screen.findByRole("heading", { name: "每日台账" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "记账" })).toBeInTheDocument();
   });
 
   it("sends only username and password and opens the authenticated shell after login", async () => {
@@ -299,7 +299,7 @@ describe("authenticated application shell", () => {
     expect(mobile).toHaveClass("fixed", "md:hidden");
     expect(within(desktop).getAllByRole("link").map((link) => link.textContent)).toEqual([
       "首页",
-      "每日记账",
+      "记账",
       "营业记录",
       "管理中心",
     ]);

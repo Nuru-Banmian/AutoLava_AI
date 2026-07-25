@@ -158,7 +158,7 @@ describe("App", () => {
     const nav = await screen.findByRole("navigation", { name: "主导航" });
     expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual([
       "首页",
-      "每日记账",
+      "记账",
       "营业记录",
       "管理中心",
     ]);
@@ -180,7 +180,7 @@ describe("App", () => {
     await userEvent.selectOptions(desktopStorePicker, "1");
     await waitFor(() => expect(within(desktop).getByRole("link", { name: "公司结算" })).toBeInTheDocument());
     expect(within(desktop).getAllByRole("link").map((link) => link.textContent)).toEqual([
-      "首页", "每日记账", "营业记录", "公司结算",
+      "首页", "记账", "营业记录", "公司结算",
     ]);
     const mobile = screen.getByRole("navigation", { name: "移动导航" });
     expect(within(mobile).getAllByRole("link")).toHaveLength(4);
