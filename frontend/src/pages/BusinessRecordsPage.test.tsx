@@ -124,7 +124,7 @@ afterEach(() => {
 afterAll(() => server.close());
 
 describe("BusinessRecordsPage", () => {
-  it("uses the selected early-close status for records and export", async () => {
+  it("loads and exports the selected date range without status filtering", async () => {
     const recordRequests: URL[] = [];
     server.use(
       http.get("/api/database/1/records", ({ request }) => {
@@ -136,19 +136,16 @@ describe("BusinessRecordsPage", () => {
     renderPage();
 
     await screen.findByRole("heading", { name: "2026年7月14日" });
-    fireEvent.change(screen.getByLabelText("营业状态"), {
-      target: { value: "提前休息" },
-    });
     await waitFor(() => {
-      expect(recordRequests.at(-1)?.searchParams.get("status")).toBe("提前休息");
+      expect(recordRequests.at(-1)?.searchParams.has("status")).toBe(false);
     });
+    expect(screen.queryByLabelText("营业状态")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "导出当前范围" }));
 
     await waitFor(() => {
       expect(downloadBusinessRecords).toHaveBeenCalledWith(
         1,
         { start: "2026-07-01", end: "2026-07-31" },
-        "提前休息",
       );
     });
   });

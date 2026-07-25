@@ -363,6 +363,21 @@ test("database desktop keeps the wide analysis rail, compact trend, and accessib
   await expect.poll(() => trend.evaluate((node) => node.getBoundingClientRect().height)).toBe(256);
 
   const recordFilters = page.getByRole("region", { name: "记录筛选" });
+  const monthInput = recordFilters.getByLabel("月份", { exact: true });
+  const customRangeButton = recordFilters.getByRole("button", { name: "自定义范围" });
+  const exportButton = recordFilters.getByRole("button", { name: "导出当前范围" });
+  const [monthBox, customRangeBox, exportBox] = await Promise.all([
+    monthInput.boundingBox(),
+    customRangeButton.boundingBox(),
+    exportButton.boundingBox(),
+  ]);
+  expect(monthBox).not.toBeNull();
+  expect(customRangeBox).not.toBeNull();
+  expect(exportBox).not.toBeNull();
+  expect(monthBox!.width).toBeLessThanOrEqual(160);
+  expect(customRangeBox!.width).toBeLessThanOrEqual(144);
+  expect(exportBox!.width).toBeLessThanOrEqual(160);
+  await expect(recordFilters.getByLabel("营业状态")).toHaveCount(0);
   await recordFilters.getByRole("button", { name: "自定义范围" }).click();
 
   await expectNativeMonthInput(page.getByLabel("开始月份", { exact: true }), { ariaLabel: "开始月份", max: "2026-07" });

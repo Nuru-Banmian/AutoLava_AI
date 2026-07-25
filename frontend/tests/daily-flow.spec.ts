@@ -282,7 +282,7 @@ test("direct-total accounting starts at zero and writes only after save", async 
   });
 });
 
-test("early close keeps operating values through records filtering and export", async ({ page }) => {
+test("early close keeps operating values through records display and export", async ({ page }) => {
   await page.clock.install({ time: new Date(`${today}T12:00:00Z`) });
   const flow = await mockMergedFlow(page);
   await page.goto(`/ledger?date=${today}`);
@@ -304,11 +304,11 @@ test("early close keeps operating values through records filtering and export", 
   await page.getByRole("navigation", { name: "主导航" })
     .getByRole("link", { name: "营业记录" })
     .click();
-  await page.getByLabel("营业状态").selectOption("提前休息");
   await expect(page.getByRole("table").locator("tbody tr").first()).toContainText("提前休息");
+  await expect(page.getByLabel("营业状态")).toHaveCount(0);
   await page.getByRole("button", { name: "导出当前范围" }).click();
-  await expect.poll(() => flow.exportRequests.at(-1)?.searchParams.get("status"))
-    .toBe("提前休息");
+  await expect.poll(() => flow.exportRequests.at(-1)?.searchParams.has("status"))
+    .toBe(false);
 });
 
 test("rest normalizes operating values and legacy status cannot be generated", async ({ page }) => {

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
 import { friendlyApiError } from "@/api/client";
-import type { LedgerStatus, RecordSnapshot } from "@/api/types";
+import type { RecordSnapshot } from "@/api/types";
 import { useAuth } from "@/auth/AuthProvider";
 import { BusinessAnalysisCard } from "@/components/BusinessAnalysisCard";
 import { DeleteRecordDialog } from "@/components/DeleteRecordDialog";
@@ -36,7 +36,6 @@ export function BusinessRecordsPage() {
   const [recordMode, setRecordMode] = useState<RecordRangeMode>(restored?.recordMode ?? "month");
   const [range, setRange] = useState<DateRange>(() => restored?.range ?? monthRange(today.slice(0, 7)));
   const [page, setPage] = useState(restored?.page ?? 1);
-  const [status, setStatus] = useState<LedgerStatus | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | null>(restored?.selectedDate ?? null);
   const [mobileRecord, setMobileRecord] = useState<RecordDetail | null>(null);
   const [returnFocusTo, setReturnFocusTo] = useState<HTMLButtonElement | null>(null);
@@ -66,7 +65,6 @@ export function BusinessRecordsPage() {
     setRecordMode("month");
     setRange(monthRange(storeLocalToday(selected).slice(0, 7)));
     setPage(1);
-    setStatus(null);
     setSelectedDate(null);
     setMobileRecord(null);
     setReturnFocusTo(null);
@@ -84,10 +82,9 @@ export function BusinessRecordsPage() {
   const recordQueryString = useMemo(() => new URLSearchParams({
     start: range.start,
     end: range.end,
-    ...(status ? { status } : {}),
     page: "1",
     page_size: String(FETCH_SIZE),
-  }).toString(), [range.end, range.start, status]);
+  }).toString(), [range.end, range.start]);
   const recordStateReady = selected !== null && recordStoreId === selected.id;
   const records = useQuery({
     queryKey: recordStateReady ? databaseKey(selected.id, recordQueryString) : ["database", "records", "pending", selected?.id ?? null],
@@ -97,7 +94,6 @@ export function BusinessRecordsPage() {
       range.start,
       range.end,
       signal,
-      status,
     ),
   });
 
@@ -140,27 +136,19 @@ export function BusinessRecordsPage() {
   const selectedRecord = selectedRecordRef.current;
   const visibleRecords = records.data?.items.filter((item) => item.store_id === selected?.id) ?? [];
   const tableRows = useMemo<RecordTableRow[]>(() => {
-    if (status) {
-      return [...visibleRecords].sort((left, right) => right.date.localeCompare(left.date));
-    }
     const byDate = new Map(visibleRecords.map((record) => [record.date, record]));
     const tableEnd = range.end > today ? today : range.end;
     return eachDayOfInterval({ start: parseISO(range.start), end: parseISO(tableEnd) })
       .map((day) => byDate.get(format(day, "yyyy-MM-dd")) ?? { id: null, date: format(day, "yyyy-MM-dd") })
       .reverse();
-  }, [range.end, range.start, status, today, visibleRecords]);
+  }, [range.end, range.start, today, visibleRecords]);
   const selectedTableRow = tableRows.find((record) => record.date === selectedDate) ?? null;
   const pagedTableRows = tableRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const exportMutation = useMutation({
-    mutationFn: ({ storeId, requestedRange, requestedStatus }: {
+    mutationFn: ({ storeId, requestedRange }: {
       storeId: number;
       requestedRange: DateRange;
-      requestedStatus: LedgerStatus | null;
-    }) => (
-      requestedStatus
-        ? downloadBusinessRecords(storeId, requestedRange, requestedStatus)
-        : downloadBusinessRecords(storeId, requestedRange)
-    ),
+    }) => downloadBusinessRecords(storeId, requestedRange),
   });
   const exportError = exportMutation.isError
     ? friendlyApiError(exportMutation.error, "导出失败，请重试")
@@ -175,12 +163,6 @@ export function BusinessRecordsPage() {
   };
   const handlePageChange = (nextPage: number) => {
     setPage(nextPage);
-    setSelectedDate(null);
-    setMobileRecord(null);
-  };
-  const handleStatusChange = (nextStatus: LedgerStatus | null) => {
-    setStatus(nextStatus);
-    setPage(1);
     setSelectedDate(null);
     setMobileRecord(null);
   };
@@ -208,15 +190,12 @@ export function BusinessRecordsPage() {
         mode={recordMode}
         range={range}
         today={today}
-        status={status}
         exporting={exportMutation.isPending}
         exportError={exportError}
         onChange={handleRecordRangeChange}
-        onStatusChange={handleStatusChange}
         onExport={() => exportMutation.mutate({
           storeId: selected.id,
           requestedRange: range,
-          requestedStatus: status,
         })}
       />
       <div className="grid gap-4 lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_minmax(30rem,32rem)]">

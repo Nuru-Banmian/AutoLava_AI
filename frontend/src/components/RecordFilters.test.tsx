@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { RecordFilters } from "@/components/RecordFilters";
@@ -8,11 +8,9 @@ describe("RecordFilters", () => {
     mode: "month" as const,
     range: { start: "2026-07-01", end: "2026-07-31" },
     today: "2026-07-17",
-    status: null,
     exporting: false,
     exportError: "",
     onChange: vi.fn(),
-    onStatusChange: vi.fn(),
     onExport: vi.fn(),
   };
 
@@ -31,20 +29,15 @@ describe("RecordFilters", () => {
     expect(onExport).toHaveBeenCalledOnce();
   });
 
-  it("offers only the unified operating statuses", () => {
-    const onStatusChange = vi.fn();
-    render(<RecordFilters {...props} onStatusChange={onStatusChange} />);
+  it("keeps desktop controls compact and omits operating-status filtering", () => {
+    render(<RecordFilters {...props} />);
 
-    const status = screen.getByLabelText("营业状态");
-    expect(within(status).getAllByRole("option").map((option) => option.textContent)).toEqual([
-      "全部状态",
-      "营业",
-      "休息",
-      "提前休息",
-    ]);
-    expect(within(status).queryByRole("option", { name: "天气停业" })).not.toBeInTheDocument();
-    fireEvent.change(status, { target: { value: "提前休息" } });
-    expect(onStatusChange).toHaveBeenCalledWith("提前休息");
+    expect(screen.getByLabelText("月份导航")).toHaveClass("md:grid-cols-[2.5rem_9rem_2.5rem]");
+    expect(screen.getByRole("button", { name: "自定义范围" }).parentElement).toHaveClass(
+      "md:grid-cols-[auto_auto]",
+      "md:justify-start",
+    );
+    expect(screen.queryByLabelText("营业状态")).not.toBeInTheDocument();
   });
 
   it("directly selects a month and rejects future months", () => {
