@@ -125,7 +125,7 @@ class SettlementCompanyService:
                 action = "settlement_company.restore" if active else "settlement_company.archive"
                 self.audit(action, company.id, before, company_state(company))
         except IntegrityError as exc:
-            raise HTTPException(409, "该门店已有同名活动结算公司，无法恢复") from exc
+            raise HTTPException(409, "该门店已有同名使用中结算公司，无法恢复") from exc
         return company
 
     async def delete(self, company_id: int) -> None:
@@ -291,7 +291,7 @@ class SettlementRecordService:
                 )
             )
             if company is None:
-                raise HTTPException(404, "当前门店的活动结算公司不存在")
+                raise HTTPException(404, "当前门店的使用中结算公司不存在")
             record = SettlementRecord(
                 store_id=self.store_id,
                 company_id=company.id,
@@ -331,7 +331,7 @@ class SettlementRecordService:
                     )
                 )
                 if company is None:
-                    raise HTTPException(404, "当前门店的活动结算公司不存在")
+                    raise HTTPException(404, "当前门店的使用中结算公司不存在")
                 record.company_id = company.id
                 record.company_name = company.name
             if amount is not None:

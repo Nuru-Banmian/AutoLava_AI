@@ -190,7 +190,7 @@ async def test_archiving_releases_name_and_restore_rejects_active_conflict(
 
     restore = await client.post(f"/api/settlements/{store_id}/companies/{archived['id']}/restore")
     assert restore.status_code == 409
-    assert restore.json() == {"detail": "该门店已有同名活动结算公司，无法恢复"}
+    assert restore.json() == {"detail": "该门店已有同名使用中结算公司，无法恢复"}
     stored = await db_session.get(SettlementCompany, archived["id"])
     assert stored is not None
     assert stored.is_active is False
