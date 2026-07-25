@@ -171,13 +171,16 @@ describe("LedgerPage", () => {
     expect(invalidStoreTwoRequests).toEqual([]);
   });
 
-  it("keeps income and weather visible while wash/activity starts collapsed", async () => {
+  it("uses clear accounting semantics without a duplicate form name", async () => {
     renderLedger();
 
+    expect(await screen.findByRole("region", { name: "记账录入" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "记账" })).toBeInTheDocument();
+    expect(screen.queryByRole("form")).not.toBeInTheDocument();
     expect(await screen.findByRole("group", { name: "收入项目" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "天气" })).toHaveTextContent("请选择天气");
-    expect(screen.getByRole("button", { name: "洗车数量 / 事件" })).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByLabelText("洗车数量")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("洗车数量")).toHaveValue("0");
+    expect(screen.getByLabelText("事件")).toBeVisible();
     expect(screen.getByRole("button", { name: "保存今日记录" })).toBeEnabled();
   });
 
@@ -244,8 +247,7 @@ describe("LedgerPage", () => {
     expect(screen.getByLabelText("现金")).toHaveValue("89");
     expect(screen.getByLabelText("刷卡")).toHaveValue("12");
     expect(screen.getByRole("combobox", { name: "天气" })).toHaveTextContent("中雨");
-    fireEvent.click(screen.getByRole("button", { name: "洗车数量 / 事件" }));
-    expect(screen.getByLabelText("洗车数量")).toHaveValue(17);
+    expect(screen.getByLabelText("洗车数量")).toHaveValue("17");
     expect(screen.getByLabelText("事件")).toHaveValue("周末促销");
 
     fireEvent.change(screen.getByLabelText("现金"), { target: { value: "100" } });
@@ -388,7 +390,7 @@ describe("LedgerPage", () => {
     fireEvent.change(await screen.findByLabelText("现金"), { target: { value: "200" } });
     fireEvent.change(screen.getByLabelText("刷卡"), { target: { value: "150" } });
     fireEvent.change(screen.getByLabelText("暗钱"), { target: { value: "80" } });
-    expect(screen.getByText("合计 €350")).toBeInTheDocument();
+    expect(screen.getByText("合计金额 €350")).toBeInTheDocument();
     fillBlankLedgerAmounts();
     fireEvent.click(screen.getByRole("button", { name: "保存今日记录" }));
     await waitFor(() => expect(submitted).not.toBeNull());
@@ -507,7 +509,6 @@ describe("LedgerPage", () => {
   it("normalizes rest amounts and wash count while keeping activity notes", async () => {
     let body: any;
     render(<LedgerForm config={singleConfig} categories={[{ id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }]} onSave={(value) => { body = value; }} />);
-    fireEvent.click(screen.getByRole("button", { name: "洗车数量 / 事件" }));
     fireEvent.change(screen.getByLabelText("现金"), { target: { value: "25" } });
     fireEvent.change(screen.getByLabelText("洗车数量"), { target: { value: "3" } });
     fireEvent.change(screen.getByLabelText("事件"), { target: { value: "设备检修" } });
@@ -517,16 +518,13 @@ describe("LedgerPage", () => {
     expect(body).toMatchObject({ is_open: "休息", wash_count: 0, activity: "设备检修", items: [{ category_id: 1, amount: 0 }] });
   });
 
-  it("reports edits against the loaded snapshot and preserves collapsed values", async () => {
+  it("reports edits against the loaded snapshot while keeping event values visible", async () => {
     const onDirtyChange = vi.fn();
     render(<LedgerForm config={singleConfig} categories={[{ id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }]} onSave={() => undefined} onDirtyChange={onDirtyChange} />);
 
     await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(false));
-    fireEvent.click(screen.getByRole("button", { name: "洗车数量 / 事件" }));
     fireEvent.change(screen.getByLabelText("事件"), { target: { value: "夏日事件" } });
     await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true));
-    fireEvent.click(screen.getByRole("button", { name: "洗车数量 / 事件" }));
-    fireEvent.click(screen.getByRole("button", { name: "洗车数量 / 事件" }));
     expect(screen.getByLabelText("事件")).toHaveValue("夏日事件");
   });
 
@@ -544,7 +542,7 @@ describe("LedgerPage", () => {
     fireEvent.change(screen.getByLabelText("现金"), { target: { value: "12.3" } }); fireEvent.click(screen.getByRole("button", { name: "保存" }));
     expect(screen.getByRole("alert")).toHaveTextContent("金额必须是大于等于 0 的整数");
     fireEvent.change(screen.getByLabelText("现金"), { target: { value: "-1" } });
-    expect(screen.getByText("合计 —")).toBeInTheDocument(); fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(screen.getByText("合计金额 €0")).toBeInTheDocument(); fireEvent.click(screen.getByRole("button", { name: "保存" }));
     expect(screen.getByRole("alert")).toHaveTextContent("金额必须是大于等于 0 的整数"); expect(saves).toHaveLength(0);
   });
 
@@ -626,7 +624,6 @@ describe("LedgerPage", () => {
       }),
     ]);
     fireEvent.change(await screen.findByLabelText("现金"), { target: { value: "13" } });
-    fireEvent.click(screen.getByRole("button", { name: "洗车数量 / 事件" }));
     fireEvent.change(screen.getByLabelText("事件"), { target: { value: " 促销 " } });
     fillBlankLedgerAmounts();
     fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
@@ -798,7 +795,7 @@ describe("LedgerPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "choose2" }));
     fireEvent.click(await screen.findByRole("button", { name: "放弃修改" }));
-    await waitFor(() => expect(screen.getByLabelText("现金")).toHaveValue(""));
+    await waitFor(() => expect(screen.getByLabelText("现金")).toHaveValue("0"));
   });
 
   it("shows a save error directly without an overwrite confirmation", async () => {

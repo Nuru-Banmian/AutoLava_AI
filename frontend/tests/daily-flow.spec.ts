@@ -229,19 +229,16 @@ test("disabled wash count stays hidden and historical values return after re-ena
   });
   await page.goto(`/ledger?date=${today}`);
 
-  await expect(page.getByRole("button", { name: "事件", exact: true })).toBeVisible();
+  await expect(page.getByLabel("事件", { exact: true })).toBeVisible();
   await expect(page.getByText("洗车数量", { exact: true })).toHaveCount(0);
   await page.getByLabel(categories[0].name).fill("125");
-  await page.getByRole("button", { name: "事件", exact: true }).click();
   await page.getByLabel("事件", { exact: true }).fill("雨天促销");
   await page.getByRole("button", { name: "保存修改" }).click();
 
   await expect.poll(() => flow.ledgerWrites.at(-1)?.body.wash_count).toBeNull();
   flow.setWashCountEnabled(true);
   await page.reload();
-  const washAndActivity = page.getByRole("button", { name: "洗车数量 / 事件" });
-  await expect(washAndActivity).toBeVisible();
-  await washAndActivity.click();
+  await expect(page.getByLabel("事件", { exact: true })).toBeVisible();
   await expect(page.getByLabel("洗车数量")).toHaveValue("7");
 });
 
@@ -256,20 +253,27 @@ for (const viewport of [
     const flow = await mockMergedFlow(page);
     await page.goto(`/ledger?date=${today}`);
 
-    const card = page.getByRole("region", { name: "每日台账录入" });
+    const card = page.getByRole("region", { name: "记账录入" });
     const statusAndWeatherGroup = page.getByRole("group", { name: "状态与天气" });
     const status = page.getByLabel("状态", { exact: true });
     const weather = page.getByRole("combobox", { name: "天气" });
     const firstIncome = page.getByLabel(categories[0].name);
     const secondIncome = page.getByLabel(categories[1].name);
+    const washCount = page.getByLabel("洗车数量", { exact: true });
+    const event = page.getByLabel("事件", { exact: true });
     await expect(card).toBeVisible();
+    await expect(page.getByRole("heading", { name: "记账" })).toBeVisible();
+    await expect(washCount).toHaveValue("0");
+    await expect(event).toHaveAttribute("placeholder", "记录可能影响经营的特殊情况，如当地活动、泥雨等（选填）");
+    expect(flow.ledgerWrites).toHaveLength(0);
     await expect(page.getByRole("heading", { name: "最近七天" })).toHaveCount(0);
 
-    const [mainBox, cardBox, statusAndWeatherBox, statusBox, weatherBox, firstIncomeBox, secondIncomeBox] = await Promise.all([
+    const [mainBox, cardBox, statusAndWeatherBox, statusBox, weatherBox, firstIncomeBox, secondIncomeBox, washCountBox, eventBox] = await Promise.all([
       page.locator("main").boundingBox(), card.boundingBox(), statusAndWeatherGroup.boundingBox(), status.boundingBox(), weather.boundingBox(),
       firstIncome.boundingBox(), secondIncome.boundingBox(),
+      washCount.locator("xpath=..").boundingBox(), event.locator("xpath=..").boundingBox(),
     ]);
-    for (const box of [mainBox, cardBox, statusAndWeatherBox, statusBox, weatherBox, firstIncomeBox, secondIncomeBox]) expect(box).not.toBeNull();
+    for (const box of [mainBox, cardBox, statusAndWeatherBox, statusBox, weatherBox, firstIncomeBox, secondIncomeBox, washCountBox, eventBox]) expect(box).not.toBeNull();
     expect(statusBox!.height).toBeGreaterThanOrEqual(44);
     expect(weatherBox!.height).toBeGreaterThanOrEqual(44);
     expect(firstIncomeBox!.height).toBeGreaterThanOrEqual(44);
@@ -280,9 +284,11 @@ for (const viewport of [
       expect(Math.abs(cardBox!.x + cardBox!.width / 2 - (mainBox!.x + mainBox!.width / 2))).toBeLessThanOrEqual(1);
       expect(Math.abs(statusBox!.y - weatherBox!.y)).toBeLessThanOrEqual(1);
       expect(Math.abs(firstIncomeBox!.y - secondIncomeBox!.y)).toBeLessThanOrEqual(1);
+      expect(Math.abs(washCountBox!.y - eventBox!.y)).toBeLessThanOrEqual(1);
     } else {
       expect(weatherBox!.y).toBeGreaterThanOrEqual(statusBox!.y + statusBox!.height + 8);
       expect(secondIncomeBox!.y).toBeGreaterThanOrEqual(firstIncomeBox!.y + firstIncomeBox!.height + 8);
+      expect(eventBox!.y).toBeGreaterThanOrEqual(washCountBox!.y + washCountBox!.height + 8);
       await expect.poll(() => page.evaluate(() => ({
         body: document.body.scrollWidth,
         document: document.documentElement.scrollWidth,
@@ -291,7 +297,7 @@ for (const viewport of [
     }
 
     await fillNewRecordAmounts(page, "100");
-    await expect(page.getByText("合计 €100", { exact: true })).toBeVisible();
+    await expect(page.getByText("合计金额 €100", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "保存今日记录" }).click();
     await expect(page.getByRole("status")).toContainText("保存成功");
     expect(flow.ledgerWrites.at(-1)).toMatchObject({ date: today });
@@ -462,7 +468,7 @@ test("desktop: multi-date ledger snapshots, markers, dirty guards, and permanent
   await expect.poll(() => flow.chartRequests.length).toBeGreaterThan(chartRequestsBeforeDelete);
   await expect(page.getByRole("heading", { name: "2026年7月15日" })).toHaveCount(0);
 
-  await navigation.getByRole("link", { name: "每日记账" }).click();
+  await navigation.getByRole("link", { name: "记账" }).click();
   await page.getByRole("button", { name: "选择台账日期：2026年7月17日" }).click();
   await expect(page.getByRole("button", { name: "2026年7月15日" })).not.toHaveAttribute("data-recorded");
 });
