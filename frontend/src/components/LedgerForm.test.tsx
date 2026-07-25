@@ -158,19 +158,19 @@ describe("LedgerForm", () => {
     render(<LedgerForm
       categories={[]}
       config={composedConfig}
-      record={savedRecord({ wash_count: 7, activity: "历史活动" })}
+      record={savedRecord({ wash_count: 7, activity: "历史事件" })}
       washCountEnabled={false}
       onSave={onSave}
     />);
 
     expect(screen.queryByText("洗车数量")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "活动" }));
-    expect(screen.getByLabelText("活动")).toHaveValue("历史活动");
+    fireEvent.click(screen.getByRole("button", { name: "事件" }));
+    expect(screen.getByLabelText("事件")).toHaveValue("历史事件");
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
       wash_count: null,
-      activity: "历史活动",
+      activity: "历史事件",
     }));
   });
 

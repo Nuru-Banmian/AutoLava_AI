@@ -229,17 +229,17 @@ test("disabled wash count stays hidden and historical values return after re-ena
   });
   await page.goto(`/ledger?date=${today}`);
 
-  await expect(page.getByRole("button", { name: "活动", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "事件", exact: true })).toBeVisible();
   await expect(page.getByText("洗车数量", { exact: true })).toHaveCount(0);
   await page.getByLabel(categories[0].name).fill("125");
-  await page.getByRole("button", { name: "活动", exact: true }).click();
-  await page.getByLabel("活动", { exact: true }).fill("雨天促销");
+  await page.getByRole("button", { name: "事件", exact: true }).click();
+  await page.getByLabel("事件", { exact: true }).fill("雨天促销");
   await page.getByRole("button", { name: "保存修改" }).click();
 
   await expect.poll(() => flow.ledgerWrites.at(-1)?.body.wash_count).toBeNull();
   flow.setWashCountEnabled(true);
   await page.reload();
-  const washAndActivity = page.getByRole("button", { name: "洗车数量 / 活动" });
+  const washAndActivity = page.getByRole("button", { name: "洗车数量 / 事件" });
   await expect(washAndActivity).toBeVisible();
   await washAndActivity.click();
   await expect(page.getByLabel("洗车数量")).toHaveValue("7");

@@ -146,37 +146,15 @@ export function StoreDetailsCard({ mode, store, onDirtyChange, onSaved, onDelete
     }
   }
 
-  async function toggleCompanySettlement() {
+  async function toggleStoreSetting(
+    changes: Partial<Pick<AdminStore, "company_settlement_enabled" | "wash_count_enabled">>,
+  ) {
     if (!store) return;
     const requestId = beginRequest();
     try {
       const saved = await api<AdminStore>(`/admin/stores/${store.id}`, {
         method: "PATCH",
-        body: JSON.stringify({
-          company_settlement_enabled: !store.company_settlement_enabled,
-        }),
-      });
-      await invalidateStores();
-      if (!isCurrent(requestId)) return;
-      setPending(false);
-      onSaved(saved);
-    } catch (reason) {
-      if (!isCurrent(requestId)) return;
-      setPending(false);
-      setErrorOperation("save");
-      setError(reason);
-    }
-  }
-
-  async function toggleWashCount() {
-    if (!store) return;
-    const requestId = beginRequest();
-    try {
-      const saved = await api<AdminStore>(`/admin/stores/${store.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          wash_count_enabled: !(store.wash_count_enabled ?? true),
-        }),
+        body: JSON.stringify(changes),
       });
       await invalidateStores();
       if (!isCurrent(requestId)) return;
@@ -250,7 +228,9 @@ export function StoreDetailsCard({ mode, store, onDirtyChange, onSaved, onDelete
           <input
             checked={store.company_settlement_enabled ?? false}
             className="mt-1 size-4"
-            onChange={() => void toggleCompanySettlement()}
+            onChange={() => void toggleStoreSetting({
+              company_settlement_enabled: !store.company_settlement_enabled,
+            })}
             type="checkbox"
           />
           <span>
@@ -265,7 +245,9 @@ export function StoreDetailsCard({ mode, store, onDirtyChange, onSaved, onDelete
           <input
             checked={store.wash_count_enabled ?? true}
             className="mt-1 size-4"
-            onChange={() => void toggleWashCount()}
+            onChange={() => void toggleStoreSetting({
+              wash_count_enabled: !(store.wash_count_enabled ?? true),
+            })}
             type="checkbox"
           />
           <span>

@@ -176,7 +176,7 @@ describe("LedgerPage", () => {
 
     expect(await screen.findByRole("group", { name: "收入项目" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "天气" })).toHaveTextContent("请选择天气");
-    expect(screen.getByRole("button", { name: "洗车数量 / 活动" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: "洗车数量 / 事件" })).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByLabelText("洗车数量")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "保存今日记录" })).toBeEnabled();
   });
@@ -244,9 +244,9 @@ describe("LedgerPage", () => {
     expect(screen.getByLabelText("现金")).toHaveValue("89");
     expect(screen.getByLabelText("刷卡")).toHaveValue("12");
     expect(screen.getByRole("combobox", { name: "天气" })).toHaveTextContent("中雨");
-    fireEvent.click(screen.getByRole("button", { name: "洗车数量 / 活动" }));
+    fireEvent.click(screen.getByRole("button", { name: "洗车数量 / 事件" }));
     expect(screen.getByLabelText("洗车数量")).toHaveValue(17);
-    expect(screen.getByLabelText("活动")).toHaveValue("周末促销");
+    expect(screen.getByLabelText("事件")).toHaveValue("周末促销");
 
     fireEvent.change(screen.getByLabelText("现金"), { target: { value: "100" } });
     fillBlankLedgerAmounts();
@@ -507,12 +507,12 @@ describe("LedgerPage", () => {
   it("normalizes rest amounts and wash count while keeping activity notes", async () => {
     let body: any;
     render(<LedgerForm config={singleConfig} categories={[{ id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }]} onSave={(value) => { body = value; }} />);
-    fireEvent.click(screen.getByRole("button", { name: "洗车数量 / 活动" }));
+    fireEvent.click(screen.getByRole("button", { name: "洗车数量 / 事件" }));
     fireEvent.change(screen.getByLabelText("现金"), { target: { value: "25" } });
     fireEvent.change(screen.getByLabelText("洗车数量"), { target: { value: "3" } });
-    fireEvent.change(screen.getByLabelText("活动"), { target: { value: "设备检修" } });
+    fireEvent.change(screen.getByLabelText("事件"), { target: { value: "设备检修" } });
     fireEvent.change(screen.getByLabelText("状态"), { target: { value: "休息" } });
-    expect(screen.getByLabelText("活动")).not.toBeDisabled();
+    expect(screen.getByLabelText("事件")).not.toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     expect(body).toMatchObject({ is_open: "休息", wash_count: 0, activity: "设备检修", items: [{ category_id: 1, amount: 0 }] });
   });
@@ -522,12 +522,12 @@ describe("LedgerPage", () => {
     render(<LedgerForm config={singleConfig} categories={[{ id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }]} onSave={() => undefined} onDirtyChange={onDirtyChange} />);
 
     await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(false));
-    fireEvent.click(screen.getByRole("button", { name: "洗车数量 / 活动" }));
-    fireEvent.change(screen.getByLabelText("活动"), { target: { value: "夏日活动" } });
+    fireEvent.click(screen.getByRole("button", { name: "洗车数量 / 事件" }));
+    fireEvent.change(screen.getByLabelText("事件"), { target: { value: "夏日事件" } });
     await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true));
-    fireEvent.click(screen.getByRole("button", { name: "洗车数量 / 活动" }));
-    fireEvent.click(screen.getByRole("button", { name: "洗车数量 / 活动" }));
-    expect(screen.getByLabelText("活动")).toHaveValue("夏日活动");
+    fireEvent.click(screen.getByRole("button", { name: "洗车数量 / 事件" }));
+    fireEvent.click(screen.getByRole("button", { name: "洗车数量 / 事件" }));
+    expect(screen.getByLabelText("事件")).toHaveValue("夏日事件");
   });
 
   it("keeps a manually selected weather value when delayed automatic weather arrives", async () => {
@@ -626,8 +626,8 @@ describe("LedgerPage", () => {
       }),
     ]);
     fireEvent.change(await screen.findByLabelText("现金"), { target: { value: "13" } });
-    fireEvent.click(screen.getByRole("button", { name: "洗车数量 / 活动" }));
-    fireEvent.change(screen.getByLabelText("活动"), { target: { value: " 促销 " } });
+    fireEvent.click(screen.getByRole("button", { name: "洗车数量 / 事件" }));
+    fireEvent.change(screen.getByLabelText("事件"), { target: { value: " 促销 " } });
     fillBlankLedgerAmounts();
     fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
     expect(await screen.findByRole("status")).toHaveTextContent("保存成功");
