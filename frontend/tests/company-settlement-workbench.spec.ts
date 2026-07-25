@@ -263,7 +263,7 @@ test("390x844 record and company actions stay compact and keyboard-operable", as
   const renameInput = page.getByRole("textbox", { name: "重命名Alpha Fleet Services" });
   await renameInput.fill("Alpha Fleet");
   await page.getByRole("button", { name: "保存名称" }).click();
-  await expect(page.getByTitle("Alpha Fleet")).toBeVisible();
+  await expect(page.getByTitle("Alpha Fleet", { exact: true })).toBeVisible();
 
   const renamedCompanyMenuButton = page.getByRole("button", { name: "Alpha Fleet更多操作" });
   await renamedCompanyMenuButton.focus();

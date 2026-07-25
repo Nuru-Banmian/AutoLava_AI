@@ -21,7 +21,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-asyncio", "pytest-cov", "pyyaml", "respx", "ruff"]
+dev = ["pytest", "pytest-asyncio", "pytest-cov", "pyyaml", "respx", "ruff==0.15.22"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
