@@ -3,14 +3,15 @@ from typing import Any
 from app.models.ledger import StoreDailyRecord
 
 
-def record_payload(record: StoreDailyRecord) -> dict[str, Any]:
-    return {
+def record_payload(
+    record: StoreDailyRecord, *, include_wash_count: bool = True
+) -> dict[str, Any]:
+    payload = {
         "id": record.id,
         "store_id": record.store_id,
         "date": record.date.isoformat(),
         "daily_revenue": record.daily_revenue,
         "income_mode": record.income_mode,
-        "wash_count": record.wash_count,
         "is_open": record.is_open,
         "weather": record.weather,
         "weather_auto": record.weather_auto,
@@ -39,3 +40,6 @@ def record_payload(record: StoreDailyRecord) -> dict[str, Any]:
             for item in sorted(record.items, key=lambda value: (value.sort_order, value.id))
         ],
     }
+    if include_wash_count:
+        payload["wash_count"] = record.wash_count
+    return payload

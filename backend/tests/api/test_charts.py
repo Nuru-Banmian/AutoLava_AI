@@ -359,6 +359,51 @@ async def test_charts_complete_calendar_month_includes_confirmed_settlement_hist
     ]
 
 
+async def test_charts_wash_kpis_follow_each_store_setting(
+    auth_client, db_session, store_factory
+) -> None:
+    disabled_store = await _assigned_store(auth_client, db_session, store_factory)
+    enabled_store = await _assigned_store(auth_client, db_session, store_factory)
+    disabled_store.wash_count_enabled = False
+    enabled_store.wash_count_enabled = True
+    disabled_category = IncomeCategory(
+        store_id=disabled_store.id, name="Disabled cash", include_in_total=True
+    )
+    enabled_category = IncomeCategory(
+        store_id=enabled_store.id, name="Enabled cash", include_in_total=True
+    )
+    db_session.add_all([disabled_category, enabled_category])
+    await db_session.flush()
+    await _record(
+        db_session, disabled_store, disabled_category, revenue=125, wash_count=5
+    )
+    await _record(
+        db_session, enabled_store, enabled_category, revenue=125, wash_count=5
+    )
+
+    disabled_response = await auth_client.get(
+        f"/api/charts/{disabled_store.id}?start=2026-07-01&end=2026-07-31"
+    )
+    enabled_response = await auth_client.get(
+        f"/api/charts/{enabled_store.id}?start=2026-07-01&end=2026-07-31"
+    )
+
+    assert disabled_response.status_code == enabled_response.status_code == 200
+    assert disabled_response.json()["kpis"]["total_wash_count"] is None
+    assert disabled_response.json()["kpis"]["average_ticket"] is None
+    assert enabled_response.json()["kpis"]["total_wash_count"] == 5
+    assert enabled_response.json()["kpis"]["average_ticket"] == 25
+
+    disabled_store.wash_count_enabled = True
+    await db_session.flush()
+    reenabled_response = await auth_client.get(
+        f"/api/charts/{disabled_store.id}?start=2026-07-01&end=2026-07-31"
+    )
+
+    assert reenabled_response.json()["kpis"]["total_wash_count"] == 5
+    assert reenabled_response.json()["kpis"]["average_ticket"] == 25
+
+
 async def test_charts_partial_month_includes_confirmed_settlement_for_overlapping_month(
     auth_client, db_session, store_factory
 ) -> None:

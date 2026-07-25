@@ -12,22 +12,17 @@ def _safe_text(value: object) -> object:
     return value
 
 
-def build_ledger_workbook(records: Iterable[dict]) -> bytes:
+def build_ledger_workbook(
+    records: Iterable[dict], *, include_wash_count: bool = True
+) -> bytes:
     records = list(records)
     workbook = Workbook(write_only=True)
     summary = workbook.create_sheet(title="经营记录")
-    summary.append(
-        [
-            "日期",
-            "状态",
-            "总收入",
-            "洗车",
-            "天气",
-            "活动",
-            "记录人",
-            "最后修改人",
-        ]
-    )
+    summary_headers = ["日期", "状态", "总收入"]
+    if include_wash_count:
+        summary_headers.append("洗车")
+    summary_headers.extend(["天气", "事件", "记录人", "最后修改人"])
+    summary.append(summary_headers)
 
     detail = workbook.create_sheet(title="收入明细")
     detail.append(["日期", "收入项目", "计入总额", "排序", "金额"])
@@ -38,18 +33,22 @@ def build_ledger_workbook(records: Iterable[dict]) -> bytes:
         return cell
 
     for record in records:
-        summary.append(
+        summary_row = [
+            date.fromisoformat(record["date"]),
+            record["is_open"],
+            money_cell(summary, record["daily_revenue"]),
+        ]
+        if include_wash_count:
+            summary_row.append(record["wash_count"])
+        summary_row.extend(
             [
-                date.fromisoformat(record["date"]),
-                record["is_open"],
-                money_cell(summary, record["daily_revenue"]),
-                record["wash_count"],
                 _safe_text(record["weather"]),
                 _safe_text(record["activity"]),
                 _safe_text(record["created_by_name"]),
                 _safe_text(record["updated_by_name"]),
             ]
         )
+        summary.append(summary_row)
         for item in sorted(
             record["items"], key=lambda value: (value["sort_order"], value["id"])
         ):
