@@ -1,6 +1,6 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Ellipsis } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { api, ApiError, friendlyApiError } from "@/api/client";
@@ -77,7 +77,7 @@ function euro(value: number) {
 }
 
 const MAX_SETTLEMENT_AMOUNT = 9_999_999_999;
-const recordGridColumns = "md:grid-cols-[minmax(0,1fr)_8rem_7rem_minmax(19rem,auto)]";
+const recordGridColumns = "md:grid-cols-[minmax(0,1fr)_8rem_7rem_11rem]";
 
 function validAmount(value: string) {
   const amount = Number(value);
@@ -146,6 +146,99 @@ function canonicalConflictRecord(error: unknown): SettlementRecord | null {
     || !("revision" in current) || typeof current.revision !== "number"
   ) return null;
   return current as SettlementRecord;
+}
+
+function RecordActionsMenu({ record, disabled, onEdit, onDelete, onRevoke }: {
+  record: SettlementRecord;
+  disabled: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
+  onRevoke: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    const closeFromOutside = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", closeFromOutside);
+    return () => document.removeEventListener("pointerdown", closeFromOutside);
+  }, [open]);
+
+  const closeAndFocusTrigger = () => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+  const openFromKeyboard = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (!["Enter", " ", "ArrowDown"].includes(event.key)) return;
+    event.preventDefault();
+    setOpen(true);
+  };
+  const navigateMenu = (event: KeyboardEvent<HTMLDivElement>) => {
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
+    const currentIndex = items.indexOf(document.activeElement as HTMLElement);
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowDown") nextIndex = (currentIndex + 1) % items.length;
+    if (event.key === "ArrowUp") nextIndex = (currentIndex - 1 + items.length) % items.length;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = items.length - 1;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeAndFocusTrigger();
+      return;
+    }
+    if (nextIndex !== null) {
+      event.preventDefault();
+      items[nextIndex]?.focus();
+    }
+  };
+  const runAction = (action: () => void) => {
+    setOpen(false);
+    action();
+  };
+
+  return <div className="relative" ref={rootRef}>
+    <Button
+      aria-expanded={open}
+      aria-haspopup="menu"
+      aria-label={`${record.company_name}开票记录更多操作`}
+      disabled={disabled}
+      onClick={() => setOpen((value) => !value)}
+      onKeyDown={openFromKeyboard}
+      ref={triggerRef}
+      size="icon"
+      type="button"
+      variant="outline"
+    >
+      <Ellipsis aria-hidden="true" />
+    </Button>
+    {open && <div
+      aria-label={`${record.company_name}开票记录操作`}
+      className="absolute right-0 top-full z-20 mt-1 min-w-44 rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
+      onKeyDown={navigateMenu}
+      ref={menuRef}
+      role="menu"
+    >
+      {record.status === "pending" ? <>
+        <button aria-label={`编辑${record.company_name}开票记录`} className="flex w-full rounded-sm px-2 py-2 text-left text-sm outline-none hover:bg-accent focus:bg-accent" onClick={() => runAction(onEdit)} role="menuitem" type="button">
+          编辑
+          <span className="sr-only">{record.company_name}开票记录</span>
+        </button>
+        <button aria-label={`删除${record.company_name}开票记录`} className="flex w-full rounded-sm px-2 py-2 text-left text-sm text-destructive outline-none hover:bg-destructive/10 focus:bg-destructive/10" onClick={() => runAction(onDelete)} role="menuitem" type="button">
+          删除
+          <span className="sr-only">{record.company_name}开票记录</span>
+        </button>
+      </> : <button aria-label={`撤销${record.company_name}开票记录到账确认`} className="flex w-full rounded-sm px-2 py-2 text-left text-sm outline-none hover:bg-accent focus:bg-accent" onClick={() => runAction(onRevoke)} role="menuitem" type="button">
+        撤销到账确认
+        <span className="sr-only">{record.company_name}开票记录</span>
+      </button>}
+    </div>}
+  </div>;
 }
 
 function CompanyList({ companies, archived, busy, onRename, onLifecycle, onDelete }: {
@@ -395,6 +488,13 @@ export function CompanySettlementPage() {
     editRecordMutation.reset();
   };
 
+  const openRecordTransition = (record: SettlementRecord, kind: RecordTransitionKind) => {
+    setRecordError("");
+    setRecordMessage("");
+    transitionRecordMutation.reset();
+    setRecordTransition({ record, kind });
+  };
+
   const submitRecordEdit = () => {
     if (!selected || !editingRecord || !validAmount(editAmount) || !editCompanyId) return;
     editRecordMutation.mutate({
@@ -529,26 +629,25 @@ export function CompanySettlementPage() {
             <ul aria-label={`${month}开票记录`} className="grid gap-2">
             {monthSummary.data.records.map((record) => {
               const transitionKind: RecordTransitionKind = record.status === "pending" ? "confirm" : "revoke";
-              return <li className={`grid min-w-0 gap-3 rounded-lg border p-3 md:items-center ${recordGridColumns}`} key={record.id}>
-              <div className="grid min-w-0 gap-1"><span className="text-xs text-muted-foreground md:hidden">结算公司</span><span className="min-w-0 break-words font-medium">{record.company_name}</span></div>
-              <div className="flex items-baseline justify-between gap-3 md:block md:text-right"><span className="text-xs text-muted-foreground md:hidden">金额</span><span className="font-medium tabular-nums">{euro(record.amount)}</span></div>
-              <div><span className={`inline-flex rounded-full px-2.5 py-1 text-sm font-medium ring-1 ring-inset ${record.status === "pending" ? "bg-amber-50 text-amber-800 ring-amber-200" : "bg-emerald-50 text-emerald-800 ring-emerald-200"}`}>{record.status === "pending" ? "待到账" : "已确认"}</span></div>
-              <div className="flex flex-wrap gap-2 md:justify-end">
-                <Button aria-label={record.status === "pending" ? `确认${record.company_name}开票记录到账` : `撤销${record.company_name}开票记录到账确认`} disabled={transitionRecordMutation.isPending || editRecordMutation.isPending || deleteRecordMutation.isPending} onClick={() => {
-                  setRecordError("");
-                  setRecordMessage("");
-                  transitionRecordMutation.reset();
-                  setRecordTransition({ record, kind: transitionKind });
-                }} type="button" variant={transitionKind === "confirm" ? "default" : "outline"}>{transitionKind === "confirm" ? "确认到账" : "撤销到账确认"}</Button>
-              {record.status === "pending" && <>
-                <Button aria-label={`编辑${record.company_name}开票记录`} disabled={editRecordMutation.isPending || deleteRecordMutation.isPending} onClick={() => openRecordEditor(record)} type="button" variant="outline">编辑</Button>
-                <Button aria-label={`删除${record.company_name}开票记录`} disabled={editRecordMutation.isPending || deleteRecordMutation.isPending} onClick={() => {
-                  setRecordError("");
-                  setRecordMessage("");
-                  deleteRecordMutation.reset();
-                  setRecordToDelete(record);
-                }} type="button" variant="destructive">删除</Button>
-              </>}
+              const actionsDisabled = transitionRecordMutation.isPending || editRecordMutation.isPending || deleteRecordMutation.isPending;
+              return <li className={`grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-2 rounded-lg border p-3 ${recordGridColumns}`} key={record.id}>
+              <div className="min-w-0"><span className="block truncate font-medium" title={record.company_name}>{record.company_name}</span></div>
+              <div className="text-right"><span className="font-medium tabular-nums">{euro(record.amount)}</span></div>
+              <div><span className={`inline-flex rounded-full px-2 py-0.5 text-sm font-medium ring-1 ring-inset ${record.status === "pending" ? "bg-amber-50 text-amber-800 ring-amber-200" : "bg-emerald-50 text-emerald-800 ring-emerald-200"}`}>{record.status === "pending" ? "待到账" : "已确认"}</span></div>
+              <div className="col-span-3 flex justify-end gap-2 md:col-span-1">
+                {record.status === "pending" && <Button aria-label={`确认${record.company_name}开票记录到账`} disabled={actionsDisabled} onClick={() => openRecordTransition(record, transitionKind)} type="button">确认到账</Button>}
+                <RecordActionsMenu
+                  disabled={actionsDisabled}
+                  onDelete={() => {
+                    setRecordError("");
+                    setRecordMessage("");
+                    deleteRecordMutation.reset();
+                    setRecordToDelete(record);
+                  }}
+                  onEdit={() => openRecordEditor(record)}
+                  onRevoke={() => openRecordTransition(record, transitionKind)}
+                  record={record}
+                />
               </div>
             </li>;
             })}

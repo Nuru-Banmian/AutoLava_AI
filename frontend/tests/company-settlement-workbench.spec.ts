@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 const records = [
   {
@@ -93,16 +93,32 @@ async function expectNoHorizontalOverflow(page: Page) {
   }))).toEqual({ documentFits: true, bodyFits: true });
 }
 
+async function expectRecordRowsUseAtMostTwoLines(rows: Locator) {
+  for (const row of await rows.all()) {
+    const cellBoxes = await row.locator(":scope > *").evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().toJSON()));
+    expect(new Set(cellBoxes.map((box) => Math.round(box.y + box.height / 2))).size).toBeLessThanOrEqual(2);
+  }
+}
+
 test("1280x900 monthly workbench keeps summaries and record columns aligned", async ({ page }) => {
   const requestedMonths = await openSettlementWorkbench(page, 1280, 900);
 
   const summary = page.getByRole("region", { name: "月度汇总" });
+  const registration = page.getByRole("form", { name: "登记开票记录" });
   const recordsRegion = page.getByRole("region", { name: "开票记录列表" });
   await expect(summary.getByText("月度总收入")).toBeVisible();
   const summaryCards = summary.locator("dd");
   await expect(summaryCards).toHaveCount(4);
   const summaryBoxes = await summaryCards.evaluateAll((nodes) => nodes.map((node) => node.parentElement!.getBoundingClientRect().toJSON()));
   expect(new Set(summaryBoxes.map((box) => Math.round(box.y))).size).toBe(1);
+  const registrationControls = [
+    registration.getByLabel("结算公司"),
+    registration.getByLabel("金额（整数欧元）"),
+    registration.getByRole("button", { name: "登记待到账记录" }),
+  ];
+  const registrationBoxes = await Promise.all(registrationControls.map((control) => control.boundingBox()));
+  expect(registrationBoxes.every((box) => box !== null)).toBe(true);
+  expect(new Set(registrationBoxes.map((box) => Math.round(box!.y))).size).toBe(1);
 
   const columnHeader = recordsRegion.getByText("公司名称").locator("..");
   await expect(columnHeader).toBeVisible();
@@ -117,6 +133,8 @@ test("1280x900 monthly workbench keeps summaries and record columns aligned", as
   await expect.poll(() => rows.nth(0).locator(":scope > :nth-child(2)").evaluate((node) => getComputedStyle(node).textAlign)).toBe("right");
   await expect(recordsRegion.getByText("待到账", { exact: true })).toBeVisible();
   await expect(recordsRegion.getByText("已确认", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "确认Alpha Fleet Services开票记录到账" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Alpha Fleet Services开票记录更多操作" })).toBeVisible();
   await expect(page.getByRole("button", { name: "活动结算公司" })).toHaveAttribute("aria-expanded", "false");
   await expect(page.getByRole("button", { name: "归档结算公司" })).toHaveAttribute("aria-expanded", "false");
 
@@ -129,20 +147,33 @@ test("1280x900 monthly workbench keeps summaries and record columns aligned", as
   await expectNoHorizontalOverflow(page);
 });
 
-test("390x844 record cards preserve states, actions, and keyboard company management", async ({ page }) => {
+test("390x844 record items stay within two rows and expose a keyboard-operable action menu", async ({ page }) => {
   await openSettlementWorkbench(page, 390, 844);
 
   const recordsRegion = page.getByRole("region", { name: "开票记录列表" });
   await expect(recordsRegion.getByText("公司名称")).toBeHidden();
   const rows = recordsRegion.getByRole("listitem");
   await expect(rows).toHaveCount(2);
-  const firstRowCellBoxes = await rows.nth(0).locator(":scope > *").evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().toJSON()));
-  expect(new Set(firstRowCellBoxes.map((box) => Math.round(box.y))).size).toBeGreaterThanOrEqual(3);
+  await expectRecordRowsUseAtMostTwoLines(rows);
 
   await expect(page.getByRole("button", { name: "确认Alpha Fleet Services开票记录到账" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "编辑Alpha Fleet Services开票记录" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "删除Alpha Fleet Services开票记录" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "撤销Beta Logistics开票记录到账确认" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "编辑Alpha Fleet Services开票记录" })).toHaveCount(0);
+  const pendingMenu = page.getByRole("button", { name: "Alpha Fleet Services开票记录更多操作" });
+  await pendingMenu.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("menuitem", { name: "编辑Alpha Fleet Services开票记录" })).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(page.getByRole("menuitem", { name: "删除Alpha Fleet Services开票记录" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(pendingMenu).toBeFocused();
+  await expect(page.getByRole("menu")).toHaveCount(0);
+
+  const confirmedMenu = page.getByRole("button", { name: "Beta Logistics开票记录更多操作" });
+  await confirmedMenu.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("menuitem", { name: "撤销Beta Logistics开票记录到账确认" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(confirmedMenu).toBeFocused();
   const pendingColor = await recordsRegion.getByText("待到账", { exact: true }).evaluate((node) => getComputedStyle(node).backgroundColor);
   const confirmedColor = await recordsRegion.getByText("已确认", { exact: true }).evaluate((node) => getComputedStyle(node).backgroundColor);
   expect(pendingColor).not.toBe("rgba(0, 0, 0, 0)");
@@ -170,7 +201,9 @@ test("320px workbench wraps summaries and controls without horizontal overflow",
   expect(monthNavigationBox!.x).toBeGreaterThanOrEqual(0);
   expect(monthNavigationBox!.x + monthNavigationBox!.width).toBeLessThanOrEqual(320);
   await expect(page.getByRole("button", { name: "确认Alpha Fleet Services开票记录到账" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "撤销Beta Logistics开票记录到账确认" })).toBeVisible();
+  const rows = page.getByRole("region", { name: "开票记录列表" }).getByRole("listitem");
+  await expectRecordRowsUseAtMostTwoLines(rows);
+  await expect(page.getByRole("button", { name: "Beta Logistics开票记录更多操作" })).toBeVisible();
   await expectWorkbenchOrder(page);
   await expectNoHorizontalOverflow(page);
 });

@@ -78,6 +78,11 @@ function renderPage(extra: Parameters<typeof server.use> = []) {
   return { ...view, client };
 }
 
+async function openRecordActions(companyName: string) {
+  const trigger = await screen.findByRole("button", { name: `${companyName}开票记录更多操作` });
+  fireEvent.click(trigger);
+}
+
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -197,7 +202,8 @@ describe("CompanySettlementPage record corrections", () => {
 
     await waitFor(() => expect(submitted).toEqual({ revision: 1 }));
     expect(await screen.findByRole("status")).toHaveTextContent("开票记录已确认到账");
-    expect(await screen.findByRole("button", { name: "撤销Alpha开票记录到账确认" })).toBeInTheDocument();
+    await openRecordActions("Alpha");
+    expect(screen.getByRole("menuitem", { name: "撤销Alpha开票记录到账确认" })).toBeInTheDocument();
     expect(screen.getByText("€120", { selector: "dd" })).toBeInTheDocument();
     expect(client.getQueryState(chartsQueryKey)?.isInvalidated).toBe(true);
   });
@@ -225,7 +231,8 @@ describe("CompanySettlementPage record corrections", () => {
 
     expect(await screen.findByRole("status")).toHaveTextContent("记录状态已同步：已确认到账");
     expect(screen.queryByRole("alertdialog", { name: "确认整笔到账？" })).not.toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: "撤销Alpha开票记录到账确认" })).toBeInTheDocument();
+    await openRecordActions("Alpha");
+    expect(screen.getByRole("menuitem", { name: "撤销Alpha开票记录到账确认" })).toBeInTheDocument();
     expect(client.getQueryState(chartsQueryKey)?.isInvalidated).toBe(true);
   });
 
@@ -244,7 +251,8 @@ describe("CompanySettlementPage record corrections", () => {
       }),
     ]);
 
-    fireEvent.click(await screen.findByRole("button", { name: "撤销Alpha开票记录到账确认" }));
+    await openRecordActions("Alpha");
+    fireEvent.click(screen.getByRole("menuitem", { name: "撤销Alpha开票记录到账确认" }));
     expect(screen.getByRole("alertdialog", { name: "撤销到账确认？" })).toBeInTheDocument();
     const confirmRevocation = screen.getByRole("button", { name: "确认撤销到账确认" });
     expect(confirmRevocation).not.toHaveClass("bg-destructive");
@@ -254,7 +262,8 @@ describe("CompanySettlementPage record corrections", () => {
     fireEvent.click(screen.getByRole("button", { name: "确认撤销到账确认" }));
     await waitFor(() => expect(requests).toBe(2));
     expect(await screen.findByRole("status")).toHaveTextContent("已撤销开票记录到账确认");
-    expect(await screen.findByRole("button", { name: "编辑Alpha开票记录" })).toBeInTheDocument();
+    await openRecordActions("Alpha");
+    expect(screen.getByRole("menuitem", { name: "编辑Alpha开票记录" })).toBeInTheDocument();
   });
 
   it("edits a pending record with its revision and keeps its opening month", async () => {
@@ -269,14 +278,16 @@ describe("CompanySettlementPage record corrections", () => {
       }),
     ]);
 
-    fireEvent.click(await screen.findByRole("button", { name: "编辑Alpha开票记录" }));
+    await openRecordActions("Alpha");
+    fireEvent.click(screen.getByRole("menuitem", { name: "编辑Alpha开票记录" }));
     fireEvent.change(screen.getByLabelText("编辑结算公司"), { target: { value: "11" } });
     fireEvent.change(screen.getByLabelText("编辑金额（整数欧元）"), { target: { value: "250" } });
     fireEvent.click(screen.getByRole("button", { name: "保存开票记录修改" }));
 
     await waitFor(() => expect(submitted).toEqual({ company_id: 11, amount: 250, revision: 1 }));
     expect(await screen.findByRole("status")).toHaveTextContent("开票记录已修改");
-    expect(await screen.findByRole("button", { name: "编辑Beta开票记录" })).toBeInTheDocument();
+    await openRecordActions("Beta");
+    expect(screen.getByRole("menuitem", { name: "编辑Beta开票记录" })).toBeInTheDocument();
     expect(screen.getByLabelText("开票月份")).toHaveValue("2026-07");
   });
 
@@ -289,7 +300,8 @@ describe("CompanySettlementPage record corrections", () => {
       }),
     ]);
 
-    fireEvent.click(await screen.findByRole("button", { name: "编辑Alpha开票记录" }));
+    await openRecordActions("Alpha");
+    fireEvent.click(screen.getByRole("menuitem", { name: "编辑Alpha开票记录" }));
     fireEvent.change(screen.getByLabelText("编辑金额（整数欧元）"), { target: { value: "250" } });
     fireEvent.click(screen.getByRole("button", { name: "保存开票记录修改" }));
 
@@ -318,7 +330,8 @@ describe("CompanySettlementPage record corrections", () => {
       }),
     ]);
 
-    fireEvent.click(await screen.findByRole("button", { name: "编辑Alpha开票记录" }));
+    await openRecordActions("Alpha");
+    fireEvent.click(screen.getByRole("menuitem", { name: "编辑Alpha开票记录" }));
     fireEvent.change(screen.getByLabelText("编辑金额（整数欧元）"), { target: { value: "250" } });
     fireEvent.click(screen.getByRole("button", { name: "保存开票记录修改" }));
 
@@ -346,7 +359,8 @@ describe("CompanySettlementPage record corrections", () => {
       }),
     ]);
 
-    fireEvent.click(await screen.findByRole("button", { name: "删除Alpha开票记录" }));
+    await openRecordActions("Alpha");
+    fireEvent.click(screen.getByRole("menuitem", { name: "删除Alpha开票记录" }));
     expect(screen.getByRole("alertdialog", { name: "永久删除开票记录？" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "确认永久删除开票记录" }));
 
@@ -373,7 +387,8 @@ describe("CompanySettlementPage record corrections", () => {
       }),
     ]);
 
-    fireEvent.click(await screen.findByRole("button", { name: "删除Alpha开票记录" }));
+    await openRecordActions("Alpha");
+    fireEvent.click(screen.getByRole("menuitem", { name: "删除Alpha开票记录" }));
     fireEvent.click(screen.getByRole("button", { name: "确认永久删除开票记录" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("开票记录已被其他用户修改");
     fireEvent.click(screen.getByRole("button", { name: "确认永久删除开票记录" }));
@@ -397,7 +412,8 @@ describe("CompanySettlementPage record corrections", () => {
     fireEvent.change(await screen.findByLabelText("开票月份"), { target: { value: "2026-06" } });
     fireEvent.click(screen.getByRole("button", { name: "归档结算公司" }));
     expect(await screen.findByText("暂无归档公司")).toBeInTheDocument();
-    fireEvent.click(await screen.findByRole("button", { name: "编辑Alpha开票记录" }));
+    await openRecordActions("Alpha");
+    fireEvent.click(screen.getByRole("menuitem", { name: "编辑Alpha开票记录" }));
     fireEvent.change(screen.getByLabelText("编辑金额（整数欧元）"), { target: { value: "250" } });
     fireEvent.click(screen.getByRole("button", { name: "保存开票记录修改" }));
     expect(await screen.findByRole("alert")).toBeInTheDocument();
