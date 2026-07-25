@@ -285,6 +285,32 @@ test("early close keeps operating values through records filtering and export", 
     .toBe("提前休息");
 });
 
+test("rest normalizes operating values and legacy status cannot be generated", async ({ page }) => {
+  await page.clock.install({ time: new Date(`${today}T12:00:00Z`) });
+  const flow = await mockMergedFlow(page);
+  await page.goto(`/ledger?date=${today}`);
+
+  const status = page.getByLabel("状态", { exact: true });
+  await expect(status.locator("option")).toHaveText([
+    "营业",
+    "休息",
+    "提前休息",
+  ]);
+  await expect(status.locator("option", { hasText: "天气停业" })).toHaveCount(0);
+  await fillNewRecordAmounts(page, "200");
+  await page.getByRole("button", { name: "洗车数量 / 事件" }).click();
+  await page.getByLabel("洗车数量").fill("6");
+  await status.selectOption("休息");
+  await page.getByRole("button", { name: "保存今日记录" }).click();
+
+  await expect.poll(() => flow.ledgerWrites.at(-1)?.body).toMatchObject({
+    is_open: "休息",
+    wash_count: 0,
+  });
+  expect(flow.ledgerWrites.at(-1)?.body.items).toHaveLength(categories.length);
+  expect(flow.ledgerWrites.at(-1)?.body.items.every((item) => item.amount === 0)).toBe(true);
+});
+
 for (const viewport of [
   { name: "desktop", width: 1280, height: 900, desktop: true },
   { name: "390px", width: 390, height: 844, desktop: false },

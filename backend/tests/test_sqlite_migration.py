@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 import subprocess
@@ -201,7 +202,7 @@ def test_existing_store_and_ledger_survive_company_settlement_upgrade(
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
-def test_weather_closed_records_migrate_to_early_close_with_new_constraint(
+def test_legacy_status_records_migrate_to_early_close_with_new_constraint(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "existing.sqlite3"
@@ -267,6 +268,36 @@ def test_weather_closed_records_migrate_to_early_close_with_new_constraint(
             """,
             (1, 1, "Cash", 1, 0, 730),
         )
+        connection.execute(
+            """
+            INSERT INTO daily_briefings (store_id, card_type, content, payload)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                1,
+                "yesterday",
+                "昨天因天气停业。",
+                json.dumps(
+                    {
+                        "card_type": "yesterday",
+                        "state": "weather_closed",
+                        "revenue": None,
+                    }
+                ),
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO daily_briefings (store_id, card_type, content, payload)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                1,
+                "tomorrow",
+                "明天：晴。",
+                json.dumps({"card_type": "tomorrow", "state": "forecast"}),
+            ),
+        )
         connection.commit()
 
     subprocess.run(
@@ -298,6 +329,9 @@ def test_weather_closed_records_migrate_to_early_close_with_new_constraint(
             FROM daily_income_items WHERE record_id = 1
             """
         ).fetchone() == ("Cash", 1, 0, 730)
+        assert connection.execute(
+            "SELECT card_type, content FROM daily_briefings ORDER BY id"
+        ).fetchall() == [("tomorrow", "明天：晴。")]
 
         base_values = (1, "2026-07-21", 0, "legacy_total", 0, 0, 1, 1)
         for index, status in enumerate(("营业", "休息", "提前休息"), start=1):

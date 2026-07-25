@@ -31,6 +31,13 @@ def _replace_status_constraint(*, old_status: str, new_status: str) -> None:
 
 def upgrade() -> None:
     _replace_status_constraint(old_status="天气停业", new_status="提前休息")
+    op.execute(
+        """
+        DELETE FROM daily_briefings
+        WHERE content LIKE '%天气停业%'
+           OR CAST(payload AS TEXT) LIKE '%weather_closed%'
+        """
+    )
 
 
 def downgrade() -> None:

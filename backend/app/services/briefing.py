@@ -15,6 +15,16 @@ _CARD_ORDER = {"yesterday": 0, "today": 1, "tomorrow": 2}
 _WEEKDAYS = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
 
 
+def _record_summary(record: StoreDailyRecord | None) -> tuple[str, int | None]:
+    if record is None:
+        return "missing", None
+    if record.is_open == "休息":
+        return "rest", None
+    if record.is_open == "提前休息":
+        return "early_closed", record.daily_revenue
+    return "recorded", record.daily_revenue
+
+
 class BriefingService:
     def __init__(self, session: AsyncSession, weather_service: WeatherService):
         self.session = session
@@ -36,18 +46,7 @@ class BriefingService:
 
     async def build_yesterday(self, *, store_id: int, local_date: date) -> DashboardCardResponse:
         record = await self._record(store_id, local_date - timedelta(days=1))
-        if record is None:
-            state = "missing"
-            revenue = None
-        elif record.is_open == "休息":
-            state = "rest"
-            revenue = None
-        elif record.is_open == "提前休息":
-            state = "early_closed"
-            revenue = record.daily_revenue
-        else:
-            state = "recorded"
-            revenue = record.daily_revenue
+        state, revenue = _record_summary(record)
         return DashboardCardResponse(
             card_type="yesterday",
             state=state,
@@ -65,18 +64,7 @@ class BriefingService:
     ) -> DashboardCardResponse:
         result = None if weather_override is not None else await self._weather(store, local_date)
         record = await self._record(store.id, local_date)
-        if record is None:
-            state = "missing"
-            revenue = None
-        elif record.is_open == "休息":
-            state = "rest"
-            revenue = None
-        elif record.is_open == "提前休息":
-            state = "early_closed"
-            revenue = record.daily_revenue
-        else:
-            state = "recorded"
-            revenue = record.daily_revenue
+        state, revenue = _record_summary(record)
         return DashboardCardResponse(
             card_type="today",
             state=state,
