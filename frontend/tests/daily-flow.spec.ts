@@ -55,7 +55,14 @@ async function mockMergedFlow(
   const databaseRequests: URL[] = [];
   const chartRequests: URL[] = [];
   const exportRequests: URL[] = [];
-  const ledgerWrites: { date: string; body: { wash_count: number | null; items: { category_id: number; amount: number }[] } }[] = [];
+  const ledgerWrites: {
+    date: string;
+    body: {
+      is_open: "营业" | "休息" | "提前休息";
+      wash_count: number | null;
+      items: { category_id: number; amount: number }[];
+    };
+  }[] = [];
   const ledgerDeletes: string[] = [];
 
   await page.route(/^http:\/\/127\.0\.0\.1:4173\/api\//, async (route) => {
@@ -89,7 +96,7 @@ async function mockMergedFlow(
     if (ledgerMatch && request.method() === "PUT") {
       const targetDate = ledgerMatch[1];
       const body = request.postDataJSON() as {
-        is_open: "营业" | "休息" | "天气停业";
+        is_open: "营业" | "休息" | "提前休息";
         wash_count: number | null;
         weather: string | null;
         weather_edited: boolean;
@@ -100,6 +107,7 @@ async function mockMergedFlow(
       const amount = body.items.find((item) => item.category_id === 1)?.amount ?? 0;
       const existing = records.find((item) => item.date === targetDate);
       const saved = snapshot(existing?.id ?? 999, targetDate, amount);
+      saved.is_open = body.is_open;
       saved.wash_count = washCountSetting ? body.wash_count : existing?.wash_count ?? null;
       saved.items = body.items.map((item, index) => ({
         id: saved.id * 10 + index,
@@ -125,8 +133,10 @@ async function mockMergedFlow(
       const pageSize = Number(url.searchParams.get("page_size"));
       const start = url.searchParams.get("start") ?? "";
       const end = url.searchParams.get("end") ?? "";
+      const status = url.searchParams.get("status");
       const filtered = records
         .filter((record) => record.date >= start && record.date <= end)
+        .filter((record) => status === null || record.is_open === status)
         .sort((left, right) => right.date.localeCompare(left.date));
       if (pageNumber === 1 && pageSize === 1 && start === end) {
         return json({
@@ -243,6 +253,62 @@ test("disabled wash count stays hidden and historical values return after re-ena
   await expect(washAndActivity).toBeVisible();
   await washAndActivity.click();
   await expect(page.getByLabel("洗车数量")).toHaveValue("7");
+});
+
+test("early close keeps operating values through records filtering and export", async ({ page }) => {
+  await page.clock.install({ time: new Date(`${today}T12:00:00Z`) });
+  const flow = await mockMergedFlow(page);
+  await page.goto(`/ledger?date=${today}`);
+
+  await page.getByLabel("状态", { exact: true }).selectOption("提前休息");
+  await fillNewRecordAmounts(page, "137");
+  await page.getByRole("button", { name: "洗车数量 / 事件" }).click();
+  await page.getByLabel("洗车数量").fill("5");
+  await page.getByRole("button", { name: "保存今日记录" }).click();
+
+  await expect.poll(() => flow.ledgerWrites.at(-1)?.body).toMatchObject({
+    is_open: "提前休息",
+    wash_count: 5,
+  });
+  expect(flow.ledgerWrites.at(-1)?.body.items[0]).toEqual({
+    category_id: 1,
+    amount: 137,
+  });
+
+  await page.getByRole("navigation", { name: "主导航" })
+    .getByRole("link", { name: "营业记录" })
+    .click();
+  await page.getByLabel("营业状态").selectOption("提前休息");
+  await expect(page.getByRole("table").locator("tbody tr").first()).toContainText("提前休息");
+  await page.getByRole("button", { name: "导出当前范围" }).click();
+  await expect.poll(() => flow.exportRequests.at(-1)?.searchParams.get("status"))
+    .toBe("提前休息");
+});
+
+test("rest normalizes operating values and legacy status cannot be generated", async ({ page }) => {
+  await page.clock.install({ time: new Date(`${today}T12:00:00Z`) });
+  const flow = await mockMergedFlow(page);
+  await page.goto(`/ledger?date=${today}`);
+
+  const status = page.getByLabel("状态", { exact: true });
+  await expect(status.locator("option")).toHaveText([
+    "营业",
+    "休息",
+    "提前休息",
+  ]);
+  await expect(status.locator("option", { hasText: "天气停业" })).toHaveCount(0);
+  await fillNewRecordAmounts(page, "200");
+  await page.getByRole("button", { name: "洗车数量 / 事件" }).click();
+  await page.getByLabel("洗车数量").fill("6");
+  await status.selectOption("休息");
+  await page.getByRole("button", { name: "保存今日记录" }).click();
+
+  await expect.poll(() => flow.ledgerWrites.at(-1)?.body).toMatchObject({
+    is_open: "休息",
+    wash_count: 0,
+  });
+  expect(flow.ledgerWrites.at(-1)?.body.items).toHaveLength(categories.length);
+  expect(flow.ledgerWrites.at(-1)?.body.items.every((item) => item.amount === 0)).toBe(true);
 });
 
 for (const viewport of [

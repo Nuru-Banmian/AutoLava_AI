@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 class DatabaseFilters(BaseModel):
     start: date | None = None
     end: date | None = None
-    status: Literal["营业", "休息", "天气停业"] | None = None
+    status: Literal["营业", "休息", "提前休息"] | None = None
     weather: str | None = Field(default=None, max_length=50)
     activity_query: str | None = Field(default=None, max_length=2000)
     missing_wash_count: bool = False

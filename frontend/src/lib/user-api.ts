@@ -1,6 +1,6 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import type { AccessibleStore, CategoryDescriptor, DatabaseResponse } from "@/api/types";
+import type { AccessibleStore, CategoryDescriptor, DatabaseResponse, LedgerStatus } from "@/api/types";
 
 export const categoryCatalogKey = (storeId: number, start: string, end = start) => ["categoryCatalog", storeId, start, end] as const;
 export const incomeConfigKey = (storeId: number) => ["income-config", storeId, "current"] as const;
@@ -13,13 +13,20 @@ export const databaseKey = (storeId: number, query: string) => ["database", "rec
 
 const DATABASE_PAGE_SIZE = 200;
 
-async function loadRecordPages(storeId: number, start: string, end: string, signal?: AbortSignal): Promise<DatabaseResponse[]> {
+async function loadRecordPages(
+  storeId: number,
+  start: string,
+  end: string,
+  signal?: AbortSignal,
+  status?: LedgerStatus | null,
+): Promise<DatabaseResponse[]> {
   const pages: DatabaseResponse[] = [];
   let page = 1;
   let total = 0;
 
   do {
     const query = new URLSearchParams({ start, end, page: String(page), page_size: String(DATABASE_PAGE_SIZE) });
+    if (status) query.set("status", status);
     const response = await api<DatabaseResponse>(`/database/${storeId}/records?${query}`, { signal });
     pages.push(response);
     total = response.total;
@@ -35,8 +42,14 @@ function mergedCategories(pages: DatabaseResponse[]): CategoryDescriptor[] {
   return [...categories.values()].sort((left, right) => left.sort_order - right.sort_order || left.id - right.id);
 }
 
-export async function loadBusinessRecords(storeId: number, start: string, end: string, signal?: AbortSignal): Promise<DatabaseResponse> {
-  const pages = await loadRecordPages(storeId, start, end, signal);
+export async function loadBusinessRecords(
+  storeId: number,
+  start: string,
+  end: string,
+  signal?: AbortSignal,
+  status?: LedgerStatus | null,
+): Promise<DatabaseResponse> {
+  const pages = await loadRecordPages(storeId, start, end, signal, status);
   return {
     ...pages[0],
     items: pages.flatMap((response) => response.items),

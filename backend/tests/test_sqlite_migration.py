@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 import subprocess
@@ -198,4 +199,167 @@ def test_existing_store_and_ledger_survive_company_settlement_upgrade(
             "SELECT date, daily_revenue, income_mode, is_open FROM store_daily_records WHERE id = 1"
         ).fetchone() == ("2026-06-30", 730, "legacy_total", "营业")
         assert connection.execute("SELECT COUNT(*) FROM stores").fetchone() == (1,)
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_legacy_status_records_migrate_to_early_close_with_new_constraint(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "existing.sqlite3"
+    environment = os.environ | {"AUTOLAVA_DATABASE_PATH": str(database_path)}
+    backend = Path(__file__).parents[1]
+
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "0003"],
+        cwd=backend,
+        env=environment,
+        check=True,
+    )
+    with closing(sqlite3.connect(database_path)) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(
+            "INSERT INTO users (username, password_hash, role, is_active) VALUES (?, ?, ?, ?)",
+            ("migration-admin", "hash", "admin", 1),
+        )
+        connection.execute(
+            """
+            INSERT INTO stores (
+                name, address, latitude, longitude, timezone, is_active,
+                income_items_enabled
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("Migration Store", "Address", 45, 9, "Europe/Rome", 1, 1),
+        )
+        connection.execute(
+            """
+            INSERT INTO income_categories (
+                store_id, name, include_in_total, is_active, sort_order
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (1, "Cash", 1, 1, 0),
+        )
+        connection.execute(
+            """
+            INSERT INTO store_daily_records (
+                store_id, date, daily_revenue, income_mode, wash_count, is_open,
+                weather, activity, weather_edited, scanned, created_by, updated_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                1,
+                "2026-07-20",
+                730,
+                "composed",
+                11,
+                "天气停业",
+                "大雨",
+                "下午提前结束",
+                1,
+                0,
+                1,
+                1,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO daily_income_items (
+                record_id, category_id, category_name, include_in_total, sort_order, amount
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (1, 1, "Cash", 1, 0, 730),
+        )
+        connection.execute(
+            """
+            INSERT INTO daily_briefings (store_id, card_type, content, payload)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                1,
+                "yesterday",
+                "昨天因天气停业。",
+                json.dumps(
+                    {
+                        "card_type": "yesterday",
+                        "state": "weather_closed",
+                        "revenue": None,
+                    }
+                ),
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO daily_briefings (store_id, card_type, content, payload)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                1,
+                "tomorrow",
+                "明天：晴。",
+                json.dumps({"card_type": "tomorrow", "state": "forecast"}),
+            ),
+        )
+        connection.commit()
+
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=backend,
+        env=environment,
+        check=True,
+    )
+
+    with closing(sqlite3.connect(database_path)) as connection:
+        migrated = connection.execute(
+            """
+            SELECT date, daily_revenue, income_mode, wash_count, is_open, weather, activity
+            FROM store_daily_records WHERE id = 1
+            """
+        ).fetchone()
+        assert migrated == (
+            "2026-07-20",
+            730,
+            "composed",
+            11,
+            "提前休息",
+            "大雨",
+            "下午提前结束",
+        )
+        assert connection.execute(
+            """
+            SELECT category_name, include_in_total, sort_order, amount
+            FROM daily_income_items WHERE record_id = 1
+            """
+        ).fetchone() == ("Cash", 1, 0, 730)
+        assert connection.execute(
+            "SELECT card_type, content FROM daily_briefings ORDER BY id"
+        ).fetchall() == [("tomorrow", "明天：晴。")]
+
+        base_values = (1, "2026-07-21", 0, "legacy_total", 0, 0, 1, 1)
+        for index, status in enumerate(("营业", "休息", "提前休息"), start=1):
+            connection.execute(
+                """
+                INSERT INTO store_daily_records (
+                    store_id, date, daily_revenue, income_mode, is_open,
+                    weather_edited, scanned, created_by, updated_by
+                ) VALUES (?, date(?, ?), ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    base_values[0],
+                    base_values[1],
+                    f"+{index} day",
+                    base_values[2],
+                    base_values[3],
+                    status,
+                    *base_values[4:],
+                ),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
+            connection.execute(
+                """
+                INSERT INTO store_daily_records (
+                    store_id, date, daily_revenue, income_mode, is_open,
+                    weather_edited, scanned, created_by, updated_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (1, "2026-07-25", 0, "legacy_total", "天气停业", 0, 0, 1, 1),
+            )
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []

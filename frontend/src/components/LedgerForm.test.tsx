@@ -67,23 +67,41 @@ describe("LedgerForm", () => {
     expect(screen.queryByRole("group", { name: "收入项目" })).not.toBeInTheDocument();
   });
 
-  it("starts new business and weather-closure amounts empty in both ledger modes", () => {
+  it("starts new business and early-close amounts empty in both ledger modes", () => {
     const direct = render(<LedgerForm categories={[]} config={directConfig} onSave={vi.fn()} />);
     expect(screen.getByLabelText("当日营业额")).toHaveValue("");
-    fireEvent.change(screen.getByLabelText("状态"), { target: { value: "天气停业" } });
+    fireEvent.change(screen.getByLabelText("状态"), { target: { value: "提前休息" } });
     expect(screen.getByLabelText("当日营业额")).toHaveValue("");
     direct.unmount();
 
     render(<LedgerForm categories={[]} config={composedConfig} onSave={vi.fn()} />);
     expect(screen.getByLabelText("现金")).toHaveValue("");
     expect(screen.getByLabelText("不计入")).toHaveValue("");
-    fireEvent.change(screen.getByLabelText("状态"), { target: { value: "天气停业" } });
+    fireEvent.change(screen.getByLabelText("状态"), { target: { value: "提前休息" } });
     expect(screen.getByLabelText("现金")).toHaveValue("");
     expect(screen.getByLabelText("不计入")).toHaveValue("");
     fireEvent.change(screen.getByLabelText("状态"), { target: { value: "休息" } });
     fireEvent.change(screen.getByLabelText("状态"), { target: { value: "营业" } });
     expect(screen.getByLabelText("现金")).toHaveValue("");
     expect(screen.getByLabelText("不计入")).toHaveValue("");
+  });
+
+  it("submits early-close operating values without normalizing them", () => {
+    const onSave = vi.fn<(body: LedgerBody) => void>();
+    render(<LedgerForm categories={[]} config={composedConfig} onSave={onSave} />);
+
+    fireEvent.change(screen.getByLabelText("状态"), { target: { value: "提前休息" } });
+    fireEvent.change(screen.getByLabelText("现金"), { target: { value: "125" } });
+    fireEvent.change(screen.getByLabelText("不计入"), { target: { value: "9" } });
+    fireEvent.click(screen.getByRole("button", { name: "洗车数量 / 事件" }));
+    fireEvent.change(screen.getByLabelText("洗车数量"), { target: { value: "4" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      is_open: "提前休息",
+      wash_count: 4,
+      items: [{ category_id: 5, amount: 125 }, { category_id: 6, amount: 9 }],
+    }));
   });
 
   it("accepts only whole non-negative money input", () => {

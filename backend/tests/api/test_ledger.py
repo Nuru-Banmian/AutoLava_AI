@@ -196,6 +196,33 @@ async def test_put_and_get_return_integer_money(
     assert [item["amount"] for item in fetched.json()["items"]] == [200, 80]
 
 
+async def test_early_close_preserves_values_while_rest_normalizes_them(
+    auth_client: AsyncClient, assigned_store: AssignedStore, ledger_payload: dict
+) -> None:
+    path = f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}"
+
+    early_close = await auth_client.put(
+        path,
+        json=ledger_payload | {"is_open": "提前休息"},
+    )
+    early_close_record = await auth_client.get(path)
+
+    assert early_close.status_code == 201
+    assert early_close_record.json()["is_open"] == "提前休息"
+    assert early_close_record.json()["daily_revenue"] == 200
+    assert early_close_record.json()["wash_count"] == 12
+    assert [item["amount"] for item in early_close_record.json()["items"]] == [200, 80]
+
+    rest = await auth_client.put(path, json=ledger_payload | {"is_open": "休息"})
+    rest_record = await auth_client.get(path)
+
+    assert rest.status_code == 200
+    assert rest_record.json()["is_open"] == "休息"
+    assert rest_record.json()["daily_revenue"] == 0
+    assert rest_record.json()["wash_count"] == 0
+    assert [item["amount"] for item in rest_record.json()["items"]] == [0, 0]
+
+
 async def test_recent_uses_store_local_window(
     auth_client: AsyncClient, assigned_store: AssignedStore, ledger_payload: dict
 ) -> None:
@@ -224,7 +251,11 @@ async def test_future_and_invalid_status_are_422(
         f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}",
         json=ledger_payload | {"is_open": "unknown"},
     )
-    assert future.status_code == invalid.status_code == 422
+    legacy = await auth_client.put(
+        f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}",
+        json=ledger_payload | {"is_open": "天气停业"},
+    )
+    assert future.status_code == invalid.status_code == legacy.status_code == 422
 
 
 async def test_delete_returns_204(

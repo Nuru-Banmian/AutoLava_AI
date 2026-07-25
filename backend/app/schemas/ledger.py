@@ -11,7 +11,7 @@ class IncomeItemBody(BaseModel):
 
 
 class LedgerBody(BaseModel):
-    is_open: Literal["营业", "休息", "天气停业"]
+    is_open: Literal["营业", "休息", "提前休息"]
     daily_revenue: MoneyAmount | None = None
     wash_count: int | None = Field(default=None, ge=0)
     weather: str | None = Field(default=None, max_length=50)
