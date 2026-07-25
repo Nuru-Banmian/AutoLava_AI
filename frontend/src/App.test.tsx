@@ -253,11 +253,9 @@ describe("App", () => {
     );
     renderApplication("/settlements", { role: "user" });
 
-    await userEvent.click(await screen.findByRole("button", { name: "活动结算公司" }));
-    expect(await screen.findByRole("button", { name: "重命名Alpha Fleet" })).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: "结算公司管理" }));
+    expect(await screen.findByRole("button", { name: "Alpha Fleet更多操作" })).toBeInTheDocument();
     expect(screen.queryByText("Old Fleet")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "归档结算公司" }));
-    expect(await screen.findByText("Old Fleet")).toBeInTheDocument();
     const input = screen.getByRole("textbox", { name: "新结算公司名称" });
     await userEvent.type(input, "  New   Fleet  ");
     await userEvent.click(screen.getByRole("button", { name: "新增结算公司" }));
@@ -267,14 +265,20 @@ describe("App", () => {
     await userEvent.click(screen.getByRole("button", { name: "重试操作" }));
     await waitFor(() => expect(input).toHaveValue(""));
     expect(screen.queryByText("操作成功")).not.toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: "重命名New Fleet" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "New Fleet更多操作" })).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "归档Alpha Fleet" }));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "归档Alpha Fleet" })).not.toBeInTheDocument());
-    expect(screen.getByRole("button", { name: "恢复Alpha Fleet" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Alpha Fleet更多操作" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "归档Alpha Fleet" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Alpha Fleet更多操作" })).not.toBeInTheDocument());
+    await userEvent.click(screen.getByRole("tab", { name: "已归档（2）" }));
+    expect(await screen.findByText("Old Fleet")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Alpha Fleet更多操作" }));
+    expect(screen.getByRole("menuitem", { name: "恢复Alpha Fleet" })).toBeInTheDocument();
 
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-    await userEvent.click(screen.getByRole("button", { name: "永久删除New Fleet" }));
+    await userEvent.click(screen.getByRole("tab", { name: "使用中（1）" }));
+    await userEvent.click(screen.getByRole("button", { name: "New Fleet更多操作" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "永久删除New Fleet" }));
     expect(confirm).toHaveBeenCalledWith("确定永久删除结算公司“New Fleet”吗？此操作无法撤销。");
     confirm.mockRestore();
   });
@@ -308,20 +312,21 @@ describe("App", () => {
     );
     renderApplication("/settlements", { role: "user" });
 
-    await userEvent.click(await screen.findByRole("button", { name: "活动结算公司" }));
-    expect(await screen.findByRole("button", { name: "重命名一店公司" })).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: "结算公司管理" }));
+    expect(await screen.findByRole("button", { name: "一店公司更多操作" })).toBeInTheDocument();
     const draft = screen.getByRole("textbox", { name: "新结算公司名称" });
     await userEvent.type(draft, "一店草稿");
     await userEvent.click(screen.getByRole("button", { name: "新增结算公司" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("一店保存失败");
-    await userEvent.click(screen.getByRole("button", { name: "重命名一店公司" }));
+    await userEvent.click(screen.getByRole("button", { name: "一店公司更多操作" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "重命名一店公司" }));
     expect(screen.getByRole("textbox", { name: "重命名一店公司" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "重试操作" }));
 
     const picker = within(screen.getByTestId("desktop-store-picker")).getByRole("combobox", { name: "门店" });
     await userEvent.selectOptions(picker, "2");
-    await userEvent.click(await screen.findByRole("button", { name: "活动结算公司" }));
-    expect(await screen.findByRole("button", { name: "重命名二店公司" })).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: "结算公司管理" }));
+    expect(await screen.findByRole("button", { name: "二店公司更多操作" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "新结算公司名称" })).toHaveValue("");
     expect(screen.queryByRole("textbox", { name: "重命名一店公司" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "重试操作" })).not.toBeInTheDocument();
@@ -329,7 +334,7 @@ describe("App", () => {
     resolveOldRequest?.();
     await waitFor(() => expect(creates).toBe(2));
     expect(screen.queryByText("操作成功")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "重命名二店公司" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "二店公司更多操作" })).toBeInTheDocument();
   });
 
   it("uses the store timezone for the opening month boundary", () => {
@@ -377,7 +382,7 @@ describe("App", () => {
     await waitFor(() => expect(screen.getByText("日常营业额").nextElementSibling).toHaveTextContent("€1,000"));
     expect(screen.getByText("月度总收入").nextElementSibling).toHaveTextContent("€1,000");
 
-    await userEvent.click(screen.getByRole("button", { name: "活动结算公司" }));
+    await userEvent.click(screen.getByRole("button", { name: "结算公司管理" }));
     await userEvent.type(screen.getByRole("textbox", { name: "新结算公司名称" }), "Beta Fleet");
     await userEvent.click(screen.getByRole("button", { name: "新增结算公司" }));
     const companyInput = screen.getByRole("combobox", { name: "结算公司" });
