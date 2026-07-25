@@ -42,9 +42,9 @@ class BriefingService:
         elif record.is_open == "休息":
             state = "rest"
             revenue = None
-        elif record.is_open == "天气停业":
-            state = "weather_closed"
-            revenue = None
+        elif record.is_open == "提前休息":
+            state = "early_closed"
+            revenue = record.daily_revenue
         else:
             state = "recorded"
             revenue = record.daily_revenue
@@ -71,9 +71,9 @@ class BriefingService:
         elif record.is_open == "休息":
             state = "rest"
             revenue = None
-        elif record.is_open == "天气停业":
-            state = "weather_closed"
-            revenue = None
+        elif record.is_open == "提前休息":
+            state = "early_closed"
+            revenue = record.daily_revenue
         else:
             state = "recorded"
             revenue = record.daily_revenue
@@ -108,8 +108,8 @@ class BriefingService:
                 return "昨天还没有经营记录，可以在记账页补录。"
             if card.state == "rest":
                 return "昨天休息。"
-            if card.state == "weather_closed":
-                return "昨天因天气停业。"
+            if card.state == "early_closed":
+                return f"昨天提前休息，营业额 €{card.revenue}。"
             return f"昨天营业，营业额 €{card.revenue}。"
         weather = card.weather or "天气暂时不可用"
         if card.card_type == "today":
@@ -120,7 +120,7 @@ class BriefingService:
             elif card.state == "rest":
                 status = "休息"
             else:
-                status = "天气停业"
+                status = f"提前休息，营业额 €{card.revenue}"
             return f"今天：{weather}；{status}。"
         return f"明天（{card.weekday}）：{weather}。"
 

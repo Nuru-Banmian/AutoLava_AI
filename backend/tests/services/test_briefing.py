@@ -95,7 +95,7 @@ async def test_disabled_store_briefing_does_not_expose_historical_wash_count(
         (None, "missing"),
         ("营业", "recorded"),
         ("休息", "rest"),
-        ("天气停业", "weather_closed"),
+        ("提前休息", "early_closed"),
     ],
 )
 async def test_yesterday_states_are_deterministic(
@@ -123,8 +123,36 @@ async def test_yesterday_states_are_deterministic(
         store_id=store.id, local_date=date(2026, 7, 15)
     )
     assert card.state == expected_state
-    assert card.revenue == (150 if record_status == "营业" else None)
+    assert card.revenue == (
+        150 if record_status in {"营业", "提前休息"} else None
+    )
     assert isinstance(card.generated_at, datetime)
+
+
+async def test_early_close_briefing_preserves_revenue_and_uses_new_copy(
+    db_session: AsyncSession, store: Store, user_factory
+) -> None:
+    owner = await user_factory(username="early-close-copy", password="secret")
+    db_session.add(
+        StoreDailyRecord(
+            store_id=store.id,
+            date=date(2026, 7, 14),
+            daily_revenue=150,
+            is_open="提前休息",
+            weather_edited=False,
+            created_by=owner.id,
+            updated_by=owner.id,
+        )
+    )
+    await db_session.flush()
+
+    cards = await BriefingService(db_session, StubWeatherService()).regenerate(
+        store.id, ["yesterday"], local_date=date(2026, 7, 15)
+    )
+
+    assert cards[0].content == "昨天提前休息，营业额 €150。"
+    assert cards[0].payload["state"] == "early_closed"
+    assert cards[0].payload["revenue"] == 150
 
 
 async def test_sqlite_conflict_update_reuses_one_card(

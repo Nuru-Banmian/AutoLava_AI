@@ -10,7 +10,7 @@ from app.schemas.time import trusted_utc
 
 class DashboardCardResponse(BaseModel):
     card_type: Literal["yesterday", "today", "tomorrow"]
-    state: Literal["missing", "recorded", "rest", "weather_closed", "forecast", "unavailable"]
+    state: Literal["missing", "recorded", "rest", "early_closed", "forecast", "unavailable"]
     revenue: int | None = None
     weather: str | None = None
     weekday: str | None = None

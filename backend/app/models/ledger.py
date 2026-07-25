@@ -62,7 +62,7 @@ class StoreDailyRecord(Base):
     )
     __table_args__ = (
         UniqueConstraint("store_id", "date", name="uq_store_daily_records_store_date"),
-        CheckConstraint("is_open in ('营业','休息','天气停业')", name="open_status"),
+        CheckConstraint("is_open in ('营业','休息','提前休息')", name="open_status"),
         CheckConstraint("daily_revenue >= 0", name="daily_revenue_nonnegative"),
     )
 

@@ -225,3 +225,47 @@ async def test_database_context_and_export_follow_the_requested_store_wash_setti
         "总收入",
         "洗车",
     ]
+
+
+async def test_database_records_and_export_filter_by_early_close_status(
+    auth_client, store_factory, db_session
+) -> None:
+    store = await store_factory(name="Early close records")
+    user = await db_session.scalar(select(User).where(User.username == "authenticated"))
+    assert user is not None
+    db_session.add_all(
+        [
+            StoreMember(store_id=store.id, user_id=user.id),
+            StoreDailyRecord(
+                store_id=store.id,
+                date=date(2026, 7, 21),
+                daily_revenue=240,
+                wash_count=8,
+                is_open="提前休息",
+                weather_edited=False,
+                created_by=user.id,
+                updated_by=user.id,
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    page = await auth_client.get(
+        f"/api/database/{store.id}/records", params={"status": "提前休息"}
+    )
+    exported = await auth_client.get(
+        f"/api/database/{store.id}/export.xlsx", params={"status": "提前休息"}
+    )
+    legacy_page = await auth_client.get(
+        f"/api/database/{store.id}/records", params={"status": "天气停业"}
+    )
+    legacy_export = await auth_client.get(
+        f"/api/database/{store.id}/export.xlsx", params={"status": "天气停业"}
+    )
+
+    assert page.status_code == exported.status_code == 200
+    assert page.json()["total"] == 1
+    assert page.json()["items"][0]["is_open"] == "提前休息"
+    workbook = load_workbook(BytesIO(exported.content), read_only=False)
+    assert workbook["经营记录"].cell(row=2, column=2).value == "提前休息"
+    assert legacy_page.status_code == legacy_export.status_code == 422

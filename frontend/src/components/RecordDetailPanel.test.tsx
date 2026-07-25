@@ -62,7 +62,7 @@ describe("RecordDetailPanel", () => {
     expect(onDelete).toHaveBeenCalledOnce();
   });
 
-  it.each(["营业", "天气停业"] as const)("shows the actual %s status", (is_open) => {
+  it.each(["营业", "提前休息"] as const)("shows the actual %s status", (is_open) => {
     renderPanel({ ...record, is_open });
 
     expect(screen.getByText(is_open, { exact: true })).toBeInTheDocument();

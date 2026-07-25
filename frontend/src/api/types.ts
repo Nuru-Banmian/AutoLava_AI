@@ -94,7 +94,7 @@ export interface ScheduledTaskLog {
   timestamp_status: "utc" | "legacy_unknown";
 }
 
-export type LedgerStatus = "营业" | "休息" | "天气停业";
+export type LedgerStatus = "营业" | "休息" | "提前休息";
 export type IncomeMode = "legacy_total" | "composed";
 export interface CategoryDescriptor { id: number; name: string; include_in_total: boolean; is_active: boolean; sort_order: number }
 export interface IncomeItemBody { category_id: number; amount: number }
@@ -120,7 +120,7 @@ export interface RecordSnapshot {
 export interface DatabaseResponse { items: RecordSnapshot[]; categories: CategoryDescriptor[]; sum_daily_revenue: number; total: number; page: number; page_size: number }
 export interface BriefingCard {
   card_type: "yesterday" | "today" | "tomorrow";
-  state: "missing" | "recorded" | "rest" | "weather_closed" | "forecast" | "unavailable";
+  state: "missing" | "recorded" | "rest" | "early_closed" | "forecast" | "unavailable";
   revenue: number | null;
   weather: string | null;
   weekday: string | null;

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import type { LedgerStatus } from "@/api/types";
 import type { DateRange, MonthSelection, MonthSelectionIssue, RecordRangeMode } from "@/lib/business-record-ranges";
 import { customMonthRange, monthRange, monthSelectionIssue } from "@/lib/business-record-ranges";
 
@@ -11,9 +12,11 @@ interface RecordFiltersProps {
   mode: RecordRangeMode;
   range: DateRange;
   today: string;
+  status: LedgerStatus | null;
   exporting: boolean;
   exportError: string;
   onChange(mode: RecordRangeMode, range: DateRange): void;
+  onStatusChange(status: LedgerStatus | null): void;
   onExport(): void;
 }
 
@@ -24,7 +27,7 @@ const monthSelectionMessages: Record<MonthSelectionIssue, string> = {
   reversed: "结束月份不能早于开始月份",
 };
 
-export function RecordFilters({ mode, range, today, exporting, exportError, onChange, onExport }: RecordFiltersProps) {
+export function RecordFilters({ mode, range, today, status, exporting, exportError, onChange, onStatusChange, onExport }: RecordFiltersProps) {
   const currentMonth = today.slice(0, 7);
   const selectedMonth = range.start.slice(0, 7);
   const [customDraft, setCustomDraft] = useState<MonthSelection>({ startMonth: selectedMonth, endMonth: range.end.slice(0, 7) });
@@ -102,13 +105,29 @@ export function RecordFilters({ mode, range, today, exporting, exportError, onCh
           </label>
         </div>
       )}
-      <div className="grid min-w-0 grid-cols-2 gap-2 md:col-start-2 md:row-start-1 md:flex">
+      <div className="grid min-w-0 grid-cols-2 gap-2 md:col-span-2 md:grid-cols-[auto_auto_minmax(10rem,14rem)]">
         <Button aria-pressed={customOpen} className="h-10 min-w-0" onClick={customOpen ? returnToMonth : openCustom} type="button" variant="outline">
           {customOpen ? "单月浏览" : "自定义范围"}
         </Button>
         <Button className="h-10 min-w-0" disabled={exporting || Boolean(validationError)} onClick={onExport} type="button">
           导出当前范围
         </Button>
+        <label className="col-span-2 grid min-w-0 gap-1 text-sm font-medium md:col-span-1">
+          营业状态
+          <select
+            aria-label="营业状态"
+            className="h-10 min-w-0 rounded-md border border-input bg-background px-3 text-sm"
+            onChange={(event) => onStatusChange(
+              event.target.value === "" ? null : event.target.value as LedgerStatus
+            )}
+            value={status ?? ""}
+          >
+            <option value="">全部状态</option>
+            <option value="营业">营业</option>
+            <option value="休息">休息</option>
+            <option value="提前休息">提前休息</option>
+          </select>
+        </label>
       </div>
       {validationError && <p role="alert" className="text-sm text-destructive md:col-span-2">{validationError}</p>}
       {exportError && <p role="alert" className="text-sm text-destructive md:col-span-2">{exportError}</p>}
