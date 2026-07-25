@@ -75,13 +75,19 @@ export function LedgerForm({ categories, config, record, weather, onSave, onDirt
   const loadedAmounts = useMemo(() => Object.fromEntries(active.map((category) => [category.id, record ? String(record.items.find((item) => item.category_id === category.id)?.amount ?? 0) : "0"])), [active, record]);
   const [amounts, setAmounts] = useState<Record<number, string>>(loadedAmounts);
   const incomingSignature = JSON.stringify({ record, recordRevision, loadedAmounts, automaticWeather: record ? null : weather?.weather ?? null });
+  const normalizedActivity = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (record?.activity != null && value === record.activity) return value;
+    return trimmed;
+  };
   const semanticSignature = (values: { status: LedgerStatus; wash: string; weatherValue: string; weatherEdited: boolean; activity: string; directTotal: string; amounts: Record<number, string> }) => JSON.stringify({
     is_open: values.status,
     daily_revenue: composed ? null : semanticAmount(values.directTotal),
     wash_count: normalizedWashCount(washCountEnabled, values.status, values.wash),
     weather: values.weatherValue || null,
     weather_edited: values.weatherEdited,
-    activity: values.activity.trim() || null,
+    activity: normalizedActivity(values.activity),
     items: composed ? active.map((category) => [category.id, semanticAmount(values.amounts[category.id] ?? "0")]) : [],
   });
   const submittedSignature = (body: LedgerBody) => JSON.stringify({
@@ -152,7 +158,7 @@ export function LedgerForm({ categories, config, record, weather, onSave, onDirt
     setStatus(next);
     if (next === "休息") setWash("0");
   }
-  return <form className="grid min-w-0 gap-5" onSubmit={(event) => { event.preventDefault(); if (validationError) return; const items = amountResults.map(({ category, result }) => ({ category_id: category.id, amount: status === "休息" ? 0 : (result as { value: number }).value })); onSave({ is_open: status, daily_revenue: composed ? null : status === "休息" ? 0 : (directResult as { value: number }).value, wash_count: legacyEmptyWash && status !== "休息" ? null : normalizedWashCount(washCountEnabled, status, wash), weather: weatherValue || null, weather_edited: weatherEdited, activity: activity.trim() || null, items: composed ? items : [] }); }}>
+  return <form className="grid min-w-0 gap-5" onSubmit={(event) => { event.preventDefault(); if (validationError) return; const items = amountResults.map(({ category, result }) => ({ category_id: category.id, amount: status === "休息" ? 0 : (result as { value: number }).value })); onSave({ is_open: status, daily_revenue: composed ? null : status === "休息" ? 0 : (directResult as { value: number }).value, wash_count: legacyEmptyWash && status !== "休息" ? null : normalizedWashCount(washCountEnabled, status, wash), weather: weatherValue || null, weather_edited: weatherEdited, activity: normalizedActivity(activity), items: composed ? items : [] }); }}>
     <section role="group" aria-label="状态与天气" className="grid min-w-0 gap-4 md:grid-cols-2">
       <label className="grid min-w-0 gap-1.5 font-medium">状态<select aria-label="状态" value={status} onChange={(event) => changeStatus(event.target.value as LedgerStatus)} className={LEDGER_FIELD_CLASS}><option>营业</option><option>休息</option><option>提前休息</option></select></label>
       <div className="grid min-w-0 gap-1.5"><span className="font-medium">天气</span><Select value={weatherValue} onValueChange={(value) => { setWeatherValue(value); setWeatherEdited(true); }}><SelectTrigger aria-label="天气" className="h-11 text-base"><SelectValue placeholder="请选择天气">{weatherValue || undefined}</SelectValue></SelectTrigger><SelectContent>{MANUAL_RECORD_WEATHER_OPTIONS.map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectContent></Select></div>

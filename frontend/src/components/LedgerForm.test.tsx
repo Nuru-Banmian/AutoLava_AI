@@ -262,6 +262,20 @@ describe("LedgerForm", () => {
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ is_open: "休息", wash_count: 0 }));
   });
 
+  it("preserves unchanged historical event text exactly", () => {
+    const onSave = vi.fn();
+    render(<LedgerForm
+      categories={[]}
+      config={composedConfig}
+      record={savedRecord({ activity: "  历史事件  " })}
+      onSave={onSave}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ activity: "  历史事件  " }));
+  });
+
   it("absorbs late automatic weather while the form is clean", () => {
     const view = render(<LedgerForm categories={[]} config={directConfig} onSave={vi.fn()} />);
     view.rerender(<LedgerForm categories={[]} config={directConfig} weather={{ weather: "晴", weather_code: 1, temperature_max: 20, temperature_min: 10, precipitation: 0 }} onSave={vi.fn()} />);
