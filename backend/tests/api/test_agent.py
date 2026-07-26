@@ -1,4 +1,3 @@
-
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -56,33 +55,6 @@ async def _login(client: AsyncClient, username: str, password: str = "secret") -
     assert response.status_code == 200
 
 
-def _install_business_evidence_service(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    *,
-    plans: list[dict[str, object]],
-    now: datetime = datetime(2026, 7, 26, 12, 0),
-) -> FakeModelAdapter:
-    @asynccontextmanager
-    async def session_factory():
-        yield db_session
-
-    model = FakeModelAdapter(
-        plans=plans,
-        answers=["模型不能改写后端证据。"] * len(plans),
-    )
-    client._transport.app.state.agent_service = AgentService(
-        AgentTurnWorkflow(
-            model=model,
-            evidence_collector=BusinessEvidenceCollector(
-                session_factory,
-                now=lambda _timezone: now,
-            ),
-        )
-    )
-    return model
-
-
 @pytest.fixture
 def agent_service(client: AsyncClient) -> RecordingAgentService:
     service = RecordingAgentService()
@@ -126,7 +98,6 @@ async def test_agent_route_builds_trusted_runtime_context_for_current_store(
     client: AsyncClient,
     db_session: AsyncSession,
     user_factory,
-
     store_factory,
     agent_service: RecordingAgentService,
     monkeypatch: pytest.MonkeyPatch,
@@ -227,7 +198,6 @@ async def test_agent_route_rejects_users_disabled_accounts_and_hidden_stores_bef
     owner = await db_session.get(User, owner_id)
     assert owner is not None
     owner.is_active = False
-
     await db_session.commit()
     inactive = await client.post(
         f"/api/agent/stores/{hidden_store_id}/turn",
@@ -328,7 +298,6 @@ async def test_monthly_total_revenue_http_gold_path_persists_raw_evidence_safely
     db_session.add(
         StoreDailyRecord(
             store_id=store_id,
-
             date=date(2026, 7, 5),
             daily_revenue=240,
             income_mode="legacy_total",
@@ -429,7 +398,6 @@ async def test_monthly_total_revenue_http_gold_path_persists_raw_evidence_safely
     payload = response.json()
     assert payload["route"] == "answer"
     assert payload["content"] == expected_answer
-
     assert "evidence" not in payload
     assert payload["conversation"]["state"]["confirmed_period"] == {
         "start": "2026-07-01",
@@ -447,10 +415,6 @@ async def test_monthly_total_revenue_http_gold_path_persists_raw_evidence_safely
         "start": "2026-07-01",
         "end": "2026-07-26",
     }
-    assert "companies" not in evidence.payload
-    assert "records" not in evidence.payload
-    assert "Acme" not in evidence.payload["summary"]
-    assert 999 not in evidence.payload["result"].values()
     assert model.plan_calls == 1
     assert model.answer_calls == 1
 
@@ -534,7 +498,6 @@ async def test_monthly_total_revenue_http_gold_path_persists_raw_evidence_safely
                         "category_name": "历史其他",
                         "include_in_total": False,
                         "sort_order": 4,
-
                         "amount": 30,
                     }
                 ],
@@ -635,7 +598,6 @@ async def test_core_business_metric_http_gold_paths_use_historical_snapshots_and
                 category_name="历史其他",
                 include_in_total=False,
                 sort_order=4,
-
                 amount=10,
             ),
             DailyIncomeItem(
@@ -736,7 +698,6 @@ async def test_core_business_metric_http_gold_paths_use_historical_snapshots_and
         AgentTurnWorkflow(
             model=model,
             evidence_collector=BusinessEvidenceCollector(
-
                 session_factory,
                 now=lambda _timezone: datetime(2026, 7, 26, 12, 0),
             ),
@@ -774,305 +735,6 @@ async def test_core_business_metric_http_gold_paths_use_historical_snapshots_and
     assert evidence.payload["unit"] == unit
     assert evidence.payload["calculation_version"] == version
     assert evidence.payload["current_store"] == {"id": store_id}
-
-
-async def test_settlement_detail_agent_queries_are_gated_scoped_and_identity_consistent(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    user_factory,
-    store_factory,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("AUTOLAVA_BOOTSTRAP_USERNAME", "owner")
-    get_settings.cache_clear()
-    admin = await user_factory(username="admin", password="secret", role="admin")
-    owner = await user_factory(username="owner", password="secret", role="admin")
-    store = await store_factory(name="Roma", timezone="Europe/Rome")
-    other_store = await store_factory(name="Milano", timezone="Europe/Rome")
-    store.company_settlement_enabled = True
-    other_store.company_settlement_enabled = True
-    db_session.add(AgentSettings(id=1, enabled=True))
-
-    acme = SettlementCompany(
-        store_id=store.id,
-        name="Acme",
-        normalized_name="acme",
-        is_active=True,
-        archived_at=None,
-        created_by=admin.id,
-        updated_by=admin.id,
-    )
-    beta = SettlementCompany(
-        store_id=store.id,
-        name="Beta",
-        normalized_name="beta",
-        is_active=False,
-        archived_at=datetime(2026, 7, 20),
-        created_by=admin.id,
-        updated_by=admin.id,
-    )
-    secret = SettlementCompany(
-        store_id=other_store.id,
-        name="Secret",
-        normalized_name="secret",
-        is_active=True,
-        archived_at=None,
-        created_by=owner.id,
-        updated_by=owner.id,
-    )
-    db_session.add_all([acme, beta, secret])
-    await db_session.flush()
-    confirmed = SettlementRecord(
-        store_id=store.id,
-
-        company_id=acme.id,
-        company_name=acme.name,
-        opening_month=date(2026, 7, 1),
-        amount=200,
-        status="confirmed",
-        created_by=admin.id,
-        updated_by=admin.id,
-    )
-    db_session.add_all(
-        [
-            SettlementRecord(
-                store_id=store.id,
-                company_id=acme.id,
-                company_name=acme.name,
-                opening_month=date(2026, 7, 1),
-                amount=100,
-                status="pending",
-                created_by=admin.id,
-                updated_by=admin.id,
-            ),
-            confirmed,
-            SettlementRecord(
-                store_id=store.id,
-                company_id=beta.id,
-                company_name=beta.name,
-                opening_month=date(2026, 7, 1),
-                amount=300,
-                status="pending",
-                created_by=admin.id,
-                updated_by=admin.id,
-            ),
-            SettlementRecord(
-                store_id=other_store.id,
-                company_id=secret.id,
-                company_name=secret.name,
-                opening_month=date(2026, 7, 1),
-                amount=9999,
-                status="confirmed",
-                created_by=owner.id,
-                updated_by=owner.id,
-            ),
-        ]
-    )
-    await db_session.commit()
-    store_id = store.id
-    confirmed_id = confirmed.id
-
-    _install_business_evidence_service(
-        client,
-        db_session,
-        plans=[
-            {
-                "route": "evidence",
-                "evidence_plan": {
-                    "requests": [
-                        {"kind": "settlement_details", "status": "pending"}
-                    ]
-                },
-            },
-            {
-                "route": "evidence",
-                "evidence_plan": {
-                    "requests": [
-                        {"kind": "settlement_details", "company_name": "Acme"}
-                    ]
-                },
-            },
-            {
-                "route": "evidence",
-                "evidence_plan": {
-                    "requests": [
-                        {"kind": "settlement_details", "company_name": "Acme"}
-                    ]
-                },
-            },
-            {
-                "route": "evidence",
-                "evidence_plan": {
-                    "requests": [
-                        {"kind": "settlement_details", "company_name": "Acme"}
-                    ]
-                },
-            },
-            {
-                "route": "evidence",
-                "evidence_plan": {
-                    "requests": [
-                        {"kind": "settlement_details", "company_name": "Secret"}
-                    ]
-                },
-            },
-        ],
-    )
-    await _login(client, "admin")
-
-    pending = await client.post(
-        f"/api/agent/stores/{store_id}/turn",
-        json={"question": "本月有哪些待到账开票记录？"},
-    )
-    before_revoke = await client.post(
-
-        f"/api/agent/stores/{store_id}/turn",
-        json={"question": "Acme 公司金额是多少？"},
-    )
-    revoked = await client.post(
-        f"/api/settlements/{store_id}/records/{confirmed_id}/revoke-confirmation",
-        json={"revision": 1},
-    )
-    after_revoke = await client.post(
-        f"/api/agent/stores/{store_id}/turn",
-        json={"question": "撤销到账确认后，Acme 公司金额是多少？"},
-    )
-
-    assert pending.status_code == 200
-    assert "待到账 400 欧元（2 笔）" in pending.json()["content"]
-    assert "已确认 0 欧元（0 笔）" in pending.json()["content"]
-    assert "Acme" in pending.json()["content"]
-    assert "Beta" in pending.json()["content"]
-    assert "Secret" not in pending.json()["content"]
-    assert "9999" not in pending.json()["content"]
-    assert before_revoke.status_code == 200
-    assert "待到账 100 欧元（1 笔）" in before_revoke.json()["content"]
-    assert "已确认 200 欧元（1 笔）" in before_revoke.json()["content"]
-    assert "Beta" not in before_revoke.json()["content"]
-    assert revoked.status_code == 200
-    assert after_revoke.status_code == 200
-    assert "待到账 300 欧元（2 笔）" in after_revoke.json()["content"]
-    assert "已确认 0 欧元（0 笔）" in after_revoke.json()["content"]
-
-    await _login(client, "owner")
-    owner_result = await client.post(
-        f"/api/agent/stores/{store_id}/turn",
-        json={"question": "Acme 公司金额是多少？"},
-    )
-    cross_store = await client.post(
-        f"/api/agent/stores/{store_id}/turn",
-        json={"question": "Secret 公司金额是多少？"},
-    )
-
-    assert owner_result.status_code == 200
-    assert owner_result.json()["content"] == after_revoke.json()["content"]
-    assert cross_store.status_code == 200
-    assert "没有名为「Secret」的结算公司" in cross_store.json()["content"]
-    assert "9999" not in cross_store.json()["content"]
-
-    evidence_rows = list(
-        (await db_session.scalars(select(AgentEvidence).order_by(AgentEvidence.id))).all()
-    )
-    settlement_payload = evidence_rows[0].payload
-    assert settlement_payload["current_store"] == {"id": store_id}
-    assert all("id" not in record for record in settlement_payload["result"]["records"])
-    assert all("id" not in company for company in settlement_payload["result"]["companies"])
-    serialized = str(settlement_payload).casefold()
-    for sensitive_field in (
-        "contact",
-        "email",
-        "phone",
-        "payment",
-        "account",
-        "iban",
-        "tax",
-        "invoice_details",
-    ):
-        assert sensitive_field not in serialized
-
-
-async def test_disabled_settlement_details_are_refused_while_confirmed_history_stays_in_revenue(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    user_factory,
-    store_factory,
-) -> None:
-    admin = await user_factory(username="admin", password="secret", role="admin")
-    store = await store_factory(name="Roma", timezone="Europe/Rome")
-    store.company_settlement_enabled = False
-    db_session.add(AgentSettings(id=1, enabled=True))
-    company = SettlementCompany(
-        store_id=store.id,
-        name="Historical",
-        normalized_name="historical",
-        is_active=True,
-        archived_at=None,
-        created_by=admin.id,
-        updated_by=admin.id,
-    )
-    db_session.add(company)
-    await db_session.flush()
-    db_session.add(
-        SettlementRecord(
-            store_id=store.id,
-            company_id=company.id,
-            company_name=company.name,
-            opening_month=date(2026, 7, 1),
-            amount=450,
-            status="confirmed",
-            created_by=admin.id,
-            updated_by=admin.id,
-        )
-    )
-    await db_session.commit()
-    store_id = store.id
-
-    _install_business_evidence_service(
-        client,
-        db_session,
-        plans=[
-            {
-                "route": "evidence",
-                "evidence_plan": {
-                    "requests": [{"kind": "settlement_details"}],
-                },
-            },
-            {
-                "route": "evidence",
-                "evidence_plan": {
-                    "requests": [
-                        {
-                            "kind": "business_metrics",
-                            "metric": "monthly_total_revenue",
-                        }
-                    ],
-                },
-            },
-        ],
-    )
-    await _login(client, "admin")
-
-    details = await client.post(
-        f"/api/agent/stores/{store_id}/turn",
-        json={"question": "本月开票记录有哪些？"},
-    )
-    revenue = await client.post(
-        f"/api/agent/stores/{store_id}/turn",
-        json={"question": "本月收入是多少？"},
-    )
-
-    assert details.status_code == 200
-    assert details.json()["route"] == "answer"
-    assert details.json()["content"] == (
-        "当前门店未启用公司结算，不能查询结算公司或开票记录明细。"
-    )
-    assert revenue.status_code == 200
-    assert "月度总收入为 450 欧元" in revenue.json()["content"]
-    evidence_rows = list(
-        (await db_session.scalars(select(AgentEvidence).order_by(AgentEvidence.id))).all()
-    )
-    assert evidence_rows[0].payload["status"] == "refused"
-    assert evidence_rows[1].payload["result"]["confirmed_settlement_income"] == 450
 
 
 async def test_current_conversation_restores_full_messages_and_structured_state(
@@ -1136,7 +798,6 @@ async def test_current_conversations_are_isolated_by_user_and_store(
         )
     ).status_code == 200
     assert (
-
         await client.post(
             f"/api/agent/stores/{second_store_id}/turn",
             json={"question": "first-Milano"},
@@ -1237,7 +898,6 @@ async def test_reset_requires_confirmation_and_permanently_deletes_current_conve
         "comparison": {
             "period": {"start": "2026-06-01", "end": "2026-06-30"},
             "label": "完整上月",
-
         },
         "pending_clarifications": ["请确认收入分类"],
     }
@@ -1338,7 +998,6 @@ async def test_in_flight_turn_cannot_recreate_a_conversation_after_reset(
         f"/api/agent/stores/{store_id}/turn",
         json={"question": "请求进行时重置"},
     )
-
 
     assert response.status_code == 409
     assert (

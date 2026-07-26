@@ -6,7 +6,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, SecretStr, ValidationError
 
-from app.agent.contracts import CollectedEvidence, ModelMessage, TurnPlan
+from app.agent.contracts import EvidenceBundle, ModelMessage, TurnPlan
 
 
 class ModelAdapterError(RuntimeError):
@@ -27,7 +27,7 @@ class ModelAdapter(Protocol):
     async def answer_turn(
         self,
         messages: Sequence[ModelMessage],
-        evidence: CollectedEvidence,
+        evidence: EvidenceBundle,
     ) -> str: ...
 
 
@@ -94,7 +94,7 @@ class OpenAICompatibleModelAdapter:
     async def answer_turn(
         self,
         messages: Sequence[ModelMessage],
-        evidence: CollectedEvidence,
+        evidence: EvidenceBundle,
     ) -> str:
         prompt = [
             *_to_langchain_messages(messages),
@@ -151,7 +151,7 @@ class FakeModelAdapter:
     async def answer_turn(
         self,
         messages: Sequence[ModelMessage],
-        evidence: CollectedEvidence,
+        evidence: EvidenceBundle,
     ) -> str:
         del messages, evidence
         self.answer_calls += 1
@@ -183,10 +183,6 @@ _SERVER_OWNED_OR_QUERY_FIELDS = {
     "url",
     "uri",
     "store_id",
-    "company_id",
-    "company_ids",
-    "record_id",
-    "record_ids",
     "user_id",
     "role",
     "timezone",

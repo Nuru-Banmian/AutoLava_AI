@@ -2,7 +2,7 @@ from datetime import date
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ClosedModel(BaseModel):
@@ -22,7 +22,6 @@ class ModelMessage(ClosedModel):
 
 class EvidenceRequestKind(StrEnum):
     BUSINESS_METRICS = "business_metrics"
-    SETTLEMENT_DETAILS = "settlement_details"
 
 
 class EvidenceMetric(StrEnum):
@@ -46,7 +45,6 @@ EVIDENCE_METRIC_LABELS = {
     EvidenceMetric.INCOME_CATEGORY_AMOUNT: "收入分类金额",
     EvidenceMetric.OTHER_DATA_AMOUNT: "其他数据金额",
 }
-SETTLEMENT_DETAILS_LABEL = "公司结算明细"
 
 
 class CurrentMonthPeriod(ClosedModel):
@@ -66,7 +64,7 @@ EvidencePeriod = Annotated[
 
 
 class EvidenceRequest(ClosedModel):
-    kind: Literal["business_metrics"] = "business_metrics"
+    kind: EvidenceRequestKind
     metric: EvidenceMetric
     period: EvidencePeriod | None = None
     group_by: Literal["income_category"] | None = None
@@ -81,27 +79,8 @@ class EvidenceRequest(ClosedModel):
         return self
 
 
-SettlementCompanyName = Annotated[
-    str,
-    StringConstraints(strip_whitespace=True, min_length=1, max_length=120),
-]
-
-
-class SettlementDetailsRequest(ClosedModel):
-    kind: Literal["settlement_details"] = "settlement_details"
-    period: EvidencePeriod | None = None
-    status: Literal["pending", "confirmed"] | None = None
-    company_name: SettlementCompanyName | None = None
-
-
-EvidenceRequestUnion = Annotated[
-    EvidenceRequest | SettlementDetailsRequest,
-    Field(discriminator="kind"),
-]
-
-
 class EvidencePlan(ClosedModel):
-    requests: list[EvidenceRequestUnion] = Field(min_length=1, max_length=1)
+    requests: list[EvidenceRequest] = Field(min_length=1, max_length=1)
 
 
 class TurnRoute(StrEnum):
@@ -233,46 +212,6 @@ class EvidenceBundle(ClosedModel):
     summary: str = Field(min_length=1, max_length=20_000)
 
 
-class SettlementCompanyEvidence(ClosedModel):
-    name: str = Field(min_length=1, max_length=120)
-    is_active: bool
-    pending_amount: int = Field(ge=0)
-    confirmed_amount: int = Field(ge=0)
-    record_count: int = Field(ge=0)
-
-
-class SettlementRecordEvidence(ClosedModel):
-    company_name: str = Field(min_length=1, max_length=120)
-    opening_month: date
-    amount: int = Field(gt=0)
-    status: Literal["pending", "confirmed"]
-
-
-class SettlementDetailsResult(ClosedModel):
-    companies: list[SettlementCompanyEvidence] = Field(max_length=50)
-    records: list[SettlementRecordEvidence] = Field(max_length=50)
-    pending_amount: int = Field(ge=0)
-    confirmed_amount: int = Field(ge=0)
-    pending_records: int = Field(ge=0)
-    confirmed_records: int = Field(ge=0)
-
-
-class SettlementDetailsEvidenceBundle(ClosedModel):
-    status: Literal["ok", "refused"]
-    current_store: CurrentStoreScope
-    period: EvidencePeriodResult
-    evidence_type: Literal["settlement_details"] = "settlement_details"
-    unit: Literal["EUR"] = "EUR"
-    calculation_version: Literal["settlement_details.v1"] = "settlement_details.v1"
-    result: SettlementDetailsResult
-    warnings: list[str] = Field(default_factory=list, max_length=20)
-    truncated: bool = False
-    summary: str = Field(min_length=1, max_length=20_000)
-
-
-CollectedEvidence = EvidenceBundle | SettlementDetailsEvidenceBundle
-
-
 class TurnResult(ClosedModel):
     route: Literal["clarify", "answer", "safe_failure"]
     content: str = Field(min_length=1, max_length=20_000)
@@ -280,4 +219,4 @@ class TurnResult(ClosedModel):
 
 class WorkflowResult(ClosedModel):
     turn: TurnResult
-    evidence: CollectedEvidence | None = None
+    evidence: EvidenceBundle | None = None
