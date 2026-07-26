@@ -67,6 +67,7 @@ MONTHLY_TOTAL_REVENUE_LABEL = "月度总收入"
 DAILY_LEDGER_LABEL = "每日台账"
 MINIMUM_EVIDENCE_DATE = CalendarDate(2000, 1, 1)
 MAXIMUM_EVIDENCE_DATE = CalendarDate(2200, 12, 31)
+MAXIMUM_CUSTOM_RANGE_DAYS = 400
 
 
 class CurrentMonthPeriod(ClosedModel):
@@ -116,6 +117,10 @@ class CustomDateRangePeriod(ClosedModel):
     def require_forward_range(self) -> "CustomDateRangePeriod":
         if self.end < self.start:
             raise ValueError("custom date range end must not precede start")
+        if (self.end - self.start).days + 1 > MAXIMUM_CUSTOM_RANGE_DAYS:
+            raise ValueError(
+                f"custom date range cannot exceed {MAXIMUM_CUSTOM_RANGE_DAYS} days"
+            )
         return self
 
 

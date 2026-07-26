@@ -288,6 +288,11 @@ def test_evidence_plan_rejects_model_owned_scope_and_query_fields(
             "start": "2026-01-01",
             "end": "2201-01-01",
         },
+        {
+            "kind": "custom_date_range",
+            "start": "2025-01-01",
+            "end": "2026-02-05",
+        },
     ),
 )
 def test_evidence_plan_bounds_exact_and_custom_dates(
