@@ -43,6 +43,7 @@ class AgentMessage(Base):
     )
     role: Mapped[str] = mapped_column(String(16))
     content: Mapped[str] = mapped_column(Text)
+    action: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     __table_args__ = (
         CheckConstraint("role in ('user','assistant')", name="role"),

@@ -62,6 +62,9 @@ def test_final_schema_columns_and_money_types() -> None:
         "uq_agent_conversations_user_store"
     }
     assert conversations.c.state.type.compile(dialect=sqlite.dialect()) == "JSON"
+    messages = Base.metadata.tables["agent_messages"].c
+    assert messages.action.type.compile(dialect=sqlite.dialect()) == "JSON"
+    assert messages.action.nullable
 
     records = Base.metadata.tables["store_daily_records"].c
     assert "income_config_version_id" not in records

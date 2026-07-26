@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date as CalendarDate
+from datetime import date as CalendarDate, datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated, Literal
@@ -308,7 +308,24 @@ class TurnRoute(StrEnum):
     CLARIFY = "clarify"
     DIRECT_ANSWER = "direct_answer"
     EVIDENCE = "evidence"
+    ACTION = "action"
     SAFE_FAILURE = "safe_failure"
+
+
+class OpenBusinessRecordsAction(ClosedModel):
+    type: Literal["open_business_records"] = "open_business_records"
+    start_month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    end_month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+
+    @model_validator(mode="after")
+    def require_allowed_ordered_months(self) -> "OpenBusinessRecordsAction":
+        start = datetime.strptime(self.start_month, "%Y-%m")
+        end = datetime.strptime(self.end_month, "%Y-%m")
+        if not 2000 <= start.year <= 2200 or not 2000 <= end.year <= 2200:
+            raise ValueError("business record months must be between 2000 and 2200")
+        if start > end:
+            raise ValueError("start_month must be on or before end_month")
+        return self
 
 
 class TurnPlan(ClosedModel):
@@ -317,6 +334,7 @@ class TurnPlan(ClosedModel):
     answer: str | None = Field(default=None, min_length=1, max_length=10_000)
     evidence_plan: EvidencePlan | None = None
     supplemental_evidence_plan: EvidencePlan | None = None
+    action: OpenBusinessRecordsAction | None = None
     message: str | None = Field(default=None, min_length=1, max_length=2_000)
 
     @model_validator(mode="after")
@@ -325,12 +343,14 @@ class TurnPlan(ClosedModel):
             TurnRoute.CLARIFY: "question",
             TurnRoute.DIRECT_ANSWER: "answer",
             TurnRoute.EVIDENCE: "evidence_plan",
+            TurnRoute.ACTION: "action",
             TurnRoute.SAFE_FAILURE: "message",
         }[self.route]
         primary_payloads = {
             "question": self.question,
             "answer": self.answer,
             "evidence_plan": self.evidence_plan,
+            "action": self.action,
             "message": self.message,
         }
         if primary_payloads[expected] is None or any(
@@ -746,6 +766,13 @@ class TurnResult(ClosedModel):
     route: Literal["clarify", "answer", "safe_failure"]
     content: str = Field(min_length=1, max_length=20_000)
     recovery_status: Literal["none", "retried", "fallback"] = "none"
+    action: OpenBusinessRecordsAction | None = None
+
+    @model_validator(mode="after")
+    def allow_actions_only_on_answers(self) -> "TurnResult":
+        if self.action is not None and self.route != "answer":
+            raise ValueError("actions require an answer")
+        return self
 
 
 class WorkflowResult(ClosedModel):

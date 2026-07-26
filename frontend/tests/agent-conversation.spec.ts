@@ -4,6 +4,11 @@ type Message = {
   id: number;
   role: "user" | "assistant";
   content: string;
+  action?: {
+    type: "open_business_records";
+    start_month: string;
+    end_month: string;
+  } | null;
   created_at: string;
 };
 
@@ -29,6 +34,11 @@ async function mockAgentApi(page: Page) {
         id: 2,
         role: "assistant",
         content: "之前保存的完整回答",
+        action: {
+          type: "open_business_records",
+          start_month: "2025-01",
+          end_month: "2025-12",
+        },
         created_at: "2026-07-26T12:00:01Z",
       },
     ]],
@@ -67,6 +77,46 @@ async function mockAgentApi(page: Page) {
     }
     if (path === "/api/agent/status") return json({ enabled: true });
     if (/^\/api\/dashboard\/\d+$/.test(path)) return json([]);
+    if (/^\/api\/database\/\d+\/records$/.test(path)) {
+      return json({
+        items: [],
+        categories: [],
+        sum_daily_revenue: 0,
+        total: 0,
+        page: 1,
+        page_size: 200,
+      });
+    }
+    if (/^\/api\/charts\/\d+$/.test(path)) {
+      const start = url.searchParams.get("start");
+      const end = url.searchParams.get("end");
+      return json({
+        kpis: {
+          total_revenue: 0,
+          record_days: 0,
+          open_days: 0,
+          average_revenue: 0,
+          primary_categories: [],
+          total_wash_count: null,
+          average_ticket: null,
+        },
+        range: { start, end, bucket: "month" },
+        comparison_kpis: null,
+        income_summary: {
+          daily_ledger_revenue: 0,
+          confirmed_settlement_income: 0,
+          total_income: 0,
+          includes_settlement_income: false,
+        },
+        classified_included_total: 0,
+        daily: [],
+        categories: [],
+        excluded_categories: [],
+        monthly: [],
+        weather: [],
+        weekday: [],
+      });
+    }
 
     const conversationMatch = path.match(
       /^\/api\/agent\/stores\/(\d+)\/conversation$/,
@@ -129,6 +179,7 @@ test("administrator restores, switches, and permanently resets per-store convers
     .getByRole("combobox", { name: "门店" });
   await storePicker.selectOption("2");
   await expect(page.getByText("当前对话为空")).toBeVisible();
+  await expect(page.getByRole("button", { name: "查看营业记录" })).toHaveCount(0);
   await storePicker.selectOption("1");
   await expect(page.getByText("之前的问题")).toBeVisible();
 
@@ -139,3 +190,35 @@ test("administrator restores, switches, and permanently resets per-store convers
   await expect(page.getByText("当前对话为空")).toBeVisible();
   await expect(page.getByText("之前的问题")).toHaveCount(0);
 });
+
+for (const viewport of [
+  { name: "desktop", width: 1280, height: 900, keyboard: false },
+  { name: "mobile", width: 390, height: 844, keyboard: true },
+] as const) {
+  test(`${viewport.name} business records action is user-triggered, prefills months, and does not overflow`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await mockAgentApi(page);
+    await page.goto("/");
+
+    const action = page.getByRole("button", { name: "查看营业记录" });
+    await expect(action).toBeVisible();
+    await expect(page).toHaveURL("/");
+    if (viewport.keyboard) {
+      await action.focus();
+      await page.keyboard.press("Enter");
+    } else {
+      await action.click();
+    }
+
+    await expect(page).toHaveURL("/database");
+    await expect(page.getByRole("heading", { name: "营业记录" })).toBeVisible();
+    await expect(page.getByLabel("开始月份")).toHaveValue("2025-01");
+    await expect(page.getByLabel("结束月份")).toHaveValue("2025-12");
+    const horizontalOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    );
+    expect(horizontalOverflow).toBe(false);
+  });
+}

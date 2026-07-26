@@ -124,6 +124,38 @@ afterEach(() => {
 afterAll(() => server.close());
 
 describe("BusinessRecordsPage", () => {
+  it("prefills the existing custom month range from a validated Agent action", async () => {
+    const recordRequests: URL[] = [];
+    server.use(
+      http.get("/api/database/1/records", ({ request }) => {
+        recordRequests.push(new URL(request.url));
+        return HttpResponse.json(databaseResponse([]));
+      }),
+      http.get("/api/charts/1", () => HttpResponse.json({
+        ...chartsPayload,
+        range: { start: "2025-01-01", end: "2025-12-31", bucket: "month" },
+      })),
+    );
+    renderPage("admin", {
+      pathname: "/database",
+      state: {
+        agentBusinessRecordsAction: {
+          type: "open_business_records",
+          start_month: "2025-01",
+          end_month: "2025-12",
+        },
+      },
+    });
+
+    expect(await screen.findByLabelText("开始月份")).toHaveValue("2025-01");
+    expect(screen.getByLabelText("结束月份")).toHaveValue("2025-12");
+    await waitFor(() => {
+      expect(recordRequests.at(-1)?.searchParams.get("start")).toBe("2025-01-01");
+      expect(recordRequests.at(-1)?.searchParams.get("end")).toBe("2025-12-31");
+    });
+    expect(screen.getByLabelText("路由状态")).not.toHaveTextContent("agentBusinessRecordsAction");
+  });
+
   it("loads and exports the selected date range without status filtering", async () => {
     const recordRequests: URL[] = [];
     server.use(

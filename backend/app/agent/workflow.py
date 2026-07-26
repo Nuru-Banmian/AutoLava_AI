@@ -1,5 +1,8 @@
 from collections.abc import Callable, Sequence
+from datetime import datetime
+import re
 from typing import Protocol, TypedDict
+from zoneinfo import ZoneInfo
 
 from langgraph.graph import END, START, StateGraph
 
@@ -20,6 +23,7 @@ from app.agent.model import ModelAdapter, ModelAttempt, RepairableModelPlanError
 from app.agent.runtime import RuntimeContext
 
 SAFE_FAILURE_MESSAGE = "模型服务暂时不可用，请稍后重试。"
+OPEN_BUSINESS_RECORDS_MESSAGE = "可查看所选月份的营业记录。"
 PLAN_REPAIR_FEEDBACK = (
     "The previous TurnPlan had a format, enum, or structural error. "
     "Return one corrected TurnPlan matching the schema. "
@@ -57,6 +61,10 @@ NEGATED_PERCENTAGE_TERMS = (
     "只看金额",
     "仅给金额",
     "仅看金额",
+)
+NAVIGATION_TARGET = re.compile(
+    r"(?:https?://|www\.|/api/|/database(?:[/?#\s]|$))",
+    re.IGNORECASE,
 )
 
 
@@ -192,7 +200,22 @@ class AgentTurnWorkflow:
         if plan.route == TurnRoute.CLARIFY:
             return {"result": TurnResult(route="clarify", content=plan.question or "")}
         if plan.route == TurnRoute.DIRECT_ANSWER:
+            if NAVIGATION_TARGET.search(plan.answer or ""):
+                return {"result": _safe_failure()}
             return {"result": TurnResult(route="answer", content=plan.answer or "")}
+        if plan.route == TurnRoute.ACTION and plan.action is not None:
+            current_month = datetime.now(
+                ZoneInfo(state["context"].store_timezone)
+            ).strftime("%Y-%m")
+            if plan.action.end_month > current_month:
+                return {"result": _safe_failure()}
+            return {
+                "result": TurnResult(
+                    route="answer",
+                    content=OPEN_BUSINESS_RECORDS_MESSAGE,
+                    action=plan.action,
+                )
+            }
         return {"result": _safe_failure()}
 
     async def _collect_evidence(self, state: TurnState) -> dict:

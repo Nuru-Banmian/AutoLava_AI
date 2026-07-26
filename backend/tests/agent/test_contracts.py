@@ -7,6 +7,7 @@ from app.agent.contracts import (
     DailyLedgerExtremeResult,
     EvidencePlan,
     EvidenceRequest,
+    OpenBusinessRecordsAction,
     TurnPlan,
 )
 
@@ -28,6 +29,14 @@ from app.agent.contracts import (
             },
         },
         {"route": "safe_failure", "message": "当前无法安全处理该问题。"},
+        {
+            "route": "action",
+            "action": {
+                "type": "open_business_records",
+                "start_month": "2025-01",
+                "end_month": "2025-12",
+            },
+        },
     ),
 )
 def test_turn_plan_accepts_each_closed_route(plan: dict[str, object]) -> None:
@@ -250,6 +259,44 @@ def test_daily_ledger_request_requires_one_exact_date_and_no_metric_or_period() 
     ):
         with pytest.raises(ValidationError):
             EvidencePlan.model_validate({"requests": [invalid]})
+
+
+@pytest.mark.parametrize(
+    "action",
+    (
+        {
+            "type": "open_business_records",
+            "start_month": "2026-07",
+            "end_month": "2026-06",
+        },
+        {
+            "type": "open_business_records",
+            "start_month": "1999-12",
+            "end_month": "2026-06",
+        },
+        {
+            "type": "open_business_records",
+            "start_month": "2026-6",
+            "end_month": "2026-07",
+        },
+        {
+            "type": "arbitrary_navigation",
+            "start_month": "2026-06",
+            "end_month": "2026-07",
+        },
+        {
+            "type": "open_business_records",
+            "start_month": "2026-06",
+            "end_month": "2026-07",
+            "url": "/database?store_id=999",
+        },
+    ),
+)
+def test_business_record_action_rejects_invalid_or_expanded_parameters(
+    action: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        OpenBusinessRecordsAction.model_validate(action)
 
 
 @pytest.mark.parametrize(

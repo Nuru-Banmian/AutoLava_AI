@@ -5,7 +5,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.contracts import CollectedEvidence, ModelMessage, TurnResult
+from app.agent.contracts import (
+    CollectedEvidence,
+    ModelMessage,
+    OpenBusinessRecordsAction,
+    TurnResult,
+)
 from app.agent.model import ModelAttempt
 from app.models.agent import AgentConversation, AgentMessage
 
@@ -38,6 +43,7 @@ class ConversationMessageResponse(ClosedModel):
     id: int
     role: Literal["user", "assistant"]
     content: str
+    action: OpenBusinessRecordsAction | None = None
     created_at: datetime
 
 
@@ -121,11 +127,13 @@ async def append_message(
     conversation: AgentConversation,
     role: Literal["user", "assistant"],
     content: str,
+    action: OpenBusinessRecordsAction | None = None,
 ) -> AgentMessage:
     message = AgentMessage(
         conversation_id=conversation.id,
         role=role,
         content=content,
+        action=action.model_dump(mode="json") if action is not None else None,
     )
     session.add(message)
     conversation.updated_at = datetime.now(timezone.utc)
@@ -172,6 +180,7 @@ async def conversation_response(
                 id=message.id,
                 role=message.role,
                 content=message.content,
+                action=message.action,
                 created_at=message.created_at,
             )
             for message in messages
