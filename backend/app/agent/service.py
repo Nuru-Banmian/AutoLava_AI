@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.business_evidence import BusinessEvidenceCollector
 from app.agent.conversation import AgentRunResult, ConfirmedPeriod, ConversationState
-from app.agent.contracts import MONTHLY_TOTAL_REVENUE_LABEL, ModelMessage
+from app.agent.contracts import EVIDENCE_METRIC_LABELS, ModelMessage
 from app.agent.factory import create_model_adapter
 from app.agent.runtime import RuntimeContext
 from app.agent.workflow import AgentTurnWorkflow
@@ -65,7 +65,7 @@ class AgentService:
                         start=evidence.period.start,
                         end=evidence.period.end,
                     ),
-                    "metrics": [MONTHLY_TOTAL_REVENUE_LABEL],
+                    "metrics": [EVIDENCE_METRIC_LABELS[evidence.metric]],
                 }
             )
         return AgentRunResult(
