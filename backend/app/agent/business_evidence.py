@@ -31,6 +31,14 @@ class Snapshot:
     operating_days: int
     confirmed_settlement: int
     recorded_dates: int
+    recorded_date_values: list[date]
+    weather_recorded_dates: int
+    missing_weather_dates: list[date]
+    wash_count: int
+    wash_count_recorded_operating_days: int
+    wash_count_missing_dates: list[date]
+    wash_count_revenue: int
+    category_total_mismatches: list[dict[str, object]]
     categories: list[dict[str, object]]
 
 
@@ -70,18 +78,63 @@ class BusinessEvidenceCollector:
                     raise
 
         calendar_dates = (end - start).days + 1
-        missing_dates = calendar_dates - snapshot.recorded_dates
-        warnings = (
-            [f"所选期间有 {missing_dates} 个日期没有每日台账；这不表示门店本应营业。"]
-            if missing_dates
-            else []
+        recorded_date_set = set(snapshot.recorded_date_values)
+        unrecorded_dates = [
+            date.fromordinal(ordinal)
+            for ordinal in range(start.toordinal(), end.toordinal() + 1)
+            if date.fromordinal(ordinal) not in recorded_date_set
+        ]
+        wash_count_missing_operating_days = len(snapshot.wash_count_missing_dates)
+        if snapshot.operating_days:
+            wash_count_coverage_percent = _rounded_average(
+                snapshot.wash_count_recorded_operating_days * 100,
+                snapshot.operating_days,
+            )
+        else:
+            wash_count_coverage_percent = None
+        wash_count_sufficient = (
+            context.features.wash_count_enabled
+            and snapshot.operating_days > 0
+            and wash_count_missing_operating_days == 0
         )
+        warnings: list[str] = []
+        if unrecorded_dates:
+            warnings.append(
+                f"所选期间有 {len(unrecorded_dates)} 个日期没有每日台账；"
+                "这只表示没有记录，不表示门店本应营业，也不推断记录起始日期。"
+            )
+        if snapshot.missing_weather_dates:
+            warnings.append(
+                f"有 {len(snapshot.missing_weather_dates)} 个每日台账缺少记录天气。"
+            )
+        if context.features.wash_count_enabled and snapshot.wash_count_missing_dates:
+            warnings.append(
+                f"洗车数量覆盖 {snapshot.wash_count_recorded_operating_days}/"
+                f"{snapshot.operating_days} 个经营日"
+                f"（{wash_count_coverage_percent}%）；缺失没有按零计算。"
+            )
+        if snapshot.category_total_mismatches:
+            warnings.append(
+                f"有 {len(snapshot.category_total_mismatches)} 个分类记账的"
+                "计入总额分类合计与每日台账营业额不一致。"
+            )
         result, unit, version, summary = self._metric_result(
             metric=request.metric,
             start=start,
             end=end,
             snapshot=snapshot,
             warnings=warnings,
+            wash_count_enabled=context.features.wash_count_enabled,
+            wash_count_sufficient=wash_count_sufficient,
+        )
+        completeness_limited = bool(
+            unrecorded_dates
+            or snapshot.missing_weather_dates
+            or (
+                context.features.wash_count_enabled
+                and snapshot.wash_count_missing_dates
+            )
+            or snapshot.category_total_mismatches
         )
         return EvidenceBundle(
             status="ok",
@@ -94,6 +147,22 @@ class BusinessEvidenceCollector:
             coverage={
                 "calendar_dates": calendar_dates,
                 "recorded_dates": snapshot.recorded_dates,
+                "operating_days": snapshot.operating_days,
+                "weather_recorded_dates": snapshot.weather_recorded_dates,
+                "wash_count_enabled": context.features.wash_count_enabled,
+                "wash_count_recorded_operating_days": (
+                    snapshot.wash_count_recorded_operating_days
+                ),
+                "wash_count_missing_operating_days": wash_count_missing_operating_days,
+                "wash_count_coverage_percent": wash_count_coverage_percent,
+                "wash_count_sufficient": wash_count_sufficient,
+            },
+            completeness={
+                "status": "limited" if completeness_limited else "sufficient",
+                "unrecorded_dates": unrecorded_dates,
+                "missing_weather_dates": snapshot.missing_weather_dates,
+                "wash_count_missing_dates": snapshot.wash_count_missing_dates,
+                "category_total_mismatches": snapshot.category_total_mismatches,
             },
             comparison=None,
             warnings=warnings,
@@ -170,6 +239,63 @@ class BusinessEvidenceCollector:
                 )
             ).one()
 
+            record_rows = (
+                await session.execute(
+                    select(
+                        StoreDailyRecord.id,
+                        StoreDailyRecord.date,
+                        StoreDailyRecord.daily_revenue,
+                        StoreDailyRecord.income_mode,
+                        StoreDailyRecord.wash_count,
+                        StoreDailyRecord.is_open,
+                        StoreDailyRecord.weather,
+                    )
+                    .where(*daily_scope)
+                    .order_by(StoreDailyRecord.date)
+                )
+            ).all()
+            included_item_rows = (
+                await session.execute(
+                    select(
+                        DailyIncomeItem.record_id,
+                        func.coalesce(func.sum(DailyIncomeItem.amount), 0).label("amount"),
+                    )
+                    .join(
+                        StoreDailyRecord,
+                        StoreDailyRecord.id == DailyIncomeItem.record_id,
+                    )
+                    .where(*daily_scope, DailyIncomeItem.include_in_total.is_(True))
+                    .group_by(DailyIncomeItem.record_id)
+                )
+            ).all()
+            included_amounts = {
+                int(item.record_id): int(item.amount) for item in included_item_rows
+            }
+            operating_records = [
+                record for record in record_rows if record.is_open in {"营业", "提前休息"}
+            ]
+            wash_count_records = [
+                record for record in operating_records if record.wash_count is not None
+            ]
+            missing_weather_dates = [
+                record.date
+                for record in record_rows
+                if record.weather is None or not record.weather.strip()
+            ]
+            wash_count_missing_dates = [
+                record.date for record in operating_records if record.wash_count is None
+            ]
+            category_total_mismatches = [
+                {
+                    "date": record.date,
+                    "daily_ledger_revenue": int(record.daily_revenue),
+                    "included_category_amount": included_amounts.get(int(record.id), 0),
+                }
+                for record in record_rows
+                if record.income_mode == "composed"
+                and included_amounts.get(int(record.id), 0) != int(record.daily_revenue)
+            ]
+
             categories: list[dict[str, object]] = []
             if metric in {
                 EvidenceMetric.INCOME_CATEGORY_AMOUNT,
@@ -223,6 +349,16 @@ class BusinessEvidenceCollector:
             operating_days=int(row.operating_days),
             confirmed_settlement=int(row.confirmed_settlement),
             recorded_dates=int(row.recorded_dates),
+            recorded_date_values=[record.date for record in record_rows],
+            weather_recorded_dates=len(record_rows) - len(missing_weather_dates),
+            missing_weather_dates=missing_weather_dates,
+            wash_count=sum(int(record.wash_count) for record in wash_count_records),
+            wash_count_recorded_operating_days=len(wash_count_records),
+            wash_count_missing_dates=wash_count_missing_dates,
+            wash_count_revenue=sum(
+                int(record.daily_revenue) for record in wash_count_records
+            ),
+            category_total_mismatches=category_total_mismatches,
             categories=categories,
         )
 
@@ -234,6 +370,8 @@ class BusinessEvidenceCollector:
         end: date,
         snapshot: Snapshot,
         warnings: list[str],
+        wash_count_enabled: bool,
+        wash_count_sufficient: bool,
     ) -> tuple[dict[str, object], str, str, str]:
         period = f"{start.isoformat()} 至 {end.isoformat()}"
         warning_text = "".join(warnings)
@@ -329,6 +467,83 @@ class BusinessEvidenceCollector:
                 "EUR/operating_day",
                 "monthly_daily_average_income.v1",
                 summary,
+            )
+        if metric == EvidenceMetric.WASH_COUNT:
+            if not wash_count_enabled:
+                warnings.append(
+                    "门店已关闭记录洗车数量；历史洗车数量保留但当前查询不可用。"
+                )
+                result = {"available": False, "wash_count": None}
+                summary = f"{period} 的洗车数量不可用；门店已关闭记录洗车数量。"
+            elif not wash_count_sufficient:
+                warnings.append("洗车数量覆盖不足，洗车数量不可用。")
+                result = {"available": False, "wash_count": None}
+                summary = (
+                    f"{period} 的洗车数量因经营日覆盖不足而不可用；"
+                    "缺失没有按零计算。"
+                )
+            else:
+                result = {"available": True, "wash_count": snapshot.wash_count}
+                summary = f"{period} 的洗车数量为 {snapshot.wash_count} 辆。"
+            return result, "car", "wash_count.v1", f"{summary}{''.join(warnings)}"
+        if metric == EvidenceMetric.AVERAGE_REVENUE_PER_CAR:
+            if not wash_count_enabled:
+                warnings.append(
+                    "门店已关闭记录洗车数量；历史数据保留但平均每车收入不可用。"
+                )
+                result = {
+                    "available": False,
+                    "daily_ledger_revenue": None,
+                    "wash_count": None,
+                    "average_revenue_per_car": None,
+                }
+                summary = f"{period} 的平均每车收入不可用；门店已关闭记录洗车数量。"
+            elif not wash_count_sufficient:
+                warnings.append("洗车数量覆盖不足，平均每车收入不可用。")
+                result = {
+                    "available": False,
+                    "daily_ledger_revenue": None,
+                    "wash_count": None,
+                    "average_revenue_per_car": None,
+                }
+                summary = (
+                    f"{period} 的平均每车收入因经营日覆盖不足而不可用；"
+                    "缺失没有按零计算。"
+                )
+            elif snapshot.wash_count == 0:
+                warnings.append("洗车数量合计为零，平均每车收入不可用。")
+                result = {
+                    "available": False,
+                    "daily_ledger_revenue": snapshot.wash_count_revenue,
+                    "wash_count": 0,
+                    "average_revenue_per_car": None,
+                }
+                summary = (
+                    f"{period} 同时记录洗车数量的经营日洗车数量合计为零，"
+                    "平均每车收入不可用；不包含公司结算收入。"
+                )
+            else:
+                average = _rounded_average(
+                    snapshot.wash_count_revenue,
+                    snapshot.wash_count,
+                )
+                result = {
+                    "available": True,
+                    "daily_ledger_revenue": snapshot.wash_count_revenue,
+                    "wash_count": snapshot.wash_count,
+                    "average_revenue_per_car": average,
+                }
+                summary = (
+                    f"{period} 的平均每车收入为 {average} 欧元/车"
+                    f"（同时记录洗车数量的经营日每日台账营业额 "
+                    f"{snapshot.wash_count_revenue} 欧元 / 洗车数量 "
+                    f"{snapshot.wash_count}）；不包含公司结算收入。"
+                )
+            return (
+                result,
+                "EUR/car",
+                "average_revenue_per_car.v1",
+                f"{summary}{''.join(warnings)}",
             )
         if metric in {
             EvidenceMetric.INCOME_CATEGORY_AMOUNT,
