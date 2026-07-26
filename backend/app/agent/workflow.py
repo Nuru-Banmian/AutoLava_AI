@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Protocol, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -12,7 +12,7 @@ from app.agent.contracts import (
     TurnRoute,
     WorkflowResult,
 )
-from app.agent.model import ModelAdapter, RepairableModelPlanError
+from app.agent.model import ModelAdapter, ModelAttempt, RepairableModelPlanError
 from app.agent.runtime import RuntimeContext
 
 SAFE_FAILURE_MESSAGE = "模型服务暂时不可用，请稍后重试。"
@@ -41,6 +41,7 @@ class TurnState(TypedDict):
     result: TurnResult | None
     model_calls: int
     evidence_calls: int
+    attempts: list[ModelAttempt]
 
 
 class AgentTurnWorkflow:
@@ -73,6 +74,8 @@ class AgentTurnWorkflow:
         self,
         messages: Sequence[ModelMessage],
         context: RuntimeContext,
+        *,
+        observer: Callable[[ModelAttempt], None] | None = None,
     ) -> WorkflowResult:
         state: TurnState = {
             "messages": messages,
@@ -82,18 +85,36 @@ class AgentTurnWorkflow:
             "result": None,
             "model_calls": 0,
             "evidence_calls": 0,
+            "attempts": [],
         }
         final = await self._graph.ainvoke(state)
+        attempts = final["attempts"]
+        if observer is not None:
+            for attempt in attempts:
+                observer(attempt)
         result = final["result"]
         if result is None:
             return WorkflowResult(turn=_safe_failure())
-        return WorkflowResult(turn=result, evidence=final["evidence"])
+        recovery_status = (
+            "fallback"
+            if any(attempt.is_fallback for attempt in attempts)
+            else "retried"
+            if len(attempts) > 1
+            and any(attempt.result == "failure" for attempt in attempts)
+            else "none"
+        )
+        return WorkflowResult(
+            turn=result.model_copy(update={"recovery_status": recovery_status}),
+            evidence=final["evidence"],
+        )
 
     async def _plan(self, state: TurnState) -> dict:
         if state["model_calls"] >= MAX_MODEL_CALLS:
             return {"plan": _safe_failure_plan(), "model_calls": state["model_calls"]}
         try:
-            plan = await self.model.plan_turn(state["messages"])
+            plan = await self.model.plan_turn(
+                state["messages"], observer=state["attempts"].append
+            )
             calls = state["model_calls"] + 1
         except RepairableModelPlanError:
             calls = state["model_calls"] + 1
@@ -104,7 +125,8 @@ class AgentTurnWorkflow:
                     [
                         *state["messages"],
                         ModelMessage(role="system", content=PLAN_REPAIR_FEEDBACK),
-                    ]
+                    ],
+                    observer=state["attempts"].append,
                 )
             except Exception:
                 plan = _safe_failure_plan()
@@ -164,7 +186,11 @@ class AgentTurnWorkflow:
         if state["model_calls"] >= MAX_MODEL_CALLS or state["evidence"] is None:
             return {"result": _safe_failure()}
         try:
-            answer = await self.model.answer_turn(state["messages"], state["evidence"])
+            answer = await self.model.answer_turn(
+                state["messages"],
+                state["evidence"],
+                observer=state["attempts"].append,
+            )
         except Exception:
             return {
                 "result": _safe_failure(),

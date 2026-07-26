@@ -13,6 +13,7 @@ from app.agent.contracts import (
     ModelMessage,
 )
 from app.agent.factory import create_model_adapter
+from app.agent.model import ModelAttempt
 from app.agent.runtime import RuntimeContext
 from app.agent.workflow import AgentTurnWorkflow
 from app.core.config import Settings
@@ -46,6 +47,7 @@ class AgentService:
             f"income_items={context.features.income_items_enabled}, "
             f"wash_count={context.features.wash_count_enabled}."
         )
+        attempts: list[ModelAttempt] = []
         workflow_result = await self.workflow.run(
             [
                 ModelMessage(role="system", content=f"{CORE_RULES}\n{runtime_scope}"),
@@ -59,6 +61,7 @@ class AgentService:
                 *recent_messages,
             ],
             context,
+            observer=attempts.append,
         )
         result = workflow_result.turn
         pending_clarifications = [result.content] if result.route == "clarify" else []
@@ -84,6 +87,7 @@ class AgentService:
             turn=result,
             state=state.model_copy(update=state_update),
             evidence=workflow_result.evidence,
+            attempts=attempts,
         )
 
 
