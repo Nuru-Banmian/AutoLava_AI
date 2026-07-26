@@ -64,6 +64,14 @@ The Agent model transport is selected with `AUTOLAVA_MODEL_ADAPTER`. CI uses the
 API key only in the ignored root `.env` or an injected deployment Secret, and never place it in
 logs, error responses, frontend assets, or committed example values.
 
+An optional fallback profile uses the corresponding `AUTOLAVA_FALLBACK_MODEL_*` fields. The API
+retries only transient network, timeout, rate-limit, and provider 5xx failures once on the primary
+model, then redoes that same model stage once on the fallback. Authentication, balance,
+configuration, safety, permission, insufficient-information, and prompt-injection failures do not
+switch providers. Provider/model pricing can be supplied with
+`AUTOLAVA_MODEL_INPUT_COST_PER_MILLION` and `AUTOLAVA_MODEL_OUTPUT_COST_PER_MILLION` (and the
+fallback equivalents) to estimate cost in conversation-free run statistics.
+
 The API container runs Alembic before starting. On an empty volume it then creates the schema, and
 the administrator bootstrap command is idempotent:
 

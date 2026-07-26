@@ -26,6 +26,8 @@ def test_final_tables_are_registered() -> None:
         "agent_conversations",
         "agent_messages",
         "agent_evidence",
+        "agent_run_stats",
+        "agent_alerts",
     }
 
 
