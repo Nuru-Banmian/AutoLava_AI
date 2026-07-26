@@ -28,7 +28,6 @@ class EvidenceRequestKind(StrEnum):
 
 class EvidenceRequest(ClosedModel):
     kind: EvidenceRequestKind
-    question: str = Field(min_length=1, max_length=1_000)
 
 
 class EvidencePlan(ClosedModel):

@@ -35,10 +35,7 @@ async def test_workflow_collects_once_then_generates_one_complete_answer() -> No
                 "route": "evidence",
                 "evidence_plan": {
                     "requests": [
-                        {
-                            "kind": "business_metrics",
-                            "question": "查询本月月度总收入",
-                        }
+                        {"kind": "business_metrics"}
                     ]
                 },
             }

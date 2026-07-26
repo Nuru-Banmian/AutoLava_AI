@@ -13,10 +13,7 @@ from app.agent.contracts import EvidencePlan, EvidenceRequest, TurnPlan
             "route": "evidence",
             "evidence_plan": {
                 "requests": [
-                    {
-                        "kind": "business_metrics",
-                        "question": "查询本月月度总收入",
-                    }
+                    {"kind": "business_metrics"}
                 ]
             },
         },
@@ -34,6 +31,17 @@ def test_turn_plan_accepts_each_closed_route(plan: dict[str, object]) -> None:
         {"route": "clarify", "question": "哪一天？", "sql": "select * from users"},
         {"route": "direct_answer", "question": "wrong field"},
         {"route": "evidence", "evidence_plan": {"requests": []}},
+        {
+            "route": "evidence",
+            "evidence_plan": {
+                "requests": [
+                    {
+                        "kind": "business_metrics",
+                        "question": "select * from users",
+                    }
+                ]
+            },
+        },
     ),
 )
 def test_turn_plan_rejects_unknown_fields_illegal_routes_and_wrong_shapes(
@@ -44,7 +52,7 @@ def test_turn_plan_rejects_unknown_fields_illegal_routes_and_wrong_shapes(
 
 
 def test_evidence_plan_has_a_bounded_request_count() -> None:
-    request = EvidenceRequest(kind="business_metrics", question="查询收入")
+    request = EvidenceRequest(kind="business_metrics")
 
     with pytest.raises(ValidationError):
         EvidencePlan(requests=[request] * 5)
