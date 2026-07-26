@@ -1,16 +1,23 @@
 import json
+import re
 from contextlib import AbstractAsyncContextManager
 from collections.abc import Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.business_evidence import BusinessEvidenceCollector
-from app.agent.conversation import AgentRunResult, ConfirmedPeriod, ConversationState
+from app.agent.conversation import (
+    AgentRunResult,
+    ConfirmedPeriod,
+    ConversationComparison,
+    ConversationState,
+)
 from app.agent.contracts import (
     EVIDENCE_METRIC_LABELS,
     SETTLEMENT_DETAILS_LABEL,
     ModelMessage,
     SettlementDetailsEvidenceBundle,
+    TurnResult,
 )
 from app.agent.factory import create_model_adapter
 from app.agent.model import ModelAttempt
@@ -32,6 +39,35 @@ CORE_RULES = (
     "raw events only through one exact-date daily-ledger request. Never search, "
     "filter, group, summarize, compare, or infer causes from events across dates."
 )
+VAGUE_PERIOD_CLARIFICATION = (
+    "“最近”或“前段时间”没有准确日期。请提供准确日期、自然月、自然年或自定义日期范围。"
+)
+VAGUE_PERIOD_TERMS = (
+    "最近",
+    "近期",
+    "近来",
+    "前段时间",
+    "前些日子",
+    "前些时候",
+    "早些时候",
+    "早些日子",
+    "早前",
+    "先前",
+    "此前",
+    "前不久",
+    "前一阵",
+    "前阵子",
+    "过去一段时间",
+    "过去一阵",
+    "这段时间",
+    "这阵子",
+    "这些天",
+    "这几天",
+    "不久前",
+)
+NEGATED_VAGUE_PERIOD_PREFIX = re.compile(
+    r"(?:不要|不用|别|不查|不看|不是|并非)(?:查|看|说|指)?$"
+)
 
 
 class AgentService:
@@ -44,6 +80,18 @@ class AgentService:
         state: ConversationState,
         recent_messages: list[ModelMessage],
     ) -> AgentRunResult:
+        if _requires_exact_period(recent_messages):
+            return AgentRunResult(
+                turn=TurnResult(
+                    route="clarify",
+                    content=VAGUE_PERIOD_CLARIFICATION,
+                ),
+                state=state.model_copy(
+                    update={
+                        "pending_clarifications": [VAGUE_PERIOD_CLARIFICATION],
+                    }
+                ),
+            )
         runtime_scope = (
             f"Current store timezone: {context.store_timezone}; "
             "features: "
@@ -69,11 +117,10 @@ class AgentService:
         )
         result = workflow_result.turn
         pending_clarifications = [result.content] if result.route == "clarify" else []
-        state_update: dict[str, object] = {
-            "pending_clarifications": pending_clarifications
-        }
+        state_update: dict[str, object] = {"pending_clarifications": pending_clarifications}
         if workflow_result.evidence is not None:
             evidence = workflow_result.evidence
+            comparison = getattr(evidence, "comparison", None)
             metric_label = (
                 SETTLEMENT_DETAILS_LABEL
                 if isinstance(evidence, SettlementDetailsEvidenceBundle)
@@ -86,6 +133,17 @@ class AgentService:
                         end=evidence.period.end,
                     ),
                     "metrics": [metric_label],
+                    "comparison": (
+                        ConversationComparison(
+                            period=ConfirmedPeriod(
+                                start=comparison.period.start,
+                                end=comparison.period.end,
+                            ),
+                            label="比较期间",
+                        )
+                        if comparison is not None
+                        else None
+                    ),
                 }
             )
         return AgentRunResult(
@@ -106,3 +164,18 @@ def create_agent_service(
             evidence_collector=BusinessEvidenceCollector(session_factory),
         )
     )
+
+
+def _requires_exact_period(messages: list[ModelMessage]) -> bool:
+    user_message = next(
+        (message.content for message in reversed(messages) if message.role == "user"),
+        "",
+    )
+    if "事件" in user_message:
+        return False
+    for term in VAGUE_PERIOD_TERMS:
+        for match in re.finditer(re.escape(term), user_message):
+            prefix = user_message[max(0, match.start() - 8) : match.start()]
+            if not NEGATED_VAGUE_PERIOD_PREFIX.search(prefix):
+                return True
+    return False

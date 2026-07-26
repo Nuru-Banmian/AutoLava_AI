@@ -27,6 +27,34 @@ MAX_EVIDENCE_CALLS = 1
 SETTLEMENT_DETAILS_REQUIRE_EXPLICIT_MESSAGE = (
     "请明确询问结算公司、开票记录、待到账、已确认金额或某个公司的结算金额。"
 )
+EXPLICIT_PERCENTAGE_TERMS = (
+    "%",
+    "百分比",
+    "百分之",
+    "变化率",
+    "增长率",
+    "下降率",
+    "环比",
+    "同比",
+    "涨幅",
+    "跌幅",
+    "增幅",
+    "降幅",
+)
+NEGATED_PERCENTAGE_TERMS = (
+    "不要百分",
+    "不用百分",
+    "不需要百分",
+    "无需百分",
+    "别算百分",
+    "不要算百分",
+    "不要%",
+    "不用%",
+    "只给金额",
+    "只看金额",
+    "仅给金额",
+    "仅看金额",
+)
 
 
 class EvidenceCollector(Protocol):
@@ -181,8 +209,12 @@ class AgentTurnWorkflow:
                 "evidence_calls": state["evidence_calls"],
             }
         try:
-            evidence = await self.evidence_collector.collect(
+            evidence_plan = _enforce_explicit_percentage_request(
                 plan.evidence_plan,
+                state["messages"],
+            )
+            evidence = await self.evidence_collector.collect(
+                evidence_plan,
                 state["context"],
             )
         except Exception:
@@ -264,4 +296,38 @@ def _evidence_request_is_explicit(
         request.company_name is not None
         and request.company_name.casefold() in question
         and any(term in question for term in ("金额", "多少", "收入", "结算"))
+    )
+
+
+def _enforce_explicit_percentage_request(
+    plan: EvidencePlan,
+    messages: Sequence[ModelMessage],
+) -> EvidencePlan:
+    request = plan.requests[0]
+    comparison = getattr(request, "comparison", None)
+    if comparison is None or not comparison.include_percentage:
+        return plan
+    user_message = next(
+        (message.content for message in reversed(messages) if message.role == "user"),
+        "",
+    )
+    percentage_is_negated = any(
+        term in user_message for term in NEGATED_PERCENTAGE_TERMS
+    )
+    if not percentage_is_negated and any(
+        term in user_message for term in EXPLICIT_PERCENTAGE_TERMS
+    ):
+        return plan
+    return plan.model_copy(
+        update={
+            "requests": [
+                request.model_copy(
+                    update={
+                        "comparison": comparison.model_copy(
+                            update={"include_percentage": False}
+                        )
+                    }
+                )
+            ]
+        }
     )

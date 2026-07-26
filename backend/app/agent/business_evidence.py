@@ -13,17 +13,24 @@ from sqlalchemy.orm import selectinload
 
 from app.agent.contracts import (
     CalendarMonthPeriod,
+    CalendarYearPeriod,
+    CustomDateRangePeriod,
     DailyLedgerAmount,
     DailyLedgerFacts,
     DailyLedgerRequest,
     DailyLedgerResult,
     EvidenceBundle,
+    EvidenceComparisonResult,
     EvidenceMetric,
     EvidencePeriodResult,
     EvidencePlan,
     SettlementDetailsEvidenceBundle,
     SettlementDetailsRequest,
     UntrustedRawEvent,
+    ExactDatePeriod,
+    MonthlyTotalRevenueResult,
+    PreviousMonthPeriod,
+    PreviousMonthToDatePeriod,
 )
 from app.agent.runtime import RuntimeContext
 from app.models.identity import Store
@@ -70,7 +77,12 @@ class BusinessEvidenceCollector:
         start, end = self._resolve_period(request.period, context)
         if request.metric == EvidenceMetric.MONTHLY_DAILY_AVERAGE_INCOME:
             self._require_natural_month_period(start, end, context)
-
+        comparison_period = (
+            self._resolve_period(request.comparison.period, context)
+            if request.comparison is not None
+            else None
+        )
+        comparison_snapshot: Snapshot | None = None
         for attempt in range(2):
             try:
                 snapshot = await self._read_snapshot(
@@ -79,6 +91,13 @@ class BusinessEvidenceCollector:
                     end=end,
                     metric=request.metric,
                 )
+                if comparison_period is not None:
+                    comparison_snapshot = await self._read_snapshot(
+                        context=context,
+                        start=comparison_period[0],
+                        end=comparison_period[1],
+                        metric=request.metric,
+                    )
                 break
             except OperationalError as error:
                 if attempt == 1 or not _is_temporary_sqlite_failure(error):
@@ -98,6 +117,23 @@ class BusinessEvidenceCollector:
             snapshot=snapshot,
             warnings=warnings,
         )
+        comparison: EvidenceComparisonResult | None = None
+        if (
+            request.comparison is not None
+            and comparison_period is not None
+            and comparison_snapshot is not None
+        ):
+            comparison, comparison_summary, comparison_warnings = (
+                self._comparison_result(
+                    current=snapshot,
+                    current_days=calendar_dates,
+                    comparison=comparison_snapshot,
+                    comparison_period=comparison_period,
+                    include_percentage=request.comparison.include_percentage,
+                )
+            )
+            warnings.extend(comparison_warnings)
+            summary += comparison_summary + "".join(comparison_warnings)
         return EvidenceBundle(
             status="ok",
             current_store={"id": context.store_id},
@@ -110,7 +146,7 @@ class BusinessEvidenceCollector:
                 "calendar_dates": calendar_dates,
                 "recorded_dates": snapshot.recorded_dates,
             },
-            comparison=None,
+            comparison=comparison,
             warnings=warnings,
             truncated=False,
             summary=summary,
@@ -618,6 +654,93 @@ class BusinessEvidenceCollector:
             )
         raise ValueError("Unsupported evidence metric")
 
+    def _comparison_result(
+        self,
+        *,
+        current: Snapshot,
+        current_days: int,
+        comparison: Snapshot,
+        comparison_period: tuple[date, date],
+        include_percentage: bool,
+    ) -> tuple[EvidenceComparisonResult, str, list[str]]:
+        comparison_start, comparison_end = comparison_period
+        comparison_days = (comparison_end - comparison_start).days + 1
+        equal_length = comparison_days == current_days
+        warnings: list[str] = []
+        if comparison.recorded_dates == 0 and comparison.confirmed_settlement == 0:
+            warning = (
+                f"比较期间 {comparison_start.isoformat()} 至 "
+                f"{comparison_end.isoformat()} 没有历史数据；仅描述当前期间。"
+            )
+            return (
+                EvidenceComparisonResult(
+                    status="no_data",
+                    period=EvidencePeriodResult(
+                        start=comparison_start,
+                        end=comparison_end,
+                    ),
+                    result=None,
+                    amount_difference=None,
+                    percentage_change=None,
+                    percentage_status="unavailable_no_data",
+                    equal_length=equal_length,
+                ),
+                "",
+                [warning],
+            )
+
+        current_total = current.daily_revenue + current.confirmed_settlement
+        comparison_total = comparison.daily_revenue + comparison.confirmed_settlement
+        amount_difference = current_total - comparison_total
+        percentage_change: float | None = None
+        percentage_status: Literal[
+            "not_requested",
+            "available",
+            "unavailable_zero_baseline",
+        ] = "not_requested"
+        if include_percentage:
+            if comparison_total == 0:
+                percentage_status = "unavailable_zero_baseline"
+                warnings.append("比较基准为 0 欧元，百分比不可用。")
+            else:
+                percentage_status = "available"
+                percentage_change = round(
+                    amount_difference / comparison_total * 100,
+                    2,
+                )
+        summary = (
+            f"比较期间 {comparison_start.isoformat()} 至 "
+            f"{comparison_end.isoformat()} 的月度总收入为 "
+            f"{comparison_total} 欧元，金额差为 {amount_difference} 欧元。"
+        )
+        if percentage_change is not None:
+            summary += f"百分比变化为 {percentage_change:g}%。"
+        if not equal_length:
+            suffix = "百分比仅供参考。" if include_percentage else "默认仅提供金额差。"
+            warnings.append(
+                f"期间长度不同（{current_days} 天与 {comparison_days} 天）；{suffix}"
+            )
+        return (
+            EvidenceComparisonResult(
+                status="ok",
+                period=EvidencePeriodResult(
+                    start=comparison_start,
+                    end=comparison_end,
+                ),
+                result=MonthlyTotalRevenueResult(
+                    daily_ledger_revenue=comparison.daily_revenue,
+                    confirmed_settlement_income=comparison.confirmed_settlement,
+                    monthly_total_revenue=comparison_total,
+                ),
+                amount_difference=amount_difference,
+                percentage_change=percentage_change,
+                percentage_status=percentage_status,
+                equal_length=equal_length,
+            ),
+            summary,
+            warnings,
+        )
+
     async def _read_settlement_snapshot(
         self,
         *,
@@ -790,7 +913,21 @@ class BusinessEvidenceCollector:
             start = date(period.year, period.month, 1)
             if start > today:
                 raise ValueError("Future calendar months are not supported")
-            return start, min(_month_end(start), today)
+            if start.year == today.year and start.month == today.month:
+                return start, today
+            return start, _month_end(start)
+        if isinstance(period, CalendarYearPeriod):
+            return date(period.year, 1, 1), date(period.year, 12, 31)
+        if isinstance(period, ExactDatePeriod):
+            return period.on, period.on
+        if isinstance(period, CustomDateRangePeriod):
+            return period.start, period.end
+        if isinstance(period, (PreviousMonthPeriod, PreviousMonthToDatePeriod)):
+            previous_month_end = date.fromordinal(today.replace(day=1).toordinal() - 1)
+            start = previous_month_end.replace(day=1)
+            if isinstance(period, PreviousMonthToDatePeriod):
+                return start, start.replace(day=min(today.day, previous_month_end.day))
+            return start, previous_month_end
         return today.replace(day=1), today
 
     def _require_natural_month_period(

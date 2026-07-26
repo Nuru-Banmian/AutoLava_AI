@@ -52,10 +52,22 @@ EVIDENCE_METRIC_LABELS = {
     EvidenceMetric.DAILY_LEDGER: "每日台账",
 }
 SETTLEMENT_DETAILS_LABEL = "公司结算明细"
+MONTHLY_TOTAL_REVENUE_LABEL = "月度总收入"
+DAILY_LEDGER_LABEL = "每日台账"
+MINIMUM_EVIDENCE_DATE = CalendarDate(2000, 1, 1)
+MAXIMUM_EVIDENCE_DATE = CalendarDate(2200, 12, 31)
 
 
 class CurrentMonthPeriod(ClosedModel):
     kind: Literal["current_month"] = "current_month"
+
+
+class PreviousMonthPeriod(ClosedModel):
+    kind: Literal["previous_month"] = "previous_month"
+
+
+class PreviousMonthToDatePeriod(ClosedModel):
+    kind: Literal["previous_month_to_date"] = "previous_month_to_date"
 
 
 class CalendarMonthPeriod(ClosedModel):
@@ -64,10 +76,53 @@ class CalendarMonthPeriod(ClosedModel):
     month: int = Field(ge=1, le=12)
 
 
+class CalendarYearPeriod(ClosedModel):
+    kind: Literal["calendar_year"]
+    year: int = Field(ge=2000, le=2200)
+
+
+class ExactDatePeriod(ClosedModel):
+    kind: Literal["exact_date"]
+    on: CalendarDate = Field(
+        alias="date",
+        ge=MINIMUM_EVIDENCE_DATE,
+        le=MAXIMUM_EVIDENCE_DATE,
+    )
+
+
+class CustomDateRangePeriod(ClosedModel):
+    kind: Literal["custom_date_range"]
+    start: CalendarDate = Field(
+        ge=MINIMUM_EVIDENCE_DATE,
+        le=MAXIMUM_EVIDENCE_DATE,
+    )
+    end: CalendarDate = Field(
+        ge=MINIMUM_EVIDENCE_DATE,
+        le=MAXIMUM_EVIDENCE_DATE,
+    )
+
+    @model_validator(mode="after")
+    def require_forward_range(self) -> "CustomDateRangePeriod":
+        if self.end < self.start:
+            raise ValueError("custom date range end must not precede start")
+        return self
+
+
 EvidencePeriod = Annotated[
-    CurrentMonthPeriod | CalendarMonthPeriod,
+    CurrentMonthPeriod
+    | PreviousMonthPeriod
+    | PreviousMonthToDatePeriod
+    | CalendarMonthPeriod
+    | CalendarYearPeriod
+    | ExactDatePeriod
+    | CustomDateRangePeriod,
     Field(discriminator="kind"),
 ]
+
+
+class EvidenceComparisonRequest(ClosedModel):
+    period: EvidencePeriod
+    include_percentage: bool = False
 
 
 class EvidenceRequest(ClosedModel):
@@ -75,6 +130,7 @@ class EvidenceRequest(ClosedModel):
     metric: EvidenceMetric
     period: EvidencePeriod | None = None
     group_by: Literal["income_category"] | None = None
+    comparison: EvidenceComparisonRequest | None = None
 
     @model_validator(mode="after")
     def require_category_group_only_for_category_metrics(self) -> "EvidenceRequest":
@@ -85,6 +141,11 @@ class EvidenceRequest(ClosedModel):
             EvidenceMetric.OTHER_DATA_AMOUNT,
         }:
             raise ValueError("income category grouping requires a category metric")
+        if (
+            self.comparison is not None
+            and self.metric != EvidenceMetric.MONTHLY_TOTAL_REVENUE
+        ):
+            raise ValueError("period comparison requires monthly total revenue")
         return self
 
 
@@ -231,6 +292,21 @@ class DailyLedgerResult(ClosedModel):
     raw_event: UntrustedRawEvent | None = None
 
 
+class EvidenceComparisonResult(ClosedModel):
+    status: Literal["ok", "no_data"]
+    period: EvidencePeriodResult
+    result: MonthlyTotalRevenueResult | None
+    amount_difference: int | None
+    percentage_change: float | None
+    percentage_status: Literal[
+        "not_requested",
+        "available",
+        "unavailable_zero_baseline",
+        "unavailable_no_data",
+    ]
+    equal_length: bool
+
+
 EvidenceResult = (
     MonthlyTotalRevenueResult
     | DailyLedgerRevenueResult
@@ -271,7 +347,7 @@ class EvidenceBundle(ClosedModel):
     ]
     result: EvidenceResult
     coverage: EvidenceCoverage
-    comparison: None = None
+    comparison: EvidenceComparisonResult | None = None
     warnings: list[str] = Field(default_factory=list, max_length=20)
     truncated: bool = False
     summary: str = Field(min_length=1, max_length=20_000)
@@ -300,6 +376,7 @@ class EvidenceBundle(ClosedModel):
             self.unit != "mixed"
             or self.calculation_version != "daily_ledger.v1"
             or not isinstance(self.result, DailyLedgerResult)
+            or self.comparison is not None
             or self.period.start != self.period.end
             or self.coverage.calendar_dates != 1
         ):
