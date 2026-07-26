@@ -174,6 +174,30 @@ async def test_workflow_does_not_retry_a_plan_that_claims_store_scope() -> None:
     assert collector.calls == 0
 
 
+async def test_workflow_does_not_collect_settlement_details_for_an_ordinary_revenue_question() -> None:
+    model = FakeModelAdapter(
+        plans=[
+            {
+                "route": "evidence",
+                "evidence_plan": {
+                    "requests": [{"kind": "settlement_details"}],
+                },
+            }
+        ]
+    )
+    collector = RecordingEvidenceCollector()
+
+    result = await AgentTurnWorkflow(model=model, evidence_collector=collector).run(
+        [ModelMessage(role="user", content="本月收入是多少？")],
+        CONTEXT,
+    )
+
+    assert result.turn.route == "clarify"
+    assert "明确询问" in result.turn.content
+    assert collector.calls == 0
+    assert model.answer_calls == 0
+
+
 async def test_workflow_replaces_unsupported_amounts_and_raw_json_with_safe_summary() -> None:
     evidence_plan = {
         "route": "evidence",

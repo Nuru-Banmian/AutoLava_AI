@@ -20,6 +20,18 @@ from app.agent.contracts import EvidencePlan, EvidenceRequest, TurnPlan
                 ]
             },
         },
+        {
+            "route": "evidence",
+            "evidence_plan": {
+                "requests": [
+                    {
+                        "kind": "settlement_details",
+                        "status": "pending",
+                        "company_name": "Acme",
+                    }
+                ]
+            },
+        },
         {"route": "safe_failure", "message": "当前无法安全处理该问题。"},
     ),
 )
@@ -74,6 +86,8 @@ def test_evidence_plan_has_a_bounded_request_count() -> None:
         "expression",
         "url",
         "store_id",
+        "company_id",
+        "record_id",
         "user_id",
         "role",
         "timezone",
