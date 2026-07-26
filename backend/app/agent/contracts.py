@@ -27,9 +27,25 @@ class EvidenceRequestKind(StrEnum):
 
 class EvidenceMetric(StrEnum):
     MONTHLY_TOTAL_REVENUE = "monthly_total_revenue"
+    DAILY_LEDGER_REVENUE = "daily_ledger_revenue"
+    CONFIRMED_SETTLEMENT_INCOME = "confirmed_settlement_income"
+    OPERATING_DAYS = "operating_days"
+    OPERATING_DAY_AVERAGE_LEDGER_REVENUE = "operating_day_average_ledger_revenue"
+    MONTHLY_DAILY_AVERAGE_INCOME = "monthly_daily_average_income"
+    INCOME_CATEGORY_AMOUNT = "income_category_amount"
+    OTHER_DATA_AMOUNT = "other_data_amount"
 
 
-MONTHLY_TOTAL_REVENUE_LABEL = "月度总收入"
+EVIDENCE_METRIC_LABELS = {
+    EvidenceMetric.MONTHLY_TOTAL_REVENUE: "月度总收入",
+    EvidenceMetric.DAILY_LEDGER_REVENUE: "每日台账营业额",
+    EvidenceMetric.CONFIRMED_SETTLEMENT_INCOME: "已确认公司结算收入",
+    EvidenceMetric.OPERATING_DAYS: "经营日",
+    EvidenceMetric.OPERATING_DAY_AVERAGE_LEDGER_REVENUE: "经营日均台账营业额",
+    EvidenceMetric.MONTHLY_DAILY_AVERAGE_INCOME: "月度日均收入",
+    EvidenceMetric.INCOME_CATEGORY_AMOUNT: "收入分类金额",
+    EvidenceMetric.OTHER_DATA_AMOUNT: "其他数据金额",
+}
 SETTLEMENT_DETAILS_LABEL = "公司结算明细"
 
 
@@ -53,6 +69,16 @@ class EvidenceRequest(ClosedModel):
     kind: Literal["business_metrics"] = "business_metrics"
     metric: EvidenceMetric
     period: EvidencePeriod | None = None
+    group_by: Literal["income_category"] | None = None
+
+    @model_validator(mode="after")
+    def require_category_group_only_for_category_metrics(self) -> "EvidenceRequest":
+        if self.group_by is not None and self.metric not in {
+            EvidenceMetric.INCOME_CATEGORY_AMOUNT,
+            EvidenceMetric.OTHER_DATA_AMOUNT,
+        }:
+            raise ValueError("income category grouping requires a category metric")
+        return self
 
 
 SettlementCompanyName = Annotated[
@@ -124,6 +150,56 @@ class MonthlyTotalRevenueResult(ClosedModel):
     monthly_total_revenue: int = Field(ge=0)
 
 
+class DailyLedgerRevenueResult(ClosedModel):
+    daily_ledger_revenue: int = Field(ge=0)
+
+
+class ConfirmedSettlementIncomeResult(ClosedModel):
+    confirmed_settlement_income: int = Field(ge=0)
+
+
+class OperatingDaysResult(ClosedModel):
+    operating_days: int = Field(ge=0)
+
+
+class OperatingDayAverageLedgerRevenueResult(ClosedModel):
+    daily_ledger_revenue: int = Field(ge=0)
+    operating_days: int = Field(ge=0)
+    operating_day_average_ledger_revenue: int | None = Field(default=None, ge=0)
+
+
+class MonthlyDailyAverageIncomeResult(ClosedModel):
+    daily_ledger_revenue: int = Field(ge=0)
+    confirmed_settlement_income: int = Field(ge=0)
+    monthly_total_revenue: int = Field(ge=0)
+    operating_days: int = Field(ge=0)
+    monthly_daily_average_income: int | None = Field(default=None, ge=0)
+
+
+class CategoryAmountRow(ClosedModel):
+    category_id: int = Field(gt=0)
+    category_name: str = Field(min_length=1, max_length=100)
+    include_in_total: bool
+    sort_order: int
+    amount: int = Field(ge=0)
+
+
+class CategoryAmountResult(ClosedModel):
+    amount: int = Field(ge=0)
+    categories: list[CategoryAmountRow]
+
+
+EvidenceResult = (
+    MonthlyTotalRevenueResult
+    | DailyLedgerRevenueResult
+    | ConfirmedSettlementIncomeResult
+    | OperatingDaysResult
+    | OperatingDayAverageLedgerRevenueResult
+    | MonthlyDailyAverageIncomeResult
+    | CategoryAmountResult
+)
+
+
 class EvidenceCoverage(ClosedModel):
     calendar_dates: int = Field(ge=1)
     recorded_dates: int = Field(ge=0)
@@ -138,9 +214,18 @@ class EvidenceBundle(ClosedModel):
     current_store: CurrentStoreScope
     period: EvidencePeriodResult
     metric: EvidenceMetric
-    unit: Literal["EUR"]
-    calculation_version: Literal["monthly_total_revenue.v1"]
-    result: MonthlyTotalRevenueResult
+    unit: Literal["EUR", "day", "EUR/operating_day"]
+    calculation_version: Literal[
+        "monthly_total_revenue.v1",
+        "daily_ledger_revenue.v1",
+        "confirmed_settlement_income.v1",
+        "operating_days.v1",
+        "operating_day_average_ledger_revenue.v1",
+        "monthly_daily_average_income.v1",
+        "income_category_amount.v1",
+        "other_data_amount.v1",
+    ]
+    result: EvidenceResult
     coverage: EvidenceCoverage
     comparison: None = None
     warnings: list[str] = Field(default_factory=list, max_length=20)

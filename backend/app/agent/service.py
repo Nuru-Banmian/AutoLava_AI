@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.business_evidence import BusinessEvidenceCollector
 from app.agent.conversation import AgentRunResult, ConfirmedPeriod, ConversationState
 from app.agent.contracts import (
-    MONTHLY_TOTAL_REVENUE_LABEL,
+    EVIDENCE_METRIC_LABELS,
     SETTLEMENT_DETAILS_LABEL,
     ModelMessage,
     SettlementDetailsEvidenceBundle,
@@ -70,7 +70,7 @@ class AgentService:
             metric_label = (
                 SETTLEMENT_DETAILS_LABEL
                 if isinstance(evidence, SettlementDetailsEvidenceBundle)
-                else MONTHLY_TOTAL_REVENUE_LABEL
+                else EVIDENCE_METRIC_LABELS[evidence.metric]
             )
             state_update.update(
                 {
