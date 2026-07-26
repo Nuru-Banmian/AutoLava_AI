@@ -4,7 +4,7 @@ from datetime import date as CalendarDate
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 
 class ClosedModel(BaseModel):
@@ -24,14 +24,34 @@ class ModelMessage(ClosedModel):
 
 class EvidenceRequestKind(StrEnum):
     BUSINESS_METRICS = "business_metrics"
+    SETTLEMENT_DETAILS = "settlement_details"
     DAILY_LEDGER = "daily_ledger"
 
 
 class EvidenceMetric(StrEnum):
     MONTHLY_TOTAL_REVENUE = "monthly_total_revenue"
+    DAILY_LEDGER_REVENUE = "daily_ledger_revenue"
+    CONFIRMED_SETTLEMENT_INCOME = "confirmed_settlement_income"
+    OPERATING_DAYS = "operating_days"
+    OPERATING_DAY_AVERAGE_LEDGER_REVENUE = "operating_day_average_ledger_revenue"
+    MONTHLY_DAILY_AVERAGE_INCOME = "monthly_daily_average_income"
+    INCOME_CATEGORY_AMOUNT = "income_category_amount"
+    OTHER_DATA_AMOUNT = "other_data_amount"
     DAILY_LEDGER = "daily_ledger"
 
 
+EVIDENCE_METRIC_LABELS = {
+    EvidenceMetric.MONTHLY_TOTAL_REVENUE: "月度总收入",
+    EvidenceMetric.DAILY_LEDGER_REVENUE: "每日台账营业额",
+    EvidenceMetric.CONFIRMED_SETTLEMENT_INCOME: "已确认公司结算收入",
+    EvidenceMetric.OPERATING_DAYS: "经营日",
+    EvidenceMetric.OPERATING_DAY_AVERAGE_LEDGER_REVENUE: "经营日均台账营业额",
+    EvidenceMetric.MONTHLY_DAILY_AVERAGE_INCOME: "月度日均收入",
+    EvidenceMetric.INCOME_CATEGORY_AMOUNT: "收入分类金额",
+    EvidenceMetric.OTHER_DATA_AMOUNT: "其他数据金额",
+    EvidenceMetric.DAILY_LEDGER: "每日台账",
+}
+SETTLEMENT_DETAILS_LABEL = "公司结算明细"
 MONTHLY_TOTAL_REVENUE_LABEL = "月度总收入"
 DAILY_LEDGER_LABEL = "每日台账"
 MINIMUM_EVIDENCE_DATE = CalendarDate(2000, 1, 1)
@@ -106,34 +126,55 @@ class EvidenceComparisonRequest(ClosedModel):
 
 
 class EvidenceRequest(ClosedModel):
-    kind: EvidenceRequestKind
-    metric: EvidenceMetric | None = None
+    kind: Literal["business_metrics"] = "business_metrics"
+    metric: EvidenceMetric
     period: EvidencePeriod | None = None
-    date: CalendarDate | None = None
+    group_by: Literal["income_category"] | None = None
     comparison: EvidenceComparisonRequest | None = None
 
     @model_validator(mode="after")
-    def require_only_the_request_payload(self) -> "EvidenceRequest":
-        if self.kind == EvidenceRequestKind.BUSINESS_METRICS:
-            if (
-                self.metric is None
-                or self.metric == EvidenceMetric.DAILY_LEDGER
-                or self.date is not None
-            ):
-                raise ValueError("business_metrics requires metric and forbids date")
-            return self
+    def require_category_group_only_for_category_metrics(self) -> "EvidenceRequest":
+        if self.metric == EvidenceMetric.DAILY_LEDGER:
+            raise ValueError("daily ledger requires the daily_ledger request kind")
+        if self.group_by is not None and self.metric not in {
+            EvidenceMetric.INCOME_CATEGORY_AMOUNT,
+            EvidenceMetric.OTHER_DATA_AMOUNT,
+        }:
+            raise ValueError("income category grouping requires a category metric")
         if (
-            self.metric is not None
-            or self.period is not None
-            or self.comparison is not None
-            or self.date is None
+            self.comparison is not None
+            and self.metric != EvidenceMetric.MONTHLY_TOTAL_REVENUE
         ):
-            raise ValueError("daily_ledger requires only an exact date")
+            raise ValueError("period comparison requires monthly total revenue")
         return self
 
 
+SettlementCompanyName = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=120),
+]
+
+
+class SettlementDetailsRequest(ClosedModel):
+    kind: Literal["settlement_details"] = "settlement_details"
+    period: EvidencePeriod | None = None
+    status: Literal["pending", "confirmed"] | None = None
+    company_name: SettlementCompanyName | None = None
+
+
+class DailyLedgerRequest(ClosedModel):
+    kind: Literal["daily_ledger"] = "daily_ledger"
+    date: CalendarDate
+
+
+EvidenceRequestUnion = Annotated[
+    EvidenceRequest | SettlementDetailsRequest | DailyLedgerRequest,
+    Field(discriminator="kind"),
+]
+
+
 class EvidencePlan(ClosedModel):
-    requests: list[EvidenceRequest] = Field(min_length=1, max_length=1)
+    requests: list[EvidenceRequestUnion] = Field(min_length=1, max_length=1)
 
 
 class TurnRoute(StrEnum):
@@ -182,6 +223,45 @@ class MonthlyTotalRevenueResult(ClosedModel):
     monthly_total_revenue: int = Field(ge=0)
 
 
+class DailyLedgerRevenueResult(ClosedModel):
+    daily_ledger_revenue: int = Field(ge=0)
+
+
+class ConfirmedSettlementIncomeResult(ClosedModel):
+    confirmed_settlement_income: int = Field(ge=0)
+
+
+class OperatingDaysResult(ClosedModel):
+    operating_days: int = Field(ge=0)
+
+
+class OperatingDayAverageLedgerRevenueResult(ClosedModel):
+    daily_ledger_revenue: int = Field(ge=0)
+    operating_days: int = Field(ge=0)
+    operating_day_average_ledger_revenue: int | None = Field(default=None, ge=0)
+
+
+class MonthlyDailyAverageIncomeResult(ClosedModel):
+    daily_ledger_revenue: int = Field(ge=0)
+    confirmed_settlement_income: int = Field(ge=0)
+    monthly_total_revenue: int = Field(ge=0)
+    operating_days: int = Field(ge=0)
+    monthly_daily_average_income: int | None = Field(default=None, ge=0)
+
+
+class CategoryAmountRow(ClosedModel):
+    category_id: int = Field(gt=0)
+    category_name: str = Field(min_length=1, max_length=100)
+    include_in_total: bool
+    sort_order: int
+    amount: int = Field(ge=0)
+
+
+class CategoryAmountResult(ClosedModel):
+    amount: int = Field(ge=0)
+    categories: list[CategoryAmountRow]
+
+
 class DailyLedgerAmount(ClosedModel):
     name: str = Field(min_length=1, max_length=100)
     amount: int = Field(ge=0)
@@ -227,6 +307,18 @@ class EvidenceComparisonResult(ClosedModel):
     equal_length: bool
 
 
+EvidenceResult = (
+    MonthlyTotalRevenueResult
+    | DailyLedgerRevenueResult
+    | ConfirmedSettlementIncomeResult
+    | OperatingDaysResult
+    | OperatingDayAverageLedgerRevenueResult
+    | MonthlyDailyAverageIncomeResult
+    | CategoryAmountResult
+    | DailyLedgerResult
+)
+
+
 class EvidenceCoverage(ClosedModel):
     calendar_dates: int = Field(ge=1)
     recorded_dates: int = Field(ge=0)
@@ -241,11 +333,19 @@ class EvidenceBundle(ClosedModel):
     current_store: CurrentStoreScope
     period: EvidencePeriodResult
     metric: EvidenceMetric
-    unit: Literal["EUR", "mixed"]
+    unit: Literal["EUR", "day", "EUR/operating_day", "mixed"]
     calculation_version: Literal[
-        "monthly_total_revenue.v1", "daily_ledger.v1"
+        "monthly_total_revenue.v1",
+        "daily_ledger_revenue.v1",
+        "confirmed_settlement_income.v1",
+        "operating_days.v1",
+        "operating_day_average_ledger_revenue.v1",
+        "monthly_daily_average_income.v1",
+        "income_category_amount.v1",
+        "other_data_amount.v1",
+        "daily_ledger.v1",
     ]
-    result: MonthlyTotalRevenueResult | DailyLedgerResult
+    result: EvidenceResult
     coverage: EvidenceCoverage
     comparison: EvidenceComparisonResult | None = None
     warnings: list[str] = Field(default_factory=list, max_length=20)
@@ -262,6 +362,15 @@ class EvidenceBundle(ClosedModel):
                 or not isinstance(self.result, MonthlyTotalRevenueResult)
             ):
                 raise ValueError("monthly revenue evidence has an inconsistent shape")
+            return self
+        if self.metric != EvidenceMetric.DAILY_LEDGER:
+            if (
+                self.status != "ok"
+                or self.unit == "mixed"
+                or self.calculation_version == "daily_ledger.v1"
+                or isinstance(self.result, DailyLedgerResult)
+            ):
+                raise ValueError("business metric evidence has an inconsistent shape")
             return self
         if (
             self.unit != "mixed"
@@ -284,6 +393,46 @@ class EvidenceBundle(ClosedModel):
         return self
 
 
+class SettlementCompanyEvidence(ClosedModel):
+    name: str = Field(min_length=1, max_length=120)
+    is_active: bool
+    pending_amount: int = Field(ge=0)
+    confirmed_amount: int = Field(ge=0)
+    record_count: int = Field(ge=0)
+
+
+class SettlementRecordEvidence(ClosedModel):
+    company_name: str = Field(min_length=1, max_length=120)
+    opening_month: CalendarDate
+    amount: int = Field(gt=0)
+    status: Literal["pending", "confirmed"]
+
+
+class SettlementDetailsResult(ClosedModel):
+    companies: list[SettlementCompanyEvidence] = Field(max_length=50)
+    records: list[SettlementRecordEvidence] = Field(max_length=50)
+    pending_amount: int = Field(ge=0)
+    confirmed_amount: int = Field(ge=0)
+    pending_records: int = Field(ge=0)
+    confirmed_records: int = Field(ge=0)
+
+
+class SettlementDetailsEvidenceBundle(ClosedModel):
+    status: Literal["ok", "refused"]
+    current_store: CurrentStoreScope
+    period: EvidencePeriodResult
+    evidence_type: Literal["settlement_details"] = "settlement_details"
+    unit: Literal["EUR"] = "EUR"
+    calculation_version: Literal["settlement_details.v1"] = "settlement_details.v1"
+    result: SettlementDetailsResult
+    warnings: list[str] = Field(default_factory=list, max_length=20)
+    truncated: bool = False
+    summary: str = Field(min_length=1, max_length=20_000)
+
+
+CollectedEvidence = EvidenceBundle | SettlementDetailsEvidenceBundle
+
+
 class TurnResult(ClosedModel):
     route: Literal["clarify", "answer", "safe_failure"]
     content: str = Field(min_length=1, max_length=20_000)
@@ -292,4 +441,4 @@ class TurnResult(ClosedModel):
 
 class WorkflowResult(ClosedModel):
     turn: TurnResult
-    evidence: EvidenceBundle | None = None
+    evidence: CollectedEvidence | None = None

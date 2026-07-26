@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.contracts import EvidenceBundle, ModelMessage, TurnResult
+from app.agent.contracts import CollectedEvidence, ModelMessage, TurnResult
 from app.agent.model import ModelAttempt
 from app.models.agent import AgentConversation, AgentMessage
 
@@ -56,7 +56,7 @@ class AgentTurnResponse(TurnResult):
 class AgentRunResult(ClosedModel):
     turn: TurnResult
     state: ConversationState
-    evidence: EvidenceBundle | None = None
+    evidence: CollectedEvidence | None = None
     attempts: list[ModelAttempt] = Field(default_factory=list)
 
 

@@ -20,6 +20,18 @@ from app.agent.contracts import EvidencePlan, EvidenceRequest, TurnPlan
                 ]
             },
         },
+        {
+            "route": "evidence",
+            "evidence_plan": {
+                "requests": [
+                    {
+                        "kind": "settlement_details",
+                        "status": "pending",
+                        "company_name": "Acme",
+                    }
+                ]
+            },
+        },
         {"route": "safe_failure", "message": "当前无法安全处理该问题。"},
     ),
 )
@@ -65,6 +77,42 @@ def test_evidence_plan_has_a_bounded_request_count() -> None:
         EvidencePlan(requests=[request] * 2)
 
 
+def test_evidence_request_has_at_most_one_bounded_group_position() -> None:
+    request = EvidenceRequest(
+        kind="business_metrics",
+        metric="income_category_amount",
+        group_by="income_category",
+    )
+
+    assert request.group_by == "income_category"
+    with pytest.raises(ValidationError):
+        EvidencePlan.model_validate(
+            {
+                "requests": [
+                    {
+                        "kind": "business_metrics",
+                        "metric": "income_category_amount",
+                        "group_by": ["income_category", "date"],
+                    }
+                ]
+            }
+        )
+    with pytest.raises(ValidationError):
+        EvidenceRequest(
+            kind="business_metrics",
+            metric="daily_ledger_revenue",
+            group_by="income_category",
+        )
+
+
+def test_evidence_metric_whitelist_fails_closed() -> None:
+    with pytest.raises(ValidationError):
+        EvidenceRequest(
+            kind="business_metrics",
+            metric="arbitrary_sql_metric",
+        )
+
+
 def test_daily_ledger_request_requires_one_exact_date_and_no_metric_or_period() -> None:
     plan = EvidencePlan.model_validate(
         {
@@ -102,6 +150,8 @@ def test_daily_ledger_request_requires_one_exact_date_and_no_metric_or_period() 
         "expression",
         "url",
         "store_id",
+        "company_id",
+        "record_id",
         "user_id",
         "role",
         "timezone",

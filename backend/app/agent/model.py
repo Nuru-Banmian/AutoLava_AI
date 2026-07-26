@@ -9,7 +9,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, SecretStr, ValidationError
 
-from app.agent.contracts import EvidenceBundle, ModelMessage, TurnPlan
+from app.agent.contracts import CollectedEvidence, ModelMessage, TurnPlan
 
 
 class ModelErrorCategory(StrEnum):
@@ -100,7 +100,7 @@ class ModelAdapter(Protocol):
     async def answer_turn(
         self,
         messages: Sequence[ModelMessage],
-        evidence: EvidenceBundle,
+        evidence: CollectedEvidence,
         *,
         observer: AttemptObserver | None = None,
     ) -> str: ...
@@ -190,7 +190,7 @@ class OpenAICompatibleModelAdapter:
     async def answer_turn(
         self,
         messages: Sequence[ModelMessage],
-        evidence: EvidenceBundle,
+        evidence: CollectedEvidence,
         *,
         observer: AttemptObserver | None = None,
     ) -> str:
@@ -273,7 +273,7 @@ class FakeModelAdapter:
     async def answer_turn(
         self,
         messages: Sequence[ModelMessage],
-        evidence: EvidenceBundle,
+        evidence: CollectedEvidence,
         *,
         observer: AttemptObserver | None = None,
     ) -> str:
@@ -320,7 +320,7 @@ class ResilientModelAdapter:
     async def answer_turn(
         self,
         messages: Sequence[ModelMessage],
-        evidence: EvidenceBundle,
+        evidence: CollectedEvidence,
         *,
         observer: AttemptObserver | None = None,
     ) -> str:
@@ -332,7 +332,7 @@ class ResilientModelAdapter:
         self,
         stage: Literal["plan", "answer"],
         messages: Sequence[ModelMessage],
-        evidence: EvidenceBundle | None,
+        evidence: CollectedEvidence | None,
         *,
         observer: AttemptObserver | None,
     ) -> Any:
@@ -368,7 +368,7 @@ class ResilientModelAdapter:
         adapter: ModelAdapter,
         stage: Literal["plan", "answer"],
         messages: Sequence[ModelMessage],
-        evidence: EvidenceBundle | None,
+        evidence: CollectedEvidence | None,
         *,
         observer: AttemptObserver | None,
     ) -> Any:
@@ -399,6 +399,10 @@ _SERVER_OWNED_OR_QUERY_FIELDS = {
     "url",
     "uri",
     "store_id",
+    "company_id",
+    "company_ids",
+    "record_id",
+    "record_ids",
     "user_id",
     "role",
     "timezone",

@@ -1,3 +1,5 @@
+
+
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -60,17 +62,28 @@ def _install_business_evidence_service(
     db_session: AsyncSession,
     *,
     plans: list[dict[str, object]],
-    answers: list[str],
+    answers: list[str] | None = None,
+    now: datetime = datetime(2026, 7, 26, 12, 0),
 ) -> FakeModelAdapter:
     @asynccontextmanager
     async def session_factory():
         yield db_session
 
-    model = FakeModelAdapter(plans=plans, answers=answers)
+    model = FakeModelAdapter(
+        plans=plans,
+        answers=(
+            answers
+            if answers is not None
+            else ["模型不能改写后端证据。"] * len(plans)
+        ),
+    )
     client._transport.app.state.agent_service = AgentService(
         AgentTurnWorkflow(
             model=model,
-            evidence_collector=BusinessEvidenceCollector(session_factory),
+            evidence_collector=BusinessEvidenceCollector(
+                session_factory,
+                now=lambda _timezone: now,
+            ),
         )
     )
     return model
@@ -91,6 +104,7 @@ async def test_only_final_administrator_can_persist_the_global_agent_switch(
 ) -> None:
     monkeypatch.setenv("AUTOLAVA_BOOTSTRAP_USERNAME", "owner")
     get_settings.cache_clear()
+
     await user_factory(username="owner", password="secret", role="admin")
     await user_factory(username="admin", password="secret", role="admin")
     await db_session.commit()
@@ -119,6 +133,7 @@ async def test_agent_route_builds_trusted_runtime_context_for_current_store(
     client: AsyncClient,
     db_session: AsyncSession,
     user_factory,
+
     store_factory,
     agent_service: RecordingAgentService,
     monkeypatch: pytest.MonkeyPatch,
@@ -190,6 +205,7 @@ async def test_agent_route_rejects_users_disabled_accounts_and_hidden_stores_bef
     owner = await user_factory(username="owner", password="secret", role="admin")
     await user_factory(username="ordinary", password="secret", role="user")
     hidden_store = await store_factory(name="Hidden", is_active=False)
+
     owner_id, hidden_store_id = owner.id, hidden_store.id
     await db_session.commit()
 
@@ -219,6 +235,7 @@ async def test_agent_route_rejects_users_disabled_accounts_and_hidden_stores_bef
     owner = await db_session.get(User, owner_id)
     assert owner is not None
     owner.is_active = False
+
     await db_session.commit()
     inactive = await client.post(
         f"/api/agent/stores/{hidden_store_id}/turn",
@@ -289,6 +306,7 @@ async def test_agent_http_turn_returns_direct_answers_and_ends_on_clarification(
 
     assert direct.status_code == 200
     assert {key: direct.json()[key] for key in ("route", "content")} == {
+
         "route": "answer",
         "content": "我可以回答一般问题。",
     }
@@ -319,6 +337,7 @@ async def test_monthly_total_revenue_http_gold_path_persists_raw_evidence_safely
     db_session.add(
         StoreDailyRecord(
             store_id=store_id,
+
             date=date(2026, 7, 5),
             daily_revenue=240,
             income_mode="legacy_total",
@@ -388,6 +407,7 @@ async def test_monthly_total_revenue_http_gold_path_persists_raw_evidence_safely
             {
                 "route": "evidence",
                 "evidence_plan": {
+
                     "requests": [
                         {
                             "kind": "business_metrics",
@@ -419,6 +439,7 @@ async def test_monthly_total_revenue_http_gold_path_persists_raw_evidence_safely
     payload = response.json()
     assert payload["route"] == "answer"
     assert payload["content"] == expected_answer
+
     assert "evidence" not in payload
     assert payload["conversation"]["state"]["confirmed_period"] == {
         "start": "2026-07-01",
@@ -436,8 +457,638 @@ async def test_monthly_total_revenue_http_gold_path_persists_raw_evidence_safely
         "start": "2026-07-01",
         "end": "2026-07-26",
     }
+    assert "companies" not in evidence.payload
+    assert "records" not in evidence.payload
+    assert "Acme" not in evidence.payload["summary"]
+    assert 999 not in evidence.payload["result"].values()
     assert model.plan_calls == 1
     assert model.answer_calls == 1
+
+
+@pytest.mark.parametrize(
+    ("metric", "question", "unit", "version", "expected_result"),
+    (
+        (
+            "daily_ledger_revenue",
+            "本月每日台账营业额是多少？",
+            "EUR",
+            "daily_ledger_revenue.v1",
+            {"daily_ledger_revenue": 200},
+        ),
+        (
+            "confirmed_settlement_income",
+            "本月已确认公司结算收入是多少？",
+            "EUR",
+            "confirmed_settlement_income.v1",
+            {"confirmed_settlement_income": 100},
+        ),
+        (
+            "operating_days",
+            "本月有多少经营日？",
+            "day",
+            "operating_days.v1",
+            {"operating_days": 2},
+        ),
+        (
+            "operating_day_average_ledger_revenue",
+            "本月经营日均台账营业额是多少？",
+            "EUR/operating_day",
+            "operating_day_average_ledger_revenue.v1",
+            {
+                "daily_ledger_revenue": 200,
+                "operating_days": 2,
+                "operating_day_average_ledger_revenue": 100,
+            },
+        ),
+        (
+            "monthly_daily_average_income",
+            "本月月度日均收入是多少？",
+            "EUR/operating_day",
+            "monthly_daily_average_income.v1",
+            {
+                "daily_ledger_revenue": 200,
+                "confirmed_settlement_income": 100,
+
+                "monthly_total_revenue": 300,
+                "operating_days": 2,
+                "monthly_daily_average_income": 150,
+            },
+        ),
+        (
+            "income_category_amount",
+            "本月各收入分类金额是多少？",
+            "EUR",
+            "income_category_amount.v1",
+            {
+                "amount": 200,
+                "categories": [
+                    {
+                        "category_id": "included",
+                        "category_name": "历史现金",
+                        "include_in_total": True,
+                        "sort_order": 3,
+                        "amount": 200,
+                    }
+                ],
+            },
+        ),
+        (
+            "other_data_amount",
+            "本月其他数据金额是多少？",
+            "EUR",
+            "other_data_amount.v1",
+            {
+                "amount": 30,
+                "categories": [
+                    {
+                        "category_id": "other",
+                        "category_name": "历史其他",
+                        "include_in_total": False,
+                        "sort_order": 4,
+
+                        "amount": 30,
+                    }
+                ],
+            },
+        ),
+    ),
+)
+async def test_core_business_metric_http_gold_paths_use_historical_snapshots_and_store_scope(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+    metric: str,
+    question: str,
+    unit: str,
+    version: str,
+    expected_result: dict[str, object],
+) -> None:
+    user = await user_factory(username="admin", password="secret", role="admin")
+    store = await store_factory(name="Roma", timezone="Europe/Rome")
+    other_store = await store_factory(name="Milano", timezone="Europe/Rome")
+    included = IncomeCategory(
+        store_id=store.id,
+        name="当前现金",
+        include_in_total=False,
+        is_active=True,
+        sort_order=99,
+    )
+    other = IncomeCategory(
+        store_id=store.id,
+        name="当前其他",
+        include_in_total=True,
+        is_active=True,
+        sort_order=98,
+    )
+    db_session.add_all([included, other])
+    await db_session.flush()
+    store_id = store.id
+    included_id = included.id
+    other_id = other.id
+    records = [
+        StoreDailyRecord(
+            store_id=store.id,
+            date=date(2026, 7, 1),
+            daily_revenue=120,
+            income_mode="composed",
+            wash_count=None,
+            is_open="营业",
+            created_by=user.id,
+            updated_by=user.id,
+        ),
+        StoreDailyRecord(
+            store_id=store.id,
+            date=date(2026, 7, 2),
+            daily_revenue=80,
+            income_mode="composed",
+            wash_count=None,
+            is_open="提前休息",
+            created_by=user.id,
+            updated_by=user.id,
+        ),
+        StoreDailyRecord(
+            store_id=store.id,
+
+            date=date(2026, 7, 3),
+            daily_revenue=0,
+            income_mode="legacy_total",
+            wash_count=None,
+            is_open="休息",
+            created_by=user.id,
+            updated_by=user.id,
+        ),
+        StoreDailyRecord(
+            store_id=other_store.id,
+            date=date(2026, 7, 1),
+            daily_revenue=9_000,
+            income_mode="legacy_total",
+            wash_count=None,
+            is_open="营业",
+            created_by=user.id,
+            updated_by=user.id,
+        ),
+    ]
+    db_session.add_all(records)
+    await db_session.flush()
+    db_session.add_all(
+        [
+            DailyIncomeItem(
+                record_id=records[0].id,
+                category_id=included.id,
+                category_name="历史现金",
+                include_in_total=True,
+                sort_order=3,
+                amount=120,
+            ),
+            DailyIncomeItem(
+                record_id=records[0].id,
+                category_id=other.id,
+                category_name="历史其他",
+                include_in_total=False,
+                sort_order=4,
+
+                amount=10,
+            ),
+            DailyIncomeItem(
+                record_id=records[1].id,
+                category_id=included.id,
+                category_name="历史现金",
+                include_in_total=True,
+                sort_order=3,
+                amount=80,
+            ),
+            DailyIncomeItem(
+                record_id=records[1].id,
+                category_id=other.id,
+                category_name="历史其他",
+                include_in_total=False,
+                sort_order=4,
+                amount=20,
+            ),
+        ]
+    )
+    company = SettlementCompany(
+        store_id=store.id,
+        name="Acme",
+        normalized_name="acme",
+        is_active=True,
+        archived_at=None,
+        created_by=user.id,
+        updated_by=user.id,
+    )
+    other_company = SettlementCompany(
+        store_id=other_store.id,
+        name="Other",
+        normalized_name="other",
+        is_active=True,
+        archived_at=None,
+        created_by=user.id,
+        updated_by=user.id,
+    )
+    db_session.add_all([company, other_company])
+    await db_session.flush()
+    db_session.add_all(
+        [
+            SettlementRecord(
+                store_id=store.id,
+                company_id=company.id,
+                company_name=company.name,
+                opening_month=date(2026, 7, 1),
+                amount=100,
+                status="confirmed",
+                created_by=user.id,
+                updated_by=user.id,
+            ),
+            SettlementRecord(
+                store_id=store.id,
+                company_id=company.id,
+                company_name=company.name,
+                opening_month=date(2026, 7, 1),
+                amount=999,
+                status="pending",
+                created_by=user.id,
+                updated_by=user.id,
+            ),
+
+            SettlementRecord(
+                store_id=other_store.id,
+                company_id=other_company.id,
+                company_name=other_company.name,
+                opening_month=date(2026, 7, 1),
+                amount=8_000,
+                status="confirmed",
+                created_by=user.id,
+                updated_by=user.id,
+            ),
+        ]
+    )
+    db_session.add(AgentSettings(id=1, enabled=True))
+    await db_session.commit()
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    request: dict[str, object] = {
+        "kind": "business_metrics",
+        "metric": metric,
+    }
+    if metric in {"income_category_amount", "other_data_amount"}:
+        request["group_by"] = "income_category"
+    model = FakeModelAdapter(
+        plans=[
+            {
+                "route": "evidence",
+                "evidence_plan": {"requests": [request]},
+            }
+        ],
+        answers=["模型不能改写后端计算。"],
+    )
+    client._transport.app.state.agent_service = AgentService(
+        AgentTurnWorkflow(
+            model=model,
+            evidence_collector=BusinessEvidenceCollector(
+
+                session_factory,
+                now=lambda _timezone: datetime(2026, 7, 26, 12, 0),
+            ),
+        )
+    )
+    await _login(client, "admin")
+
+    response = await client.post(
+        f"/api/agent/stores/{store_id}/turn",
+        json={"question": question},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["route"] == "answer"
+    assert response.json()["conversation"]["state"]["confirmed_period"] == {
+        "start": "2026-07-01",
+        "end": "2026-07-26",
+    }
+    evidence = await db_session.scalar(select(AgentEvidence).order_by(AgentEvidence.id.desc()))
+    assert evidence is not None
+    resolved_expected = expected_result
+    if metric in {"income_category_amount", "other_data_amount"}:
+        resolved_expected = {
+            **expected_result,
+            "categories": [
+                {
+                    **expected_result["categories"][0],
+                    "category_id": (
+                        included_id if metric == "income_category_amount" else other_id
+                    ),
+                }
+            ],
+        }
+    assert evidence.payload["result"] == resolved_expected
+    assert evidence.payload["unit"] == unit
+    assert evidence.payload["calculation_version"] == version
+    assert evidence.payload["current_store"] == {"id": store_id}
+
+
+async def test_settlement_detail_agent_queries_are_gated_scoped_and_identity_consistent(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AUTOLAVA_BOOTSTRAP_USERNAME", "owner")
+    get_settings.cache_clear()
+    admin = await user_factory(username="admin", password="secret", role="admin")
+    owner = await user_factory(username="owner", password="secret", role="admin")
+    store = await store_factory(name="Roma", timezone="Europe/Rome")
+    other_store = await store_factory(name="Milano", timezone="Europe/Rome")
+    store.company_settlement_enabled = True
+    other_store.company_settlement_enabled = True
+    db_session.add(AgentSettings(id=1, enabled=True))
+
+    acme = SettlementCompany(
+        store_id=store.id,
+        name="Acme",
+        normalized_name="acme",
+        is_active=True,
+
+        archived_at=None,
+        created_by=admin.id,
+        updated_by=admin.id,
+    )
+    beta = SettlementCompany(
+        store_id=store.id,
+        name="Beta",
+        normalized_name="beta",
+        is_active=False,
+        archived_at=datetime(2026, 7, 20),
+        created_by=admin.id,
+        updated_by=admin.id,
+    )
+    secret = SettlementCompany(
+        store_id=other_store.id,
+        name="Secret",
+        normalized_name="secret",
+        is_active=True,
+        archived_at=None,
+        created_by=owner.id,
+        updated_by=owner.id,
+    )
+    db_session.add_all([acme, beta, secret])
+    await db_session.flush()
+    confirmed = SettlementRecord(
+        store_id=store.id,
+
+        company_id=acme.id,
+        company_name=acme.name,
+        opening_month=date(2026, 7, 1),
+        amount=200,
+        status="confirmed",
+        created_by=admin.id,
+        updated_by=admin.id,
+    )
+    db_session.add_all(
+        [
+            SettlementRecord(
+                store_id=store.id,
+                company_id=acme.id,
+                company_name=acme.name,
+                opening_month=date(2026, 7, 1),
+                amount=100,
+                status="pending",
+                created_by=admin.id,
+                updated_by=admin.id,
+            ),
+            confirmed,
+            SettlementRecord(
+                store_id=store.id,
+                company_id=beta.id,
+                company_name=beta.name,
+                opening_month=date(2026, 7, 1),
+                amount=300,
+                status="pending",
+                created_by=admin.id,
+                updated_by=admin.id,
+            ),
+            SettlementRecord(
+                store_id=other_store.id,
+                company_id=secret.id,
+                company_name=secret.name,
+                opening_month=date(2026, 7, 1),
+                amount=9999,
+                status="confirmed",
+                created_by=owner.id,
+                updated_by=owner.id,
+            ),
+        ]
+    )
+    await db_session.commit()
+    store_id = store.id
+    confirmed_id = confirmed.id
+
+    _install_business_evidence_service(
+        client,
+        db_session,
+        plans=[
+            {
+                "route": "evidence",
+                "evidence_plan": {
+                    "requests": [
+                        {"kind": "settlement_details", "status": "pending"}
+                    ]
+                },
+            },
+            {
+                "route": "evidence",
+                "evidence_plan": {
+                    "requests": [
+                        {"kind": "settlement_details", "company_name": "Acme"}
+                    ]
+                },
+            },
+            {
+                "route": "evidence",
+                "evidence_plan": {
+                    "requests": [
+                        {"kind": "settlement_details", "company_name": "Acme"}
+                    ]
+
+                },
+            },
+            {
+                "route": "evidence",
+                "evidence_plan": {
+                    "requests": [
+                        {"kind": "settlement_details", "company_name": "Acme"}
+                    ]
+                },
+            },
+            {
+                "route": "evidence",
+                "evidence_plan": {
+                    "requests": [
+                        {"kind": "settlement_details", "company_name": "Secret"}
+                    ]
+                },
+            },
+        ],
+    )
+    await _login(client, "admin")
+
+    pending = await client.post(
+        f"/api/agent/stores/{store_id}/turn",
+        json={"question": "本月有哪些待到账开票记录？"},
+    )
+    before_revoke = await client.post(
+
+        f"/api/agent/stores/{store_id}/turn",
+        json={"question": "Acme 公司金额是多少？"},
+    )
+    revoked = await client.post(
+        f"/api/settlements/{store_id}/records/{confirmed_id}/revoke-confirmation",
+        json={"revision": 1},
+    )
+    after_revoke = await client.post(
+        f"/api/agent/stores/{store_id}/turn",
+        json={"question": "撤销到账确认后，Acme 公司金额是多少？"},
+    )
+
+    assert pending.status_code == 200
+    assert "待到账 400 欧元（2 笔）" in pending.json()["content"]
+    assert "已确认 0 欧元（0 笔）" in pending.json()["content"]
+    assert "Acme" in pending.json()["content"]
+    assert "Beta" in pending.json()["content"]
+    assert "Secret" not in pending.json()["content"]
+    assert "9999" not in pending.json()["content"]
+    assert before_revoke.status_code == 200
+    assert "待到账 100 欧元（1 笔）" in before_revoke.json()["content"]
+    assert "已确认 200 欧元（1 笔）" in before_revoke.json()["content"]
+    assert "Beta" not in before_revoke.json()["content"]
+    assert revoked.status_code == 200
+    assert after_revoke.status_code == 200
+    assert "待到账 300 欧元（2 笔）" in after_revoke.json()["content"]
+    assert "已确认 0 欧元（0 笔）" in after_revoke.json()["content"]
+
+    await _login(client, "owner")
+    owner_result = await client.post(
+        f"/api/agent/stores/{store_id}/turn",
+        json={"question": "Acme 公司金额是多少？"},
+    )
+    cross_store = await client.post(
+        f"/api/agent/stores/{store_id}/turn",
+        json={"question": "Secret 公司金额是多少？"},
+    )
+
+    assert owner_result.status_code == 200
+    assert owner_result.json()["content"] == after_revoke.json()["content"]
+    assert cross_store.status_code == 200
+    assert "没有名为「Secret」的结算公司" in cross_store.json()["content"]
+    assert "9999" not in cross_store.json()["content"]
+
+    evidence_rows = list(
+        (await db_session.scalars(select(AgentEvidence).order_by(AgentEvidence.id))).all()
+    )
+    settlement_payload = evidence_rows[0].payload
+    assert settlement_payload["current_store"] == {"id": store_id}
+    assert all("id" not in record for record in settlement_payload["result"]["records"])
+    assert all("id" not in company for company in settlement_payload["result"]["companies"])
+    serialized = str(settlement_payload).casefold()
+    for sensitive_field in (
+        "contact",
+        "email",
+        "phone",
+        "payment",
+        "account",
+        "iban",
+        "tax",
+        "invoice_details",
+    ):
+        assert sensitive_field not in serialized
+
+
+async def test_disabled_settlement_details_are_refused_while_confirmed_history_stays_in_revenue(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+) -> None:
+    admin = await user_factory(username="admin", password="secret", role="admin")
+
+    store = await store_factory(name="Roma", timezone="Europe/Rome")
+    store.company_settlement_enabled = False
+    db_session.add(AgentSettings(id=1, enabled=True))
+    company = SettlementCompany(
+        store_id=store.id,
+        name="Historical",
+        normalized_name="historical",
+        is_active=True,
+        archived_at=None,
+        created_by=admin.id,
+        updated_by=admin.id,
+    )
+    db_session.add(company)
+    await db_session.flush()
+    db_session.add(
+        SettlementRecord(
+            store_id=store.id,
+            company_id=company.id,
+            company_name=company.name,
+            opening_month=date(2026, 7, 1),
+            amount=450,
+            status="confirmed",
+            created_by=admin.id,
+            updated_by=admin.id,
+        )
+    )
+    await db_session.commit()
+    store_id = store.id
+
+    _install_business_evidence_service(
+        client,
+        db_session,
+        plans=[
+            {
+                "route": "evidence",
+                "evidence_plan": {
+                    "requests": [{"kind": "settlement_details"}],
+                },
+            },
+            {
+                "route": "evidence",
+                "evidence_plan": {
+                    "requests": [
+                        {
+                            "kind": "business_metrics",
+                            "metric": "monthly_total_revenue",
+                        }
+                    ],
+                },
+            },
+        ],
+    )
+    await _login(client, "admin")
+
+    details = await client.post(
+        f"/api/agent/stores/{store_id}/turn",
+        json={"question": "本月开票记录有哪些？"},
+    )
+    revenue = await client.post(
+        f"/api/agent/stores/{store_id}/turn",
+        json={"question": "本月收入是多少？"},
+    )
+
+    assert details.status_code == 200
+    assert details.json()["route"] == "answer"
+    assert details.json()["content"] == (
+        "当前门店未启用公司结算，不能查询结算公司或开票记录明细。"
+    )
+    assert revenue.status_code == 200
+    assert "月度总收入为 450 欧元" in revenue.json()["content"]
+    evidence_rows = list(
+        (await db_session.scalars(select(AgentEvidence).order_by(AgentEvidence.id))).all()
+    )
+    assert evidence_rows[0].payload["status"] == "refused"
+    assert evidence_rows[1].payload["result"]["confirmed_settlement_income"] == 450
 
 
 async def test_daily_ledger_http_returns_safe_facts_and_keeps_event_untrusted(
@@ -498,6 +1149,7 @@ async def test_daily_ledger_http_returns_safe_facts_and_keeps_event_untrusted(
                 category_name="现金",
                 include_in_total=True,
                 sort_order=1,
+
                 amount=120,
             ),
             DailyIncomeItem(
@@ -598,6 +1250,7 @@ async def test_daily_ledger_http_distinguishes_missing_day_and_disabled_wash_cou
     store.wash_count_enabled = False
     store_id = store.id
     db_session.add(AgentSettings(id=1, enabled=True))
+
     db_session.add(
         StoreDailyRecord(
             store_id=store.id,
@@ -698,6 +1351,7 @@ async def test_agent_http_rejects_multi_day_event_operations_without_repair(
         },
         {
             "kind": "daily_ledger",
+
             "date": "2026-07-05",
             "analysis": "归纳并解释因果",
         },
@@ -757,6 +1411,7 @@ async def test_current_conversation_restores_full_messages_and_structured_state(
     assert sent.status_code == 200
     assert restored.status_code == 200
     payload = restored.json()
+
     assert payload["id"] == sent.json()["conversation"]["id"]
     assert [(item["role"], item["content"]) for item in payload["messages"]] == [
         ("user", "保留完整问题，包括 €123 和全部细节。"),
@@ -795,6 +1450,7 @@ async def test_current_conversations_are_isolated_by_user_and_store(
         )
     ).status_code == 200
     assert (
+
         await client.post(
             f"/api/agent/stores/{second_store_id}/turn",
             json={"question": "first-Milano"},
@@ -856,6 +1512,7 @@ async def test_model_receives_structured_state_and_only_twelve_recent_messages(
         )
         assert response.status_code == 200
 
+
     _, state, recent_messages = agent_service.calls[-1]
     assert state.pending_clarifications == []
     assert len(recent_messages) == 12
@@ -895,6 +1552,7 @@ async def test_reset_requires_confirmation_and_permanently_deletes_current_conve
         "comparison": {
             "period": {"start": "2026-06-01", "end": "2026-06-30"},
             "label": "完整上月",
+
         },
         "pending_clarifications": ["请确认收入分类"],
     }
@@ -955,6 +1613,7 @@ async def test_reset_requires_confirmation_and_permanently_deletes_current_conve
     }
     assert (
         await db_session.scalar(select(func.count()).select_from(AgentConversation))
+
         == 0
     )
     assert await db_session.scalar(select(func.count()).select_from(AgentMessage)) == 0
@@ -995,6 +1654,7 @@ async def test_in_flight_turn_cannot_recreate_a_conversation_after_reset(
         f"/api/agent/stores/{store_id}/turn",
         json={"question": "请求进行时重置"},
     )
+
 
     assert response.status_code == 409
     assert (

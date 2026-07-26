@@ -4,9 +4,10 @@ from typing import Protocol, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from app.agent.contracts import (
-    EvidenceBundle,
+    CollectedEvidence,
     EvidencePlan,
     ModelMessage,
+    SettlementDetailsRequest,
     TurnPlan,
     TurnResult,
     TurnRoute,
@@ -23,6 +24,9 @@ PLAN_REPAIR_FEEDBACK = (
 )
 MAX_MODEL_CALLS = 3
 MAX_EVIDENCE_CALLS = 1
+SETTLEMENT_DETAILS_REQUIRE_EXPLICIT_MESSAGE = (
+    "请明确询问结算公司、开票记录、待到账、已确认金额或某个公司的结算金额。"
+)
 EXPLICIT_PERCENTAGE_TERMS = (
     "%",
     "百分比",
@@ -58,14 +62,14 @@ class EvidenceCollector(Protocol):
         self,
         plan: EvidencePlan,
         context: RuntimeContext,
-    ) -> EvidenceBundle: ...
+    ) -> CollectedEvidence: ...
 
 
 class TurnState(TypedDict):
     messages: Sequence[ModelMessage]
     context: RuntimeContext
     plan: TurnPlan | None
-    evidence: EvidenceBundle | None
+    evidence: CollectedEvidence | None
     result: TurnResult | None
     model_calls: int
     evidence_calls: int
@@ -171,6 +175,8 @@ class AgentTurnWorkflow:
 
     @staticmethod
     async def _finish_plan(state: TurnState) -> dict:
+        if state["result"] is not None:
+            return {}
         plan = state["plan"]
         if plan is None or plan.route == TurnRoute.SAFE_FAILURE:
             return {"result": _safe_failure()}
@@ -189,6 +195,17 @@ class AgentTurnWorkflow:
         ):
             return {
                 "result": _safe_failure(),
+                "evidence_calls": state["evidence_calls"],
+            }
+        if not _evidence_request_is_explicit(
+            plan.evidence_plan,
+            state["messages"],
+        ):
+            return {
+                "result": TurnResult(
+                    route="clarify",
+                    content=SETTLEMENT_DETAILS_REQUIRE_EXPLICIT_MESSAGE,
+                ),
                 "evidence_calls": state["evidence_calls"],
             }
         try:
@@ -245,8 +262,41 @@ def _safe_failure() -> TurnResult:
     return TurnResult(route="safe_failure", content=SAFE_FAILURE_MESSAGE)
 
 
-def _validated_readable_answer(answer: str, evidence: EvidenceBundle) -> str:
+def _validated_readable_answer(answer: str, evidence: CollectedEvidence) -> str:
     return answer if answer.strip() == evidence.summary else evidence.summary
+
+
+def _evidence_request_is_explicit(
+    plan: EvidencePlan,
+    messages: Sequence[ModelMessage],
+) -> bool:
+    request = plan.requests[0]
+    if not isinstance(request, SettlementDetailsRequest):
+        return True
+    question = next(
+        (
+            message.content.casefold()
+            for message in reversed(messages)
+            if message.role == "user"
+        ),
+        "",
+    )
+    explicit_terms = (
+        "公司结算",
+        "结算公司",
+        "开票记录",
+        "开票",
+        "待到账",
+        "已确认",
+        "到账",
+    )
+    if any(term in question for term in explicit_terms):
+        return True
+    return (
+        request.company_name is not None
+        and request.company_name.casefold() in question
+        and any(term in question for term in ("金额", "多少", "收入", "结算"))
+    )
 
 
 def _enforce_explicit_percentage_request(
@@ -254,7 +304,7 @@ def _enforce_explicit_percentage_request(
     messages: Sequence[ModelMessage],
 ) -> EvidencePlan:
     request = plan.requests[0]
-    comparison = request.comparison
+    comparison = getattr(request, "comparison", None)
     if comparison is None or not comparison.include_percentage:
         return plan
     user_message = next(
