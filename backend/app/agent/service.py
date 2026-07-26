@@ -133,6 +133,9 @@ class AgentService:
                         end=evidence.period.end,
                     ),
                     "metrics": [metric_label],
+                    "filters": _conversation_filters(
+                        getattr(evidence, "filters", None)
+                    ),
                     "comparison": (
                         ConversationComparison(
                             period=ConfirmedPeriod(
@@ -179,3 +182,14 @@ def _requires_exact_period(messages: list[ModelMessage]) -> bool:
             if not NEGATED_VAGUE_PERIOD_PREFIX.search(prefix):
                 return True
     return False
+
+
+def _conversation_filters(filters: object) -> dict[str, list[str]]:
+    if filters is None or not hasattr(filters, "model_dump"):
+        return {}
+    payload = filters.model_dump(mode="json")
+    return {
+        key: [str(value) for value in values]
+        for key, values in payload.items()
+        if values
+    }

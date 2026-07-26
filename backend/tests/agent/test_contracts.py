@@ -85,12 +85,115 @@ def test_evidence_request_has_at_most_one_bounded_group_position() -> None:
                 ]
             }
         )
+
+
+@pytest.mark.parametrize(
+    ("group_by", "metric"),
+    (
+        ("date", "daily_ledger_revenue"),
+        ("calendar_month", "daily_ledger_revenue"),
+        ("calendar_year", "daily_ledger_revenue"),
+        ("income_category", "income_category_amount"),
+        ("recorded_weather", "daily_ledger_revenue"),
+        ("weekday", "daily_ledger_revenue"),
+        ("operating_status", "daily_ledger_revenue"),
+    ),
+)
+def test_evidence_request_accepts_each_whitelisted_group(
+    group_by: str,
+    metric: str,
+) -> None:
+    request = EvidenceRequest(
+        kind="business_metrics",
+        metric=metric,
+        group_by=group_by,
+    )
+
+    assert request.group_by == group_by
+
+
+def test_evidence_request_accepts_bounded_deterministic_filters() -> None:
+    request = EvidenceRequest.model_validate(
+        {
+            "kind": "business_metrics",
+            "metric": "daily_ledger_revenue",
+            "filters": {
+                "income_categories": ["  Carta  ", "现金"],
+                "recorded_weather": ["晴", "多云"],
+                "weekdays": ["星期一", "星期日"],
+                "operating_statuses": ["营业", "提前休息"],
+            },
+        }
+    )
+
+    assert request.filters is not None
+    assert request.filters.income_categories == ["Carta", "现金"]
+    assert request.filters.weekdays == ["星期一", "星期日"]
+
+
+@pytest.mark.parametrize(
+    "filters",
+    (
+        {"income_categories": [f"分类 {index}" for index in range(11)]},
+        {
+            "income_categories": [f"分类 {index}" for index in range(6)],
+            "recorded_weather": [f"天气 {index}" for index in range(6)],
+            "weekdays": [
+                "星期一",
+                "星期二",
+                "星期三",
+                "星期四",
+                "星期五",
+                "星期六",
+            ],
+            "operating_statuses": ["营业", "休息", "提前休息"],
+        },
+        {"weekdays": ["周一"]},
+        {"operating_statuses": ["天气停业"]},
+        {"event": ["促销"]},
+    ),
+)
+def test_evidence_request_rejects_excessive_or_non_whitelisted_filters(
+    filters: dict[str, object],
+) -> None:
     with pytest.raises(ValidationError):
-        EvidenceRequest(
-            kind="business_metrics",
-            metric="daily_ledger_revenue",
-            group_by="income_category",
+        EvidenceRequest.model_validate(
+            {
+                "kind": "business_metrics",
+                "metric": "daily_ledger_revenue",
+                "filters": filters,
+            }
         )
+
+
+def test_daily_ledger_extreme_is_bounded_to_one_direction_and_compatible_shape() -> None:
+    request = EvidenceRequest(
+        kind="business_metrics",
+        metric="daily_ledger_revenue",
+        extreme="lowest",
+    )
+
+    assert request.extreme == "lowest"
+    for invalid in (
+        {
+            "kind": "business_metrics",
+            "metric": "operating_days",
+            "extreme": "highest",
+        },
+        {
+            "kind": "business_metrics",
+            "metric": "daily_ledger_revenue",
+            "extreme": ["highest", "lowest"],
+        },
+        {
+            "kind": "business_metrics",
+            "metric": "daily_ledger_revenue",
+            "extreme": "highest",
+            "group_by": "date",
+        },
+    ):
+        with pytest.raises(ValidationError):
+            EvidenceRequest.model_validate(invalid)
 
 
 def test_evidence_metric_whitelist_fails_closed() -> None:

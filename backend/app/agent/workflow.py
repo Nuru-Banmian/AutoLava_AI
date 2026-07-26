@@ -3,6 +3,7 @@ from typing import Protocol, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from app.agent.business_evidence import EvidenceClarificationError
 from app.agent.contracts import (
     CollectedEvidence,
     EvidencePlan,
@@ -217,7 +218,13 @@ class AgentTurnWorkflow:
                 evidence_plan,
                 state["context"],
             )
-        except Exception:
+        except EvidenceClarificationError as error:
+            return {
+                "result": TurnResult(route="clarify", content=str(error)),
+                "evidence_calls": state["evidence_calls"] + 1,
+            }
+        except Exception as error:
+            print("DEBUG", repr(error))
             return {
                 "result": _safe_failure(),
                 "evidence_calls": state["evidence_calls"] + 1,

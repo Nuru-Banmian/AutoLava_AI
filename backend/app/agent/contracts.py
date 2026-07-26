@@ -4,7 +4,14 @@ from datetime import date as CalendarDate
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 
 class ClosedModel(BaseModel):
@@ -129,27 +136,126 @@ class EvidenceComparisonRequest(ClosedModel):
     include_percentage: bool = False
 
 
+class EvidenceGroup(StrEnum):
+    DATE = "date"
+    CALENDAR_MONTH = "calendar_month"
+    CALENDAR_YEAR = "calendar_year"
+    INCOME_CATEGORY = "income_category"
+    RECORDED_WEATHER = "recorded_weather"
+    WEEKDAY = "weekday"
+    OPERATING_STATUS = "operating_status"
+
+
+class EvidenceWeekday(StrEnum):
+    MONDAY = "星期一"
+    TUESDAY = "星期二"
+    WEDNESDAY = "星期三"
+    THURSDAY = "星期四"
+    FRIDAY = "星期五"
+    SATURDAY = "星期六"
+    SUNDAY = "星期日"
+
+
+FilterText = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=100),
+]
+WeatherFilterText = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=50),
+]
+
+
+class EvidenceFilters(ClosedModel):
+    income_categories: list[FilterText] = Field(default_factory=list, max_length=10)
+    recorded_weather: list[WeatherFilterText] = Field(default_factory=list, max_length=10)
+    weekdays: list[EvidenceWeekday] = Field(default_factory=list, max_length=7)
+    operating_statuses: list[Literal["营业", "休息", "提前休息"]] = Field(
+        default_factory=list,
+        max_length=3,
+    )
+
+    @field_validator(
+        "income_categories",
+        "recorded_weather",
+        "weekdays",
+        "operating_statuses",
+    )
+    @classmethod
+    def require_unique_filter_values(cls, values: list[object]) -> list[object]:
+        normalized = [
+            value.casefold() if isinstance(value, str) else str(value).casefold()
+            for value in values
+        ]
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("filter values must be unique")
+        return values
+
+    @model_validator(mode="after")
+    def bound_total_filter_values(self) -> "EvidenceFilters":
+        total = (
+            len(self.income_categories)
+            + len(self.recorded_weather)
+            + len(self.weekdays)
+            + len(self.operating_statuses)
+        )
+        if total > 20:
+            raise ValueError("at most 20 filter values are allowed")
+        return self
+
+
 class EvidenceRequest(ClosedModel):
     kind: Literal["business_metrics"] = "business_metrics"
     metric: EvidenceMetric
     period: EvidencePeriod | None = None
-    group_by: Literal["income_category"] | None = None
+    group_by: EvidenceGroup | None = None
+    filters: EvidenceFilters | None = None
+    extreme: Literal["highest", "lowest"] | None = None
     comparison: EvidenceComparisonRequest | None = None
 
     @model_validator(mode="after")
-    def require_category_group_only_for_category_metrics(self) -> "EvidenceRequest":
+    def require_compatible_query_shape(self) -> "EvidenceRequest":
         if self.metric == EvidenceMetric.DAILY_LEDGER:
             raise ValueError("daily ledger requires the daily_ledger request kind")
-        if self.group_by is not None and self.metric not in {
-            EvidenceMetric.INCOME_CATEGORY_AMOUNT,
-            EvidenceMetric.OTHER_DATA_AMOUNT,
-        }:
-            raise ValueError("income category grouping requires a category metric")
         if (
             self.comparison is not None
             and self.metric != EvidenceMetric.MONTHLY_TOTAL_REVENUE
         ):
             raise ValueError("period comparison requires monthly total revenue")
+        if self.comparison is not None and (
+            self.group_by is not None or self.filters is not None or self.extreme is not None
+        ):
+            raise ValueError("period comparison cannot be combined with grouping or filtering")
+        if self.extreme is not None and self.metric != EvidenceMetric.DAILY_LEDGER_REVENUE:
+            raise ValueError("daily extremes require daily ledger revenue")
+        if self.extreme is not None and self.group_by is not None:
+            raise ValueError("daily extremes cannot also be grouped")
+        if self.group_by is not None:
+            daily_metrics = {
+                EvidenceMetric.DAILY_LEDGER_REVENUE,
+                EvidenceMetric.OPERATING_DAYS,
+                EvidenceMetric.OPERATING_DAY_AVERAGE_LEDGER_REVENUE,
+                EvidenceMetric.INCOME_CATEGORY_AMOUNT,
+                EvidenceMetric.OTHER_DATA_AMOUNT,
+            }
+            if self.metric not in daily_metrics:
+                raise ValueError("this metric has no safe daily grouping grain")
+            if (
+                self.group_by == EvidenceGroup.INCOME_CATEGORY
+                and self.metric
+                not in {
+                    EvidenceMetric.DAILY_LEDGER_REVENUE,
+                    EvidenceMetric.INCOME_CATEGORY_AMOUNT,
+                    EvidenceMetric.OTHER_DATA_AMOUNT,
+                }
+            ):
+                raise ValueError("income category grouping requires an amount metric")
+        if self.filters is not None and self.metric in {
+            EvidenceMetric.MONTHLY_TOTAL_REVENUE,
+            EvidenceMetric.CONFIRMED_SETTLEMENT_INCOME,
+            EvidenceMetric.MONTHLY_DAILY_AVERAGE_INCOME,
+        }:
+            raise ValueError("this metric cannot be safely filtered at daily grain")
         return self
 
 
@@ -278,6 +384,23 @@ class CategoryAmountResult(ClosedModel):
     categories: list[CategoryAmountRow]
 
 
+class EvidenceGroupRow(ClosedModel):
+    key: str = Field(min_length=1, max_length=160)
+    label: str = Field(min_length=1, max_length=160)
+    value: int | None = Field(default=None, ge=0)
+
+
+class GroupedMetricResult(ClosedModel):
+    group_by: EvidenceGroup
+    rows: list[EvidenceGroupRow] = Field(max_length=400)
+
+
+class DailyLedgerExtremeResult(ClosedModel):
+    extreme: Literal["highest", "lowest"]
+    daily_ledger_revenue: int | None = Field(default=None, ge=0)
+    dates: list[CalendarDate] = Field(max_length=400)
+
+
 class DailyLedgerAmount(ClosedModel):
     name: str = Field(min_length=1, max_length=100)
     amount: int = Field(ge=0)
@@ -333,6 +456,8 @@ EvidenceResult = (
     | WashCountResult
     | AverageRevenuePerCarResult
     | CategoryAmountResult
+    | GroupedMetricResult
+    | DailyLedgerExtremeResult
     | DailyLedgerResult
 )
 
@@ -370,7 +495,17 @@ class EvidenceBundle(ClosedModel):
     current_store: CurrentStoreScope
     period: EvidencePeriodResult
     metric: EvidenceMetric
-    unit: Literal["EUR", "day", "car", "EUR/car", "EUR/operating_day", "mixed"]
+    group_by: EvidenceGroup | None = None
+    filters: EvidenceFilters | None = None
+    extreme: Literal["highest", "lowest"] | None = None
+    unit: Literal[
+        "EUR",
+        "day",
+        "car",
+        "EUR/car",
+        "EUR/operating_day",
+        "mixed",
+    ]
     calculation_version: Literal[
         "monthly_total_revenue.v1",
         "daily_ledger_revenue.v1",
@@ -382,6 +517,8 @@ class EvidenceBundle(ClosedModel):
         "average_revenue_per_car.v1",
         "income_category_amount.v1",
         "other_data_amount.v1",
+        "grouped_business_metric.v1",
+        "daily_ledger_extreme.v1",
         "daily_ledger.v1",
     ]
     result: EvidenceResult
@@ -419,6 +556,9 @@ class EvidenceBundle(ClosedModel):
             self.unit != "mixed"
             or self.calculation_version != "daily_ledger.v1"
             or not isinstance(self.result, DailyLedgerResult)
+            or self.group_by is not None
+            or self.filters is not None
+            or self.extreme is not None
             or self.comparison is not None
             or self.period.start != self.period.end
             or self.coverage.calendar_dates != 1

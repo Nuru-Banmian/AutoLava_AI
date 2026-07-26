@@ -166,6 +166,9 @@ async def test_collector_defaults_to_store_current_month_and_reconciles_total_re
     assert payload["current_store"] == {"id": store.id}
     assert payload["period"] == {"start": "2026-07-01", "end": "2026-07-26"}
     assert payload["metric"] == "monthly_total_revenue"
+    assert payload["group_by"] is None
+    assert payload["filters"] is None
+    assert payload["extreme"] is None
     assert payload["unit"] == "EUR"
     assert payload["calculation_version"] == "monthly_total_revenue.v1"
     assert payload["result"] == {

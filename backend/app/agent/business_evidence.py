@@ -1,12 +1,14 @@
+from collections import defaultdict
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Literal
+import unicodedata
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import case, distinct, func, literal, select
+from sqlalchemy import case, distinct, exists, func, literal, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -19,11 +21,16 @@ from app.agent.contracts import (
     DailyLedgerFacts,
     DailyLedgerRequest,
     DailyLedgerResult,
+    DailyLedgerExtremeResult,
     EvidenceBundle,
     EvidenceComparisonResult,
+    EvidenceFilters,
+    EvidenceGroup,
+    EvidenceGroupRow,
     EvidenceMetric,
     EvidencePeriodResult,
     EvidencePlan,
+    GroupedMetricResult,
     SettlementDetailsEvidenceBundle,
     SettlementDetailsRequest,
     UntrustedRawEvent,
@@ -34,12 +41,26 @@ from app.agent.contracts import (
 )
 from app.agent.runtime import RuntimeContext
 from app.models.identity import Store
-from app.models.ledger import DailyIncomeItem, StoreDailyRecord
+from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
 from app.models.settlement import SettlementCompany, SettlementRecord
 
 SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 Now = Callable[[ZoneInfo], datetime]
 MAX_SETTLEMENT_ROWS = 50
+MAX_GROUP_ROWS = 400
+WEEKDAY_DATABASE_VALUES = {
+    "星期一": "1",
+    "星期二": "2",
+    "星期三": "3",
+    "星期四": "4",
+    "星期五": "5",
+    "星期六": "6",
+    "星期日": "0",
+}
+
+
+class EvidenceClarificationError(ValueError):
+    """A safe, user-resolvable evidence request that must end in clarification."""
 
 
 @dataclass(frozen=True)
@@ -85,12 +106,87 @@ class BusinessEvidenceCollector:
         start, end = self._resolve_period(request.period, context)
         if request.metric == EvidenceMetric.MONTHLY_DAILY_AVERAGE_INCOME:
             self._require_natural_month_period(start, end, context)
+        category_ids = await self._resolve_category_filter(request.filters, context)
         comparison_period = (
             self._resolve_period(request.comparison.period, context)
             if request.comparison is not None
             else None
         )
         comparison_snapshot: Snapshot | None = None
+        category_metric_group = (
+            request.group_by == EvidenceGroup.INCOME_CATEGORY
+            and request.metric
+            in {
+                EvidenceMetric.INCOME_CATEGORY_AMOUNT,
+                EvidenceMetric.OTHER_DATA_AMOUNT,
+            }
+        )
+        if request.group_by is not None and not category_metric_group:
+            rows, recorded_dates, truncated = await self._read_grouped_snapshot(
+                context=context,
+                start=start,
+                end=end,
+                metric=request.metric,
+                group_by=request.group_by,
+                filters=request.filters,
+                category_ids=category_ids,
+            )
+            warnings = (
+                ["结果过多，仅返回前 400 个分组。"] if truncated else []
+            )
+            summary = _grouped_summary(
+                start=start,
+                end=end,
+                group_by=request.group_by,
+                rows=rows,
+                warnings=warnings,
+            )
+            return EvidenceBundle(
+                status="ok",
+                current_store={"id": context.store_id},
+                period=EvidencePeriodResult(start=start, end=end),
+                metric=request.metric,
+                group_by=request.group_by,
+                filters=request.filters,
+                unit=_metric_unit(request.metric),
+                calculation_version="grouped_business_metric.v1",
+                result=GroupedMetricResult(group_by=request.group_by, rows=rows),
+                coverage={
+                    "calendar_dates": (end - start).days + 1,
+                    "recorded_dates": recorded_dates,
+                },
+                warnings=warnings,
+                truncated=truncated,
+                summary=summary,
+            )
+        if request.extreme is not None:
+            result, recorded_dates = await self._read_daily_extreme(
+                context=context,
+                start=start,
+                end=end,
+                extreme=request.extreme,
+                filters=request.filters,
+                category_ids=category_ids,
+            )
+            summary = _extreme_summary(start=start, end=end, result=result)
+            return EvidenceBundle(
+                status="ok",
+                current_store={"id": context.store_id},
+                period=EvidencePeriodResult(start=start, end=end),
+                metric=request.metric,
+                filters=request.filters,
+                extreme=request.extreme,
+                unit="EUR",
+                calculation_version="daily_ledger_extreme.v1",
+                result=result,
+                coverage={
+                    "calendar_dates": (end - start).days + 1,
+                    "recorded_dates": recorded_dates,
+                },
+                warnings=[],
+                truncated=False,
+                summary=summary,
+            )
         for attempt in range(2):
             try:
                 snapshot = await self._read_snapshot(
@@ -98,6 +194,8 @@ class BusinessEvidenceCollector:
                     start=start,
                     end=end,
                     metric=request.metric,
+                    filters=request.filters,
+                    category_ids=category_ids,
                 )
                 if comparison_period is not None:
                     comparison_snapshot = await self._read_snapshot(
@@ -105,6 +203,8 @@ class BusinessEvidenceCollector:
                         start=comparison_period[0],
                         end=comparison_period[1],
                         metric=request.metric,
+                        filters=None,
+                        category_ids=frozenset(),
                     )
                 break
             except OperationalError as error:
@@ -113,11 +213,15 @@ class BusinessEvidenceCollector:
 
         calendar_dates = (end - start).days + 1
         recorded_date_set = set(snapshot.recorded_date_values)
-        unrecorded_dates = [
-            date.fromordinal(ordinal)
-            for ordinal in range(start.toordinal(), end.toordinal() + 1)
-            if date.fromordinal(ordinal) not in recorded_date_set
-        ]
+        unrecorded_dates = (
+            [
+                date.fromordinal(ordinal)
+                for ordinal in range(start.toordinal(), end.toordinal() + 1)
+                if date.fromordinal(ordinal) not in recorded_date_set
+            ]
+            if request.filters is None
+            else []
+        )
         if snapshot.operating_days:
             wash_count_coverage_percent = _rounded_average(
                 snapshot.wash_count_recorded_operating_days * 100,
@@ -151,6 +255,8 @@ class BusinessEvidenceCollector:
                 f"有 {len(snapshot.category_total_mismatches)} 个分类记账的"
                 "计入总额分类合计与每日台账营业额不一致。"
             )
+        if request.filters is not None:
+            warnings.append(f"筛选后匹配 {snapshot.recorded_dates} 个每日台账日期。")
         result, unit, version, summary = self._metric_result(
             metric=request.metric,
             start=start,
@@ -182,6 +288,8 @@ class BusinessEvidenceCollector:
             current_store={"id": context.store_id},
             period=EvidencePeriodResult(start=start, end=end),
             metric=request.metric,
+            group_by=request.group_by,
+            filters=request.filters,
             unit=unit,
             calculation_version=version,
             result=result,
@@ -466,6 +574,228 @@ class BusinessEvidenceCollector:
                 .options(selectinload(StoreDailyRecord.items))
             )
 
+    async def _resolve_category_filter(
+        self,
+        filters: EvidenceFilters | None,
+        context: RuntimeContext,
+    ) -> frozenset[int]:
+        if filters is None or not filters.income_categories:
+            return frozenset()
+        async with self._session_factory() as session:
+            configured = (
+                await session.execute(
+                    select(IncomeCategory.id, IncomeCategory.name).where(
+                        IncomeCategory.store_id == context.store_id
+                    )
+                )
+            ).all()
+            historical = (
+                await session.execute(
+                    select(DailyIncomeItem.category_id, DailyIncomeItem.category_name)
+                    .join(
+                        StoreDailyRecord,
+                        StoreDailyRecord.id == DailyIncomeItem.record_id,
+                    )
+                    .where(StoreDailyRecord.store_id == context.store_id)
+                    .distinct()
+                )
+            ).all()
+
+        candidates: list[tuple[int, str]] = []
+        seen_candidates: set[tuple[int, str]] = set()
+        for category_id, name in [*configured, *historical]:
+            candidate = (int(category_id), str(name).strip())
+            if candidate[1] and candidate not in seen_candidates:
+                candidates.append(candidate)
+                seen_candidates.add(candidate)
+        by_normalized: dict[str, set[int]] = defaultdict(set)
+        for category_id, name in candidates:
+            by_normalized[_normalize_category_name(name)].add(category_id)
+
+        resolved: set[int] = set()
+        unresolved: list[str] = []
+        for requested in filters.income_categories:
+            matches = by_normalized.get(_normalize_category_name(requested), set())
+            if len(matches) == 1:
+                resolved.update(matches)
+            else:
+                unresolved.append(requested)
+        if unresolved:
+            safe_names = sorted(
+                {name for _, name in candidates},
+                key=lambda value: (_normalize_category_name(value), value),
+            )[:20]
+            choices = "、".join(safe_names)
+            requested = "、".join(f"「{name}」" for name in unresolved)
+            message = f"无法在当前门店唯一确定收入分类 {requested}，请从候选项中选择。"
+            if choices:
+                message += f" 当前门店可选收入分类：{choices}。"
+            else:
+                message += " 当前门店暂无可选收入分类。"
+            raise EvidenceClarificationError(message)
+        return frozenset(resolved)
+
+    async def _read_grouped_snapshot(
+        self,
+        *,
+        context: RuntimeContext,
+        start: date,
+        end: date,
+        metric: EvidenceMetric,
+        group_by: EvidenceGroup,
+        filters: EvidenceFilters | None,
+        category_ids: frozenset[int],
+    ) -> tuple[list[EvidenceGroupRow], int, bool]:
+        async with self._session_factory() as session:
+            records = list(
+                (
+                    await session.scalars(
+                        select(StoreDailyRecord)
+                        .where(
+                            StoreDailyRecord.store_id == context.store_id,
+                            StoreDailyRecord.date >= start,
+                            StoreDailyRecord.date <= end,
+                            *_daily_filter_conditions(filters, category_ids),
+                        )
+                        .options(selectinload(StoreDailyRecord.items))
+                        .order_by(StoreDailyRecord.date)
+                    )
+                )
+                .unique()
+                .all()
+            )
+
+        aggregates: dict[str, dict[str, object]] = {}
+        if group_by == EvidenceGroup.INCOME_CATEGORY:
+            include_in_total = metric != EvidenceMetric.OTHER_DATA_AMOUNT
+            for record in records:
+                for item in record.items:
+                    if item.include_in_total != include_in_total:
+                        continue
+                    if category_ids and item.category_id not in category_ids:
+                        continue
+                    key = f"{item.category_id}:{item.category_name}"
+                    aggregate = aggregates.setdefault(
+                        key,
+                        {
+                            "label": item.category_name,
+                            "value": 0,
+                            "sort": (
+                                item.sort_order,
+                                item.category_id,
+                                _normalize_category_name(item.category_name),
+                            ),
+                        },
+                    )
+                    aggregate["value"] = int(aggregate["value"]) + item.amount
+        else:
+            for record in records:
+                key, label, sort_key = _record_group(record, group_by)
+                aggregate = aggregates.setdefault(
+                    key,
+                    {
+                        "label": label,
+                        "daily_revenue": 0,
+                        "operating_revenue": 0,
+                        "operating_days": 0,
+                        "category_amount": 0,
+                        "sort": sort_key,
+                    },
+                )
+                aggregate["daily_revenue"] = (
+                    int(aggregate["daily_revenue"]) + record.daily_revenue
+                )
+                if record.is_open in {"营业", "提前休息"}:
+                    aggregate["operating_revenue"] = (
+                        int(aggregate["operating_revenue"]) + record.daily_revenue
+                    )
+                    aggregate["operating_days"] = int(aggregate["operating_days"]) + 1
+                if metric in {
+                    EvidenceMetric.INCOME_CATEGORY_AMOUNT,
+                    EvidenceMetric.OTHER_DATA_AMOUNT,
+                }:
+                    include_in_total = metric == EvidenceMetric.INCOME_CATEGORY_AMOUNT
+                    aggregate["category_amount"] = int(
+                        aggregate["category_amount"]
+                    ) + sum(
+                        item.amount
+                        for item in record.items
+                        if item.include_in_total == include_in_total
+                        and (not category_ids or item.category_id in category_ids)
+                    )
+
+        ordered = sorted(aggregates.items(), key=lambda item: item[1]["sort"])
+        truncated = len(ordered) > MAX_GROUP_ROWS
+        rows: list[EvidenceGroupRow] = []
+        for key, aggregate in ordered[:MAX_GROUP_ROWS]:
+            if group_by == EvidenceGroup.INCOME_CATEGORY:
+                value = int(aggregate["value"])
+            elif metric == EvidenceMetric.DAILY_LEDGER_REVENUE:
+                value = int(aggregate["daily_revenue"])
+            elif metric == EvidenceMetric.OPERATING_DAYS:
+                value = int(aggregate["operating_days"])
+            elif metric == EvidenceMetric.OPERATING_DAY_AVERAGE_LEDGER_REVENUE:
+                value = _rounded_average(
+                    int(aggregate["operating_revenue"]),
+                    int(aggregate["operating_days"]),
+                )
+            else:
+                value = int(aggregate["category_amount"])
+            rows.append(
+                EvidenceGroupRow(
+                    key=key,
+                    label=str(aggregate["label"]),
+                    value=value,
+                )
+            )
+        return rows, len(records), truncated
+
+    async def _read_daily_extreme(
+        self,
+        *,
+        context: RuntimeContext,
+        start: date,
+        end: date,
+        extreme: Literal["highest", "lowest"],
+        filters: EvidenceFilters | None,
+        category_ids: frozenset[int],
+    ) -> tuple[DailyLedgerExtremeResult, int]:
+        async with self._session_factory() as session:
+            records = list(
+                (
+                    await session.scalars(
+                        select(StoreDailyRecord)
+                        .where(
+                            StoreDailyRecord.store_id == context.store_id,
+                            StoreDailyRecord.date >= start,
+                            StoreDailyRecord.date <= end,
+                            StoreDailyRecord.is_open.in_(("营业", "提前休息")),
+                            *_daily_filter_conditions(filters, category_ids),
+                        )
+                        .order_by(StoreDailyRecord.date)
+                    )
+                ).all()
+            )
+        if not records:
+            return (
+                DailyLedgerExtremeResult(
+                    extreme=extreme,
+                    daily_ledger_revenue=None,
+                    dates=[],
+                ),
+                0,
+            )
+        values = [record.daily_revenue for record in records]
+        target = max(values) if extreme == "highest" else min(values)
+        return (
+            DailyLedgerExtremeResult(
+                extreme=extreme,
+                daily_ledger_revenue=target,
+                dates=[record.date for record in records if record.daily_revenue == target],
+            ),
+            len(records),
+        )
+
     async def _read_snapshot(
         self,
         *,
@@ -473,12 +803,15 @@ class BusinessEvidenceCollector:
         start: date,
         end: date,
         metric: EvidenceMetric,
+        filters: EvidenceFilters | None = None,
+        category_ids: frozenset[int] = frozenset(),
     ) -> Snapshot:
         async with self._session_factory() as session:
             daily_scope = (
                 StoreDailyRecord.store_id == context.store_id,
                 StoreDailyRecord.date >= start,
                 StoreDailyRecord.date <= end,
+                *_daily_filter_conditions(filters, category_ids),
             )
             operating_scope = (
                 *daily_scope,
@@ -614,6 +947,11 @@ class BusinessEvidenceCollector:
                         .where(
                             *daily_scope,
                             DailyIncomeItem.include_in_total.is_(include_in_total),
+                            *(
+                                (DailyIncomeItem.category_id.in_(category_ids),)
+                                if category_ids
+                                else ()
+                            ),
                         )
                         .group_by(
                             DailyIncomeItem.category_id,
@@ -1216,6 +1554,131 @@ def _rounded_average(total: int, count: int) -> int | None:
     if count == 0:
         return None
     return int((Decimal(total) / Decimal(count)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+def _normalize_category_name(value: str) -> str:
+    return unicodedata.normalize("NFKC", value).strip().casefold()
+
+
+def _daily_filter_conditions(
+    filters: EvidenceFilters | None,
+    category_ids: frozenset[int],
+) -> tuple[object, ...]:
+    if filters is None:
+        return ()
+    conditions: list[object] = []
+    if category_ids:
+        conditions.append(
+            exists(
+                select(1).where(
+                    DailyIncomeItem.record_id == StoreDailyRecord.id,
+                    DailyIncomeItem.category_id.in_(category_ids),
+                )
+            )
+        )
+    if filters.recorded_weather:
+        conditions.append(StoreDailyRecord.weather.in_(filters.recorded_weather))
+    if filters.weekdays:
+        conditions.append(
+            func.strftime("%w", StoreDailyRecord.date).in_(
+                [WEEKDAY_DATABASE_VALUES[value] for value in filters.weekdays]
+            )
+        )
+    if filters.operating_statuses:
+        conditions.append(StoreDailyRecord.is_open.in_(filters.operating_statuses))
+    return tuple(conditions)
+
+
+def _record_group(
+    record: StoreDailyRecord,
+    group_by: EvidenceGroup,
+) -> tuple[str, str, object]:
+    if group_by == EvidenceGroup.DATE:
+        value = record.date.isoformat()
+        return value, value, value
+    if group_by == EvidenceGroup.CALENDAR_MONTH:
+        value = record.date.strftime("%Y-%m")
+        return value, value, value
+    if group_by == EvidenceGroup.CALENDAR_YEAR:
+        value = str(record.date.year)
+        return value, value, value
+    if group_by == EvidenceGroup.RECORDED_WEATHER:
+        label = record.weather or "未记录"
+        key = record.weather or "unrecorded"
+        return key, label, (record.weather is None, label)
+    if group_by == EvidenceGroup.WEEKDAY:
+        labels = (
+            "星期一",
+            "星期二",
+            "星期三",
+            "星期四",
+            "星期五",
+            "星期六",
+            "星期日",
+        )
+        label = labels[record.date.weekday()]
+        return str(record.date.weekday()), label, record.date.weekday()
+    if group_by == EvidenceGroup.OPERATING_STATUS:
+        order = {"营业": 0, "提前休息": 1, "休息": 2}
+        return record.is_open, record.is_open, order[record.is_open]
+    raise ValueError("income category grouping requires item-level aggregation")
+
+
+def _metric_unit(metric: EvidenceMetric) -> str:
+    if metric == EvidenceMetric.OPERATING_DAYS:
+        return "day"
+    if metric == EvidenceMetric.OPERATING_DAY_AVERAGE_LEDGER_REVENUE:
+        return "EUR/operating_day"
+    return "EUR"
+
+
+def _grouped_summary(
+    *,
+    start: date,
+    end: date,
+    group_by: EvidenceGroup,
+    rows: list[EvidenceGroupRow],
+    warnings: list[str],
+) -> str:
+    labels = {
+        EvidenceGroup.DATE: "日期",
+        EvidenceGroup.CALENDAR_MONTH: "自然月",
+        EvidenceGroup.CALENDAR_YEAR: "自然年",
+        EvidenceGroup.INCOME_CATEGORY: "收入分类",
+        EvidenceGroup.RECORDED_WEATHER: "记录天气",
+        EvidenceGroup.WEEKDAY: "星期",
+        EvidenceGroup.OPERATING_STATUS: "营业状态",
+    }
+    details = "、".join(
+        f"{row.label}：{'不可用' if row.value is None else row.value}"
+        for row in rows
+    )
+    if not details:
+        details = "没有匹配的每日台账"
+    return (
+        f"{start.isoformat()} 至 {end.isoformat()} 按{labels[group_by]}分组："
+        f"{details}。{''.join(warnings)}"
+    )
+
+
+def _extreme_summary(
+    *,
+    start: date,
+    end: date,
+    result: DailyLedgerExtremeResult,
+) -> str:
+    label = "最高" if result.extreme == "highest" else "最低"
+    if result.daily_ledger_revenue is None:
+        return (
+            f"{start.isoformat()} 至 {end.isoformat()} 没有可比较的经营日；"
+            f"{label}每日台账营业额不可用。"
+        )
+    dates = "、".join(value.isoformat() for value in result.dates)
+    return (
+        f"{start.isoformat()} 至 {end.isoformat()} 的{label}每日台账营业额为 "
+        f"{result.daily_ledger_revenue} 欧元，经营日：{dates}；"
+        "营业和提前休息参与比较，休息不参与，零收入经营日保留。"
+    )
 
 
 def _is_temporary_sqlite_failure(error: OperationalError) -> bool:
