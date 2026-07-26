@@ -398,7 +398,7 @@ class GroupedMetricResult(ClosedModel):
 class DailyLedgerExtremeResult(ClosedModel):
     extreme: Literal["highest", "lowest"]
     daily_ledger_revenue: int | None = Field(default=None, ge=0)
-    dates: list[CalendarDate] = Field(max_length=400)
+    dates: list[CalendarDate]
 
 
 class DailyLedgerAmount(ClosedModel):

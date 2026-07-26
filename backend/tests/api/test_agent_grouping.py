@@ -45,6 +45,13 @@ async def test_agent_http_groups_filters_and_daily_extremes_are_bounded(
         is_active=True,
         sort_order=2,
     )
+    carta_alias = IncomeCategory(
+        store_id=store.id,
+        name=" CARTA ",
+        include_in_total=True,
+        is_active=False,
+        sort_order=3,
+    )
     secret = IncomeCategory(
         store_id=other_store.id,
         name="Secret",
@@ -52,7 +59,7 @@ async def test_agent_http_groups_filters_and_daily_extremes_are_bounded(
         is_active=True,
         sort_order=1,
     )
-    db_session.add_all([carta, cash, secret])
+    db_session.add_all([carta, cash, carta_alias, secret])
     await db_session.flush()
 
     record_specs = (

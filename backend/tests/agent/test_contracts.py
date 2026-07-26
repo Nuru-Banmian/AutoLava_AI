@@ -1,7 +1,14 @@
+from datetime import date, timedelta
+
 import pytest
 from pydantic import ValidationError
 
-from app.agent.contracts import EvidencePlan, EvidenceRequest, TurnPlan
+from app.agent.contracts import (
+    DailyLedgerExtremeResult,
+    EvidencePlan,
+    EvidenceRequest,
+    TurnPlan,
+)
 
 
 @pytest.mark.parametrize(
@@ -194,6 +201,19 @@ def test_daily_ledger_extreme_is_bounded_to_one_direction_and_compatible_shape()
     ):
         with pytest.raises(ValidationError):
             EvidenceRequest.model_validate(invalid)
+
+
+def test_daily_ledger_extreme_preserves_every_tied_operating_date() -> None:
+    start = date(2025, 1, 1)
+    tied_dates = [start + timedelta(days=offset) for offset in range(401)]
+
+    result = DailyLedgerExtremeResult(
+        extreme="lowest",
+        daily_ledger_revenue=0,
+        dates=tied_dates,
+    )
+
+    assert result.dates == tied_dates
 
 
 def test_evidence_metric_whitelist_fails_closed() -> None:

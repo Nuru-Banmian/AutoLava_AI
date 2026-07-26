@@ -616,7 +616,7 @@ class BusinessEvidenceCollector:
         unresolved: list[str] = []
         for requested in filters.income_categories:
             matches = by_normalized.get(_normalize_category_name(requested), set())
-            if len(matches) == 1:
+            if matches:
                 resolved.update(matches)
             else:
                 unresolved.append(requested)
