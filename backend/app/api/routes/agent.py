@@ -182,6 +182,7 @@ async def run_agent_turn(
             conversation=conversation,
             role="assistant",
             content=result.content,
+            action=result.action,
         )
         snapshot = await conversation_response(
             session, user_id=user_id, store_id=authorized_store_id

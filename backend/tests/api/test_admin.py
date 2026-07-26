@@ -1,5 +1,6 @@
 import asyncio
 from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
@@ -966,7 +967,7 @@ async def test_category_patch_preserves_snapshot_and_refreshes_current_briefing(
     )
     db_session.add(category)
     await db_session.flush()
-    local_today = datetime.now().date()
+    local_today = datetime.now(ZoneInfo(store.timezone)).date()
     record = StoreDailyRecord(
         store_id=store.id,
         date=local_today,

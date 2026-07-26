@@ -398,6 +398,8 @@ _SERVER_OWNED_OR_QUERY_FIELDS = {
     "where",
     "url",
     "uri",
+    "href",
+    "path",
     "store_id",
     "company_id",
     "company_ids",

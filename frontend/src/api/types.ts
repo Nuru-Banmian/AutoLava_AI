@@ -132,6 +132,11 @@ export interface BriefingCard {
   timestamp_status: "utc" | "legacy_unknown";
 }
 export interface AgentStatus { enabled: boolean }
+export interface OpenBusinessRecordsAction {
+  type: "open_business_records";
+  start_month: string;
+  end_month: string;
+}
 export interface AgentConversationState {
   confirmed_period: { start: string; end: string } | null;
   metrics: string[];
@@ -146,6 +151,7 @@ export interface AgentConversationMessage {
   id: number;
   role: "user" | "assistant";
   content: string;
+  action?: OpenBusinessRecordsAction | null;
   created_at: string;
 }
 export interface AgentConversation {

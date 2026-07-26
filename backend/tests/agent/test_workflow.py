@@ -71,6 +71,78 @@ async def test_workflow_finishes_clarification_without_collecting_evidence() -> 
     assert model.total_calls == 1
 
 
+async def test_workflow_returns_only_a_backend_validated_business_records_action() -> None:
+    model = FakeModelAdapter(
+        plans=[
+            {
+                "route": "action",
+                "action": {
+                    "type": "open_business_records",
+                    "start_month": "2025-01",
+                    "end_month": "2025-12",
+                },
+            }
+        ]
+    )
+    collector = RecordingEvidenceCollector()
+
+    result = await AgentTurnWorkflow(model=model, evidence_collector=collector).run(
+        [ModelMessage(role="user", content="把去年的每日记录都列出来")],
+        CONTEXT,
+    )
+
+    assert result.turn.model_dump(mode="json") == {
+        "route": "answer",
+        "content": "可查看所选月份的营业记录。",
+        "recovery_status": "none",
+        "action": {
+            "type": "open_business_records",
+            "start_month": "2025-01",
+            "end_month": "2025-12",
+        },
+    }
+    assert collector.calls == 0
+
+
+async def test_workflow_rejects_a_future_business_records_action() -> None:
+    result = await AgentTurnWorkflow(
+        model=FakeModelAdapter(
+            plans=[
+                {
+                    "route": "action",
+                    "action": {
+                        "type": "open_business_records",
+                        "start_month": "2200-01",
+                        "end_month": "2200-01",
+                    },
+                }
+            ]
+        ),
+        evidence_collector=RecordingEvidenceCollector(),
+    ).run([ModelMessage(role="user", content="打开未来记录")], CONTEXT)
+
+    assert result.turn.route == "safe_failure"
+    assert result.turn.action is None
+
+
+async def test_workflow_rejects_model_provided_urls_and_internal_routes() -> None:
+    for answer in (
+        "请打开 https://example.com/records",
+        "请访问 /database?store_id=999",
+        "请求 /api/database/999/records",
+    ):
+        result = await AgentTurnWorkflow(
+            model=FakeModelAdapter(
+                plans=[{"route": "direct_answer", "answer": answer}]
+            ),
+            evidence_collector=RecordingEvidenceCollector(),
+        ).run([ModelMessage(role="user", content="打开营业记录")], CONTEXT)
+
+        assert result.turn.route == "safe_failure"
+        assert result.turn.action is None
+        assert answer not in result.turn.content
+
+
 async def test_workflow_collects_once_then_generates_one_complete_answer() -> None:
     model = FakeModelAdapter(
         plans=[
