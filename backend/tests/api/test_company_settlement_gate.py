@@ -5,6 +5,7 @@ from httpx import AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.models.identity import StoreMember, User
 from app.models.settlement import (
     SettlementAuditEvent,
@@ -114,6 +115,84 @@ async def test_accessible_store_payload_exposes_server_flag_and_gate_is_store_sc
     assert denied.status_code == 403
     assert denied.json() == {"detail": "当前门店未启用公司结算"}
     assert (await client.get(f"/api/settlements/{other.id}")).status_code == 403
+
+
+async def test_all_store_roles_can_read_enabled_company_settlement(
+    client,
+    user_factory,
+    store_factory,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AUTOLAVA_BOOTSTRAP_USERNAME", "settlement-owner")
+    get_settings.cache_clear()
+    member = await user_factory(username="settlement-member", password="secret")
+    admin = await user_factory(
+        username="settlement-admin-reader",
+        password="secret",
+        role="admin",
+    )
+    owner = await user_factory(username="settlement-owner", password="secret")
+    store = await store_factory(name="Shared enabled store")
+    store.company_settlement_enabled = True
+    db_session.add(StoreMember(store_id=store.id, user_id=member.id))
+    company = SettlementCompany(
+        store_id=store.id,
+        name="Shared Fleet",
+        normalized_name="shared fleet",
+        is_active=True,
+        created_by=admin.id,
+        updated_by=admin.id,
+    )
+    db_session.add(company)
+    await db_session.flush()
+    db_session.add(
+        SettlementRecord(
+            store_id=store.id,
+            company_id=company.id,
+            company_name=company.name,
+            opening_month=date(2026, 7, 1),
+            amount=420,
+            status="confirmed",
+            revision=1,
+            created_by=admin.id,
+            updated_by=admin.id,
+        )
+    )
+    await db_session.commit()
+
+    for user in (member, admin, owner):
+        login = await client.post(
+            "/api/auth/login",
+            json={"username": user.username, "password": "secret"},
+        )
+        assert login.status_code == 200
+        if user is owner:
+            assert login.json()["role"] == "admin"
+            assert login.json()["is_owner"] is True
+
+        stores = await client.get("/api/stores/accessible")
+        assert stores.status_code == 200
+        assert stores.json() == [
+            {
+                "id": store.id,
+                "name": store.name,
+                "timezone": store.timezone,
+                "is_active": True,
+                "company_settlement_enabled": True,
+                "wash_count_enabled": True,
+            }
+        ]
+        workspace = await client.get(f"/api/settlements/{store.id}")
+        assert workspace.status_code == 200
+        assert workspace.json()["company_settlement_enabled"] is True
+        companies = await client.get(f"/api/settlements/{store.id}/companies")
+        assert companies.status_code == 200
+        assert [item["name"] for item in companies.json()] == ["Shared Fleet"]
+        month = await client.get(f"/api/settlements/{store.id}/months/2026-07")
+        assert month.status_code == 200
+        assert [item["amount"] for item in month.json()["records"]] == [420]
+        await client.post("/api/auth/logout")
 
 
 async def test_new_store_defaults_disabled_and_admin_payload_exposes_flag(

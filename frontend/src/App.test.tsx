@@ -35,9 +35,17 @@ beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
-function renderApplication(path: string, options: { role?: "admin" | "user" } = {}) {
+function renderApplication(
+  path: string,
+  options: { role?: "admin" | "user"; isOwner?: boolean } = {},
+) {
   if (options.role) {
-    server.use(http.get("/api/auth/me", () => HttpResponse.json({ id: 1, username: options.role, role: options.role, is_owner: false })));
+    server.use(http.get("/api/auth/me", () => HttpResponse.json({
+      id: 1,
+      username: options.isOwner ? "final-admin" : options.role,
+      role: options.role,
+      is_owner: options.isOwner ?? false,
+    })));
   }
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createAppRouter([path]);
@@ -192,6 +200,56 @@ describe("App", () => {
     );
     await waitFor(() => expect(within(desktop).queryByRole("link", { name: "公司结算" })).not.toBeInTheDocument());
     expect(within(screen.getByRole("navigation", { name: "更多功能" })).queryByRole("link", { name: "公司结算" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["普通用户", { role: "user" as const }],
+    ["管理员", { role: "admin" as const }],
+    ["最终管理员", { role: "admin" as const, isOwner: true }],
+  ])("%s can open the enabled store settlement route and read its data", async (_identity, identity) => {
+    server.use(
+      http.get("/api/stores/accessible", () => HttpResponse.json([
+        { id: 1, name: "共享门店", timezone: "Europe/Rome", company_settlement_enabled: true },
+      ])),
+      http.get("/api/settlements/1", () => HttpResponse.json({
+        store_id: 1,
+        store_name: "共享门店",
+        company_settlement_enabled: true,
+      })),
+      http.get("/api/settlements/1/companies", ({ request }) => HttpResponse.json(
+        new URL(request.url).searchParams.has("archived")
+          ? []
+          : [{ id: 10, name: "共享车队", is_active: true }],
+      )),
+      http.get("/api/settlements/1/months/:month", ({ params }) => HttpResponse.json({
+        opening_month: params.month,
+        records: [{
+          id: 20,
+          company_id: 10,
+          company_name: "共享车队",
+          opening_month: params.month,
+          amount: 420,
+          status: "confirmed",
+          revision: 1,
+          created_at: "2026-07-10T08:00:00",
+        }],
+        daily_ledger_revenue: 900,
+        confirmed_settlement_income: 420,
+        pending_amount: 0,
+        monthly_total: 1320,
+      })),
+    );
+    renderApplication("/settlements", identity);
+
+    const desktop = await screen.findByRole("navigation", { name: "主导航" });
+    await waitFor(() => {
+      expect(within(desktop).getByRole("link", { name: "公司结算" })).toBeInTheDocument();
+    });
+    expect(await screen.findByRole("heading", { name: "公司结算" })).toBeInTheDocument();
+    expect(screen.getByLabelText("开票月份")).toBeInTheDocument();
+    expect((await screen.findAllByText("€420")).length).toBeGreaterThan(0);
+    await userEvent.click(screen.getByRole("button", { name: "结算公司管理" }));
+    expect(await screen.findByRole("button", { name: "共享车队更多操作" })).toBeInTheDocument();
   });
 
   it("rejects a direct company settlement visit for a disabled store", async () => {

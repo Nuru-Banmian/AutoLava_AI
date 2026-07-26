@@ -23,7 +23,24 @@ const records = [
   },
 ] as const;
 
-async function mockSettlementWorkbench(page: Page) {
+interface SettlementIdentity {
+  id: number;
+  username: string;
+  role: "admin" | "user";
+  is_owner: boolean;
+}
+
+const finalAdministrator: SettlementIdentity = {
+  id: 1,
+  username: "administrator",
+  role: "admin",
+  is_owner: true,
+};
+
+async function mockSettlementWorkbench(
+  page: Page,
+  identity: SettlementIdentity = finalAdministrator,
+) {
   const requestedMonths: string[] = [];
   let nextCompanyId = 30;
   const activeCompanies = [
@@ -48,7 +65,7 @@ async function mockSettlementWorkbench(page: Page) {
       body: JSON.stringify(body),
     });
 
-    if (path === "/api/auth/me") return json({ id: 1, username: "administrator", role: "admin", is_owner: true });
+    if (path === "/api/auth/me") return json(identity);
     if (path === "/api/stores/accessible") return json([{ id: 1, name: "Berlin", timezone: "Europe/Berlin", company_settlement_enabled: true }]);
     if (path === "/api/settlements/1") return json({ store_id: 1, store_name: "Berlin", company_settlement_enabled: true });
     if (path === "/api/settlements/1/companies" && method === "GET") {
@@ -139,6 +156,25 @@ async function expectRecordRowsUseAtMostTwoLines(rows: Locator) {
     const cellBoxes = await row.locator(":scope > *").evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().toJSON()));
     expect(new Set(cellBoxes.map((box) => Math.round(box.y + box.height / 2))).size).toBeLessThanOrEqual(2);
   }
+}
+
+for (const identity of [
+  { label: "普通用户", user: { id: 2, username: "operator", role: "user", is_owner: false } },
+  { label: "管理员", user: { id: 3, username: "manager", role: "admin", is_owner: false } },
+  { label: "最终管理员", user: finalAdministrator },
+] satisfies { label: string; user: SettlementIdentity }[]) {
+  test(`${identity.label} can enter the same enabled store and read settlement data`, async ({ page }) => {
+    await page.clock.install({ time: new Date("2026-07-21T10:00:00Z") });
+    await mockSettlementWorkbench(page, identity.user);
+    await page.goto("/settlements");
+
+    await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "公司结算" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "公司结算" })).toBeVisible();
+    await expect(page.getByLabel("开票月份")).toHaveValue("2026-07");
+    await expect(page.getByRole("region", { name: "开票记录列表" }).getByText("Beta Logistics")).toBeVisible();
+    await page.getByRole("button", { name: "结算公司管理" }).click();
+    await expect(page.getByRole("button", { name: "Alpha Fleet Services更多操作" })).toBeVisible();
+  });
 }
 
 test("1280x900 monthly workbench keeps summaries and record columns aligned", async ({ page }) => {
