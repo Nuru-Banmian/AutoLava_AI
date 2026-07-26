@@ -35,6 +35,8 @@ class EvidenceMetric(StrEnum):
     OPERATING_DAYS = "operating_days"
     OPERATING_DAY_AVERAGE_LEDGER_REVENUE = "operating_day_average_ledger_revenue"
     MONTHLY_DAILY_AVERAGE_INCOME = "monthly_daily_average_income"
+    WASH_COUNT = "wash_count"
+    AVERAGE_REVENUE_PER_CAR = "average_revenue_per_car"
     INCOME_CATEGORY_AMOUNT = "income_category_amount"
     OTHER_DATA_AMOUNT = "other_data_amount"
     DAILY_LEDGER = "daily_ledger"
@@ -47,6 +49,8 @@ EVIDENCE_METRIC_LABELS = {
     EvidenceMetric.OPERATING_DAYS: "经营日",
     EvidenceMetric.OPERATING_DAY_AVERAGE_LEDGER_REVENUE: "经营日均台账营业额",
     EvidenceMetric.MONTHLY_DAILY_AVERAGE_INCOME: "月度日均收入",
+    EvidenceMetric.WASH_COUNT: "洗车数量",
+    EvidenceMetric.AVERAGE_REVENUE_PER_CAR: "平均每车收入",
     EvidenceMetric.INCOME_CATEGORY_AMOUNT: "收入分类金额",
     EvidenceMetric.OTHER_DATA_AMOUNT: "其他数据金额",
     EvidenceMetric.DAILY_LEDGER: "每日台账",
@@ -249,6 +253,18 @@ class MonthlyDailyAverageIncomeResult(ClosedModel):
     monthly_daily_average_income: int | None = Field(default=None, ge=0)
 
 
+class WashCountResult(ClosedModel):
+    available: bool
+    wash_count: int | None = Field(default=None, ge=0)
+
+
+class AverageRevenuePerCarResult(ClosedModel):
+    available: bool
+    daily_ledger_revenue: int | None = Field(default=None, ge=0)
+    wash_count: int | None = Field(default=None, ge=0)
+    average_revenue_per_car: int | None = Field(default=None, ge=0)
+
+
 class CategoryAmountRow(ClosedModel):
     category_id: int = Field(gt=0)
     category_name: str = Field(min_length=1, max_length=100)
@@ -314,6 +330,8 @@ EvidenceResult = (
     | OperatingDaysResult
     | OperatingDayAverageLedgerRevenueResult
     | MonthlyDailyAverageIncomeResult
+    | WashCountResult
+    | AverageRevenuePerCarResult
     | CategoryAmountResult
     | DailyLedgerResult
 )
@@ -322,6 +340,25 @@ EvidenceResult = (
 class EvidenceCoverage(ClosedModel):
     calendar_dates: int = Field(ge=1)
     recorded_dates: int = Field(ge=0)
+
+
+class CategoryTotalMismatch(ClosedModel):
+    date: CalendarDate
+    daily_ledger_revenue: int = Field(ge=0)
+    included_category_amount: int = Field(ge=0)
+
+
+class EvidenceCompleteness(ClosedModel):
+    status: Literal["sufficient", "limited"]
+    unrecorded_dates: list[CalendarDate] = Field(default_factory=list)
+    missing_weather_dates: list[CalendarDate] = Field(default_factory=list)
+    wash_count_enabled: bool
+    operating_days: int = Field(ge=0)
+    wash_count_recorded_operating_days: int = Field(ge=0)
+    wash_count_missing_dates: list[CalendarDate] = Field(default_factory=list)
+    wash_count_coverage_percent: int | None = Field(default=None, ge=0, le=100)
+    wash_count_sufficient: bool
+    category_total_mismatches: list[CategoryTotalMismatch] = Field(default_factory=list)
 
 
 class CurrentStoreScope(ClosedModel):
@@ -333,7 +370,7 @@ class EvidenceBundle(ClosedModel):
     current_store: CurrentStoreScope
     period: EvidencePeriodResult
     metric: EvidenceMetric
-    unit: Literal["EUR", "day", "EUR/operating_day", "mixed"]
+    unit: Literal["EUR", "day", "car", "EUR/car", "EUR/operating_day", "mixed"]
     calculation_version: Literal[
         "monthly_total_revenue.v1",
         "daily_ledger_revenue.v1",
@@ -341,12 +378,18 @@ class EvidenceBundle(ClosedModel):
         "operating_days.v1",
         "operating_day_average_ledger_revenue.v1",
         "monthly_daily_average_income.v1",
+        "wash_count.v1",
+        "average_revenue_per_car.v1",
         "income_category_amount.v1",
         "other_data_amount.v1",
         "daily_ledger.v1",
     ]
     result: EvidenceResult
     coverage: EvidenceCoverage
+    completeness: EvidenceCompleteness | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     comparison: EvidenceComparisonResult | None = None
     warnings: list[str] = Field(default_factory=list, max_length=20)
     truncated: bool = False

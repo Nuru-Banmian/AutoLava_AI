@@ -239,17 +239,18 @@ def test_ci_runs_backend_and_frontend_checks_without_containers() -> None:
     assert "services" not in backend
     assert "services" not in frontend
     assert backend["env"]["AUTOLAVA_DATABASE_PATH"] == "/tmp/autolava-ci.sqlite3"
-    assert any("aiosqlite" in command for command in backend_commands)
+    assert any('pip install -e ".[dev]"' in command for command in backend_commands)
     assert any("alembic upgrade head" in command for command in backend_commands)
     assert any("ruff check ." in command for command in backend_commands)
-    assert any("pytest --cov=app --cov-report=term-missing" in command for command in backend_commands)
+    assert any("pytest -n 2 --dist loadscope" in command for command in backend_commands)
+    assert any("--cov=app --cov-report=term-missing" in command for command in backend_commands)
 
     for contract in (
         "npm ci",
         "npm test",
         "npm run build",
         "playwright install --with-deps chromium",
-        "playwright test",
+        "npm run test:e2e",
     ):
         assert any(contract in command for command in frontend_commands)
 
@@ -261,7 +262,7 @@ def test_ci_does_not_execute_container_release_or_runtime_checks() -> None:
         "containers:",
         "docker build",
         "docker compose",
-        "actions/upload-artifact",
+        "autolava-release-images",
         "Bootstrap, login, and verify SQLite persistence",
         "Verify manual SQLite online backup",
         "Container diagnostics and cleanup",

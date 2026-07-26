@@ -161,31 +161,39 @@ async def test_collector_defaults_to_store_current_month_and_reconciles_total_re
         _context(store),
     )
 
-    assert bundle.model_dump(mode="json") == {
-        "status": "ok",
-        "current_store": {"id": store.id},
-        "period": {"start": "2026-07-01", "end": "2026-07-26"},
-        "metric": "monthly_total_revenue",
-        "unit": "EUR",
-        "calculation_version": "monthly_total_revenue.v1",
-        "result": {
-            "daily_ledger_revenue": 200,
-            "confirmed_settlement_income": 300,
-            "monthly_total_revenue": 500,
-        },
-        "coverage": {
-            "calendar_dates": 26,
-            "recorded_dates": 2,
-        },
-        "comparison": None,
-        "warnings": ["所选期间有 24 个日期没有每日台账；这不表示门店本应营业。"],
-        "truncated": False,
-        "summary": (
-            "2026-07-01 至 2026-07-26 的月度总收入为 500 欧元，"
-            "其中每日台账营业额 200 欧元，已确认公司结算收入 300 欧元。"
-            "所选期间有 24 个日期没有每日台账；这不表示门店本应营业。"
-        ),
+    payload = bundle.model_dump(mode="json")
+    assert payload["status"] == "ok"
+    assert payload["current_store"] == {"id": store.id}
+    assert payload["period"] == {"start": "2026-07-01", "end": "2026-07-26"}
+    assert payload["metric"] == "monthly_total_revenue"
+    assert payload["unit"] == "EUR"
+    assert payload["calculation_version"] == "monthly_total_revenue.v1"
+    assert payload["result"] == {
+        "daily_ledger_revenue": 200,
+        "confirmed_settlement_income": 300,
+        "monthly_total_revenue": 500,
     }
+    assert payload["coverage"] == {
+        "calendar_dates": 26,
+        "recorded_dates": 2,
+    }
+    assert payload["completeness"]["status"] == "limited"
+    assert len(payload["completeness"]["unrecorded_dates"]) == 24
+    assert payload["completeness"]["missing_weather_dates"] == [
+        "2026-07-01",
+        "2026-07-20",
+    ]
+    assert payload["completeness"]["wash_count_missing_dates"] == []
+    assert payload["completeness"]["wash_count_enabled"] is True
+    assert payload["completeness"]["operating_days"] == 2
+    assert payload["completeness"]["wash_count_recorded_operating_days"] == 2
+    assert payload["completeness"]["wash_count_coverage_percent"] == 100
+    assert payload["completeness"]["wash_count_sufficient"] is True
+    assert payload["completeness"]["category_total_mismatches"] == []
+    assert payload["comparison"] is None
+    assert payload["truncated"] is False
+    assert "不推断记录起始日期" in payload["summary"]
+    assert "缺少记录天气" in payload["summary"]
 
 
 async def test_collector_retries_the_whole_snapshot_once_after_temporary_sqlite_failure(

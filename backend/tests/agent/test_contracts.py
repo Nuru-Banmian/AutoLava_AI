@@ -20,18 +20,6 @@ from app.agent.contracts import EvidencePlan, EvidenceRequest, TurnPlan
                 ]
             },
         },
-        {
-            "route": "evidence",
-            "evidence_plan": {
-                "requests": [
-                    {
-                        "kind": "settlement_details",
-                        "status": "pending",
-                        "company_name": "Acme",
-                    }
-                ]
-            },
-        },
         {"route": "safe_failure", "message": "当前无法安全处理该问题。"},
     ),
 )
@@ -150,8 +138,6 @@ def test_daily_ledger_request_requires_one_exact_date_and_no_metric_or_period() 
         "expression",
         "url",
         "store_id",
-        "company_id",
-        "record_id",
         "user_id",
         "role",
         "timezone",

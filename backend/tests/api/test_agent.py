@@ -400,7 +400,8 @@ async def test_monthly_total_revenue_http_gold_path_persists_raw_evidence_safely
     expected_answer = (
         "2026-07-01 至 2026-07-26 的月度总收入为 400 欧元，"
         "其中每日台账营业额 240 欧元，已确认公司结算收入 160 欧元。"
-        "所选期间有 25 个日期没有每日台账；这不表示门店本应营业。"
+        "所选期间有 25 个日期没有每日台账；"
+        "这只表示没有记录，不表示门店本应营业，也不推断记录起始日期。"
     )
     model = FakeModelAdapter(
         plans=[
