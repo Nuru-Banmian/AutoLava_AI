@@ -5,9 +5,13 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.contracts import TurnResult
+from app.agent.model import FakeModelAdapter
 from app.agent.runtime import RuntimeContext
+from app.agent.service import AgentService, ClosedEvidenceCollector
+from app.agent.workflow import AgentTurnWorkflow
 from app.core.config import get_settings
 from app.models.identity import Store, User
+from app.models.operations import AgentSettings
 
 
 @dataclass
@@ -194,3 +198,51 @@ async def test_agent_route_is_unavailable_while_global_switch_is_off(
     assert status.json() == {"enabled": False}
     assert response.status_code == 403
     assert agent_service.calls == []
+
+
+async def test_agent_http_turn_returns_direct_answers_and_ends_on_clarification(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+) -> None:
+    await user_factory(username="admin", password="secret", role="admin")
+    store = await store_factory(name="Roma")
+    store_id = store.id
+    db_session.add(AgentSettings(id=1, enabled=True))
+    await db_session.commit()
+    model = FakeModelAdapter(
+        plans=[
+            {"route": "direct_answer", "answer": "我可以回答一般问题。"},
+            {"route": "clarify", "question": "你想了解哪个时间范围？"},
+        ]
+    )
+    client._transport.app.state.agent_service = AgentService(
+        AgentTurnWorkflow(
+            model=model,
+            evidence_collector=ClosedEvidenceCollector(),
+        )
+    )
+    await _login(client, "admin")
+
+    direct = await client.post(
+        f"/api/agent/stores/{store_id}/turn",
+        json={"question": "你能做什么？"},
+    )
+    clarification = await client.post(
+        f"/api/agent/stores/{store_id}/turn",
+        json={"question": "帮我看看"},
+    )
+
+    assert direct.status_code == 200
+    assert direct.json() == {
+        "route": "answer",
+        "content": "我可以回答一般问题。",
+    }
+    assert clarification.status_code == 200
+    assert clarification.json() == {
+        "route": "clarify",
+        "content": "你想了解哪个时间范围？",
+    }
+    assert model.plan_calls == 2
+    assert model.answer_calls == 0

@@ -62,10 +62,9 @@ it("shows progress before revealing one complete direct answer", async () => {
 
   expect(screen.getByRole("status")).toHaveTextContent("正在理解问题");
   expect(screen.queryByText(/完整回答/)).not.toBeInTheDocument();
-  await new Promise((resolve) => window.setTimeout(resolve, 250));
-  expect(screen.getByRole("status")).toHaveTextContent("正在整理回答");
-  expect(screen.queryByText(/完整回答/)).not.toBeInTheDocument();
   release();
+  expect(await screen.findByText("正在整理回答…")).toBeInTheDocument();
+  expect(screen.queryByText(/完整回答/)).not.toBeInTheDocument();
   expect(
     await screen.findByText("这是一次性出现的完整回答。"),
   ).toBeInTheDocument();

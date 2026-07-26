@@ -22,11 +22,15 @@ export function AgentPanel({ storeId }: { storeId: number }) {
     queryFn: () => api<AgentStatus>("/agent/status"),
   });
   const turn = useMutation({
-    mutationFn: (input: string) =>
-      api<AgentTurnResult>(`/agent/stores/${storeId}/turn`, {
+    mutationFn: async (input: string) => {
+      const result = await api<AgentTurnResult>(`/agent/stores/${storeId}/turn`, {
         method: "POST",
         body: JSON.stringify({ question: input }),
-      }),
+      });
+      setStage("organizing");
+      await new Promise((resolve) => window.setTimeout(resolve, 150));
+      return result;
+    },
     onMutate: (input) => {
       setStage("understanding");
       setEntries((current) => [
@@ -44,12 +48,6 @@ export function AgentPanel({ storeId }: { storeId: number }) {
     },
     onError: () => setStage(null),
   });
-
-  useEffect(() => {
-    if (!turn.isPending || stage !== "understanding") return;
-    const timer = window.setTimeout(() => setStage("organizing"), 200);
-    return () => window.clearTimeout(timer);
-  }, [stage, turn.isPending]);
 
   useEffect(() => {
     turn.reset();

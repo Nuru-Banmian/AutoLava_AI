@@ -9,11 +9,7 @@ ROOT_ENV_FILE = Path(__file__).resolve().parents[3] / ".env"
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_prefix="AUTOLAVA_",
-        env_file=ROOT_ENV_FILE,
-        extra="ignore",
-    )
+    model_config = SettingsConfigDict(env_prefix="AUTOLAVA_", env_file=ROOT_ENV_FILE)
 
     environment: str = "development"
     database_path: Path = Path("../.autolava-local/autolava.sqlite3")
