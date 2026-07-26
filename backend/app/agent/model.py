@@ -190,7 +190,7 @@ _SERVER_OWNED_OR_QUERY_FIELDS = {
 
 
 def _plan_validation_error(payload: object) -> ModelAdapterError:
-    if _contains_forbidden_key(payload):
+    if _contains_forbidden_key(payload) or _contains_forbidden_event_operation(payload):
         return UnsafeModelPlanError("unsafe structured model output")
     return RepairableModelPlanError("invalid structured model output")
 
@@ -209,6 +209,47 @@ def _contains_forbidden_key(value: object) -> bool:
         except (TypeError, ValueError):
             return False
         return _contains_forbidden_key(decoded)
+    return False
+
+
+def _contains_forbidden_event_operation(value: object) -> bool:
+    if isinstance(value, dict):
+        kind = value.get("kind")
+        if kind in {"event_search", "events", "event_analysis"}:
+            return True
+        event_keys = {
+            "event",
+            "events",
+            "event_filter",
+            "event_query",
+            "event_group",
+        }
+        if any(key in value for key in event_keys):
+            return True
+        if kind == "daily_ledger" and any(
+            key in value
+            for key in {
+                "period",
+                "start",
+                "end",
+                "filter",
+                "filters",
+                "group_by",
+                "summarize",
+                "analysis",
+                "cause",
+            }
+        ):
+            return True
+        return any(_contains_forbidden_event_operation(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_forbidden_event_operation(item) for item in value)
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except (TypeError, ValueError):
+            return False
+        return _contains_forbidden_event_operation(decoded)
     return False
 
 
