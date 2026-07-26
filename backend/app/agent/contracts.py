@@ -359,6 +359,7 @@ CollectedEvidence = EvidenceBundle | SettlementDetailsEvidenceBundle
 class TurnResult(ClosedModel):
     route: Literal["clarify", "answer", "safe_failure"]
     content: str = Field(min_length=1, max_length=20_000)
+    recovery_status: Literal["none", "retried", "fallback"] = "none"
 
 
 class WorkflowResult(ClosedModel):

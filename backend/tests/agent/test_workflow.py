@@ -1,7 +1,14 @@
 from typing import Any
 
+import pytest
+
 from app.agent.contracts import EvidenceBundle, ModelMessage
-from app.agent.model import FakeModelAdapter, ModelAdapterError
+from app.agent.model import (
+    FakeModelAdapter,
+    ModelAdapterError,
+    ModelErrorCategory,
+    ResilientModelAdapter,
+)
 from app.agent.runtime import RuntimeContext, RuntimeFeatureFlags
 from app.agent.workflow import AgentTurnWorkflow
 
@@ -230,3 +237,127 @@ async def test_workflow_replaces_unsupported_amounts_and_raw_json_with_safe_summ
         )
 
         assert result.turn.content == "本月月度总收入为 100 欧元。"
+
+
+@pytest.mark.parametrize(
+    "category",
+    (
+        ModelErrorCategory.TIMEOUT,
+        ModelErrorCategory.RATE_LIMIT,
+        ModelErrorCategory.PROVIDER_5XX,
+        ModelErrorCategory.NETWORK,
+    ),
+)
+async def test_transient_failure_retries_current_model_once(
+    category: ModelErrorCategory,
+) -> None:
+    primary = FakeModelAdapter(
+        plans=[
+            ModelAdapterError("provider detail", category=category),
+            {"route": "direct_answer", "answer": "恢复后的回答"},
+        ],
+        provider="primary",
+    )
+
+    result = await AgentTurnWorkflow(
+        model=ResilientModelAdapter(primary),
+        evidence_collector=RecordingEvidenceCollector(),
+    ).run([ModelMessage(role="user", content="问题")], CONTEXT)
+
+    assert result.turn.content == "恢复后的回答"
+    assert result.turn.recovery_status == "retried"
+    assert primary.plan_calls == 2
+
+
+async def test_fallback_redoes_only_answer_stage_with_same_evidence() -> None:
+    primary = FakeModelAdapter(
+        plans=[
+            {
+                "route": "evidence",
+                "evidence_plan": {
+                    "requests": [
+                        {
+                            "kind": "business_metrics",
+                            "metric": "monthly_total_revenue",
+                        }
+                    ]
+                },
+            }
+        ],
+        answers=[
+            ModelAdapterError("timeout", category=ModelErrorCategory.TIMEOUT),
+            ModelAdapterError("still down", category=ModelErrorCategory.PROVIDER_5XX),
+        ],
+        provider="primary",
+    )
+    fallback = FakeModelAdapter(
+        answers=["本月月度总收入为 100 欧元。"],
+        provider="fallback",
+    )
+    collector = RecordingEvidenceCollector()
+
+    result = await AgentTurnWorkflow(
+        model=ResilientModelAdapter(primary, fallback=fallback),
+        evidence_collector=collector,
+    ).run([ModelMessage(role="user", content="本月收入是多少？")], CONTEXT)
+
+    assert result.turn.content == "本月月度总收入为 100 欧元。"
+    assert result.turn.recovery_status == "fallback"
+    assert collector.calls == 1
+    assert primary.plan_calls == 1
+    assert primary.answer_calls == 2
+    assert fallback.plan_calls == 0
+    assert fallback.answer_calls == 1
+
+
+@pytest.mark.parametrize(
+    "category",
+    (
+        ModelErrorCategory.INVALID_API_KEY,
+        ModelErrorCategory.INSUFFICIENT_BALANCE,
+        ModelErrorCategory.INVALID_REQUEST,
+        ModelErrorCategory.SAFETY_REFUSAL,
+        ModelErrorCategory.PERMISSION_DENIED,
+        ModelErrorCategory.INSUFFICIENT_USER_INFO,
+        ModelErrorCategory.PROMPT_INJECTION,
+    ),
+)
+async def test_non_recoverable_failure_never_retries_or_uses_fallback(
+    category: ModelErrorCategory,
+) -> None:
+    primary = FakeModelAdapter(
+        plans=[ModelAdapterError("secret provider detail", category=category)]
+    )
+    fallback = FakeModelAdapter(
+        plans=[{"route": "direct_answer", "answer": "不应绕过"}]
+    )
+
+    result = await AgentTurnWorkflow(
+        model=ResilientModelAdapter(primary, fallback=fallback),
+        evidence_collector=RecordingEvidenceCollector(),
+    ).run([ModelMessage(role="user", content="问题")], CONTEXT)
+
+    assert result.turn.route == "safe_failure"
+    assert "secret provider detail" not in result.turn.content
+    assert primary.plan_calls == 1
+    assert fallback.plan_calls == 0
+
+
+async def test_all_providers_unavailable_returns_sanitized_failure() -> None:
+    def unavailable(message: str) -> ModelAdapterError:
+        return ModelAdapterError(
+            message, category=ModelErrorCategory.PROVIDER_5XX
+        )
+    primary = FakeModelAdapter(
+        plans=[unavailable("primary raw"), unavailable("primary raw again")]
+    )
+    fallback = FakeModelAdapter(plans=[unavailable("fallback raw")])
+
+    result = await AgentTurnWorkflow(
+        model=ResilientModelAdapter(primary, fallback=fallback),
+        evidence_collector=RecordingEvidenceCollector(),
+    ).run([ModelMessage(role="user", content="问题")], CONTEXT)
+
+    assert result.turn.route == "safe_failure"
+    assert result.turn.recovery_status == "fallback"
+    assert "raw" not in result.turn.content

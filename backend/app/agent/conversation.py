@@ -6,6 +6,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.contracts import CollectedEvidence, ModelMessage, TurnResult
+from app.agent.model import ModelAttempt
 from app.models.agent import AgentConversation, AgentMessage
 
 RECENT_MESSAGE_LIMIT = 12
@@ -56,6 +57,7 @@ class AgentRunResult(ClosedModel):
     turn: TurnResult
     state: ConversationState
     evidence: CollectedEvidence | None = None
+    attempts: list[ModelAttempt] = Field(default_factory=list)
 
 
 def empty_conversation_response() -> ConversationResponse:
