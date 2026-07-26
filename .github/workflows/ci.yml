@@ -12,6 +12,7 @@ jobs:
     env:
       AUTOLAVA_DATABASE_PATH: /tmp/autolava-ci.sqlite3
       AUTOLAVA_JWT_SECRET: ci-only-jwt-secret-with-at-least-32-bytes
+      AUTOLAVA_MODEL_ADAPTER: fake
     defaults:
       run:
         working-directory: backend
