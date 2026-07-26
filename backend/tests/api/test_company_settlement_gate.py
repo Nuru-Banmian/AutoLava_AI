@@ -124,7 +124,7 @@ async def test_all_store_roles_can_read_enabled_company_settlement(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("AUTOLAVA_BOOTSTRAP_USERNAME", "settlement-owner")
+    monkeypatch.setenv("AUTOLAVA_BOOTSTRAP_USERNAME", "settlement-final-admin")
     get_settings.cache_clear()
     member = await user_factory(username="settlement-member", password="secret")
     admin = await user_factory(
@@ -132,7 +132,10 @@ async def test_all_store_roles_can_read_enabled_company_settlement(
         password="secret",
         role="admin",
     )
-    owner = await user_factory(username="settlement-owner", password="secret")
+    final_administrator = await user_factory(
+        username="settlement-final-admin",
+        password="secret",
+    )
     store = await store_factory(name="Shared enabled store")
     store.company_settlement_enabled = True
     db_session.add(StoreMember(store_id=store.id, user_id=member.id))
@@ -161,13 +164,13 @@ async def test_all_store_roles_can_read_enabled_company_settlement(
     )
     await db_session.commit()
 
-    for user in (member, admin, owner):
+    for user in (member, admin, final_administrator):
         login = await client.post(
             "/api/auth/login",
             json={"username": user.username, "password": "secret"},
         )
         assert login.status_code == 200
-        if user is owner:
+        if user is final_administrator:
             assert login.json()["role"] == "admin"
             assert login.json()["is_owner"] is True
 

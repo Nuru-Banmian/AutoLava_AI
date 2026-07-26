@@ -35,16 +35,17 @@ beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
-function renderApplication(
-  path: string,
-  options: { role?: "admin" | "user"; isOwner?: boolean } = {},
-) {
-  if (options.role) {
+type TestIdentity = "regular-user" | "administrator" | "final-administrator";
+
+function renderApplication(path: string, identity?: TestIdentity) {
+  if (identity) {
+    const isFinalAdministrator = identity === "final-administrator";
+    const role = identity === "regular-user" ? "user" : "admin";
     server.use(http.get("/api/auth/me", () => HttpResponse.json({
       id: 1,
-      username: options.isOwner ? "final-admin" : options.role,
-      role: options.role,
-      is_owner: options.isOwner ?? false,
+      username: isFinalAdministrator ? "final-admin" : role,
+      role,
+      is_owner: isFinalAdministrator,
     })));
   }
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -100,7 +101,7 @@ describe("App", () => {
   });
 
   it("shows four mobile entries and hides management from regular users", async () => {
-    renderApplication("/more", { role: "user" });
+    renderApplication("/more", "regular-user");
     const nav = await screen.findByRole("navigation", { name: "移动导航" });
     expect(within(nav).getAllByRole("link")).toHaveLength(4);
     expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["首页", "记账", "记录", "更多"]);
@@ -118,7 +119,7 @@ describe("App", () => {
     server.use(http.get("/api/stores/accessible", () => HttpResponse.json([
       { id: 1, name: storeName, timezone: "Europe/Berlin" },
     ])));
-    renderApplication("/more", { role: "user" });
+    renderApplication("/more", "regular-user");
 
     const desktopPicker = await screen.findByTestId("desktop-store-picker");
     const select = within(desktopPicker).getByRole("combobox", { name: "门店" });
@@ -130,7 +131,7 @@ describe("App", () => {
   });
 
   it("moves the global store selector out of More and into the shell", async () => {
-    renderApplication("/more", { role: "user" });
+    renderApplication("/more", "regular-user");
     const more = await screen.findByRole("navigation", { name: "更多功能" });
     expect(within(more).queryByRole("combobox", { name: "门店" })).not.toBeInTheDocument();
     expect(await screen.findAllByRole("combobox", { name: "门店" })).toHaveLength(2);
@@ -143,7 +144,7 @@ describe("App", () => {
   });
 
   it("hides global store context in admin and restores it after leaving", async () => {
-    const view = renderApplication("/admin", { role: "admin" });
+    const view = renderApplication("/admin", "administrator");
     await screen.findByRole("heading", { name: "系统管理" });
     expect(screen.queryByTestId("desktop-store-picker")).not.toBeInTheDocument();
     expect(screen.queryByTestId("mobile-store-picker")).not.toBeInTheDocument();
@@ -155,14 +156,14 @@ describe("App", () => {
   });
 
   it("shows management and system status in More for administrators", async () => {
-    renderApplication("/more", { role: "admin" });
+    renderApplication("/more", "administrator");
     const more = await screen.findByRole("navigation", { name: "更多功能" });
     expect(within(more).getByRole("link", { name: "管理中心" })).toHaveAttribute("href", "/admin");
     expect(within(more).getByRole("link", { name: "系统状态" })).toHaveAttribute("href", "/admin?tab=status");
   });
 
   it("keeps the administrator desktop sidebar in the required order", async () => {
-    renderApplication("/", { role: "admin" });
+    renderApplication("/", "administrator");
     const nav = await screen.findByRole("navigation", { name: "主导航" });
     expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual([
       "首页",
@@ -180,7 +181,7 @@ describe("App", () => {
       ])),
       http.get("/api/settlements/1", () => HttpResponse.json({ store_id: 1, store_name: "已启用", company_settlement_enabled: true })),
     );
-    renderApplication("/more", { role: "user" });
+    renderApplication("/more", "regular-user");
 
     const desktop = await screen.findByRole("navigation", { name: "主导航" });
     const desktopStorePicker = within(screen.getByTestId("desktop-store-picker")).getByRole("combobox", { name: "门店" });
@@ -203,9 +204,9 @@ describe("App", () => {
   });
 
   it.each([
-    ["普通用户", { role: "user" as const }],
-    ["管理员", { role: "admin" as const }],
-    ["最终管理员", { role: "admin" as const, isOwner: true }],
+    ["普通用户", "regular-user" as const],
+    ["管理员", "administrator" as const],
+    ["最终管理员", "final-administrator" as const],
   ])("%s can open the enabled store settlement route and read its data", async (_identity, identity) => {
     server.use(
       http.get("/api/stores/accessible", () => HttpResponse.json([
@@ -246,14 +247,14 @@ describe("App", () => {
       expect(within(desktop).getByRole("link", { name: "公司结算" })).toBeInTheDocument();
     });
     expect(await screen.findByRole("heading", { name: "公司结算" })).toBeInTheDocument();
-    expect(screen.getByLabelText("开票月份")).toBeInTheDocument();
+    expect(await screen.findByLabelText("开票月份")).toBeInTheDocument();
     expect((await screen.findAllByText("€420")).length).toBeGreaterThan(0);
     await userEvent.click(screen.getByRole("button", { name: "结算公司管理" }));
     expect(await screen.findByRole("button", { name: "共享车队更多操作" })).toBeInTheDocument();
   });
 
   it("rejects a direct company settlement visit for a disabled store", async () => {
-    renderApplication("/settlements", { role: "user" });
+    renderApplication("/settlements", "regular-user");
 
     expect(await screen.findByRole("alert")).toHaveTextContent("当前门店未启用公司结算");
     expect(screen.getByRole("link", { name: "返回首页" })).toHaveAttribute("href", "/");
@@ -273,7 +274,7 @@ describe("App", () => {
       }),
       http.get("/api/settlements/1/companies", () => HttpResponse.json([])),
     );
-    renderApplication("/settlements", { role: "user" });
+    renderApplication("/settlements", "regular-user");
 
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("暂时失败"));
     await userEvent.click(screen.getByRole("button", { name: "重试公司结算" }));
@@ -309,7 +310,7 @@ describe("App", () => {
         return HttpResponse.json(company);
       }),
     );
-    renderApplication("/settlements", { role: "user" });
+    renderApplication("/settlements", "regular-user");
 
     await userEvent.click(await screen.findByRole("button", { name: "结算公司管理" }));
     expect(await screen.findByRole("button", { name: "Alpha Fleet更多操作" })).toBeInTheDocument();
@@ -368,7 +369,7 @@ describe("App", () => {
         return HttpResponse.json({ id: 3, name: "一店草稿", is_active: true }, { status: 201 });
       }),
     );
-    renderApplication("/settlements", { role: "user" });
+    renderApplication("/settlements", "regular-user");
 
     await userEvent.click(await screen.findByRole("button", { name: "结算公司管理" }));
     expect(await screen.findByRole("button", { name: "一店公司更多操作" })).toBeInTheDocument();
@@ -433,7 +434,7 @@ describe("App", () => {
         return HttpResponse.json({ id: 7, company_id: 2, company_name: "Beta Fleet", opening_month: "2026-07", amount: 250, status: "pending", revision: 1, created_at: "2026-07-01T00:00:00" }, { status: 201 });
       }),
     );
-    renderApplication("/settlements", { role: "user" });
+    renderApplication("/settlements", "regular-user");
 
     const monthInput = await screen.findByLabelText("开票月份");
     expect(monthInput).toHaveValue(monthInTimezone("Pacific/Honolulu"));
@@ -488,7 +489,7 @@ describe("App", () => {
         return HttpResponse.json({ id: 9, company_id: 1, company_name: "1号公司", opening_month: "2026-06", amount: 88, status: "pending", revision: 1, created_at: "2026-06-01T00:00:00" }, { status: 201 });
       }),
     );
-    renderApplication("/settlements", { role: "user" });
+    renderApplication("/settlements", "regular-user");
     const company = await screen.findByRole("combobox", { name: "结算公司" });
     await within(company).findByRole("option", { name: "1号公司" });
     await userEvent.selectOptions(company, "1");

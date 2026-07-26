@@ -37,9 +37,24 @@ const finalAdministrator: SettlementIdentity = {
   is_owner: true,
 };
 
+const enabledStore = {
+  id: 1,
+  name: "Berlin",
+  timezone: "Europe/Berlin",
+  company_settlement_enabled: true,
+};
+
+const disabledStore = {
+  id: 2,
+  name: "Aachen",
+  timezone: "Europe/Berlin",
+  company_settlement_enabled: false,
+};
+
 async function mockSettlementWorkbench(
   page: Page,
   identity: SettlementIdentity = finalAdministrator,
+  accessibleStores = [enabledStore],
 ) {
   const requestedMonths: string[] = [];
   let nextCompanyId = 30;
@@ -66,7 +81,7 @@ async function mockSettlementWorkbench(
     });
 
     if (path === "/api/auth/me") return json(identity);
-    if (path === "/api/stores/accessible") return json([{ id: 1, name: "Berlin", timezone: "Europe/Berlin", company_settlement_enabled: true }]);
+    if (path === "/api/stores/accessible") return json(accessibleStores);
     if (path === "/api/settlements/1") return json({ store_id: 1, store_name: "Berlin", company_settlement_enabled: true });
     if (path === "/api/settlements/1/companies" && method === "GET") {
       return json(url.searchParams.has("archived") ? archivedCompanies : activeCompanies);
@@ -159,13 +174,32 @@ async function expectRecordRowsUseAtMostTwoLines(rows: Locator) {
 }
 
 for (const identity of [
-  { label: "普通用户", user: { id: 2, username: "operator", role: "user", is_owner: false } },
-  { label: "管理员", user: { id: 3, username: "manager", role: "admin", is_owner: false } },
-  { label: "最终管理员", user: finalAdministrator },
-] satisfies { label: string; user: SettlementIdentity }[]) {
+  {
+    label: "普通用户",
+    user: { id: 2, username: "operator", role: "user", is_owner: false },
+    stores: [enabledStore],
+  },
+  {
+    label: "管理员",
+    user: { id: 3, username: "manager", role: "admin", is_owner: false },
+    stores: [disabledStore, enabledStore],
+  },
+  {
+    label: "最终管理员",
+    user: finalAdministrator,
+    stores: [disabledStore, enabledStore],
+  },
+] satisfies { label: string; user: SettlementIdentity; stores: typeof enabledStore[] }[]) {
   test(`${identity.label} can enter the same enabled store and read settlement data`, async ({ page }) => {
     await page.clock.install({ time: new Date("2026-07-21T10:00:00Z") });
-    await mockSettlementWorkbench(page, identity.user);
+    await page.addInitScript(
+      ({ userId }) => localStorage.setItem(
+        "autolava:selected-store",
+        JSON.stringify({ userId, storeId: 1 }),
+      ),
+      { userId: identity.user.id },
+    );
+    await mockSettlementWorkbench(page, identity.user, identity.stores);
     await page.goto("/settlements");
 
     await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "公司结算" })).toBeVisible();
