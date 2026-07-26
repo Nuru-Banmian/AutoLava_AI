@@ -118,3 +118,31 @@ def test_evidence_plan_rejects_model_owned_scope_and_query_fields(
 
     with pytest.raises(ValidationError):
         EvidencePlan.model_validate({"requests": [request]})
+
+
+@pytest.mark.parametrize(
+    "period",
+    (
+        {"kind": "exact_date", "date": "1999-12-31"},
+        {
+            "kind": "custom_date_range",
+            "start": "2026-01-01",
+            "end": "2201-01-01",
+        },
+    ),
+)
+def test_evidence_plan_bounds_exact_and_custom_dates(
+    period: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        EvidencePlan.model_validate(
+            {
+                "requests": [
+                    {
+                        "kind": "business_metrics",
+                        "metric": "monthly_total_revenue",
+                        "period": period,
+                    }
+                ]
+            }
+        )

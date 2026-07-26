@@ -11,15 +11,22 @@ from sqlalchemy.orm import selectinload
 
 from app.agent.contracts import (
     CalendarMonthPeriod,
+    CalendarYearPeriod,
+    CustomDateRangePeriod,
     DailyLedgerAmount,
     DailyLedgerFacts,
     DailyLedgerResult,
     EvidenceBundle,
+    EvidenceComparisonResult,
     EvidenceMetric,
     EvidencePeriodResult,
     EvidencePlan,
     EvidenceRequestKind,
     UntrustedRawEvent,
+    ExactDatePeriod,
+    MonthlyTotalRevenueResult,
+    PreviousMonthPeriod,
+    PreviousMonthToDatePeriod,
 )
 from app.agent.runtime import RuntimeContext
 from app.models.ledger import StoreDailyRecord
@@ -54,12 +61,18 @@ class BusinessEvidenceCollector:
         if request.metric != EvidenceMetric.MONTHLY_TOTAL_REVENUE:
             raise ValueError("Unsupported evidence metric")
         start, end = self._resolve_period(request.period, context)
+        comparison_period = (
+            self._resolve_period(request.comparison.period, context)
+            if request.comparison is not None
+            else None
+        )
         for attempt in range(2):
             try:
                 row = await self._read_snapshot(
                     context=context,
                     start=start,
                     end=end,
+                    comparison_period=comparison_period,
                 )
                 break
             except OperationalError as error:
@@ -69,22 +82,100 @@ class BusinessEvidenceCollector:
         daily_amount = int(row.daily_revenue)
         settlement_amount = int(row.confirmed_settlement)
         total = daily_amount + settlement_amount
+        current_result = MonthlyTotalRevenueResult(
+            daily_ledger_revenue=daily_amount,
+            confirmed_settlement_income=settlement_amount,
+            monthly_total_revenue=total,
+        )
         calendar_dates = (end - start).days + 1
         missing_dates = calendar_dates - int(row.recorded_dates)
-        warnings = (
-            [
-                f"所选期间有 {missing_dates} 个日期没有每日台账；"
-                "这不表示门店本应营业。"
-            ]
-            if missing_dates
-            else []
-        )
+        warnings = []
+        if missing_dates:
+            warnings.append(
+                f"所选期间有 {missing_dates} 个日期没有每日台账；这不表示门店本应营业。"
+            )
         summary = (
             f"{start.isoformat()} 至 {end.isoformat()} 的月度总收入为 {total} 欧元，"
             f"其中每日台账营业额 {daily_amount} 欧元，"
             f"已确认公司结算收入 {settlement_amount} 欧元。"
-            + "".join(warnings)
         )
+        comparison: EvidenceComparisonResult | None = None
+        if request.comparison is not None and comparison_period is not None:
+            comparison_start, comparison_end = comparison_period
+            comparison_days = (comparison_end - comparison_start).days + 1
+            equal_length = comparison_days == calendar_dates
+            has_comparison_data = bool(
+                row.comparison_recorded_dates or row.comparison_settlement_records
+            )
+            if not has_comparison_data:
+                comparison = EvidenceComparisonResult(
+                    status="no_data",
+                    period=EvidencePeriodResult(
+                        start=comparison_start,
+                        end=comparison_end,
+                    ),
+                    result=None,
+                    amount_difference=None,
+                    percentage_change=None,
+                    percentage_status="unavailable_no_data",
+                    equal_length=equal_length,
+                )
+                warnings.append(
+                    f"比较期间 {comparison_start.isoformat()} 至 "
+                    f"{comparison_end.isoformat()} 没有历史数据；仅描述当前期间。"
+                )
+            else:
+                comparison_daily = int(row.comparison_daily_revenue)
+                comparison_settlement = int(row.comparison_confirmed_settlement)
+                comparison_total = comparison_daily + comparison_settlement
+                amount_difference = total - comparison_total
+                percentage_change = None
+                percentage_status = "not_requested"
+                if request.comparison.include_percentage:
+                    if comparison_total == 0:
+                        percentage_status = "unavailable_zero_baseline"
+                        warnings.append("比较基准为 0 欧元，百分比不可用。")
+                    else:
+                        percentage_status = "available"
+                        percentage_change = round(
+                            amount_difference / comparison_total * 100,
+                            2,
+                        )
+                comparison = EvidenceComparisonResult(
+                    status="ok",
+                    period=EvidencePeriodResult(
+                        start=comparison_start,
+                        end=comparison_end,
+                    ),
+                    result=MonthlyTotalRevenueResult(
+                        daily_ledger_revenue=comparison_daily,
+                        confirmed_settlement_income=comparison_settlement,
+                        monthly_total_revenue=comparison_total,
+                    ),
+                    amount_difference=amount_difference,
+                    percentage_change=percentage_change,
+                    percentage_status=percentage_status,
+                    equal_length=equal_length,
+                )
+                summary += (
+                    f"比较期间 {comparison_start.isoformat()} 至 "
+                    f"{comparison_end.isoformat()} 的月度总收入为 "
+                    f"{comparison_total} 欧元，金额差为 {amount_difference} 欧元。"
+                )
+                if percentage_status == "available":
+                    summary += f"百分比变化为 {percentage_change:g}%。"
+                if not equal_length:
+                    if request.comparison.include_percentage:
+                        warnings.append(
+                            f"期间长度不同（{calendar_dates} 天与 "
+                            f"{comparison_days} 天）；百分比仅供参考。"
+                        )
+                    else:
+                        warnings.append(
+                            f"期间长度不同（{calendar_dates} 天与 "
+                            f"{comparison_days} 天）；默认仅提供金额差。"
+                        )
+        summary += "".join(warnings)
         return EvidenceBundle(
             status="ok",
             current_store={"id": context.store_id},
@@ -92,16 +183,12 @@ class BusinessEvidenceCollector:
             metric=EvidenceMetric.MONTHLY_TOTAL_REVENUE,
             unit="EUR",
             calculation_version="monthly_total_revenue.v1",
-            result={
-                "daily_ledger_revenue": daily_amount,
-                "confirmed_settlement_income": settlement_amount,
-                "monthly_total_revenue": total,
-            },
+            result=current_result,
             coverage={
                 "calendar_dates": calendar_dates,
                 "recorded_dates": int(row.recorded_dates),
             },
-            comparison=None,
+            comparison=comparison,
             warnings=warnings,
             truncated=False,
             summary=summary,
@@ -242,55 +329,95 @@ class BusinessEvidenceCollector:
         context: RuntimeContext,
         start: date,
         end: date,
+        comparison_period: tuple[date, date] | None,
     ):
         async with self._session_factory() as session:
-            daily_scope = (
-                StoreDailyRecord.store_id == context.store_id,
-                StoreDailyRecord.date >= start,
-                StoreDailyRecord.date <= end,
+            columns = self._period_columns(
+                context=context,
+                start=start,
+                end=end,
+                prefix="",
             )
-            daily_revenue = (
+            if comparison_period is not None:
+                comparison_start, comparison_end = comparison_period
+                columns.extend(
+                    self._period_columns(
+                        context=context,
+                        start=comparison_start,
+                        end=comparison_end,
+                        prefix="comparison_",
+                    )
+                )
+            row = (await session.execute(select(*columns))).one()
+        return row
+
+    @staticmethod
+    def _period_columns(
+        *,
+        context: RuntimeContext,
+        start: date,
+        end: date,
+        prefix: str,
+    ) -> list:
+        daily_scope = (
+            StoreDailyRecord.store_id == context.store_id,
+            StoreDailyRecord.date >= start,
+            StoreDailyRecord.date <= end,
+        )
+        settlement_scope = (
+            SettlementRecord.store_id == context.store_id,
+            SettlementRecord.status == "confirmed",
+            SettlementRecord.opening_month >= start.replace(day=1),
+            SettlementRecord.opening_month <= end.replace(day=1),
+        )
+        return [
+            (
                 select(func.coalesce(func.sum(StoreDailyRecord.daily_revenue), 0))
                 .where(*daily_scope)
                 .scalar_subquery()
-            )
-            recorded_dates = (
+                .label(f"{prefix}daily_revenue")
+            ),
+            (
+                select(func.coalesce(func.sum(SettlementRecord.amount), 0))
+                .where(*settlement_scope)
+                .scalar_subquery()
+                .label(f"{prefix}confirmed_settlement")
+            ),
+            (
                 select(func.count(distinct(StoreDailyRecord.date)))
                 .where(*daily_scope)
                 .scalar_subquery()
-            )
-            first_overlapping_month = start.replace(day=1)
-            last_overlapping_month = end.replace(day=1)
-            confirmed_settlement = (
-                select(func.coalesce(func.sum(SettlementRecord.amount), 0))
-                .where(
-                    SettlementRecord.store_id == context.store_id,
-                    SettlementRecord.status == "confirmed",
-                    SettlementRecord.opening_month >= first_overlapping_month,
-                    SettlementRecord.opening_month <= last_overlapping_month,
-                )
+                .label(f"{prefix}recorded_dates")
+            ),
+            (
+                select(func.count(SettlementRecord.id))
+                .where(*settlement_scope)
                 .scalar_subquery()
-            )
-            row = (
-                await session.execute(
-                    select(
-                        daily_revenue.label("daily_revenue"),
-                        confirmed_settlement.label("confirmed_settlement"),
-                        recorded_dates.label("recorded_dates"),
-                    )
-                )
-            ).one()
-        return row
+                .label(f"{prefix}settlement_records")
+            ),
+        ]
 
     def _resolve_period(
         self,
         period: object,
         context: RuntimeContext,
     ) -> tuple[date, date]:
+        today = self._now(ZoneInfo(context.store_timezone)).date()
         if isinstance(period, CalendarMonthPeriod):
             start = date(period.year, period.month, 1)
             return start, _month_end(start)
-        today = self._now(ZoneInfo(context.store_timezone)).date()
+        if isinstance(period, CalendarYearPeriod):
+            return date(period.year, 1, 1), date(period.year, 12, 31)
+        if isinstance(period, ExactDatePeriod):
+            return period.on, period.on
+        if isinstance(period, CustomDateRangePeriod):
+            return period.start, period.end
+        if isinstance(period, (PreviousMonthPeriod, PreviousMonthToDatePeriod)):
+            previous_month_end = date.fromordinal(today.replace(day=1).toordinal() - 1)
+            start = previous_month_end.replace(day=1)
+            if isinstance(period, PreviousMonthToDatePeriod):
+                return start, start.replace(day=min(today.day, previous_month_end.day))
+            return start, previous_month_end
         return today.replace(day=1), today
 
 
