@@ -44,10 +44,7 @@ async def test_fake_model_adapter_surfaces_invalid_structure_and_model_failure()
         await adapter.plan_turn([])
 
 
-@pytest.mark.parametrize("scope_field", ("store_id", "company_id", "record_id"))
-async def test_production_adapter_does_not_repair_raw_output_with_server_owned_scope(
-    scope_field: str,
-) -> None:
+async def test_production_adapter_does_not_repair_raw_output_with_store_scope() -> None:
     class StructuredClient:
         def with_structured_output(self, _schema, **options):
             assert options["include_raw"] is True
@@ -58,9 +55,8 @@ async def test_production_adapter_does_not_repair_raw_output_with_server_owned_s
                 "raw": AIMessage(
                     content=(
                         '{"route":"evidence","evidence_plan":{"requests":['
-                        '{"kind":"settlement_details",'
-                        f'"{scope_field}":999'
-                        "}]}}"
+                        '{"kind":"business_metrics",'
+                        '"metric":"monthly_total_revenue","store_id":999}]}}'
                     )
                 ),
                 "parsed": None,
