@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.identity import Store, StoreMember, User
+from app.services.owner import is_administrator
 
 
 Capability = Literal[
@@ -32,7 +33,8 @@ ROLE_CAPABILITIES: dict[str, frozenset[Capability]] = {
 
 
 def has_capability(user: User, capability: Capability) -> bool:
-    return capability in ROLE_CAPABILITIES.get(user.role, frozenset())
+    role = "admin" if is_administrator(user) else user.role
+    return capability in ROLE_CAPABILITIES.get(role, frozenset())
 
 
 async def require_fresh_user(
@@ -62,7 +64,7 @@ async def require_fresh_store_access(
     store = await session.get(Store, store_id, populate_existing=True)
     if store is None or not store.is_active:
         raise HTTPException(404, "Store not found")
-    if user.role != "admin":
+    if not is_administrator(user):
         membership = await session.scalar(
             select(StoreMember.id).where(
                 StoreMember.store_id == store_id,
@@ -94,7 +96,7 @@ async def require_company_settlement_access(
 
 async def list_accessible_stores(session: AsyncSession, user: User) -> list[Store]:
     query = select(Store).order_by(Store.name)
-    if user.role != "admin":
+    if not is_administrator(user):
         query = query.where(Store.is_active.is_(True)).join(StoreMember).where(
             StoreMember.user_id == user.id
         )

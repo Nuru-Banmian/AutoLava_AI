@@ -67,6 +67,13 @@ def test_compose_contains_exactly_api_and_web_with_persistent_sqlite_data() -> N
         "AUTOLAVA_COOKIE_SECURE": "${AUTOLAVA_COOKIE_SECURE:-true}",
         "AUTOLAVA_BOOTSTRAP_USERNAME": "${AUTOLAVA_BOOTSTRAP_USERNAME}",
         "AUTOLAVA_BOOTSTRAP_PASSWORD": "${AUTOLAVA_BOOTSTRAP_PASSWORD}",
+        "AUTOLAVA_MODEL_ADAPTER": "${AUTOLAVA_MODEL_ADAPTER:-fake}",
+        "AUTOLAVA_MODEL_BASE_URL": "${AUTOLAVA_MODEL_BASE_URL:-}",
+        "AUTOLAVA_MODEL_ID": "${AUTOLAVA_MODEL_ID:-}",
+        "AUTOLAVA_MODEL_STRUCTURED_OUTPUT_METHOD": (
+            "${AUTOLAVA_MODEL_STRUCTURED_OUTPUT_METHOD:-json_schema}"
+        ),
+        "AUTOLAVA_MODEL_API_KEY": "${AUTOLAVA_MODEL_API_KEY:-}",
     }
     assert api["volumes"] == ["autolava_data:/data"]
     assert "ports" not in api
@@ -188,16 +195,19 @@ def test_domain_https_template_uses_tls_and_replaces_forwarded_client_ip() -> No
     assert "proxy_pass http://127.0.0.1:8080;" in config
 
 
-def test_ci_uses_disposable_sqlite_and_prebuilt_release_images() -> None:
+def test_ci_runs_backend_and_frontend_checks_without_containers() -> None:
     ci_text = read(".github/workflows/ci.yml")
     workflow = yaml.safe_load(ci_text)
-    backend = workflow["jobs"]["backend"]
-    containers = workflow["jobs"]["containers"]
+    jobs = workflow["jobs"]
+    assert set(jobs) == {"backend", "frontend"}
+
+    backend = jobs["backend"]
+    frontend = jobs["frontend"]
     backend_commands = [step["run"] for step in backend["steps"] if "run" in step]
-    container_commands = [step["run"] for step in containers["steps"] if "run" in step]
+    frontend_commands = [step["run"] for step in frontend["steps"] if "run" in step]
 
     assert "services" not in backend
-    assert "services" not in containers
+    assert "services" not in frontend
     assert backend["env"]["AUTOLAVA_DATABASE_PATH"] == "/tmp/autolava-ci.sqlite3"
     assert any("aiosqlite" in command for command in backend_commands)
     assert any("alembic upgrade head" in command for command in backend_commands)
@@ -210,52 +220,23 @@ def test_ci_uses_disposable_sqlite_and_prebuilt_release_images() -> None:
         "npm run build",
         "playwright install --with-deps chromium",
         "playwright test",
-        "docker compose config",
-        "docker compose up -d --no-build",
-        "frontend/Dockerfile.prebuilt",
     ):
-        assert contract in ci_text
-    assert any("docker build" in command and "autolava-api:latest" in command for command in container_commands)
-    assert any("docker build" in command and "autolava-web:latest" in command for command in container_commands)
-    assert any("nginx -t" in command for command in container_commands)
-    assert any("curl --fail" in command and "/health" in command for command in container_commands)
-    cleanup = containers["steps"][-1]
-    assert cleanup["if"] == "always()"
-    assert "docker compose logs --no-color || true" in cleanup["run"]
-    assert "docker compose down --volumes --remove-orphans" in cleanup["run"]
+        assert any(contract in command for command in frontend_commands)
 
 
-def test_ci_verifies_persistent_login_and_manual_online_backup() -> None:
-    workflow = yaml.safe_load(read(".github/workflows/ci.yml"))
-    steps = {
-        step.get("name"): step
-        for step in workflow["jobs"]["containers"]["steps"]
-        if step.get("name")
-    }
+def test_ci_does_not_execute_container_release_or_runtime_checks() -> None:
+    ci_text = read(".github/workflows/ci.yml")
 
-    persistence = steps["Bootstrap, login, and verify SQLite persistence"]
-    persistence_script = persistence["run"]
-    assert "python -m app.scripts.create_admin" in persistence_script
-    assert "jq -cn" in persistence_script
-    assert "--arg username" in persistence_script
-    assert "--arg password" in persistence_script
-    assert "/api/auth/login" in persistence_script
-    assert "docker compose up -d --no-build --force-recreate autolava-api" in persistence_script
-    assert "docker compose restart autolava-web" in persistence_script
-    assert persistence_script.count("login") >= 3
-    assert "echo $AUTOLAVA_BOOTSTRAP_PASSWORD" not in persistence_script
-    assert "set -x" not in persistence_script
-
-    backup = steps["Verify manual SQLite online backup"]["run"]
-    assert "from app.services.sqlite_backup import backup_sqlite, has_valid_backup" in backup
-    assert "backup_sqlite(settings.database_path, settings.backup_directory, today)" in backup
-    assert 'f"autolava-{today:%Y%m%d}.sqlite3"' in backup
-    assert "expected.is_file()" in backup
-    assert "has_valid_backup(settings.backup_directory, today)" in backup
-
-    cleanup = steps["Container diagnostics and cleanup"]
-    assert cleanup["if"] == "always()"
-    assert "docker compose down --volumes --remove-orphans" in cleanup["run"]
+    for removed_contract in (
+        "containers:",
+        "docker build",
+        "docker compose",
+        "actions/upload-artifact",
+        "Bootstrap, login, and verify SQLite persistence",
+        "Verify manual SQLite online backup",
+        "Container diagnostics and cleanup",
+    ):
+        assert removed_contract not in ci_text
 
 
 def test_environment_example_and_readme_document_sqlite_release_operations() -> None:
@@ -267,8 +248,14 @@ def test_environment_example_and_readme_document_sqlite_release_operations() -> 
         "AUTOLAVA_COOKIE_SECURE",
         "AUTOLAVA_BOOTSTRAP_USERNAME",
         "AUTOLAVA_BOOTSTRAP_PASSWORD",
+        "AUTOLAVA_MODEL_ADAPTER",
+        "AUTOLAVA_MODEL_BASE_URL",
+        "AUTOLAVA_MODEL_ID",
+        "AUTOLAVA_MODEL_STRUCTURED_OUTPUT_METHOD",
+        "AUTOLAVA_MODEL_API_KEY",
     ):
         assert f"{key}=" in environment
+    assert "AUTOLAVA_MODEL_API_KEY=\n" in environment
     assert "AUTOLAVA_DATABASE_PATH=" not in environment
     assert "AUTOLAVA_BACKUP_DIRECTORY=" not in environment
     assert "development-only-secret" not in environment

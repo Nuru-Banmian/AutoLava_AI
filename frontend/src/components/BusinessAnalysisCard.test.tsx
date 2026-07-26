@@ -55,6 +55,8 @@ describe("BusinessAnalysisCard", () => {
     expect(screen.queryByLabelText("分析开始日期")).not.toBeInTheDocument();
     expect(screen.getByText("比较区间：2026-06-01 至 2026-06-17")).toBeInTheDocument();
     expect(screen.getByText(/按日/)).toBeInTheDocument();
+    expect(screen.getByText("经营日")).toBeInTheDocument();
+    expect(screen.getByText("经营日均台账营业额")).toBeInTheDocument();
     expect(screen.getByText("代收款")).toBeInTheDocument();
   });
 
