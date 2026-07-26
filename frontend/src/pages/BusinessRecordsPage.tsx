@@ -20,6 +20,10 @@ import { downloadBusinessRecords } from "@/lib/business-record-export";
 import { databaseKey, loadBusinessRecords, storeLocalToday } from "@/lib/user-api";
 import { useStore } from "@/stores/StoreProvider";
 import { restoredBusinessRecordsState, type BusinessRecordsViewState } from "@/navigation/business-records-return";
+import {
+  businessRecordsRangeFromAction,
+  validatedBusinessRecordsAction,
+} from "@/navigation/agent-actions";
 
 const PAGE_SIZE = 15 as const;
 const FETCH_SIZE = 200 as const;
@@ -32,9 +36,23 @@ export function BusinessRecordsPage() {
   const today = selected ? storeLocalToday(selected) : "1970-01-01";
   const isAdmin = user?.role === "admin";
   const restored = useRef(restoredBusinessRecordsState(location.state, selected?.id)).current;
-  const hasRestoreEnvelope = Boolean(location.state && typeof location.state === "object" && "restoreBusinessRecords" in location.state);
-  const [recordMode, setRecordMode] = useState<RecordRangeMode>(restored?.recordMode ?? "month");
-  const [range, setRange] = useState<DateRange>(() => restored?.range ?? monthRange(today.slice(0, 7)));
+  const action = useRef(validatedBusinessRecordsAction(
+    location.state && typeof location.state === "object"
+      ? (location.state as Record<string, unknown>).agentBusinessRecordsAction
+      : null,
+    today.slice(0, 7),
+  )).current;
+  const actionRange = action ? businessRecordsRangeFromAction(action, today) : null;
+  const hasNavigationEnvelope = Boolean(
+    location.state
+    && typeof location.state === "object"
+    && (
+      "restoreBusinessRecords" in location.state
+      || "agentBusinessRecordsAction" in location.state
+    )
+  );
+  const [recordMode, setRecordMode] = useState<RecordRangeMode>(actionRange ? "custom" : (restored?.recordMode ?? "month"));
+  const [range, setRange] = useState<DateRange>(() => actionRange ?? restored?.range ?? monthRange(today.slice(0, 7)));
   const [page, setPage] = useState(restored?.page ?? 1);
   const [selectedDate, setSelectedDate] = useState<string | null>(restored?.selectedDate ?? null);
   const [mobileRecord, setMobileRecord] = useState<RecordDetail | null>(null);
@@ -74,10 +92,10 @@ export function BusinessRecordsPage() {
   }, [selected?.id, today]);
 
   useEffect(() => {
-    if (!selected || !hasRestoreEnvelope || restoreConsumed.current) return;
+    if (!selected || !hasNavigationEnvelope || restoreConsumed.current) return;
     restoreConsumed.current = true;
     navigate(location.pathname, { replace: true, state: null });
-  }, [hasRestoreEnvelope, location.pathname, navigate, selected]);
+  }, [hasNavigationEnvelope, location.pathname, navigate, selected]);
 
   const recordQueryString = useMemo(() => new URLSearchParams({
     start: range.start,

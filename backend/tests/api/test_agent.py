@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.business_evidence import BusinessEvidenceCollector
 from app.agent.conversation import AgentRunResult, ConversationState
-from app.agent.contracts import ModelMessage, TurnResult
+from app.agent.contracts import ModelMessage, OpenBusinessRecordsAction, TurnResult
 from app.agent.model import FakeModelAdapter
 from app.agent.runtime import RuntimeContext
 from app.agent.service import AgentService
@@ -1426,6 +1426,47 @@ async def test_current_conversation_restores_full_messages_and_structured_state(
         "pending_clarifications": [],
     }
     assert payload["updated_at"] is not None
+
+
+async def test_validated_business_records_action_is_persisted_without_scope_or_url(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+    agent_service: RecordingAgentService,
+) -> None:
+    await user_factory(username="admin", password="secret", role="admin")
+    store = await store_factory(name="Roma")
+    store_id = store.id
+    db_session.add(AgentSettings(id=1, enabled=True))
+    await db_session.commit()
+    await _login(client, "admin")
+    agent_service.result = TurnResult(
+        route="answer",
+        content="可查看所选月份的营业记录。",
+        action=OpenBusinessRecordsAction(
+            start_month="2025-01",
+            end_month="2025-12",
+        ),
+    )
+
+    sent = await client.post(
+        f"/api/agent/stores/{store_id}/turn",
+        json={"question": "查看去年的全部每日记录"},
+    )
+    restored = await client.get(f"/api/agent/stores/{store_id}/conversation")
+
+    assert sent.status_code == 200
+    action = sent.json()["conversation"]["messages"][-1]["action"]
+    assert action == {
+        "type": "open_business_records",
+        "start_month": "2025-01",
+        "end_month": "2025-12",
+    }
+    assert restored.json()["messages"][-1]["action"] == action
+    assert "url" not in action
+    assert "store_id" not in action
+    assert "user_id" not in action
 
 
 async def test_current_conversations_are_isolated_by_user_and_store(

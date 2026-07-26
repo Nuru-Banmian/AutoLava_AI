@@ -69,6 +69,11 @@ def test_blank_sqlite_file_migrates_to_final_schema(tmp_path: Path) -> None:
             if is_unique
         }
         assert conversation_indexes
+        message_columns = {
+            row[1]: row
+            for row in connection.execute("PRAGMA table_info('agent_messages')")
+        }
+        assert message_columns["action"][3] == 0
 
         index_names = {
             name
@@ -269,7 +274,7 @@ def test_applied_revision_0004_upgrades_without_losing_existing_data(tmp_path: P
 
     with closing(sqlite3.connect(database_path)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0007",
+            "0008",
         )
         assert connection.execute(
             "SELECT enabled FROM agent_settings WHERE id = 1"
