@@ -1,4 +1,5 @@
 from datetime import date
+from typing import Literal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +26,8 @@ async def _record(
     record_date: date = date(2026, 7, 12),
     revenue: int = 125,
     wash_count: int | None = None,
+    is_open: Literal["营业", "休息", "提前休息"] = "营业",
+    category_amount: int = 25,
 ) -> None:
     user = await db_session.scalar(select(User).where(User.username == "authenticated"))
     assert user is not None
@@ -33,7 +36,7 @@ async def _record(
         date=record_date,
         daily_revenue=revenue,
         wash_count=wash_count,
-        is_open="营业",
+        is_open=is_open,
         weather="晴",
         weather_auto=None,
         weather_code=None,
@@ -55,7 +58,7 @@ async def _record(
             category_name=category.name,
             include_in_total=category.include_in_total,
             sort_order=category.sort_order,
-            amount=25,
+            amount=category_amount,
         )
     )
     await db_session.flush()
@@ -475,3 +478,77 @@ async def test_charts_complete_multi_month_range_sums_each_month_total(
     assert payload["income_summary"]["total_income"] == 625
     assert payload["kpis"]["total_revenue"] == 625
     assert [row["monthly_total_income"] for row in payload["monthly"]] == [425, 200]
+
+
+async def test_charts_uses_the_same_operating_days_for_current_and_comparison_ranges(
+    auth_client, db_session, store_factory
+) -> None:
+    store = await _assigned_store(auth_client, db_session, store_factory)
+    category = IncomeCategory(
+        store_id=store.id, name="Cash", include_in_total=True, sort_order=1
+    )
+    db_session.add(category)
+    await db_session.flush()
+    for record_date, revenue, is_open in [
+        (date(2026, 7, 12), 150, "营业"),
+        (date(2026, 7, 13), 50, "提前休息"),
+        (date(2026, 7, 14), 0, "休息"),
+        (date(2026, 7, 15), 0, "营业"),
+        (date(2026, 6, 12), 90, "营业"),
+        (date(2026, 6, 13), 0, "提前休息"),
+        (date(2026, 6, 14), 0, "休息"),
+    ]:
+        await _record(
+            db_session,
+            store,
+            category,
+            record_date=record_date,
+            revenue=revenue,
+            is_open=is_open,
+            category_amount=25 if revenue > 0 else 0,
+        )
+
+    response = await auth_client.get(
+        f"/api/charts/{store.id}?start=2026-07-01&end=2026-07-31"
+        "&compare_start=2026-06-01&compare_end=2026-06-30"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["kpis"]["open_days"] == 3
+    assert payload["kpis"]["average_revenue"] == 67
+    assert payload["kpis"]["total_revenue"] == 200
+    assert payload["kpis"]["record_days"] == 4
+    assert payload["kpis"]["primary_categories"] == [
+        {"category_id": category.id, "category_name": "Cash", "amount": 50}
+    ]
+    assert payload["kpis"]["total_wash_count"] is None
+    assert payload["kpis"]["average_ticket"] is None
+    assert payload["income_summary"]["daily_ledger_revenue"] == 200
+    assert payload["categories"] == [
+        {"category_id": category.id, "category_name": "Cash", "amount": 50}
+    ]
+    assert payload["classified_included_total"] == 50
+    assert payload["monthly"] == [
+        {
+            "month": "2026-07",
+            "revenue": 200,
+            "daily_ledger_revenue": 200,
+            "confirmed_settlement_income": 0,
+            "monthly_total_income": 200,
+        }
+    ]
+    assert payload["weather"] == [{"weather": "晴", "average_revenue": 50}]
+    assert payload["weekday"] == [
+        {"weekday": 0, "average_revenue": 50},
+        {"weekday": 1, "average_revenue": 0},
+        {"weekday": 2, "average_revenue": 0},
+        {"weekday": 6, "average_revenue": 150},
+    ]
+    assert payload["comparison_kpis"] == {
+        "start": "2026-06-01",
+        "end": "2026-06-30",
+        "total_revenue": 90,
+        "open_days": 2,
+        "average_revenue": 45,
+    }
