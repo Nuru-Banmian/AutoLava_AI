@@ -223,8 +223,7 @@ class AgentTurnWorkflow:
                 "result": TurnResult(route="clarify", content=str(error)),
                 "evidence_calls": state["evidence_calls"] + 1,
             }
-        except Exception as error:
-            print("DEBUG", repr(error))
+        except Exception:
             return {
                 "result": _safe_failure(),
                 "evidence_calls": state["evidence_calls"] + 1,

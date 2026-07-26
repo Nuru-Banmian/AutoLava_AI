@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import case, distinct, exists, func, literal, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import aliased, selectinload
 
 from app.agent.contracts import (
     CalendarMonthPeriod,
@@ -1568,11 +1568,12 @@ def _daily_filter_conditions(
         return ()
     conditions: list[object] = []
     if category_ids:
+        category_item = aliased(DailyIncomeItem)
         conditions.append(
             exists(
                 select(1).where(
-                    DailyIncomeItem.record_id == StoreDailyRecord.id,
-                    DailyIncomeItem.category_id.in_(category_ids),
+                    category_item.record_id == StoreDailyRecord.id,
+                    category_item.category_id.in_(category_ids),
                 )
             )
         )

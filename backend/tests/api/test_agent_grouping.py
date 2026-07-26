@@ -267,7 +267,6 @@ async def test_agent_http_groups_filters_and_daily_extremes_are_bounded(
         f"/api/agent/stores/{store_id}/turn",
         json={"question": "本月 Carta 在晴或多云、星期三或星期五、营业或提前休息的营业额。"},
     )
-    print(filtered.json())
     assert filtered.status_code == 200
     assert filtered.json()["conversation"]["state"]["filters"] == {
         "income_categories": ["cArTa"],
