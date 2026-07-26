@@ -2,7 +2,11 @@ from typing import Any
 
 import pytest
 
-from app.agent.contracts import EvidenceBundle, ModelMessage
+from app.agent.contracts import (
+    EvidenceBundle,
+    ModelMessage,
+    RevenueAnalysisEvidenceBundle,
+)
 from app.agent.model import (
     FakeModelAdapter,
     ModelAdapterError,
@@ -40,6 +44,71 @@ class RecordingEvidenceCollector:
             warnings=[],
             summary="本月月度总收入为 100 欧元。",
         )
+
+
+class SupplementalEvidenceCollector(RecordingEvidenceCollector):
+    async def collect(self, plan: Any, context: RuntimeContext):
+        if self.calls == 0:
+            self.calls = 1
+            return RevenueAnalysisEvidenceBundle.model_validate(
+                {
+                    "status": "ok",
+                    "current_store": {"id": context.store_id},
+                    "period": {"start": "2026-07-01", "end": "2026-07-26"},
+                    "comparison_period": {
+                        "start": "2026-06-01",
+                        "end": "2026-06-30",
+                    },
+                    "result": {
+                        "current": {
+                            "period": {
+                                "start": "2026-07-01",
+                                "end": "2026-07-26",
+                            },
+                            "daily_ledger_revenue": 100,
+                            "confirmed_settlement_income": 0,
+                            "total_revenue": 100,
+                            "operating_days": 1,
+                            "operating_day_average_ledger_revenue": 100,
+                        },
+                        "comparison": {
+                            "period": {
+                                "start": "2026-06-01",
+                                "end": "2026-06-30",
+                            },
+                            "daily_ledger_revenue": 50,
+                            "confirmed_settlement_income": 0,
+                            "total_revenue": 50,
+                            "operating_days": 0,
+                            "operating_day_average_ledger_revenue": None,
+                        },
+                        "total_revenue_change": 50,
+                        "daily_ledger_revenue_change": 50,
+                        "confirmed_settlement_income_change": 0,
+                        "daily_ledger_decomposition": {
+                            "status": "unavailable",
+                            "unavailable_reasons": ["比较期间没有经营日"],
+                        },
+                        "percentage_change": None,
+                        "percentage_status": "not_requested",
+                    },
+                    "evidence_sufficiency": {
+                        "critical_data_complete": True,
+                        "largest_verified_contribution": None,
+                        "largest_absolute_share": None,
+                        "major_driver_threshold": "0.6",
+                        "allows_mainly_from": False,
+                    },
+                    "findings": {
+                        "verified": ["总收入变化已对账。"],
+                        "correlated_phenomena": [],
+                        "unexplained_amount": 50,
+                        "unexplained": ["50 欧元尚未解释。"],
+                    },
+                    "summary": "经营分析仍有 50 欧元尚未解释。",
+                }
+            )
+        return await super().collect(plan, context)
 
 
 CONTEXT = RuntimeContext(
@@ -102,6 +171,39 @@ async def test_workflow_collects_once_then_generates_one_complete_answer() -> No
     assert model.plan_calls == 1
     assert model.answer_calls == 1
     assert model.total_calls == 2
+
+
+async def test_workflow_allows_one_targeted_supplement_only_when_amount_is_unexplained() -> None:
+    model = FakeModelAdapter(
+        plans=[
+            {
+                "route": "evidence",
+                "evidence_plan": {
+                    "requests": [{"kind": "revenue_analysis"}],
+                },
+                "supplemental_evidence_plan": {
+                    "requests": [
+                        {
+                            "kind": "business_metrics",
+                            "metric": "income_category_amount",
+                        }
+                    ],
+                },
+            }
+        ],
+        answers=["ignored in favor of backend summary"],
+    )
+    collector = SupplementalEvidenceCollector()
+
+    result = await AgentTurnWorkflow(model=model, evidence_collector=collector).run(
+        [ModelMessage(role="user", content="为什么本月收入变化？")],
+        CONTEXT,
+    )
+
+    assert collector.calls == 2
+    assert isinstance(result.evidence, RevenueAnalysisEvidenceBundle)
+    assert result.evidence.supplemental_evidence is not None
+    assert "补充证据：" in result.turn.content
 
 
 async def test_workflow_converts_model_failure_to_a_sanitized_safe_failure() -> None:

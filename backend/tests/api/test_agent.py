@@ -466,6 +466,109 @@ async def test_monthly_total_revenue_http_gold_path_persists_raw_evidence_safely
     assert model.answer_calls == 1
 
 
+async def test_revenue_analysis_http_path_uses_one_batch_and_persists_backend_findings(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+) -> None:
+    user = await user_factory(
+        username="analysis-admin",
+        password="secret",
+        role="admin",
+    )
+    store = await store_factory(name="Analysis HTTP", timezone="Europe/Rome")
+    db_session.add(AgentSettings(id=1, enabled=True))
+    db_session.add_all(
+        [
+            StoreDailyRecord(
+                store_id=store.id,
+                date=date(2026, 6, 1),
+                daily_revenue=100,
+                income_mode="legacy_total",
+                wash_count=1,
+                is_open="营业",
+                weather="晴",
+                weather_auto=None,
+                weather_code=None,
+                temperature_max=None,
+                temperature_min=None,
+                precipitation=None,
+                activity=None,
+                weather_edited=False,
+                scanned=False,
+                created_by=user.id,
+                updated_by=user.id,
+            ),
+            StoreDailyRecord(
+                store_id=store.id,
+                date=date(2026, 7, 1),
+                daily_revenue=160,
+                income_mode="legacy_total",
+                wash_count=2,
+                is_open="营业",
+                weather="晴",
+                weather_auto=None,
+                weather_code=None,
+                temperature_max=None,
+                temperature_min=None,
+                precipitation=None,
+                activity=None,
+                weather_edited=False,
+                scanned=False,
+                created_by=user.id,
+                updated_by=user.id,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    model = FakeModelAdapter(
+        plans=[
+            {
+                "route": "evidence",
+                "evidence_plan": {
+                    "requests": [{"kind": "revenue_analysis"}],
+                },
+            }
+        ],
+        answers=["模型不能覆盖后端结论"],
+    )
+    client._transport.app.state.agent_service = AgentService(
+        AgentTurnWorkflow(
+            model=model,
+            evidence_collector=BusinessEvidenceCollector(
+                session_factory,
+                now=lambda _timezone: datetime(2026, 7, 1, 12, 0),
+            ),
+        )
+    )
+    await _login(client, "analysis-admin")
+
+    response = await client.post(
+        f"/api/agent/stores/{store.id}/turn",
+        json={"question": "为什么本月收入比上月高？"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["route"] == "answer"
+    assert "已验证：" in payload["content"]
+    assert "相关现象：" in payload["content"]
+    assert "尚未解释：" in payload["content"]
+    assert payload["conversation"]["state"]["metrics"] == ["经营分析"]
+    assert payload["conversation"]["state"]["comparison"]["label"] == "完整上月"
+    evidence_rows = list(await db_session.scalars(select(AgentEvidence)))
+    assert len(evidence_rows) == 1
+    assert evidence_rows[0].payload["calculation_version"] == "revenue_analysis.v1"
+    assert model.plan_calls == 1
+    assert model.answer_calls == 1
+
+
 @pytest.mark.parametrize(
     ("metric", "question", "unit", "version", "expected_result"),
     (
