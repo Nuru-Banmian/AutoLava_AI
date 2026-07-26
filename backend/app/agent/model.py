@@ -1,4 +1,5 @@
 from collections.abc import Iterable, Sequence
+import json
 from typing import Any, Literal, Protocol
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
@@ -10,6 +11,14 @@ from app.agent.contracts import EvidenceBundle, ModelMessage, TurnPlan
 
 class ModelAdapterError(RuntimeError):
     """A provider-neutral model failure safe for orchestration decisions."""
+
+
+class RepairableModelPlanError(ModelAdapterError):
+    """A format, enum, or structural model-plan error eligible for one repair."""
+
+
+class UnsafeModelPlanError(ModelAdapterError):
+    """A model-plan error involving server-owned scope or query capabilities."""
 
 
 class ModelAdapter(Protocol):
@@ -53,12 +62,32 @@ class OpenAICompatibleModelAdapter:
         self._planner = self._client.with_structured_output(
             TurnPlan,
             method=profile.structured_output_method,
+            include_raw=True,
         )
 
     async def plan_turn(self, messages: Sequence[ModelMessage]) -> TurnPlan:
         try:
             result = await self._planner.ainvoke(_to_langchain_messages(messages))
-            return result if isinstance(result, TurnPlan) else TurnPlan.model_validate(result)
+            if isinstance(result, TurnPlan):
+                return result
+            if isinstance(result, dict) and {"parsed", "parsing_error"} <= result.keys():
+                parsed = result["parsed"]
+                if isinstance(parsed, TurnPlan):
+                    return parsed
+                if parsed is not None:
+                    try:
+                        return TurnPlan.model_validate(parsed)
+                    except ValidationError:
+                        raise _plan_validation_error(parsed) from None
+                raise _plan_validation_error(_raw_model_payload(result.get("raw")))
+            try:
+                return TurnPlan.model_validate(result)
+            except ValidationError:
+                raise _plan_validation_error(result) from None
+        except (RepairableModelPlanError, UnsafeModelPlanError):
+            raise
+        except ValidationError:
+            raise RepairableModelPlanError("invalid structured model output") from None
         except Exception as error:
             raise ModelAdapterError("model planning failed") from error
 
@@ -117,7 +146,7 @@ class FakeModelAdapter:
         try:
             return scripted if isinstance(scripted, TurnPlan) else TurnPlan.model_validate(scripted)
         except ValidationError:
-            raise ModelAdapterError("invalid structured model output") from None
+            raise _plan_validation_error(scripted) from None
 
     async def answer_turn(
         self,
@@ -138,6 +167,55 @@ def _pop_scripted(items: list[Any]) -> Any:
     if not items:
         raise ModelAdapterError("fake model response queue exhausted")
     return items.pop(0)
+
+
+_SERVER_OWNED_OR_QUERY_FIELDS = {
+    "sql",
+    "query",
+    "table",
+    "table_name",
+    "field",
+    "field_name",
+    "column",
+    "columns",
+    "expression",
+    "where",
+    "url",
+    "uri",
+    "store_id",
+    "user_id",
+    "role",
+    "timezone",
+}
+
+
+def _plan_validation_error(payload: object) -> ModelAdapterError:
+    if _contains_forbidden_key(payload):
+        return UnsafeModelPlanError("unsafe structured model output")
+    return RepairableModelPlanError("invalid structured model output")
+
+
+def _contains_forbidden_key(value: object) -> bool:
+    if isinstance(value, dict):
+        return any(
+            key in _SERVER_OWNED_OR_QUERY_FIELDS or _contains_forbidden_key(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(_contains_forbidden_key(item) for item in value)
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except (TypeError, ValueError):
+            return False
+        return _contains_forbidden_key(decoded)
+    return False
+
+
+def _raw_model_payload(raw: object) -> object:
+    if isinstance(raw, BaseModel):
+        return raw.model_dump(mode="json")
+    return raw
 
 
 def _to_langchain_messages(messages: Sequence[ModelMessage]) -> list[BaseMessage]:

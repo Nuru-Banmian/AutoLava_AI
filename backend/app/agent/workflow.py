@@ -10,20 +10,32 @@ from app.agent.contracts import (
     TurnPlan,
     TurnResult,
     TurnRoute,
+    WorkflowResult,
 )
-from app.agent.model import ModelAdapter
+from app.agent.model import ModelAdapter, RepairableModelPlanError
+from app.agent.runtime import RuntimeContext
 
 SAFE_FAILURE_MESSAGE = "模型服务暂时不可用，请稍后重试。"
-MAX_MODEL_CALLS = 2
+PLAN_REPAIR_FEEDBACK = (
+    "The previous TurnPlan had a format, enum, or structural error. "
+    "Return one corrected TurnPlan matching the schema. "
+    "Do not add identity, store scope, timezone, SQL, schema, URL, or role fields."
+)
+MAX_MODEL_CALLS = 3
 MAX_EVIDENCE_CALLS = 1
 
 
 class EvidenceCollector(Protocol):
-    async def collect(self, plan: EvidencePlan) -> EvidenceBundle: ...
+    async def collect(
+        self,
+        plan: EvidencePlan,
+        context: RuntimeContext,
+    ) -> EvidenceBundle: ...
 
 
 class TurnState(TypedDict):
     messages: Sequence[ModelMessage]
+    context: RuntimeContext
     plan: TurnPlan | None
     evidence: EvidenceBundle | None
     result: TurnResult | None
@@ -57,9 +69,14 @@ class AgentTurnWorkflow:
         graph.add_edge("answer", END)
         self._graph = graph.compile()
 
-    async def run(self, messages: Sequence[ModelMessage]) -> TurnResult:
+    async def run(
+        self,
+        messages: Sequence[ModelMessage],
+        context: RuntimeContext,
+    ) -> WorkflowResult:
         state: TurnState = {
             "messages": messages,
+            "context": context,
             "plan": None,
             "evidence": None,
             "result": None,
@@ -69,17 +86,33 @@ class AgentTurnWorkflow:
         final = await self._graph.ainvoke(state)
         result = final["result"]
         if result is None:
-            return _safe_failure()
-        return result
+            return WorkflowResult(turn=_safe_failure())
+        return WorkflowResult(turn=result, evidence=final["evidence"])
 
     async def _plan(self, state: TurnState) -> dict:
         if state["model_calls"] >= MAX_MODEL_CALLS:
             return {"plan": _safe_failure_plan(), "model_calls": state["model_calls"]}
         try:
             plan = await self.model.plan_turn(state["messages"])
+            calls = state["model_calls"] + 1
+        except RepairableModelPlanError:
+            calls = state["model_calls"] + 1
+            if calls >= MAX_MODEL_CALLS:
+                return {"plan": _safe_failure_plan(), "model_calls": calls}
+            try:
+                plan = await self.model.plan_turn(
+                    [
+                        *state["messages"],
+                        ModelMessage(role="system", content=PLAN_REPAIR_FEEDBACK),
+                    ]
+                )
+            except Exception:
+                plan = _safe_failure_plan()
+            calls += 1
         except Exception:
             plan = _safe_failure_plan()
-        return {"plan": plan, "model_calls": state["model_calls"] + 1}
+            calls = state["model_calls"] + 1
+        return {"plan": plan, "model_calls": calls}
 
     @staticmethod
     def _route_plan(state: TurnState) -> str:
@@ -109,7 +142,10 @@ class AgentTurnWorkflow:
                 "evidence_calls": state["evidence_calls"],
             }
         try:
-            evidence = await self.evidence_collector.collect(plan.evidence_plan)
+            evidence = await self.evidence_collector.collect(
+                plan.evidence_plan,
+                state["context"],
+            )
         except Exception:
             return {
                 "result": _safe_failure(),
@@ -135,7 +171,10 @@ class AgentTurnWorkflow:
                 "model_calls": state["model_calls"] + 1,
             }
         return {
-            "result": TurnResult(route="answer", content=answer),
+            "result": TurnResult(
+                route="answer",
+                content=_validated_readable_answer(answer, state["evidence"]),
+            ),
             "model_calls": state["model_calls"] + 1,
         }
 
@@ -146,3 +185,7 @@ def _safe_failure_plan() -> TurnPlan:
 
 def _safe_failure() -> TurnResult:
     return TurnResult(route="safe_failure", content=SAFE_FAILURE_MESSAGE)
+
+
+def _validated_readable_answer(answer: str, evidence: EvidenceBundle) -> str:
+    return answer if answer.strip() == evidence.summary else evidence.summary

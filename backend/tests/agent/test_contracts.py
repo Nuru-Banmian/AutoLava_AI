@@ -13,7 +13,10 @@ from app.agent.contracts import EvidencePlan, EvidenceRequest, TurnPlan
             "route": "evidence",
             "evidence_plan": {
                 "requests": [
-                    {"kind": "business_metrics"}
+                    {
+                        "kind": "business_metrics",
+                        "metric": "monthly_total_revenue",
+                    }
                 ]
             },
         },
@@ -37,6 +40,7 @@ def test_turn_plan_accepts_each_closed_route(plan: dict[str, object]) -> None:
                 "requests": [
                     {
                         "kind": "business_metrics",
+                        "metric": "monthly_total_revenue",
                         "question": "select * from users",
                     }
                 ]
@@ -52,7 +56,73 @@ def test_turn_plan_rejects_unknown_fields_illegal_routes_and_wrong_shapes(
 
 
 def test_evidence_plan_has_a_bounded_request_count() -> None:
-    request = EvidenceRequest(kind="business_metrics")
+    request = EvidenceRequest(
+        kind="business_metrics",
+        metric="monthly_total_revenue",
+    )
 
     with pytest.raises(ValidationError):
-        EvidencePlan(requests=[request] * 5)
+        EvidencePlan(requests=[request] * 2)
+
+
+def test_evidence_request_has_at_most_one_bounded_group_position() -> None:
+    request = EvidenceRequest(
+        kind="business_metrics",
+        metric="income_category_amount",
+        group_by="income_category",
+    )
+
+    assert request.group_by == "income_category"
+    with pytest.raises(ValidationError):
+        EvidencePlan.model_validate(
+            {
+                "requests": [
+                    {
+                        "kind": "business_metrics",
+                        "metric": "income_category_amount",
+                        "group_by": ["income_category", "date"],
+                    }
+                ]
+            }
+        )
+    with pytest.raises(ValidationError):
+        EvidenceRequest(
+            kind="business_metrics",
+            metric="daily_ledger_revenue",
+            group_by="income_category",
+        )
+
+
+def test_evidence_metric_whitelist_fails_closed() -> None:
+    with pytest.raises(ValidationError):
+        EvidenceRequest(
+            kind="business_metrics",
+            metric="arbitrary_sql_metric",
+        )
+
+
+@pytest.mark.parametrize(
+    "untrusted_field",
+    (
+        "sql",
+        "table",
+        "field",
+        "expression",
+        "url",
+        "store_id",
+        "user_id",
+        "role",
+        "timezone",
+    ),
+)
+def test_evidence_plan_rejects_model_owned_scope_and_query_fields(
+    untrusted_field: str,
+) -> None:
+    request = {
+        "kind": "business_metrics",
+        "metric": "monthly_total_revenue",
+        untrusted_field: "untrusted",
+    }
+
+    with pytest.raises(ValidationError):
+        EvidencePlan.model_validate({"requests": [request]})

@@ -1,5 +1,6 @@
 """Bounded model and orchestration seams for AutoLava Agent turns."""
 
+from app.agent.business_evidence import BusinessEvidenceCollector
 from app.agent.contracts import (
     EvidenceBundle,
     EvidencePlan,
@@ -19,6 +20,7 @@ from app.agent.workflow import AgentTurnWorkflow
 
 __all__ = [
     "AgentTurnWorkflow",
+    "BusinessEvidenceCollector",
     "EvidenceBundle",
     "EvidencePlan",
     "EvidenceRequest",
