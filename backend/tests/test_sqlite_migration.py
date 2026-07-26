@@ -21,6 +21,7 @@ EXPECTED_TABLES = {
     "settlement_companies",
     "settlement_records",
     "settlement_audit_events",
+    "agent_settings",
 }
 
 
@@ -49,6 +50,12 @@ def test_blank_sqlite_file_migrates_to_final_schema(tmp_path: Path) -> None:
         assert store_columns["company_settlement_enabled"][3] == 1
         assert store_columns["wash_count_enabled"][4].strip("'") == "1"
         assert store_columns["wash_count_enabled"][3] == 1
+        agent_columns = {
+            row[1]: row
+            for row in connection.execute("PRAGMA table_info('agent_settings')")
+        }
+        assert agent_columns["enabled"][4].strip("'") == "0"
+        assert agent_columns["enabled"][3] == 1
 
         index_names = {
             name
@@ -221,7 +228,7 @@ def test_existing_store_and_ledger_survive_company_settlement_upgrade(
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
-def test_applied_revision_0004_remains_a_valid_noop_history_anchor(tmp_path: Path) -> None:
+def test_applied_revision_0004_upgrades_without_losing_existing_data(tmp_path: Path) -> None:
     database_path = tmp_path / "existing.sqlite3"
     environment = os.environ | {"AUTOLAVA_DATABASE_PATH": str(database_path)}
     backend = Path(__file__).parents[1]
@@ -249,8 +256,11 @@ def test_applied_revision_0004_remains_a_valid_noop_history_anchor(tmp_path: Pat
 
     with closing(sqlite3.connect(database_path)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0004",
+            "0005",
         )
+        assert connection.execute(
+            "SELECT enabled FROM agent_settings WHERE id = 1"
+        ).fetchone() is None
         assert connection.execute("SELECT username FROM users").fetchall() == [
             ("existing-admin",)
         ]

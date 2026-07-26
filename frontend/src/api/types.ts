@@ -131,6 +131,11 @@ export interface BriefingCard {
   generated_at: string | null;
   timestamp_status: "utc" | "legacy_unknown";
 }
+export interface AgentStatus { enabled: boolean }
+export interface AgentTurnResult {
+  route: "clarify" | "answer" | "safe_failure";
+  content: string;
+}
 export interface WeatherResponse { weather: string | null; weather_code: number | null; temperature_max: number | null; temperature_min: number | null; precipitation: number | null }
 export type ChartBucket = "day" | "month";
 export type CategoryComposition =

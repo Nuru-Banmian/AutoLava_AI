@@ -3,13 +3,16 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
+import { useAuth } from "@/auth/AuthProvider";
 import { HomePage } from "@/pages/HomePage";
 import { StoreProvider, useStore } from "@/stores/StoreProvider";
+vi.mock("@/auth/AuthProvider", () => ({ useAuth: vi.fn() }));
 function StoreControls() { const { select } = useStore(); return <><button onClick={() => select(1)}>choose1</button><button onClick={() => select(2)}>choose2</button></>; }
 const server = setupServer(); beforeAll(() => server.listen({ onUnhandledRequest: "error" })); afterEach(() => { server.resetHandlers(); vi.useRealTimers(); }); afterAll(() => server.close());
 const emptyFields = { revenue: null, weather: null, weekday: null, temperature_max: null, temperature_min: null, precipitation: null, hint: null };
 
 it("renders the approved missing-yesterday action without assigning ledger state to tomorrow", async () => {
+  vi.mocked(useAuth).mockReturnValue({ user: { id: 2, username: "user", role: "user", is_owner: false } } as ReturnType<typeof useAuth>);
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.setSystemTime(new Date("2026-07-15T12:00:00"));
   server.use(
@@ -34,6 +37,7 @@ it("renders the approved missing-yesterday action without assigning ledger state
   expect(screen.getByText("16.00°C – 25.00°C")).toBeInTheDocument();
 });
 it("keeps cached cards visible and shows the 429 refresh detail", async () => {
+    vi.mocked(useAuth).mockReturnValue({ user: { id: 2, username: "user", role: "user", is_owner: false } } as ReturnType<typeof useAuth>);
     server.use(http.get("/api/stores/accessible", () => HttpResponse.json([{ id: 1, name: "Berlin", timezone: "Europe/Berlin" }])), http.get("/api/dashboard/1", () => HttpResponse.json([{ card_type: "today", state: "recorded", ...emptyFields, revenue: 88, generated_at: "2026-07-14T00:00:00" }])), http.post("/api/dashboard/1/refresh", () => HttpResponse.json({ detail: "请等待五分钟后再刷新" }, { status: 429 })));
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   render(<QueryClientProvider client={client}><StoreProvider><HomePage /></StoreProvider></QueryClientProvider>);
@@ -41,8 +45,24 @@ it("keeps cached cards visible and shows the 429 refresh detail", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent("请等待五分钟"); expect(screen.getByText("€88")).toBeInTheDocument();
 });
 it("clears a refresh error when the selected store changes", async () => {
+  vi.mocked(useAuth).mockReturnValue({ user: { id: 2, username: "user", role: "user", is_owner: false } } as ReturnType<typeof useAuth>);
   server.use(http.get("/api/stores/accessible", () => HttpResponse.json([{ id: 1, name: "One", timezone: "Europe/Berlin" }, { id: 2, name: "Two", timezone: "Europe/Berlin" }])), http.get("/api/dashboard/:store", () => HttpResponse.json([])), http.post("/api/dashboard/1/refresh", () => HttpResponse.json({ detail: "wait" }, { status: 429 })));
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); render(<QueryClientProvider client={client}><StoreProvider><StoreControls /><HomePage /></StoreProvider></QueryClientProvider>);
   fireEvent.click(await screen.findByRole("button", { name: "choose1" })); fireEvent.click(await screen.findByRole("button", { name: "刷新简报" })); expect(await screen.findByRole("alert")).toHaveTextContent("wait");
   fireEvent.click(screen.getByRole("button", { name: "choose2" })); await screen.findByRole("button", { name: "刷新简报" }); expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("places the Agent after briefing cards for administrators only", async () => {
+  vi.mocked(useAuth).mockReturnValue({ user: { id: 1, username: "admin", role: "admin", is_owner: false } } as ReturnType<typeof useAuth>);
+  server.use(
+    http.get("/api/stores/accessible", () => HttpResponse.json([{ id: 1, name: "Roma", timezone: "Europe/Rome" }])),
+    http.get("/api/dashboard/1", () => HttpResponse.json([])),
+    http.get("/api/agent/status", () => HttpResponse.json({ enabled: true })),
+  );
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><StoreProvider><HomePage /></StoreProvider></QueryClientProvider>);
+
+  const agent = await screen.findByRole("region", { name: "门店 Agent" });
+  const briefing = screen.getByRole("region", { name: "每日简报" });
+  expect(briefing.compareDocumentPosition(agent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
