@@ -517,7 +517,32 @@ async def test_charts_uses_the_same_operating_days_for_current_and_comparison_ra
     assert payload["kpis"]["average_revenue"] == 67
     assert payload["kpis"]["total_revenue"] == 200
     assert payload["kpis"]["record_days"] == 4
+    assert payload["kpis"]["primary_categories"] == [
+        {"category_id": category.id, "category_name": "Cash", "amount": 100}
+    ]
+    assert payload["kpis"]["total_wash_count"] is None
+    assert payload["kpis"]["average_ticket"] is None
     assert payload["income_summary"]["daily_ledger_revenue"] == 200
+    assert payload["categories"] == [
+        {"category_id": category.id, "category_name": "Cash", "amount": 100}
+    ]
+    assert payload["classified_included_total"] == 100
+    assert payload["monthly"] == [
+        {
+            "month": "2026-07",
+            "revenue": 200,
+            "daily_ledger_revenue": 200,
+            "confirmed_settlement_income": 0,
+            "monthly_total_income": 200,
+        }
+    ]
+    assert payload["weather"] == [{"weather": "晴", "average_revenue": 50}]
+    assert payload["weekday"] == [
+        {"weekday": 0, "average_revenue": 50},
+        {"weekday": 1, "average_revenue": 0},
+        {"weekday": 2, "average_revenue": 0},
+        {"weekday": 6, "average_revenue": 150},
+    ]
     assert payload["comparison_kpis"] == {
         "start": "2026-06-01",
         "end": "2026-06-30",

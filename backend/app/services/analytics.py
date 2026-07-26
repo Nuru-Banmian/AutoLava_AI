@@ -53,13 +53,15 @@ def _revenue_kpis(records: list[StoreDailyRecord]) -> dict:
     operating_records = [
         record for record in records if record.is_open in {"营业", "提前休息"}
     ]
-    open_days = len(operating_records)
+    operating_day_count = len(operating_records)
     operating_revenue = sum(record.daily_revenue for record in operating_records)
     return {
         "total_revenue": total,
         "record_days": len(records),
-        "open_days": open_days,
-        "average_revenue": _rounded_average(operating_revenue, open_days),
+        "open_days": operating_day_count,
+        "average_revenue": _rounded_average(
+            operating_revenue, operating_day_count
+        ),
     }
 
 

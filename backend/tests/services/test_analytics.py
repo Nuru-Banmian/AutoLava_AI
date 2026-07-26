@@ -505,11 +505,36 @@ async def test_operating_day_average_uses_open_and_early_close_records(
     assert result["kpis"]["total_revenue"] == 200
     assert result["kpis"]["record_days"] == 4
     assert result["income_summary"]["daily_ledger_revenue"] == 200
+    assert result["kpis"]["total_wash_count"] == 3
+    assert result["kpis"]["average_ticket"] == 67
     assert result["daily"] == [
         {"date": "2026-07-12", "revenue": 150},
         {"date": "2026-07-13", "revenue": 0},
         {"date": "2026-07-14", "revenue": 50},
         {"date": "2026-07-15", "revenue": 0},
+    ]
+    assert {
+        item["category_name"]: item["amount"] for item in result["categories"]
+    } == {"现金": 300, "刷卡": 50}
+    assert result["classified_included_total"] == 350
+    assert result["monthly"] == [
+        {
+            "month": "2026-07",
+            "revenue": 200,
+            "daily_ledger_revenue": 200,
+            "confirmed_settlement_income": 0,
+            "monthly_total_income": 200,
+        }
+    ]
+    assert result["weather"] == [
+        {"weather": "晴", "average_revenue": 150},
+        {"weather": "未记录", "average_revenue": 17},
+    ]
+    assert result["weekday"] == [
+        {"weekday": 0, "average_revenue": 0},
+        {"weekday": 1, "average_revenue": 50},
+        {"weekday": 2, "average_revenue": 0},
+        {"weekday": 6, "average_revenue": 150},
     ]
     assert result["comparison_kpis"] == {
         "start": "2026-07-01",
