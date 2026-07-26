@@ -16,6 +16,7 @@ from app.agent.conversation import (
     recent_model_messages,
 )
 from app.agent.contracts import ModelMessage
+from app.models.agent import AgentEvidence
 from app.agent.runtime import RuntimeContext, RuntimeFeatureFlags
 from app.api.deps import CurrentUser, Session
 from app.api.routes.agent_admin import agent_enabled
@@ -126,6 +127,13 @@ async def run_agent_turn(
         if conversation is None:
             raise HTTPException(409, "当前对话已被重置")
         conversation.state = run_result.state.model_dump(mode="json")
+        if run_result.evidence is not None:
+            session.add(
+                AgentEvidence(
+                    conversation_id=conversation.id,
+                    payload=run_result.evidence.model_dump(mode="json"),
+                )
+            )
         await append_message(
             session,
             conversation=conversation,

@@ -2,6 +2,7 @@ from typing import Any
 
 from app.agent.contracts import EvidenceBundle, ModelMessage
 from app.agent.model import FakeModelAdapter, ModelAdapterError
+from app.agent.runtime import RuntimeContext, RuntimeFeatureFlags
 from app.agent.workflow import AgentTurnWorkflow
 
 
@@ -9,9 +10,43 @@ class RecordingEvidenceCollector:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def collect(self, plan: Any) -> EvidenceBundle:
+    async def collect(
+        self,
+        plan: Any,
+        context: RuntimeContext,
+    ) -> EvidenceBundle:
+        del plan
         self.calls += 1
-        return EvidenceBundle(summary="本月月度总收入为 100 欧元。")
+        return EvidenceBundle(
+            status="ok",
+            current_store={"id": context.store_id},
+            period={"start": "2026-07-01", "end": "2026-07-26"},
+            metric="monthly_total_revenue",
+            unit="EUR",
+            calculation_version="monthly_total_revenue.v1",
+            result={
+                "daily_ledger_revenue": 100,
+                "confirmed_settlement_income": 0,
+                "monthly_total_revenue": 100,
+            },
+            coverage={"calendar_dates": 26, "recorded_dates": 1},
+            warnings=[],
+            summary="本月月度总收入为 100 欧元。",
+        )
+
+
+CONTEXT = RuntimeContext(
+    user_id=1,
+    store_id=2,
+    role="admin",
+    store_timezone="Europe/Rome",
+    features=RuntimeFeatureFlags(
+        agent_enabled=True,
+        company_settlement_enabled=True,
+        income_items_enabled=True,
+        wash_count_enabled=True,
+    ),
+)
 
 
 async def test_workflow_finishes_clarification_without_collecting_evidence() -> None:
@@ -19,11 +54,12 @@ async def test_workflow_finishes_clarification_without_collecting_evidence() -> 
     collector = RecordingEvidenceCollector()
 
     result = await AgentTurnWorkflow(model=model, evidence_collector=collector).run(
-        [ModelMessage(role="user", content="最近收入如何？")]
+        [ModelMessage(role="user", content="最近收入如何？")],
+        CONTEXT,
     )
 
-    assert result.route == "clarify"
-    assert result.content == "请说明准确日期。"
+    assert result.turn.route == "clarify"
+    assert result.turn.content == "请说明准确日期。"
     assert collector.calls == 0
     assert model.total_calls == 1
 
@@ -35,7 +71,10 @@ async def test_workflow_collects_once_then_generates_one_complete_answer() -> No
                 "route": "evidence",
                 "evidence_plan": {
                     "requests": [
-                        {"kind": "business_metrics"}
+                        {
+                            "kind": "business_metrics",
+                            "metric": "monthly_total_revenue",
+                        }
                     ]
                 },
             }
@@ -45,11 +84,13 @@ async def test_workflow_collects_once_then_generates_one_complete_answer() -> No
     collector = RecordingEvidenceCollector()
 
     result = await AgentTurnWorkflow(model=model, evidence_collector=collector).run(
-        [ModelMessage(role="user", content="本月收入是多少？")]
+        [ModelMessage(role="user", content="本月收入是多少？")],
+        CONTEXT,
     )
 
-    assert result.route == "answer"
-    assert result.content == "本月月度总收入为 100 欧元。"
+    assert result.turn.route == "answer"
+    assert result.turn.content == "本月月度总收入为 100 欧元。"
+    assert result.evidence is not None
     assert collector.calls == 1
     assert model.plan_calls == 1
     assert model.answer_calls == 1
@@ -62,8 +103,106 @@ async def test_workflow_converts_model_failure_to_a_sanitized_safe_failure() -> 
     result = await AgentTurnWorkflow(
         model=model,
         evidence_collector=RecordingEvidenceCollector(),
-    ).run([ModelMessage(role="user", content="本月收入是多少？")])
+    ).run([ModelMessage(role="user", content="本月收入是多少？")], CONTEXT)
 
-    assert result.route == "safe_failure"
-    assert result.content == "模型服务暂时不可用，请稍后重试。"
-    assert "real-secret" not in result.content
+    assert result.turn.route == "safe_failure"
+    assert result.turn.content == "模型服务暂时不可用，请稍后重试。"
+    assert "real-secret" not in result.turn.content
+
+
+async def test_workflow_repairs_one_structurally_invalid_plan_then_collects() -> None:
+    model = FakeModelAdapter(
+        plans=[
+            {
+                "route": "evidence",
+                "evidence_plan": {"requests": [{"kind": "business_metrics"}]},
+            },
+            {
+                "route": "evidence",
+                "evidence_plan": {
+                    "requests": [
+                        {
+                            "kind": "business_metrics",
+                            "metric": "monthly_total_revenue",
+                        }
+                    ]
+                },
+            },
+        ],
+        answers=["本月月度总收入为 100 欧元。"],
+    )
+    collector = RecordingEvidenceCollector()
+
+    result = await AgentTurnWorkflow(model=model, evidence_collector=collector).run(
+        [ModelMessage(role="user", content="本月收入是多少？")],
+        CONTEXT,
+    )
+
+    assert result.turn.route == "answer"
+    assert model.plan_calls == 2
+    assert model.answer_calls == 1
+    assert collector.calls == 1
+
+
+async def test_workflow_does_not_retry_a_plan_that_claims_store_scope() -> None:
+    model = FakeModelAdapter(
+        plans=[
+            {
+                "route": "evidence",
+                "evidence_plan": {
+                    "requests": [
+                        {
+                            "kind": "business_metrics",
+                            "metric": "monthly_total_revenue",
+                            "store_id": 999,
+                        }
+                    ]
+                },
+            },
+            {"route": "direct_answer", "answer": "不应使用备用计划。"},
+        ]
+    )
+    collector = RecordingEvidenceCollector()
+
+    result = await AgentTurnWorkflow(model=model, evidence_collector=collector).run(
+        [ModelMessage(role="user", content="查询另一个门店")],
+        CONTEXT,
+    )
+
+    assert result.turn.route == "safe_failure"
+    assert model.plan_calls == 1
+    assert collector.calls == 0
+
+
+async def test_workflow_replaces_unsupported_amounts_and_raw_json_with_safe_summary() -> None:
+    evidence_plan = {
+        "route": "evidence",
+        "evidence_plan": {
+            "requests": [
+                {
+                    "kind": "business_metrics",
+                    "metric": "monthly_total_revenue",
+                }
+            ]
+        },
+    }
+    for unsafe_answer in (
+        "2026-07-01 至 2026-07-26 的月度总收入为 999 欧元。",
+        (
+            "2026-07-01 至 2026-07-26 的月度总收入为 100 欧元，"
+            "其中每日台账营业额 0 欧元，已确认公司结算收入 100 欧元。"
+        ),
+        '{"status":"ok","monthly_total_revenue":100}',
+    ):
+        result = await AgentTurnWorkflow(
+            model=FakeModelAdapter(
+                plans=[evidence_plan],
+                answers=[unsafe_answer],
+            ),
+            evidence_collector=RecordingEvidenceCollector(),
+        ).run(
+            [ModelMessage(role="user", content="本月收入是多少？")],
+            CONTEXT,
+        )
+
+        assert result.turn.content == "本月月度总收入为 100 欧元。"

@@ -1,20 +1,31 @@
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import date, datetime
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.business_evidence import BusinessEvidenceCollector
 from app.agent.conversation import AgentRunResult, ConversationState
 from app.agent.contracts import ModelMessage, TurnResult
 from app.agent.model import FakeModelAdapter
 from app.agent.runtime import RuntimeContext
-from app.agent.service import AgentService, ClosedEvidenceCollector
+from app.agent.service import AgentService
 from app.agent.workflow import AgentTurnWorkflow
 from app.core.config import get_settings
 from app.models.identity import Store, User
 from app.models.agent import AgentConversation, AgentEvidence, AgentMessage
+from app.models.ledger import StoreDailyRecord
 from app.models.operations import AgentSettings
+from app.models.settlement import SettlementCompany, SettlementRecord
+
+
+class NeverEvidenceCollector:
+    async def collect(self, plan, context):
+        del plan, context
+        raise AssertionError("This test must not collect business evidence")
 
 
 @dataclass
@@ -241,7 +252,7 @@ async def test_agent_http_turn_returns_direct_answers_and_ends_on_clarification(
     client._transport.app.state.agent_service = AgentService(
         AgentTurnWorkflow(
             model=model,
-            evidence_collector=ClosedEvidenceCollector(),
+            evidence_collector=NeverEvidenceCollector(),
         )
     )
     await _login(client, "admin")
@@ -272,6 +283,140 @@ async def test_agent_http_turn_returns_direct_answers_and_ends_on_clarification(
     ] == ["你想了解哪个时间范围？"]
     assert model.plan_calls == 2
     assert model.answer_calls == 0
+
+
+async def test_monthly_total_revenue_http_gold_path_persists_raw_evidence_safely(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+) -> None:
+    user = await user_factory(username="admin", password="secret", role="admin")
+    store = await store_factory(name="Roma", timezone="Europe/Rome")
+    store_id = store.id
+    db_session.add(AgentSettings(id=1, enabled=True))
+    db_session.add(
+        StoreDailyRecord(
+            store_id=store_id,
+            date=date(2026, 7, 5),
+            daily_revenue=240,
+            income_mode="legacy_total",
+            wash_count=4,
+            is_open="营业",
+            weather="晴",
+            weather_auto=None,
+            weather_code=None,
+            temperature_max=None,
+            temperature_min=None,
+            precipitation=None,
+            activity=None,
+            weather_edited=False,
+            scanned=False,
+            created_by=user.id,
+            updated_by=user.id,
+        )
+    )
+    company = SettlementCompany(
+        store_id=store_id,
+        name="Acme",
+        normalized_name="acme",
+        is_active=True,
+        archived_at=None,
+        created_by=user.id,
+        updated_by=user.id,
+    )
+    db_session.add(company)
+    await db_session.flush()
+    db_session.add_all(
+        [
+            SettlementRecord(
+                store_id=store_id,
+                company_id=company.id,
+                company_name=company.name,
+                opening_month=date(2026, 7, 1),
+                amount=160,
+                status="confirmed",
+                created_by=user.id,
+                updated_by=user.id,
+            ),
+            SettlementRecord(
+                store_id=store_id,
+                company_id=company.id,
+                company_name=company.name,
+                opening_month=date(2026, 7, 1),
+                amount=999,
+                status="pending",
+                created_by=user.id,
+                updated_by=user.id,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    expected_answer = (
+        "2026-07-01 至 2026-07-26 的月度总收入为 400 欧元，"
+        "其中每日台账营业额 240 欧元，已确认公司结算收入 160 欧元。"
+        "所选期间有 25 个日期没有每日台账；这不表示门店本应营业。"
+    )
+    model = FakeModelAdapter(
+        plans=[
+            {
+                "route": "evidence",
+                "evidence_plan": {
+                    "requests": [
+                        {
+                            "kind": "business_metrics",
+                            "metric": "monthly_total_revenue",
+                        }
+                    ]
+                },
+            }
+        ],
+        answers=[expected_answer],
+    )
+    client._transport.app.state.agent_service = AgentService(
+        AgentTurnWorkflow(
+            model=model,
+            evidence_collector=BusinessEvidenceCollector(
+                session_factory,
+                now=lambda _timezone: datetime(2026, 7, 26, 12, 0),
+            ),
+        )
+    )
+    await _login(client, "admin")
+
+    response = await client.post(
+        f"/api/agent/stores/{store_id}/turn",
+        json={"question": "本月收入是多少？"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["route"] == "answer"
+    assert payload["content"] == expected_answer
+    assert "evidence" not in payload
+    assert payload["conversation"]["state"]["confirmed_period"] == {
+        "start": "2026-07-01",
+        "end": "2026-07-26",
+    }
+    assert payload["conversation"]["state"]["metrics"] == ["月度总收入"]
+    evidence = await db_session.scalar(select(AgentEvidence))
+    assert evidence is not None
+    assert evidence.payload["result"] == {
+        "daily_ledger_revenue": 240,
+        "confirmed_settlement_income": 160,
+        "monthly_total_revenue": 400,
+    }
+    assert evidence.payload["period"] == {
+        "start": "2026-07-01",
+        "end": "2026-07-26",
+    }
+    assert model.plan_calls == 1
+    assert model.answer_calls == 1
 
 
 async def test_current_conversation_restores_full_messages_and_structured_state(

@@ -1,7 +1,12 @@
 import json
+from contextlib import AbstractAsyncContextManager
+from collections.abc import Callable
 
-from app.agent.conversation import AgentRunResult, ConversationState
-from app.agent.contracts import EvidenceBundle, EvidencePlan, ModelMessage
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.agent.business_evidence import BusinessEvidenceCollector
+from app.agent.conversation import AgentRunResult, ConfirmedPeriod, ConversationState
+from app.agent.contracts import MONTHLY_TOTAL_REVENUE_LABEL, ModelMessage
 from app.agent.factory import create_model_adapter
 from app.agent.runtime import RuntimeContext
 from app.agent.workflow import AgentTurnWorkflow
@@ -14,12 +19,6 @@ CORE_RULES = (
     "evidence is needed. Ask one clarifying question and end the turn when the "
     "request lacks necessary information."
 )
-
-
-class ClosedEvidenceCollector:
-    async def collect(self, plan: EvidencePlan) -> EvidenceBundle:
-        del plan
-        raise RuntimeError("Business evidence is not available in this release slice")
 
 
 class AgentService:
@@ -39,7 +38,7 @@ class AgentService:
             f"income_items={context.features.income_items_enabled}, "
             f"wash_count={context.features.wash_count_enabled}."
         )
-        result = await self.workflow.run(
+        workflow_result = await self.workflow.run(
             [
                 ModelMessage(role="system", content=f"{CORE_RULES}\n{runtime_scope}"),
                 ModelMessage(
@@ -50,21 +49,39 @@ class AgentService:
                     ),
                 ),
                 *recent_messages,
-            ]
+            ],
+            context,
         )
+        result = workflow_result.turn
         pending_clarifications = [result.content] if result.route == "clarify" else []
+        state_update: dict[str, object] = {
+            "pending_clarifications": pending_clarifications
+        }
+        if workflow_result.evidence is not None:
+            evidence = workflow_result.evidence
+            state_update.update(
+                {
+                    "confirmed_period": ConfirmedPeriod(
+                        start=evidence.period.start,
+                        end=evidence.period.end,
+                    ),
+                    "metrics": [MONTHLY_TOTAL_REVENUE_LABEL],
+                }
+            )
         return AgentRunResult(
             turn=result,
-            state=state.model_copy(
-                update={"pending_clarifications": pending_clarifications}
-            ),
+            state=state.model_copy(update=state_update),
+            evidence=workflow_result.evidence,
         )
 
 
-def create_agent_service(settings: Settings) -> AgentService:
+def create_agent_service(
+    settings: Settings,
+    session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]],
+) -> AgentService:
     return AgentService(
         AgentTurnWorkflow(
             model=create_model_adapter(settings),
-            evidence_collector=ClosedEvidenceCollector(),
+            evidence_collector=BusinessEvidenceCollector(session_factory),
         )
     )

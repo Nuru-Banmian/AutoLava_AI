@@ -1,5 +1,6 @@
+from datetime import date
 from enum import StrEnum
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -21,17 +22,39 @@ class ModelMessage(ClosedModel):
 
 class EvidenceRequestKind(StrEnum):
     BUSINESS_METRICS = "business_metrics"
-    DAILY_RECORD = "daily_record"
-    SETTLEMENT_DETAILS = "settlement_details"
-    DATA_QUALITY = "data_quality"
+
+
+class EvidenceMetric(StrEnum):
+    MONTHLY_TOTAL_REVENUE = "monthly_total_revenue"
+
+
+MONTHLY_TOTAL_REVENUE_LABEL = "月度总收入"
+
+
+class CurrentMonthPeriod(ClosedModel):
+    kind: Literal["current_month"] = "current_month"
+
+
+class CalendarMonthPeriod(ClosedModel):
+    kind: Literal["calendar_month"]
+    year: int = Field(ge=2000, le=2200)
+    month: int = Field(ge=1, le=12)
+
+
+EvidencePeriod = Annotated[
+    CurrentMonthPeriod | CalendarMonthPeriod,
+    Field(discriminator="kind"),
+]
 
 
 class EvidenceRequest(ClosedModel):
     kind: EvidenceRequestKind
+    metric: EvidenceMetric
+    period: EvidencePeriod | None = None
 
 
 class EvidencePlan(ClosedModel):
-    requests: list[EvidenceRequest] = Field(min_length=1, max_length=4)
+    requests: list[EvidenceRequest] = Field(min_length=1, max_length=1)
 
 
 class TurnRoute(StrEnum):
@@ -69,10 +92,46 @@ class TurnPlan(ClosedModel):
         return self
 
 
+class EvidencePeriodResult(ClosedModel):
+    start: date
+    end: date
+
+
+class MonthlyTotalRevenueResult(ClosedModel):
+    daily_ledger_revenue: int = Field(ge=0)
+    confirmed_settlement_income: int = Field(ge=0)
+    monthly_total_revenue: int = Field(ge=0)
+
+
+class EvidenceCoverage(ClosedModel):
+    calendar_dates: int = Field(ge=1)
+    recorded_dates: int = Field(ge=0)
+
+
+class CurrentStoreScope(ClosedModel):
+    id: int = Field(gt=0)
+
+
 class EvidenceBundle(ClosedModel):
+    status: Literal["ok"]
+    current_store: CurrentStoreScope
+    period: EvidencePeriodResult
+    metric: EvidenceMetric
+    unit: Literal["EUR"]
+    calculation_version: Literal["monthly_total_revenue.v1"]
+    result: MonthlyTotalRevenueResult
+    coverage: EvidenceCoverage
+    comparison: None = None
+    warnings: list[str] = Field(default_factory=list, max_length=20)
+    truncated: bool = False
     summary: str = Field(min_length=1, max_length=20_000)
 
 
 class TurnResult(ClosedModel):
     route: Literal["clarify", "answer", "safe_failure"]
     content: str = Field(min_length=1, max_length=20_000)
+
+
+class WorkflowResult(ClosedModel):
+    turn: TurnResult
+    evidence: EvidenceBundle | None = None
