@@ -65,6 +65,34 @@ def test_evidence_plan_has_a_bounded_request_count() -> None:
         EvidencePlan(requests=[request] * 2)
 
 
+def test_daily_ledger_request_requires_one_exact_date_and_no_metric_or_period() -> None:
+    plan = EvidencePlan.model_validate(
+        {
+            "requests": [
+                {"kind": "daily_ledger", "date": "2026-07-05"}
+            ]
+        }
+    )
+
+    assert plan.requests[0].date.isoformat() == "2026-07-05"
+    for invalid in (
+        {"kind": "daily_ledger"},
+        {
+            "kind": "daily_ledger",
+            "date": "2026-07-05",
+            "metric": "monthly_total_revenue",
+        },
+        {
+            "kind": "daily_ledger",
+            "date": "2026-07-05",
+            "period": {"kind": "calendar_month", "year": 2026, "month": 7},
+        },
+        {"kind": "business_metrics", "metric": "daily_ledger"},
+    ):
+        with pytest.raises(ValidationError):
+            EvidencePlan.model_validate({"requests": [invalid]})
+
+
 @pytest.mark.parametrize(
     "untrusted_field",
     (
