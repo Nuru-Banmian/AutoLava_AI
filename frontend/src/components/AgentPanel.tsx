@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
+import { useNavigate } from "react-router-dom";
 
 import { api, ApiError } from "@/api/client";
 import type {
@@ -19,6 +20,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { validatedBusinessRecordsAction } from "@/navigation/agent-actions";
 
 const emptyConversation: AgentConversation = {
   id: null,
@@ -37,8 +39,25 @@ const emptyConversation: AgentConversation = {
 const conversationKey = (storeId: number) =>
   ["agent", "conversation", storeId] as const;
 
-export function AgentPanel({ storeId }: { storeId: number }) {
+function currentMonthInTimezone(timezone: string): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+  }).formatToParts(new Date());
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${value.year}-${value.month}`;
+}
+
+export function AgentPanel({
+  storeId,
+  timezone = "UTC",
+}: {
+  storeId: number;
+  timezone?: string;
+}) {
   const client = useQueryClient();
+  const navigate = useNavigate();
   const [question, setQuestion] = useState("");
   const [pendingQuestion, setPendingQuestion] = useState<{
     storeId: number;
@@ -177,17 +196,36 @@ export function AgentPanel({ storeId }: { storeId: number }) {
         <p className="mt-4 text-sm text-muted-foreground">当前对话为空</p>
       ) : (
         <ol className="mt-4 space-y-3" aria-label="当前对话">
-          {messages.map((message) => (
-            <li
-              className="min-w-0 break-words rounded-lg bg-muted/50 p-3 text-sm"
-              key={message.id}
-            >
-              <span className="font-medium">
-                {message.role === "user" ? "你" : "Agent"}：
-              </span>
-              {message.content}
-            </li>
-          ))}
+          {messages.map((message) => {
+            const action = validatedBusinessRecordsAction(
+              message.action,
+              currentMonthInTimezone(timezone),
+            );
+            return (
+              <li
+                className="min-w-0 break-words rounded-lg bg-muted/50 p-3 text-sm"
+                key={message.id}
+              >
+                <span className="font-medium">
+                  {message.role === "user" ? "你" : "Agent"}：
+                </span>
+                {message.content}
+                {message.role === "assistant" && action && (
+                  <div className="mt-3">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => navigate("/database", {
+                        state: { agentBusinessRecordsAction: action },
+                      })}
+                    >
+                      查看营业记录
+                    </Button>
+                  </div>
+                )}
+              </li>
+            );
+          })}
           {visiblePendingQuestion !== null && (
             <li className="min-w-0 break-words rounded-lg bg-muted/50 p-3 text-sm">
               <span className="font-medium">你：</span>

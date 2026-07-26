@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 
 import { AgentPanel } from "@/components/AgentPanel";
@@ -19,11 +20,19 @@ function renderPanel(storeId = 7) {
     },
   });
   const rendered = render(
-    <QueryClientProvider client={client}>
-      <AgentPanel storeId={storeId} />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={client}>
+        <AgentPanel storeId={storeId} />
+        <LocationProbe />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
   return { client, ...rendered };
+}
+
+function LocationProbe() {
+  const location = useLocation();
+  return <div aria-label="当前位置">{location.pathname}|{JSON.stringify(location.state)}</div>;
 }
 
 const emptyState = {
@@ -40,6 +49,11 @@ function conversation(
     id: number;
     role: "user" | "assistant";
     content: string;
+    action?: {
+      type: "open_business_records";
+      start_month: string;
+      end_month: string;
+    } | Record<string, unknown> | null;
   }> = [],
 ) {
   return {
@@ -141,6 +155,65 @@ it("renders a clarification as the completed turn and stays within its card", as
   );
 });
 
+it("shows only the readable business records action and navigates on activation", async () => {
+  server.use(
+    http.get("/api/agent/status", () => HttpResponse.json({ enabled: true })),
+    http.get("/api/agent/stores/7/conversation", () =>
+      HttpResponse.json(
+        conversation(8, [
+          { id: 31, role: "user", content: "查看去年的全部记录" },
+          {
+            id: 32,
+            role: "assistant",
+            content: "可查看所选月份的营业记录。",
+            action: {
+              type: "open_business_records",
+              start_month: "2025-01",
+              end_month: "2025-12",
+            },
+          },
+        ]),
+      ),
+    ),
+  );
+  renderPanel();
+
+  const action = await screen.findByRole("button", { name: "查看营业记录" });
+  expect(screen.queryByText(/\/database|store_id|user_id/)).not.toBeInTheDocument();
+  fireEvent.click(action);
+
+  expect(screen.getByLabelText("当前位置")).toHaveTextContent(
+    '/database|{"agentBusinessRecordsAction":{"type":"open_business_records","start_month":"2025-01","end_month":"2025-12"}}',
+  );
+});
+
+it("does not render an action when the server payload contains an unsafe parameter", async () => {
+  server.use(
+    http.get("/api/agent/status", () => HttpResponse.json({ enabled: true })),
+    http.get("/api/agent/stores/7/conversation", () =>
+      HttpResponse.json(
+        conversation(8, [
+          {
+            id: 32,
+            role: "assistant",
+            content: "不可信操作",
+            action: {
+              type: "open_business_records",
+              start_month: "2025-01",
+              end_month: "2025-12",
+              url: "/database?store_id=999",
+            },
+          },
+        ]),
+      ),
+    ),
+  );
+  renderPanel();
+
+  expect(await screen.findByText("不可信操作")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "查看营业记录" })).not.toBeInTheDocument();
+});
+
 it("restores the complete current conversation from the server", async () => {
   server.use(
     http.get("/api/agent/status", () => HttpResponse.json({ enabled: true })),
@@ -233,9 +306,12 @@ it("keeps an in-flight turn in its originating store cache after switching", asy
   fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
 
   rerender(
-    <QueryClientProvider client={client}>
-      <AgentPanel storeId={8} />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={client}>
+        <AgentPanel storeId={8} />
+        <LocationProbe />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
   expect(await screen.findByText("八号门店的回答")).toBeInTheDocument();
   expect(screen.queryByText("七号门店的问题")).not.toBeInTheDocument();

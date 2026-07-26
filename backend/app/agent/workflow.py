@@ -1,21 +1,27 @@
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from datetime import datetime
+import re
 from typing import Protocol, TypedDict
+from zoneinfo import ZoneInfo
 
 from langgraph.graph import END, START, StateGraph
 
+from app.agent.business_evidence import EvidenceClarificationError
 from app.agent.contracts import (
-    EvidenceBundle,
+    CollectedEvidence,
     EvidencePlan,
     ModelMessage,
+    SettlementDetailsRequest,
     TurnPlan,
     TurnResult,
     TurnRoute,
     WorkflowResult,
 )
-from app.agent.model import ModelAdapter, RepairableModelPlanError
+from app.agent.model import ModelAdapter, ModelAttempt, RepairableModelPlanError
 from app.agent.runtime import RuntimeContext
 
 SAFE_FAILURE_MESSAGE = "模型服务暂时不可用，请稍后重试。"
+OPEN_BUSINESS_RECORDS_MESSAGE = "可查看所选月份的营业记录。"
 PLAN_REPAIR_FEEDBACK = (
     "The previous TurnPlan had a format, enum, or structural error. "
     "Return one corrected TurnPlan matching the schema. "
@@ -23,6 +29,41 @@ PLAN_REPAIR_FEEDBACK = (
 )
 MAX_MODEL_CALLS = 3
 MAX_EVIDENCE_CALLS = 1
+SETTLEMENT_DETAILS_REQUIRE_EXPLICIT_MESSAGE = (
+    "请明确询问结算公司、开票记录、待到账、已确认金额或某个公司的结算金额。"
+)
+EXPLICIT_PERCENTAGE_TERMS = (
+    "%",
+    "百分比",
+    "百分之",
+    "变化率",
+    "增长率",
+    "下降率",
+    "环比",
+    "同比",
+    "涨幅",
+    "跌幅",
+    "增幅",
+    "降幅",
+)
+NEGATED_PERCENTAGE_TERMS = (
+    "不要百分",
+    "不用百分",
+    "不需要百分",
+    "无需百分",
+    "别算百分",
+    "不要算百分",
+    "不要%",
+    "不用%",
+    "只给金额",
+    "只看金额",
+    "仅给金额",
+    "仅看金额",
+)
+NAVIGATION_TARGET = re.compile(
+    r"(?:https?://|www\.|/api/|/database(?:[/?#\s]|$))",
+    re.IGNORECASE,
+)
 
 
 class EvidenceCollector(Protocol):
@@ -30,17 +71,18 @@ class EvidenceCollector(Protocol):
         self,
         plan: EvidencePlan,
         context: RuntimeContext,
-    ) -> EvidenceBundle: ...
+    ) -> CollectedEvidence: ...
 
 
 class TurnState(TypedDict):
     messages: Sequence[ModelMessage]
     context: RuntimeContext
     plan: TurnPlan | None
-    evidence: EvidenceBundle | None
+    evidence: CollectedEvidence | None
     result: TurnResult | None
     model_calls: int
     evidence_calls: int
+    attempts: list[ModelAttempt]
 
 
 class AgentTurnWorkflow:
@@ -73,6 +115,8 @@ class AgentTurnWorkflow:
         self,
         messages: Sequence[ModelMessage],
         context: RuntimeContext,
+        *,
+        observer: Callable[[ModelAttempt], None] | None = None,
     ) -> WorkflowResult:
         state: TurnState = {
             "messages": messages,
@@ -82,18 +126,36 @@ class AgentTurnWorkflow:
             "result": None,
             "model_calls": 0,
             "evidence_calls": 0,
+            "attempts": [],
         }
         final = await self._graph.ainvoke(state)
+        attempts = final["attempts"]
+        if observer is not None:
+            for attempt in attempts:
+                observer(attempt)
         result = final["result"]
         if result is None:
             return WorkflowResult(turn=_safe_failure())
-        return WorkflowResult(turn=result, evidence=final["evidence"])
+        recovery_status = (
+            "fallback"
+            if any(attempt.is_fallback for attempt in attempts)
+            else "retried"
+            if len(attempts) > 1
+            and any(attempt.result == "failure" for attempt in attempts)
+            else "none"
+        )
+        return WorkflowResult(
+            turn=result.model_copy(update={"recovery_status": recovery_status}),
+            evidence=final["evidence"],
+        )
 
     async def _plan(self, state: TurnState) -> dict:
         if state["model_calls"] >= MAX_MODEL_CALLS:
             return {"plan": _safe_failure_plan(), "model_calls": state["model_calls"]}
         try:
-            plan = await self.model.plan_turn(state["messages"])
+            plan = await self.model.plan_turn(
+                state["messages"], observer=state["attempts"].append
+            )
             calls = state["model_calls"] + 1
         except RepairableModelPlanError:
             calls = state["model_calls"] + 1
@@ -104,7 +166,8 @@ class AgentTurnWorkflow:
                     [
                         *state["messages"],
                         ModelMessage(role="system", content=PLAN_REPAIR_FEEDBACK),
-                    ]
+                    ],
+                    observer=state["attempts"].append,
                 )
             except Exception:
                 plan = _safe_failure_plan()
@@ -121,13 +184,30 @@ class AgentTurnWorkflow:
 
     @staticmethod
     async def _finish_plan(state: TurnState) -> dict:
+        if state["result"] is not None:
+            return {}
         plan = state["plan"]
         if plan is None or plan.route == TurnRoute.SAFE_FAILURE:
             return {"result": _safe_failure()}
         if plan.route == TurnRoute.CLARIFY:
             return {"result": TurnResult(route="clarify", content=plan.question or "")}
         if plan.route == TurnRoute.DIRECT_ANSWER:
+            if NAVIGATION_TARGET.search(plan.answer or ""):
+                return {"result": _safe_failure()}
             return {"result": TurnResult(route="answer", content=plan.answer or "")}
+        if plan.route == TurnRoute.ACTION and plan.action is not None:
+            current_month = datetime.now(
+                ZoneInfo(state["context"].store_timezone)
+            ).strftime("%Y-%m")
+            if plan.action.end_month > current_month:
+                return {"result": _safe_failure()}
+            return {
+                "result": TurnResult(
+                    route="answer",
+                    content=OPEN_BUSINESS_RECORDS_MESSAGE,
+                    action=plan.action,
+                )
+            }
         return {"result": _safe_failure()}
 
     async def _collect_evidence(self, state: TurnState) -> dict:
@@ -141,11 +221,31 @@ class AgentTurnWorkflow:
                 "result": _safe_failure(),
                 "evidence_calls": state["evidence_calls"],
             }
+        if not _evidence_request_is_explicit(
+            plan.evidence_plan,
+            state["messages"],
+        ):
+            return {
+                "result": TurnResult(
+                    route="clarify",
+                    content=SETTLEMENT_DETAILS_REQUIRE_EXPLICIT_MESSAGE,
+                ),
+                "evidence_calls": state["evidence_calls"],
+            }
         try:
-            evidence = await self.evidence_collector.collect(
+            evidence_plan = _enforce_explicit_percentage_request(
                 plan.evidence_plan,
+                state["messages"],
+            )
+            evidence = await self.evidence_collector.collect(
+                evidence_plan,
                 state["context"],
             )
+        except EvidenceClarificationError as error:
+            return {
+                "result": TurnResult(route="clarify", content=str(error)),
+                "evidence_calls": state["evidence_calls"] + 1,
+            }
         except Exception:
             return {
                 "result": _safe_failure(),
@@ -164,7 +264,11 @@ class AgentTurnWorkflow:
         if state["model_calls"] >= MAX_MODEL_CALLS or state["evidence"] is None:
             return {"result": _safe_failure()}
         try:
-            answer = await self.model.answer_turn(state["messages"], state["evidence"])
+            answer = await self.model.answer_turn(
+                state["messages"],
+                state["evidence"],
+                observer=state["attempts"].append,
+            )
         except Exception:
             return {
                 "result": _safe_failure(),
@@ -187,5 +291,72 @@ def _safe_failure() -> TurnResult:
     return TurnResult(route="safe_failure", content=SAFE_FAILURE_MESSAGE)
 
 
-def _validated_readable_answer(answer: str, evidence: EvidenceBundle) -> str:
+def _validated_readable_answer(answer: str, evidence: CollectedEvidence) -> str:
     return answer if answer.strip() == evidence.summary else evidence.summary
+
+
+def _evidence_request_is_explicit(
+    plan: EvidencePlan,
+    messages: Sequence[ModelMessage],
+) -> bool:
+    request = plan.requests[0]
+    if not isinstance(request, SettlementDetailsRequest):
+        return True
+    question = next(
+        (
+            message.content.casefold()
+            for message in reversed(messages)
+            if message.role == "user"
+        ),
+        "",
+    )
+    explicit_terms = (
+        "公司结算",
+        "结算公司",
+        "开票记录",
+        "开票",
+        "待到账",
+        "已确认",
+        "到账",
+    )
+    if any(term in question for term in explicit_terms):
+        return True
+    return (
+        request.company_name is not None
+        and request.company_name.casefold() in question
+        and any(term in question for term in ("金额", "多少", "收入", "结算"))
+    )
+
+
+def _enforce_explicit_percentage_request(
+    plan: EvidencePlan,
+    messages: Sequence[ModelMessage],
+) -> EvidencePlan:
+    request = plan.requests[0]
+    comparison = getattr(request, "comparison", None)
+    if comparison is None or not comparison.include_percentage:
+        return plan
+    user_message = next(
+        (message.content for message in reversed(messages) if message.role == "user"),
+        "",
+    )
+    percentage_is_negated = any(
+        term in user_message for term in NEGATED_PERCENTAGE_TERMS
+    )
+    if not percentage_is_negated and any(
+        term in user_message for term in EXPLICIT_PERCENTAGE_TERMS
+    ):
+        return plan
+    return plan.model_copy(
+        update={
+            "requests": [
+                request.model_copy(
+                    update={
+                        "comparison": comparison.model_copy(
+                            update={"include_percentage": False}
+                        )
+                    }
+                )
+            ]
+        }
+    )

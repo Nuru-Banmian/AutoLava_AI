@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
+import { MemoryRouter } from "react-router-dom";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 import { useAuth } from "@/auth/AuthProvider";
 import { HomePage } from "@/pages/HomePage";
@@ -67,7 +68,7 @@ it("places the Agent after briefing cards for administrators only", async () => 
     })),
   );
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(<QueryClientProvider client={client}><StoreProvider><HomePage /></StoreProvider></QueryClientProvider>);
+  render(<MemoryRouter><QueryClientProvider client={client}><StoreProvider><HomePage /></StoreProvider></QueryClientProvider></MemoryRouter>);
 
   const agent = await screen.findByRole("region", { name: "门店 Agent" });
   const briefing = screen.getByRole("region", { name: "每日简报" });
