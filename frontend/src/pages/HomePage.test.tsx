@@ -58,6 +58,13 @@ it("places the Agent after briefing cards for administrators only", async () => 
     http.get("/api/stores/accessible", () => HttpResponse.json([{ id: 1, name: "Roma", timezone: "Europe/Rome" }])),
     http.get("/api/dashboard/1", () => HttpResponse.json([])),
     http.get("/api/agent/status", () => HttpResponse.json({ enabled: true })),
+    http.get("/api/agent/stores/1/conversation", () => HttpResponse.json({
+      id: null,
+      messages: [],
+      state: { confirmed_period: null, metrics: [], filters: {}, comparison: null, pending_clarifications: [] },
+      created_at: null,
+      updated_at: null,
+    })),
   );
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<QueryClientProvider client={client}><StoreProvider><HomePage /></StoreProvider></QueryClientProvider>);

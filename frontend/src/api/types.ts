@@ -132,9 +132,33 @@ export interface BriefingCard {
   timestamp_status: "utc" | "legacy_unknown";
 }
 export interface AgentStatus { enabled: boolean }
+export interface AgentConversationState {
+  confirmed_period: { start: string; end: string } | null;
+  metrics: string[];
+  filters: Record<string, string[]>;
+  comparison: {
+    period: { start: string; end: string };
+    label: string;
+  } | null;
+  pending_clarifications: string[];
+}
+export interface AgentConversationMessage {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+}
+export interface AgentConversation {
+  id: number | null;
+  messages: AgentConversationMessage[];
+  state: AgentConversationState;
+  created_at: string | null;
+  updated_at: string | null;
+}
 export interface AgentTurnResult {
   route: "clarify" | "answer" | "safe_failure";
   content: string;
+  conversation: AgentConversation;
 }
 export interface WeatherResponse { weather: string | null; weather_code: number | null; temperature_max: number | null; temperature_min: number | null; precipitation: number | null }
 export type ChartBucket = "day" | "month";

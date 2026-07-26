@@ -1,13 +1,25 @@
-from typing import Protocol
+from typing import Literal, Protocol
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.agent.contracts import TurnResult
+from app.agent.conversation import (
+    AgentRunResult,
+    AgentTurnResponse,
+    ConversationResponse,
+    ConversationState,
+    append_message,
+    conversation_response,
+    create_or_get_conversation,
+    delete_conversation,
+    get_conversation_by_id,
+    recent_model_messages,
+)
+from app.agent.contracts import ModelMessage
 from app.agent.runtime import RuntimeContext, RuntimeFeatureFlags
 from app.api.deps import CurrentUser, Session
 from app.api.routes.agent_admin import agent_enabled
-from app.core.database import end_read_transaction
+from app.core.database import end_read_transaction, sqlite_short_write
 from app.services.access import require_fresh_store_access, require_fresh_user
 from app.services.owner import is_administrator, is_owner
 
@@ -20,10 +32,19 @@ class AgentTurnBody(BaseModel):
     question: str = Field(min_length=1, max_length=2_000)
 
 
+class AgentResetBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirmation: Literal["permanently_delete"]
+
+
 class AgentRunner(Protocol):
     async def run(
-        self, context: RuntimeContext, question: str
-    ) -> TurnResult: ...
+        self,
+        context: RuntimeContext,
+        state: ConversationState,
+        recent_messages: list[ModelMessage],
+    ) -> AgentRunResult: ...
 
 
 async def _require_agent_administrator(session: Session, user_id: int):
@@ -48,7 +69,7 @@ async def run_agent_turn(
     request: Request,
     session: Session,
     actor: CurrentUser,
-) -> TurnResult:
+) -> AgentTurnResponse:
     user = await _require_agent_administrator(session, actor.id)
     user, store = await require_fresh_store_access(
         session,
@@ -71,7 +92,93 @@ async def run_agent_turn(
             wash_count_enabled=store.wash_count_enabled,
         ),
     )
-    # The model call must not keep a SQLite read snapshot open.
+    user_id = user.id
+    authorized_store_id = store.id
+    async with sqlite_short_write(session):
+        conversation = await create_or_get_conversation(
+            session, user_id=user_id, store_id=authorized_store_id
+        )
+        await append_message(
+            session,
+            conversation=conversation,
+            role="user",
+            content=body.question,
+        )
+        state = ConversationState.model_validate(conversation.state)
+        conversation_id = conversation.id
+        recent_messages = await recent_model_messages(
+            session, conversation_id=conversation.id
+        )
+
+    # The model call happens after the short write and outside any SQLite snapshot.
     await end_read_transaction(session)
     runner: AgentRunner = request.app.state.agent_service
-    return await runner.run(context, body.question)
+    run_result = await runner.run(context, state, recent_messages)
+    result = run_result.turn
+
+    async with sqlite_short_write(session):
+        conversation = await get_conversation_by_id(
+            session,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            store_id=authorized_store_id,
+        )
+        if conversation is None:
+            raise HTTPException(409, "当前对话已被重置")
+        conversation.state = run_result.state.model_dump(mode="json")
+        await append_message(
+            session,
+            conversation=conversation,
+            role="assistant",
+            content=result.content,
+        )
+        snapshot = await conversation_response(
+            session, user_id=user_id, store_id=authorized_store_id
+        )
+    return AgentTurnResponse(
+        route=result.route,
+        content=result.content,
+        conversation=snapshot,
+    )
+
+
+@router.get("/stores/{store_id}/conversation")
+async def get_current_conversation(
+    store_id: int,
+    session: Session,
+    actor: CurrentUser,
+) -> ConversationResponse:
+    user = await _require_agent_administrator(session, actor.id)
+    user, store = await require_fresh_store_access(
+        session,
+        user_id=user.id,
+        store_id=store_id,
+        capability="analytics.view",
+    )
+    return await conversation_response(
+        session, user_id=user.id, store_id=store.id
+    )
+
+
+@router.delete("/stores/{store_id}/conversation", status_code=204)
+async def reset_current_conversation(
+    store_id: int,
+    body: AgentResetBody,
+    session: Session,
+    actor: CurrentUser,
+) -> Response:
+    del body
+    user = await _require_agent_administrator(session, actor.id)
+    user, store = await require_fresh_store_access(
+        session,
+        user_id=user.id,
+        store_id=store_id,
+        capability="analytics.view",
+    )
+    user_id = user.id
+    authorized_store_id = store.id
+    async with sqlite_short_write(session):
+        await delete_conversation(
+            session, user_id=user_id, store_id=authorized_store_id
+        )
+    return Response(status_code=204)

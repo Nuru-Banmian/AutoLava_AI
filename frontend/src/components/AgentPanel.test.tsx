@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
@@ -11,18 +11,47 @@ beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
-function renderPanel() {
+function renderPanel(storeId = 7) {
   const client = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
       mutations: { retry: false },
     },
   });
-  return render(
+  const rendered = render(
     <QueryClientProvider client={client}>
-      <AgentPanel storeId={7} />
+      <AgentPanel storeId={storeId} />
     </QueryClientProvider>,
   );
+  return { client, ...rendered };
+}
+
+const emptyState = {
+  confirmed_period: null,
+  metrics: [],
+  filters: {},
+  comparison: null,
+  pending_clarifications: [],
+};
+
+function conversation(
+  id: number | null,
+  messages: Array<{
+    id: number;
+    role: "user" | "assistant";
+    content: string;
+  }> = [],
+) {
+  return {
+    id,
+    messages: messages.map((message) => ({
+      ...message,
+      created_at: "2026-07-26T12:00:00Z",
+    })),
+    state: emptyState,
+    created_at: id === null ? null : "2026-07-26T12:00:00Z",
+    updated_at: id === null ? null : "2026-07-26T12:00:00Z",
+  };
 }
 
 it("shows no conversation entry while the global Agent switch is off", async () => {
@@ -44,11 +73,18 @@ it("shows progress before revealing one complete direct answer", async () => {
   });
   server.use(
     http.get("/api/agent/status", () => HttpResponse.json({ enabled: true })),
+    http.get("/api/agent/stores/7/conversation", () =>
+      HttpResponse.json(conversation(null)),
+    ),
     http.post("/api/agent/stores/7/turn", async () => {
       await pending;
       return HttpResponse.json({
         route: "answer",
         content: "这是一次性出现的完整回答。",
+        conversation: conversation(1, [
+          { id: 1, role: "user", content: "你能做什么？" },
+          { id: 2, role: "assistant", content: "这是一次性出现的完整回答。" },
+        ]),
       });
     }),
   );
@@ -74,10 +110,17 @@ it("shows progress before revealing one complete direct answer", async () => {
 it("renders a clarification as the completed turn and stays within its card", async () => {
   server.use(
     http.get("/api/agent/status", () => HttpResponse.json({ enabled: true })),
+    http.get("/api/agent/stores/7/conversation", () =>
+      HttpResponse.json(conversation(null)),
+    ),
     http.post("/api/agent/stores/7/turn", () =>
       HttpResponse.json({
         route: "clarify",
         content: "你想了解哪个时间范围？",
+        conversation: conversation(1, [
+          { id: 1, role: "user", content: "帮我看看" },
+          { id: 2, role: "assistant", content: "你想了解哪个时间范围？" },
+        ]),
       }),
     ),
   );
@@ -96,4 +139,116 @@ it("renders a clarification as the completed turn and stays within its card", as
     "min-w-0",
     "overflow-hidden",
   );
+});
+
+it("restores the complete current conversation from the server", async () => {
+  server.use(
+    http.get("/api/agent/status", () => HttpResponse.json({ enabled: true })),
+    http.get("/api/agent/stores/7/conversation", () =>
+      HttpResponse.json(
+        conversation(8, [
+          { id: 31, role: "user", content: "刷新前的问题" },
+          { id: 32, role: "assistant", content: "刷新后仍然完整显示的回答" },
+        ]),
+      ),
+    ),
+  );
+
+  renderPanel();
+
+  expect(await screen.findByText("刷新前的问题")).toBeInTheDocument();
+  expect(screen.getByText("刷新后仍然完整显示的回答")).toBeInTheDocument();
+});
+
+it("requires irreversible confirmation before resetting the conversation", async () => {
+  let resets = 0;
+  server.use(
+    http.get("/api/agent/status", () => HttpResponse.json({ enabled: true })),
+    http.get("/api/agent/stores/7/conversation", () =>
+      HttpResponse.json(
+        conversation(8, [
+          { id: 31, role: "user", content: "即将删除的问题" },
+          { id: 32, role: "assistant", content: "即将删除的回答" },
+        ]),
+      ),
+    ),
+    http.delete("/api/agent/stores/7/conversation", async ({ request }) => {
+      expect(await request.json()).toEqual({
+        confirmation: "permanently_delete",
+      });
+      resets += 1;
+      return new HttpResponse(null, { status: 204 });
+    }),
+  );
+  renderPanel();
+
+  await screen.findByText("即将删除的问题");
+  fireEvent.click(screen.getByRole("button", { name: "重置对话" }));
+  expect(screen.getByRole("alertdialog")).toHaveTextContent(
+    "此操作不可恢复",
+  );
+  expect(resets).toBe(0);
+  fireEvent.click(screen.getByRole("button", { name: "确认永久重置" }));
+
+  expect(await screen.findByText("当前对话为空")).toBeInTheDocument();
+  expect(screen.queryByText("即将删除的问题")).not.toBeInTheDocument();
+  expect(resets).toBe(1);
+});
+
+it("keeps an in-flight turn in its originating store cache after switching", async () => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  server.use(
+    http.get("/api/agent/status", () => HttpResponse.json({ enabled: true })),
+    http.get("/api/agent/stores/7/conversation", () =>
+      HttpResponse.json(conversation(null)),
+    ),
+    http.get("/api/agent/stores/8/conversation", () =>
+      HttpResponse.json(
+        conversation(8, [
+          { id: 80, role: "user", content: "八号门店的问题" },
+          { id: 81, role: "assistant", content: "八号门店的回答" },
+        ]),
+      ),
+    ),
+    http.post("/api/agent/stores/7/turn", async () => {
+      await pending;
+      return HttpResponse.json({
+        route: "answer",
+        content: "七号门店的回答",
+        conversation: conversation(7, [
+          { id: 70, role: "user", content: "七号门店的问题" },
+          { id: 71, role: "assistant", content: "七号门店的回答" },
+        ]),
+      });
+    }),
+  );
+  const { client, rerender } = renderPanel(7);
+  fireEvent.change(
+    await screen.findByRole("textbox", { name: "向 Agent 提问" }),
+    { target: { value: "七号门店的问题" } },
+  );
+  fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
+
+  rerender(
+    <QueryClientProvider client={client}>
+      <AgentPanel storeId={8} />
+    </QueryClientProvider>,
+  );
+  expect(await screen.findByText("八号门店的回答")).toBeInTheDocument();
+  expect(screen.queryByText("七号门店的问题")).not.toBeInTheDocument();
+  release();
+  await waitFor(() =>
+    expect(
+      client.getQueryData<ReturnType<typeof conversation>>([
+        "agent",
+        "conversation",
+        7,
+      ])?.messages.at(-1)?.content,
+    ).toBe("七号门店的回答"),
+  );
+  expect(screen.getByText("八号门店的回答")).toBeInTheDocument();
+  expect(screen.queryByText("七号门店的回答")).not.toBeInTheDocument();
 });

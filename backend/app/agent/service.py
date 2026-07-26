@@ -1,4 +1,7 @@
-from app.agent.contracts import EvidenceBundle, EvidencePlan, ModelMessage, TurnResult
+import json
+
+from app.agent.conversation import AgentRunResult, ConversationState
+from app.agent.contracts import EvidenceBundle, EvidencePlan, ModelMessage
 from app.agent.factory import create_model_adapter
 from app.agent.runtime import RuntimeContext
 from app.agent.workflow import AgentTurnWorkflow
@@ -23,7 +26,12 @@ class AgentService:
     def __init__(self, workflow: AgentTurnWorkflow) -> None:
         self.workflow = workflow
 
-    async def run(self, context: RuntimeContext, question: str) -> TurnResult:
+    async def run(
+        self,
+        context: RuntimeContext,
+        state: ConversationState,
+        recent_messages: list[ModelMessage],
+    ) -> AgentRunResult:
         runtime_scope = (
             f"Current store timezone: {context.store_timezone}; "
             "features: "
@@ -31,11 +39,25 @@ class AgentService:
             f"income_items={context.features.income_items_enabled}, "
             f"wash_count={context.features.wash_count_enabled}."
         )
-        return await self.workflow.run(
+        result = await self.workflow.run(
             [
                 ModelMessage(role="system", content=f"{CORE_RULES}\n{runtime_scope}"),
-                ModelMessage(role="user", content=question),
+                ModelMessage(
+                    role="system",
+                    content=(
+                        "Structured conversation state:\n"
+                        f"{json.dumps(state.model_dump(mode='json'), ensure_ascii=False)}"
+                    ),
+                ),
+                *recent_messages,
             ]
+        )
+        pending_clarifications = [result.content] if result.route == "clarify" else []
+        return AgentRunResult(
+            turn=result,
+            state=state.model_copy(
+                update={"pending_clarifications": pending_clarifications}
+            ),
         )
 
 

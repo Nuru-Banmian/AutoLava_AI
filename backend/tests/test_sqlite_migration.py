@@ -22,6 +22,9 @@ EXPECTED_TABLES = {
     "settlement_records",
     "settlement_audit_events",
     "agent_settings",
+    "agent_conversations",
+    "agent_messages",
+    "agent_evidence",
 }
 
 
@@ -56,6 +59,14 @@ def test_blank_sqlite_file_migrates_to_final_schema(tmp_path: Path) -> None:
         }
         assert agent_columns["enabled"][4].strip("'") == "0"
         assert agent_columns["enabled"][3] == 1
+        conversation_indexes = {
+            name
+            for _, name, is_unique, *_ in connection.execute(
+                "PRAGMA index_list('agent_conversations')"
+            )
+            if is_unique
+        }
+        assert conversation_indexes
 
         index_names = {
             name
@@ -256,7 +267,7 @@ def test_applied_revision_0004_upgrades_without_losing_existing_data(tmp_path: P
 
     with closing(sqlite3.connect(database_path)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0005",
+            "0006",
         )
         assert connection.execute(
             "SELECT enabled FROM agent_settings WHERE id = 1"
