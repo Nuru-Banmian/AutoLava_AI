@@ -158,6 +158,7 @@ export interface AgentConversation {
 export interface AgentTurnResult {
   route: "clarify" | "answer" | "safe_failure";
   content: string;
+  recovery_status: "none" | "retried" | "fallback";
   conversation: AgentConversation;
 }
 export interface WeatherResponse { weather: string | null; weather_code: number | null; temperature_max: number | null; temperature_min: number | null; precipitation: number | null }
