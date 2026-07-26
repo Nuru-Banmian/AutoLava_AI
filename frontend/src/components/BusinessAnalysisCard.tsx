@@ -76,8 +76,8 @@ export function BusinessAnalysisCard({ storeId, range }: BusinessAnalysisCardPro
         ) : (
           <div className="grid gap-2 sm:grid-cols-3">
             <Kpi title="总营业额" value={formatWholeEuro(data.kpis.total_revenue)} />
-            <Kpi title="营业天数" value={`${data.kpis.open_days} 天`} />
-            <Kpi title="营业日均" value={formatWholeEuro(data.kpis.average_revenue)} />
+            <Kpi title="经营日" value={`${data.kpis.open_days} 天`} />
+            <Kpi title="经营日均台账营业额" value={formatWholeEuro(data.kpis.average_revenue)} />
           </div>
         )}
         <div className="grid gap-1 text-sm text-muted-foreground">

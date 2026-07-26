@@ -115,7 +115,7 @@ async def test_analytics_returns_expected_groups(db_session: AsyncSession) -> No
     assert result["kpis"]["total_revenue"] == 350
     assert result["kpis"]["record_days"] == 2
     assert result["kpis"]["open_days"] == 1
-    assert result["kpis"]["average_revenue"] == 350
+    assert result["kpis"]["average_revenue"] == 150
     assert result["kpis"]["total_wash_count"] == 5
     assert result["kpis"]["average_ticket"] == 70
     assert result["daily"][0] == {"date": "2026-07-12", "revenue": 150}
@@ -433,3 +433,88 @@ async def test_fractional_averages_use_round_half_up(db_session: AsyncSession) -
     )
 
     assert result["kpis"]["average_revenue"] == 2
+
+
+async def test_operating_day_average_uses_open_and_early_close_records(
+    db_session: AsyncSession,
+) -> None:
+    store, category_ids = await _seed_records(db_session, suffix="-operating-days")
+    records = list(
+        await db_session.scalars(
+            select(StoreDailyRecord)
+            .where(StoreDailyRecord.store_id == store.id)
+            .order_by(StoreDailyRecord.date)
+        )
+    )
+    records[1].daily_revenue = 0
+    records[1].wash_count = None
+    user_id = records[0].created_by
+    db_session.add_all(
+        [
+            StoreDailyRecord(
+                store_id=store.id,
+                date=date(2026, 7, 14),
+                daily_revenue=50,
+                wash_count=None,
+                is_open="提前休息",
+                weather=None,
+                weather_auto=None,
+                weather_code=None,
+                temperature_max=None,
+                temperature_min=None,
+                precipitation=None,
+                activity=None,
+                weather_edited=False,
+                scanned=False,
+                created_by=user_id,
+                updated_by=user_id,
+            ),
+            StoreDailyRecord(
+                store_id=store.id,
+                date=date(2026, 7, 15),
+                daily_revenue=0,
+                wash_count=None,
+                is_open="营业",
+                weather=None,
+                weather_auto=None,
+                weather_code=None,
+                temperature_max=None,
+                temperature_min=None,
+                precipitation=None,
+                activity=None,
+                weather_edited=False,
+                scanned=False,
+                created_by=user_id,
+                updated_by=user_id,
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    result = await AnalyticsService(db_session).calculate(
+        store_id=store.id,
+        start=date(2026, 7, 1),
+        end=date(2026, 7, 31),
+        category_ids=category_ids,
+        compare_start=date(2026, 7, 1),
+        compare_end=date(2026, 7, 31),
+    )
+
+    assert result["kpis"]["open_days"] == 3
+    assert result["kpis"]["average_revenue"] == 67
+    assert result["kpis"]["total_revenue"] == 200
+    assert result["kpis"]["record_days"] == 4
+    assert result["income_summary"]["daily_ledger_revenue"] == 200
+    assert result["daily"] == [
+        {"date": "2026-07-12", "revenue": 150},
+        {"date": "2026-07-13", "revenue": 0},
+        {"date": "2026-07-14", "revenue": 50},
+        {"date": "2026-07-15", "revenue": 0},
+    ]
+    assert result["comparison_kpis"] == {
+        "start": "2026-07-01",
+        "end": "2026-07-31",
+        "total_revenue": 200,
+        "open_days": 3,
+        "average_revenue": 67,
+    }
