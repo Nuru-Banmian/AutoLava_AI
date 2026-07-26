@@ -11,7 +11,7 @@ from app.core.database import get_session
 from app.core.security import decode_access_token
 from app.models.identity import Store, StoreMember, User
 from app.services.access import Capability, has_capability
-from app.services.owner import is_owner
+from app.services.owner import is_administrator, is_owner
 
 Session = Annotated[AsyncSession, Depends(get_session)]
 
@@ -31,13 +31,13 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
 async def require_admin(user: CurrentUser) -> User:
-    if user.role != "admin":
+    if not is_administrator(user):
         raise HTTPException(403, "Administrator access required")
     return user
 
 
 async def require_final_admin(user: CurrentUser) -> User:
-    if user.role != "admin" or not is_owner(user):
+    if not is_owner(user):
         raise HTTPException(403, "Final administrator access required")
     return user
 
@@ -61,7 +61,7 @@ async def require_store_access(store_id: int, user: CurrentUser, session: Sessio
     store = await session.get(Store, store_id)
     if store is None or not store.is_active:
         raise HTTPException(404, "Store not found")
-    allowed = user.role == "admin" or await session.scalar(
+    allowed = is_administrator(user) or await session.scalar(
         select(exists().where(StoreMember.store_id == store_id, StoreMember.user_id == user.id))
     )
     if not allowed:
@@ -73,9 +73,9 @@ async def require_store_read_access(
     store_id: int, user: CurrentUser, session: Session
 ) -> StoreAccess:
     store = await session.get(Store, store_id)
-    if store is None or (not store.is_active and user.role != "admin"):
+    if store is None or (not store.is_active and not is_administrator(user)):
         raise HTTPException(404, "Store not found")
-    allowed = user.role == "admin" or await session.scalar(
+    allowed = is_administrator(user) or await session.scalar(
         select(exists().where(StoreMember.store_id == store_id, StoreMember.user_id == user.id))
     )
     if not allowed:
