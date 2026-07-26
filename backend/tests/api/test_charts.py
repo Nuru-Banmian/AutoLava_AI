@@ -27,6 +27,7 @@ async def _record(
     revenue: int = 125,
     wash_count: int | None = None,
     is_open: Literal["营业", "休息", "提前休息"] = "营业",
+    category_amount: int = 25,
 ) -> None:
     user = await db_session.scalar(select(User).where(User.username == "authenticated"))
     assert user is not None
@@ -57,7 +58,7 @@ async def _record(
             category_name=category.name,
             include_in_total=category.include_in_total,
             sort_order=category.sort_order,
-            amount=25,
+            amount=category_amount,
         )
     )
     await db_session.flush()
@@ -504,6 +505,7 @@ async def test_charts_uses_the_same_operating_days_for_current_and_comparison_ra
             record_date=record_date,
             revenue=revenue,
             is_open=is_open,
+            category_amount=25 if revenue > 0 else 0,
         )
 
     response = await auth_client.get(
@@ -518,15 +520,15 @@ async def test_charts_uses_the_same_operating_days_for_current_and_comparison_ra
     assert payload["kpis"]["total_revenue"] == 200
     assert payload["kpis"]["record_days"] == 4
     assert payload["kpis"]["primary_categories"] == [
-        {"category_id": category.id, "category_name": "Cash", "amount": 100}
+        {"category_id": category.id, "category_name": "Cash", "amount": 50}
     ]
     assert payload["kpis"]["total_wash_count"] is None
     assert payload["kpis"]["average_ticket"] is None
     assert payload["income_summary"]["daily_ledger_revenue"] == 200
     assert payload["categories"] == [
-        {"category_id": category.id, "category_name": "Cash", "amount": 100}
+        {"category_id": category.id, "category_name": "Cash", "amount": 50}
     ]
-    assert payload["classified_included_total"] == 100
+    assert payload["classified_included_total"] == 50
     assert payload["monthly"] == [
         {
             "month": "2026-07",

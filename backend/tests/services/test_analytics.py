@@ -448,6 +448,11 @@ async def test_operating_day_average_uses_open_and_early_close_records(
     )
     records[1].daily_revenue = 0
     records[1].wash_count = None
+    rest_items = await db_session.scalars(
+        select(DailyIncomeItem).where(DailyIncomeItem.record_id == records[1].id)
+    )
+    for item in rest_items:
+        item.amount = 0
     user_id = records[0].created_by
     db_session.add_all(
         [
@@ -515,8 +520,8 @@ async def test_operating_day_average_uses_open_and_early_close_records(
     ]
     assert {
         item["category_name"]: item["amount"] for item in result["categories"]
-    } == {"现金": 300, "刷卡": 50}
-    assert result["classified_included_total"] == 350
+    } == {"现金": 100, "刷卡": 50}
+    assert result["classified_included_total"] == 150
     assert result["monthly"] == [
         {
             "month": "2026-07",
