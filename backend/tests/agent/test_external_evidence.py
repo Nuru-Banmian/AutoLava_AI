@@ -65,16 +65,13 @@ class RecordingWeatherProvider:
             facts={
                 "days": [
                     {
-                        "date": "2026-07-01",
+                        "date": start.isoformat(),
                         "weather": "多云",
                         "weather_code": 2,
-                        "temperature_max": 29.5,
-                        "temperature_min": 20.0,
-                        "precipitation": 0.2,
                     }
                 ]
             },
-            covered_dates=[date(2026, 7, 1)],
+            covered_dates=[start],
             limitations=["历史天气是再分析数据，不等同于门店现场观测。"],
         )
 
@@ -118,6 +115,14 @@ class RecordingHolidayProvider:
                         "types": ["Public"],
                     },
                     {
+                        "date": "2026-07-02",
+                        "local_name": "Festa nazionale",
+                        "name": "National Holiday",
+                        "global": True,
+                        "subdivisions": [],
+                        "types": ["Public"],
+                    },
+                    {
                         "date": "2026-08-15",
                         "local_name": "Ferragosto",
                         "name": "Assumption Day",
@@ -127,7 +132,11 @@ class RecordingHolidayProvider:
                     },
                 ]
             },
-            covered_dates=[date(2026, 7, 1), date(2026, 8, 15)],
+            covered_dates=[
+                date(2026, 7, 1),
+                date(2026, 7, 2),
+                date(2026, 8, 15),
+            ],
             limitations=["地区性假期只适用于供应方列出的行政区。"],
         )
 
@@ -207,10 +216,6 @@ async def test_historical_weather_returns_a_complete_external_evidence_record() 
                 {
                     "date": "2026-07-01",
                     "weather": "多云",
-                    "weather_code": 2,
-                    "temperature_max": 29.5,
-                    "temperature_min": 20.0,
-                    "precipitation": 0.2,
                 }
             ]
         },
@@ -251,16 +256,16 @@ async def test_public_holidays_are_filtered_to_the_approved_country_and_period()
     assert evidence.result == {
         "holidays": [
             {
-                "date": "2026-07-01",
-                "local_name": "Festività locale",
-                "name": "Local Holiday",
-                "global": False,
-                "subdivisions": ["IT-25"],
-                "types": ["Public"],
+                "date": "2026-07-02",
+                "local_name": "Festa nazionale",
+                "name": "National Holiday",
             }
         ]
     }
-    assert evidence.warnings == ["地区性假期只适用于供应方列出的行政区。"]
+    assert evidence.warnings == [
+        "地区性假期只适用于供应方列出的行政区。",
+        "门店未配置行政区；地区性假期未纳入结果。",
+    ]
     assert evidence.summary == "公共假期外部证据覆盖 2026 年 7 月，共 1 个假期。"
 
 
@@ -415,6 +420,34 @@ async def test_external_cache_never_reuses_another_store_scope() -> None:
     assert len(weather.calls) == 2
 
 
+async def test_external_cache_has_a_backend_enforced_capacity() -> None:
+    weather = SequencedWeatherProvider()
+    service = ExternalEvidenceService(
+        weather_provider=weather,
+        holiday_provider=UnusedHolidayProvider(),
+        now=lambda: NOW,
+        max_cache_entries=1,
+    )
+
+    await service.historical_weather(
+        _context(),
+        start=date(2026, 7, 1),
+        end=date(2026, 7, 31),
+    )
+    await service.historical_weather(
+        _context(),
+        start=date(2026, 6, 1),
+        end=date(2026, 6, 30),
+    )
+    await service.historical_weather(
+        _context(),
+        start=date(2026, 7, 1),
+        end=date(2026, 7, 31),
+    )
+
+    assert len(weather.calls) == 3
+
+
 async def test_public_holiday_cache_has_the_same_stale_fallback_semantics() -> None:
     clock = [NOW]
     holidays = SequencedHolidayProvider()
@@ -478,7 +511,7 @@ async def test_open_meteo_adapter_uses_only_the_approved_archive_endpoint(
         "start_date": "2026-07-01",
         "end_date": "2026-07-01",
         "timezone": "Europe/Rome",
-        "daily": ("weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum"),
+        "daily": "weather_code",
     }
     assert "authorization" not in route.calls[0].request.headers
 
@@ -568,6 +601,26 @@ async def test_http_adapter_classifies_timeout_without_live_network(respx_mock) 
                 date(2026, 7, 31),
             )
     assert raised.value.category == "timeout"
+
+
+async def test_http_adapter_rejects_an_oversized_response(respx_mock) -> None:
+    respx_mock.get("https://archive-api.open-meteo.com/v1/archive").mock(
+        return_value=httpx.Response(200, content=b"x" * 256_001)
+    )
+    async with httpx.AsyncClient() as client:
+        provider = OpenMeteoHistoricalWeatherProvider(client=client)
+        with pytest.raises(ExternalProviderFailure) as raised:
+            await provider.fetch(
+                ExternalEvidenceLocation(
+                    latitude=45.4642,
+                    longitude=9.19,
+                    timezone="Europe/Rome",
+                    country_code="IT",
+                ),
+                date(2026, 7, 1),
+                date(2026, 7, 31),
+            )
+    assert raised.value.category == "invalid_response"
 
 
 async def test_native_catalog_exposes_bounded_external_tools_with_external_envelopes() -> None:
@@ -719,6 +772,24 @@ async def test_external_weather_fact_is_grounded_without_allowing_causal_claims(
         statement,
         [evidence],
         [claim],
+        {reference: evidence},
+    )
+    wrong_date_statement = "2026 年 7 月 2 日的历史天气为多云。"
+    assert not answer_is_grounded(
+        wrong_date_statement,
+        [evidence],
+        [
+            claim.model_copy(
+                update={"statement": wrong_date_statement},
+            )
+        ],
+        {reference: evidence},
+    )
+    month_level_statement = "2026 年 7 月的历史天气为多云。"
+    assert not answer_is_grounded(
+        month_level_statement,
+        [evidence],
+        [claim.model_copy(update={"statement": month_level_statement})],
         {reference: evidence},
     )
     assert not answer_is_grounded(

@@ -275,7 +275,7 @@ def _claim_value_is_supported(
             or claim.metric.value != bundle.evidence_type
         ):
             return False
-        return claim.external_fact in _external_fact_values(bundle)
+        return _external_fact_is_supported(claim, bundle)
     if isinstance(bundle, SettlementDetailsEvidenceBundle):
         if claim.unit != "EUR" or claim.metric is None:
             return False
@@ -594,23 +594,37 @@ def _values_for_field(
     return values
 
 
-def _external_fact_values(bundle: ExternalEvidenceBundle) -> set[str]:
-    values: set[str] = set()
+def _external_fact_is_supported(
+    claim: NativeAnswerClaim,
+    bundle: ExternalEvidenceBundle,
+) -> bool:
+    if claim.external_fact is None:
+        return False
     key = "days" if bundle.evidence_type == "historical_weather" else "holidays"
     rows = bundle.result.get(key)
     if not isinstance(rows, list):
-        return values
+        return False
     allowed_fields = (
         ("weather",) if bundle.evidence_type == "historical_weather" else ("local_name", "name")
     )
+    supported_dates: set[date] = set()
     for row in rows:
         if not isinstance(row, dict):
             continue
-        for field in allowed_fields:
-            value = row.get(field)
-            if isinstance(value, str):
-                values.add(value)
-    return values
+        if not any(row.get(field) == claim.external_fact for field in allowed_fields):
+            continue
+        try:
+            supported_dates.add(date.fromisoformat(str(row["date"])))
+        except (KeyError, ValueError):
+            continue
+    claimed_dates: set[date] = set()
+    for pattern in (_ISO_DATE, _CHINESE_DATE):
+        for match in pattern.finditer(claim.statement):
+            try:
+                claimed_dates.add(date(*(int(part) for part in match.groups())))
+            except ValueError:
+                return False
+    return bool(claimed_dates and claimed_dates.issubset(supported_dates))
 
 
 def _metric_value(metric: ClaimMetric) -> str:

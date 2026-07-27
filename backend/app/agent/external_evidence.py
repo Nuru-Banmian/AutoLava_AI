@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Protocol
+import json
+from typing import Any, Literal, Protocol, TypeAlias
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
@@ -19,6 +21,9 @@ from app.agent.contracts import (
 )
 from app.agent.runtime import RuntimeContext
 from app.services.weather import weather_label
+
+MAX_EXTERNAL_RESPONSE_BYTES = 256_000
+MAX_EXTERNAL_ROWS = 366
 
 
 def country_code_for_timezone(timezone_name: str) -> str | None:
@@ -43,18 +48,18 @@ class ExternalProviderPayload:
     limitations: list[str] = field(default_factory=list)
 
 
-ExternalFailureCategory = str
+ExternalFailureCategory: TypeAlias = Literal[
+    "timeout",
+    "rate_limited",
+    "service_unavailable",
+    "invalid_response",
+]
 
 
 class ExternalProviderFailure(RuntimeError):
     def __init__(self, category: ExternalFailureCategory) -> None:
-        normalized = (
-            category
-            if category in {"timeout", "rate_limited", "service_unavailable", "invalid_response"}
-            else "invalid_response"
-        )
-        super().__init__(normalized)
-        self.category = normalized
+        super().__init__(category)
+        self.category = category
 
 
 @dataclass(frozen=True)
@@ -93,7 +98,7 @@ class OpenMeteoHistoricalWeatherProvider:
         start: date,
         end: date,
     ) -> ExternalProviderPayload:
-        response = await _fixed_get(
+        response_payload = await _fixed_get_json(
             self.client,
             self.endpoint,
             params={
@@ -102,19 +107,16 @@ class OpenMeteoHistoricalWeatherProvider:
                 "start_date": start.isoformat(),
                 "end_date": end.isoformat(),
                 "timezone": location.timezone,
-                "daily": ("weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum"),
+                "daily": "weather_code",
             },
         )
         try:
-            daily = response.json()["daily"]
+            daily = response_payload["daily"]
             rows = []
             covered_dates = []
-            for raw_date, raw_code, maximum, minimum, precipitation in zip(
+            for raw_date, raw_code in zip(
                 daily["time"],
                 daily["weather_code"],
-                daily["temperature_2m_max"],
-                daily["temperature_2m_min"],
-                daily["precipitation_sum"],
                 strict=True,
             ):
                 target_date = date.fromisoformat(str(raw_date))
@@ -130,9 +132,6 @@ class OpenMeteoHistoricalWeatherProvider:
                         "date": target_date.isoformat(),
                         "weather": label,
                         "weather_code": code,
-                        "temperature_max": float(maximum),
-                        "temperature_min": float(minimum),
-                        "precipitation": float(precipitation),
                     }
                 )
         except (KeyError, TypeError, ValueError) as error:
@@ -154,12 +153,12 @@ class NagerPublicHolidayProvider:
     async def fetch(self, country_code: str, year: int) -> ExternalProviderPayload:
         if country_code != "IT" or not 2000 <= year <= 2200:
             raise ExternalProviderFailure("invalid_response")
-        response = await _fixed_get(
+        response_payload = await _fixed_get_json(
             self.client,
             f"{self.endpoint_prefix}/{year}/{country_code}",
         )
         try:
-            payload = response.json()
+            payload = response_payload
             if not isinstance(payload, list):
                 raise TypeError("holiday response must be a list")
             holidays = []
@@ -196,12 +195,16 @@ class ExternalEvidenceService:
         holiday_provider: PublicHolidayProvider,
         now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         max_age: timedelta = timedelta(days=1),
+        max_cache_entries: int = 128,
     ) -> None:
+        if not 1 <= max_cache_entries <= 1_024:
+            raise ValueError("max_cache_entries must be between 1 and 1024")
         self.weather_provider = weather_provider
         self.holiday_provider = holiday_provider
         self.now = now
         self.max_age = max_age
-        self._cache: dict[tuple[object, ...], _CacheEntry] = {}
+        self.max_cache_entries = max_cache_entries
+        self._cache: OrderedDict[tuple[object, ...], _CacheEntry] = OrderedDict()
 
     async def collect(
         self,
@@ -237,9 +240,16 @@ class ExternalEvidenceService:
         )
         cached = self._cache.get(cache_key)
         if cached is not None and queried_at - cached.cached_at <= self.max_age:
+            self._cache.move_to_end(cache_key)
             return _cached_evidence(cached, queried_at, cache_status="fresh")
         try:
             payload = await self.weather_provider.fetch(location, start, end)
+            _validate_provider_payload(
+                payload,
+                evidence_type="historical_weather",
+                start=start,
+                end=end,
+            )
         except ExternalProviderFailure as error:
             if cached is not None:
                 return _stale_evidence(cached, queried_at, error.category)
@@ -309,13 +319,21 @@ class ExternalEvidenceService:
                 cache_status="refreshed" if cached is not None else "miss",
             ),
             failure=ExternalEvidenceFailure(status="none"),
-            result=payload.facts,
+            result={
+                "days": [
+                    {
+                        "date": item["date"],
+                        "weather": item["weather"],
+                    }
+                    for item in payload.facts["days"]
+                ]
+            },
             warnings=payload.limitations,
             summary=(
                 f"历史天气外部证据覆盖 {len(requested_dates)} 个日期中的 {recorded_dates} 个日期。"
             ),
         )
-        self._cache[cache_key] = _CacheEntry(evidence=evidence, cached_at=queried_at)
+        self._store_cache(cache_key, evidence, queried_at)
         return evidence
 
     async def public_holidays(
@@ -325,22 +343,31 @@ class ExternalEvidenceService:
         start: date,
         end: date,
     ) -> ExternalEvidenceBundle:
-        location = _location(context)
+        if context.store_country_code is None:
+            raise ValueError("external evidence country scope is unavailable")
+        country_code = context.store_country_code
         if start.year != end.year:
             raise ValueError("public holiday evidence must stay within one calendar year")
         queried_at = self.now()
         cache_key = (
             "public_holidays",
             context.store_id,
-            location.country_code,
+            country_code,
             start,
             end,
         )
         cached = self._cache.get(cache_key)
         if cached is not None and queried_at - cached.cached_at <= self.max_age:
+            self._cache.move_to_end(cache_key)
             return _cached_evidence(cached, queried_at, cache_status="fresh")
         try:
-            payload = await self.holiday_provider.fetch(location.country_code, start.year)
+            payload = await self.holiday_provider.fetch(country_code, start.year)
+            _validate_provider_payload(
+                payload,
+                evidence_type="public_holidays",
+                start=date(start.year, 1, 1),
+                end=date(start.year, 12, 31),
+            )
         except ExternalProviderFailure as error:
             if cached is not None:
                 return _stale_evidence(cached, queried_at, error.category)
@@ -353,7 +380,7 @@ class ExternalEvidenceService:
                 queried_at=queried_at,
                 geographic_scope=ExternalGeographicScope(
                     kind="country",
-                    timezone=location.timezone,
+                    timezone=context.store_timezone,
                     country_code="IT",
                 ),
                 max_age=self.max_age,
@@ -371,20 +398,38 @@ class ExternalEvidenceService:
                 queried_at=queried_at,
                 geographic_scope=ExternalGeographicScope(
                     kind="country",
-                    timezone=location.timezone,
+                    timezone=context.store_timezone,
                     country_code="IT",
                 ),
                 max_age=self.max_age,
                 category="service_unavailable",
             )
-        holidays = [
+        applicable_holidays = [
             item
             for item in payload.facts.get("holidays", [])
             if isinstance(item, dict)
             and isinstance(item.get("date"), str)
             and start <= date.fromisoformat(item["date"]) <= end
+            and item.get("global") is True
+        ]
+        holidays = [
+            {
+                "date": item["date"],
+                "local_name": item["local_name"],
+                "name": item["name"],
+            }
+            for item in applicable_holidays
         ]
         requested_dates = _dates(start, end)
+        warnings = list(payload.limitations)
+        if any(
+            isinstance(item, dict)
+            and isinstance(item.get("date"), str)
+            and start <= date.fromisoformat(item["date"]) <= end
+            and item.get("global") is False
+            for item in payload.facts.get("holidays", [])
+        ):
+            warnings.append("门店未配置行政区；地区性假期未纳入结果。")
         evidence = ExternalEvidenceBundle(
             status="ok",
             current_store=CurrentStoreScope(id=context.store_id),
@@ -394,7 +439,7 @@ class ExternalEvidenceService:
             queried_at=queried_at,
             geographic_scope=ExternalGeographicScope(
                 kind="country",
-                timezone=location.timezone,
+                timezone=context.store_timezone,
                 country_code="IT",
             ),
             coverage=ExternalEvidenceCoverage(
@@ -410,14 +455,25 @@ class ExternalEvidenceService:
             ),
             failure=ExternalEvidenceFailure(status="none"),
             result={"holidays": holidays},
-            warnings=payload.limitations,
+            warnings=warnings,
             summary=(
                 f"公共假期外部证据覆盖 {start.year} 年 {start.month} 月，"
                 f"共 {len(holidays)} 个假期。"
             ),
         )
-        self._cache[cache_key] = _CacheEntry(evidence=evidence, cached_at=queried_at)
+        self._store_cache(cache_key, evidence, queried_at)
         return evidence
+
+    def _store_cache(
+        self,
+        key: tuple[object, ...],
+        evidence: ExternalEvidenceBundle,
+        cached_at: datetime,
+    ) -> None:
+        self._cache[key] = _CacheEntry(evidence=evidence, cached_at=cached_at)
+        self._cache.move_to_end(key)
+        while len(self._cache) > self.max_cache_entries:
+            self._cache.popitem(last=False)
 
 
 def _location(context: RuntimeContext) -> ExternalEvidenceLocation:
@@ -441,29 +497,110 @@ def _dates(start: date, end: date) -> list[date]:
     return [start + timedelta(days=offset) for offset in range((end - start).days + 1)]
 
 
-async def _fixed_get(
+async def _fixed_get_json(
     client: httpx.AsyncClient | None,
     url: str,
     *,
     params: dict[str, str | int | float | bool | None] | None = None,
-) -> httpx.Response:
+) -> Any:
     try:
         if client is not None:
-            response = await client.get(url, params=params, timeout=8)
+            return await _read_bounded_json(client, url, params=params)
         else:
             async with httpx.AsyncClient() as owned_client:
-                response = await owned_client.get(url, params=params, timeout=8)
+                return await _read_bounded_json(owned_client, url, params=params)
     except httpx.TimeoutException as error:
         raise ExternalProviderFailure("timeout") from error
     except httpx.RequestError as error:
         raise ExternalProviderFailure("service_unavailable") from error
-    if response.status_code == 429:
-        raise ExternalProviderFailure("rate_limited")
-    if response.status_code >= 500:
-        raise ExternalProviderFailure("service_unavailable")
-    if response.status_code >= 400:
+
+
+async def _read_bounded_json(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    params: dict[str, str | int | float | bool | None] | None,
+) -> Any:
+    request = client.build_request("GET", url, params=params, timeout=8)
+    response = await client.send(request, stream=True)
+    try:
+        if response.status_code == 429:
+            raise ExternalProviderFailure("rate_limited")
+        if response.status_code >= 500:
+            raise ExternalProviderFailure("service_unavailable")
+        if response.status_code >= 400:
+            raise ExternalProviderFailure("invalid_response")
+        declared_length = response.headers.get("content-length")
+        if (
+            declared_length is not None
+            and declared_length.isdecimal()
+            and int(declared_length) > MAX_EXTERNAL_RESPONSE_BYTES
+        ):
+            raise ExternalProviderFailure("invalid_response")
+        body = bytearray()
+        async for chunk in response.aiter_bytes():
+            body.extend(chunk)
+            if len(body) > MAX_EXTERNAL_RESPONSE_BYTES:
+                raise ExternalProviderFailure("invalid_response")
+        try:
+            return json.loads(body)
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ExternalProviderFailure("invalid_response") from error
+    finally:
+        await response.aclose()
+
+
+def _validate_provider_payload(
+    payload: ExternalProviderPayload,
+    *,
+    evidence_type: str,
+    start: date,
+    end: date,
+) -> None:
+    key = "days" if evidence_type == "historical_weather" else "holidays"
+    rows = payload.facts.get(key)
+    max_rows = min(MAX_EXTERNAL_ROWS, (end - start).days + 1)
+    try:
+        encoded = json.dumps(payload.facts, ensure_ascii=False).encode()
+    except (TypeError, ValueError) as error:
+        raise ExternalProviderFailure("invalid_response") from error
+    try:
+        row_dates = (
+            [date.fromisoformat(str(item["date"])) for item in rows if isinstance(item, dict)]
+            if isinstance(rows, list)
+            else []
+        )
+    except (KeyError, ValueError) as error:
+        raise ExternalProviderFailure("invalid_response") from error
+    rows_have_required_fields = bool(
+        isinstance(rows, list)
+        and all(
+            isinstance(item, dict)
+            and isinstance(item.get("date"), str)
+            and (
+                isinstance(item.get("weather"), str)
+                if evidence_type == "historical_weather"
+                else isinstance(item.get("local_name"), str)
+                and isinstance(item.get("name"), str)
+                and isinstance(item.get("global"), bool)
+            )
+            for item in rows
+        )
+    )
+    row_count = len(rows) if isinstance(rows, list) else max_rows + 1
+    if (
+        not rows_have_required_fields
+        or row_count > max_rows
+        or len(payload.covered_dates) > max_rows
+        or len(row_dates) != row_count
+        or len(set(row_dates)) != len(row_dates)
+        or set(row_dates) != set(payload.covered_dates)
+        or len(encoded) > MAX_EXTERNAL_RESPONSE_BYTES
+        or len(payload.limitations) > 20
+        or any(len(value) > 500 for value in payload.limitations)
+        or any(not start <= value <= end for value in payload.covered_dates)
+    ):
         raise ExternalProviderFailure("invalid_response")
-    return response
 
 
 def _cached_evidence(
@@ -489,7 +626,7 @@ def _cached_evidence(
 def _stale_evidence(
     cached: _CacheEntry,
     queried_at: datetime,
-    category: str,
+    category: ExternalFailureCategory,
 ) -> ExternalEvidenceBundle:
     reason = {
         "timeout": "超时",

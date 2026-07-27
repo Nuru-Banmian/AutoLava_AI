@@ -518,6 +518,7 @@ class NativeToolAgentService:
                 required_geography=spec.required_geography,
             )
             for name, spec in NATIVE_TOOLS.items()
+            if spec.collection != "external" or self.external_evidence_collector is not None
         )
 
     async def run(
