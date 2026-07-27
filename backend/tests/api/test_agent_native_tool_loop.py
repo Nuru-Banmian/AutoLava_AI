@@ -378,9 +378,7 @@ async def test_native_settlement_tool_returns_only_the_current_store_invoice_mon
         "pending",
         "confirmed",
     }
-    assert {record["opening_month"] for record in evidence.facts["records"]} == {
-        "2026-07-01"
-    }
+    assert {record["opening_month"] for record in evidence.facts["records"]} == {"2026-07-01"}
     assert "Secret" not in evidence.model_dump_json()
     assert response.json()["content"] == (
         "所有结算公司的待到账公司结算金额合计为 120 欧元；"

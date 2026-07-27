@@ -666,9 +666,7 @@ def _native_envelope(
         extreme = None
         completeness = None
         settlement_query_scope = evidence.query_scope
-        version_payload["settlement_query_scope"] = settlement_query_scope.model_dump(
-            mode="json"
-        )
+        version_payload["settlement_query_scope"] = settlement_query_scope.model_dump(mode="json")
     if group_by is not None:
         version_payload["group_by"] = group_by
     if filters is not None:

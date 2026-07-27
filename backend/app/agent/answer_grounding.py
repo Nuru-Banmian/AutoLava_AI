@@ -61,6 +61,7 @@ _PERCENTAGE_CHANGE_CONNECTOR = re.compile(r"\s*(?:增长|增加|上升|提高|�
 _INCREASE = re.compile(r"增长|增加|上升|提高")
 _DECREASE = re.compile(r"下降|减少|降低|下滑")
 
+
 class SettlementClaimMetric(StrEnum):
     PENDING_AMOUNT = "pending_settlement_amount"
 
@@ -257,12 +258,7 @@ def _claim_value_is_supported(
 
 
 def _claim_literals_match_metadata(claim: NativeAnswerClaim) -> bool:
-    if (
-        claim.metric is None
-        or claim.period is None
-        or claim.value is None
-        or claim.unit is None
-    ):
+    if claim.metric is None or claim.period is None or claim.value is None or claim.unit is None:
         return False
     for pattern in (_ISO_DATE, _CHINESE_DATE):
         for match in pattern.finditer(claim.statement):
