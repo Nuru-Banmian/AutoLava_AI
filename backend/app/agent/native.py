@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from app.agent.answer_grounding import NativeAnswerClaim, answer_is_grounded
 from app.agent.conversation import AgentRunResult, ConfirmedPeriod, ConversationState
 from app.agent.contracts import (
     CurrentStoreScope,
@@ -38,6 +39,7 @@ OPERATING_DAYS_TOOL = "operating_days"
 MAX_NATIVE_TOOL_ROUNDS = 4
 MAX_NATIVE_TOOL_CALLS = 8
 INVESTIGATION_LIMIT_MESSAGE = "调查已达到本轮资源上限；以下结论仅基于已返回的证据。"
+ANSWER_EVIDENCE_FAILURE_MESSAGE = "回答中的关键经营声明缺少本轮有效证据支持，请缩小范围后重试。"
 EXPLICIT_CALENDAR_MONTH = re.compile(
     r"(?P<year>20\d{2}|21\d{2}|2200)\s*年\s*(?P<month>1[0-2]|0?[1-9])\s*月"
 )
@@ -153,6 +155,7 @@ class NativeModelTurn(ClosedModel):
     message: ModelMessage
     tool_calls: list[NativeToolCall] = Field(default_factory=list, max_length=4)
     hypotheses: list[NativeAnalysisHypothesis] = Field(default_factory=list, max_length=8)
+    answer_claims: list[NativeAnswerClaim] = Field(default_factory=list, max_length=20)
     signal: Literal["continue", "end"]
 
     @model_validator(mode="after")
@@ -163,6 +166,8 @@ class NativeModelTurn(ClosedModel):
             raise ValueError("continue requires at least one tool call")
         if self.signal == "end" and self.tool_calls:
             raise ValueError("end cannot include tool calls")
+        if self.signal == "continue" and self.answer_claims:
+            raise ValueError("answer claims are only allowed on an ending turn")
         call_ids = [call.id for call in self.tool_calls]
         if len(call_ids) != len(set(call_ids)):
             raise ValueError("tool call ids must be unique within a turn")
@@ -326,6 +331,7 @@ class NativeToolAgentService:
             )
         items = [NativeTranscriptItem(message=message) for message in recent_messages]
         collected: list[EvidenceBundle] = []
+        evidence_by_reference: dict[str, EvidenceBundle] = {}
         tool_call_count = 0
         for round_number in range(MAX_NATIVE_TOOL_ROUNDS):
             if round_number:
@@ -358,6 +364,19 @@ class NativeToolAgentService:
                 )
             )
             if turn.signal == "end":
+                if not answer_is_grounded(
+                    turn.message.content,
+                    collected,
+                    turn.answer_claims,
+                    evidence_by_reference,
+                ):
+                    return AgentRunResult(
+                        turn=TurnResult(
+                            route="safe_failure",
+                            content=ANSWER_EVIDENCE_FAILURE_MESSAGE,
+                        ),
+                        state=state,
+                    )
                 return _agent_result(
                     state,
                     collected,
@@ -383,6 +402,7 @@ class NativeToolAgentService:
             for tool_result, new_evidence in outcomes:
                 if new_evidence is not None:
                     collected.append(new_evidence)
+                    evidence_by_reference[tool_result.evidence.reference] = new_evidence
                 items.append(NativeTranscriptItem(tool_result=tool_result))
         return _agent_result(
             state,

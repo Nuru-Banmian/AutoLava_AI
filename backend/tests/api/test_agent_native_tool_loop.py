@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.business_evidence import BusinessEvidenceCollector
 from app.agent.native import (
-    FakeNativeToolModel,
+    NativeModelCall,
     NativeModelTurn,
     NativeToolDefinition,
     NativeTranscriptItem,
@@ -30,6 +30,51 @@ async def _login(client: AsyncClient, username: str) -> None:
         json={"username": username, "password": "secret"},
     )
     assert response.status_code == 200
+
+
+class GroundedMonthlyRevenueModel:
+    def __init__(self, *, before_turn) -> None:
+        self.before_turn = before_turn
+        self.calls: list[NativeModelCall] = []
+
+    async def next_turn(self, items, *, tools) -> NativeModelTurn:
+        self.before_turn()
+        self.calls.append(NativeModelCall(items=list(items), tools=list(tools)))
+        if len(self.calls) == 1:
+            return NativeModelTurn.model_validate(
+                {
+                    "message": {"role": "assistant", "content": "查询月度总收入。"},
+                    "tool_calls": [
+                        {
+                            "id": "call-revenue",
+                            "name": "monthly_total_revenue",
+                            "arguments": {"year": 2026, "month": 7},
+                        }
+                    ],
+                    "signal": "continue",
+                }
+            )
+        evidence = next(item.tool_result.evidence for item in items if item.tool_result)
+        return NativeModelTurn.model_validate(
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "2026 年 7 月月度总收入为 400 欧元。",
+                },
+                "answer_claims": [
+                    {
+                        "statement": "2026 年 7 月月度总收入为 400 欧元",
+                        "status": "verified_fact",
+                        "metric": "monthly_total_revenue",
+                        "period": evidence.period.model_dump(mode="json"),
+                        "value": 400,
+                        "unit": "EUR",
+                        "evidence_references": [evidence.reference],
+                    }
+                ],
+                "signal": "end",
+            }
+        )
 
 
 @pytest.mark.parametrize("username", ["admin", "owner"])
@@ -110,26 +155,7 @@ async def test_native_monthly_total_revenue_tool_closes_the_http_loop_for_admini
         assert not db_session.in_transaction()
 
     expected_answer = "2026 年 7 月月度总收入为 400 欧元。"
-    model = FakeNativeToolModel(
-        turns=[
-            {
-                "message": {"role": "assistant", "content": "查询月度总收入。"},
-                "tool_calls": [
-                    {
-                        "id": "call-revenue",
-                        "name": "monthly_total_revenue",
-                        "arguments": {"year": 2026, "month": 7},
-                    }
-                ],
-                "signal": "continue",
-            },
-            {
-                "message": {"role": "assistant", "content": expected_answer},
-                "signal": "end",
-            },
-        ],
-        before_turn=assert_model_runs_without_sqlite_transaction,
-    )
+    model = GroundedMonthlyRevenueModel(before_turn=assert_model_runs_without_sqlite_transaction)
     client._transport.app.state.agent_service = create_agent_service(
         Settings(_env_file=None),
         session_factory,

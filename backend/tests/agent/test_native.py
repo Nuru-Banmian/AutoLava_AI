@@ -13,6 +13,7 @@ from app.agent.contracts import (
     CurrentStoreScope,
     DailyLedgerRevenueResult,
     EvidenceBundle,
+    EvidenceComparisonResult,
     EvidenceCoverage,
     EvidenceMetric,
     EvidencePeriodResult,
@@ -20,7 +21,9 @@ from app.agent.contracts import (
     MonthlyTotalRevenueResult,
     OperatingDaysResult,
 )
+from app.agent.answer_grounding import NativeAnswerClaim, answer_is_grounded
 from app.agent.native import (
+    ANSWER_EVIDENCE_FAILURE_MESSAGE,
     FakeNativeToolModel,
     NativeModelTurn,
     NativeToolAccessDenied,
@@ -281,6 +284,698 @@ async def test_native_investigation_runs_independent_tool_calls_in_parallel() ->
     assert result.turn.content == "核对完成。"
 
 
+async def test_native_answer_keeps_a_freely_organized_evidence_supported_answer() -> None:
+    model = FakeNativeToolModel(
+        turns=[
+            {
+                "message": {"role": "assistant", "content": "先核对月度总收入。"},
+                "tool_calls": [
+                    {
+                        "id": "revenue",
+                        "name": "monthly_total_revenue",
+                        "arguments": {"year": 2026, "month": 7},
+                    }
+                ],
+                "signal": "continue",
+            },
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": (
+                        "我先说结论：2026 年 7 月当前门店的月度总收入是 140 欧元。"
+                        "这是工具证实的事实；至于变化原因，目前未知。"
+                    ),
+                },
+                "answer_claims": [
+                    {
+                        "statement": ("我先说结论：2026 年 7 月当前门店的月度总收入是 140 欧元"),
+                        "status": "verified_fact",
+                        "metric": "monthly_total_revenue",
+                        "period": {"start": "2026-07-01", "end": "2026-07-31"},
+                        "value": 140,
+                        "unit": "EUR",
+                        "evidence_references": ["ev_9500cd612f37e09b7cd7a96c"],
+                    },
+                    {
+                        "statement": "至于变化原因，目前未知",
+                        "status": "unknown",
+                    },
+                ],
+                "signal": "end",
+            },
+        ]
+    )
+
+    result = await NativeToolAgentService(
+        model=model,
+        evidence_collector=MetricEvidenceCollector(),
+        scope_resolver=PassthroughScopeResolver(),
+    ).run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="2026 年 7 月收入是多少？")],
+    )
+
+    assert result.turn.route == "answer"
+    assert result.turn.content == (
+        "我先说结论：2026 年 7 月当前门店的月度总收入是 140 欧元。"
+        "这是工具证实的事实；至于变化原因，目前未知。"
+    )
+
+
+async def test_native_answer_rejects_claim_metadata_that_does_not_match_its_evidence() -> None:
+    model = FakeNativeToolModel(
+        turns=[
+            {
+                "message": {"role": "assistant", "content": "先核对月度总收入。"},
+                "tool_calls": [
+                    {
+                        "id": "revenue",
+                        "name": "monthly_total_revenue",
+                        "arguments": {"year": 2026, "month": 7},
+                    }
+                ],
+                "signal": "continue",
+            },
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "2026 年 7 月已确认公司结算收入为 140 欧元。",
+                },
+                "answer_claims": [
+                    {
+                        "statement": "2026 年 7 月已确认公司结算收入为 140 欧元",
+                        "status": "verified_fact",
+                        "metric": "confirmed_settlement_income",
+                        "period": {"start": "2026-07-01", "end": "2026-07-31"},
+                        "value": 140,
+                        "unit": "EUR",
+                        "evidence_references": ["ev_9500cd612f37e09b7cd7a96c"],
+                    }
+                ],
+                "signal": "end",
+            },
+        ]
+    )
+
+    result = await NativeToolAgentService(
+        model=model,
+        evidence_collector=MetricEvidenceCollector(),
+        scope_resolver=PassthroughScopeResolver(),
+    ).run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="2026 年 7 月收入是多少？")],
+    )
+
+    assert result.turn.route == "safe_failure"
+    assert result.turn.content == ANSWER_EVIDENCE_FAILURE_MESSAGE
+
+
+@pytest.mark.parametrize(
+    "unsupported_answer",
+    (
+        "2026 年 8 月当前门店的月度总收入是 140 欧元。",
+        "2026 年 7 月当前门店的月度总收入是 999 欧元。",
+        "2026 年 7 月当前门店的月度总收入是 140 美元。",
+        "2026 年 7 月当前门店的利润是 140 欧元。",
+        "2026 年 7 月当前门店的已确认公司结算收入是 140 欧元。",
+        "2026 年 7 月当前门店的月度总收入增长了 20%。",
+        "2026 年 7 月当前门店的经营表现良好。",
+        "另一个门店 2026 年 7 月的月度总收入是 140 欧元。",
+    ),
+)
+async def test_native_answer_fails_closed_when_a_key_claim_is_not_supported(
+    unsupported_answer: str,
+) -> None:
+    model = FakeNativeToolModel(
+        turns=[
+            {
+                "message": {"role": "assistant", "content": "先核对月度总收入。"},
+                "tool_calls": [
+                    {
+                        "id": "revenue",
+                        "name": "monthly_total_revenue",
+                        "arguments": {"year": 2026, "month": 7},
+                    }
+                ],
+                "signal": "continue",
+            },
+            {
+                "message": {"role": "assistant", "content": unsupported_answer},
+                "signal": "end",
+            },
+        ]
+    )
+
+    result = await NativeToolAgentService(
+        model=model,
+        evidence_collector=MetricEvidenceCollector(),
+        scope_resolver=PassthroughScopeResolver(),
+    ).run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="2026 年 7 月收入是多少？")],
+    )
+
+    assert result.turn.route == "safe_failure"
+    assert result.turn.content == ANSWER_EVIDENCE_FAILURE_MESSAGE
+    assert unsupported_answer not in result.turn.content
+
+
+@pytest.mark.parametrize(
+    "causal_answer",
+    (
+        "暴雨导致 2026 年 7 月的月度总收入为 140 欧元。",
+        "公共假期造成 2026 年 7 月的月度总收入为 140 欧元。",
+        "门店事件证明了 2026 年 7 月的月度总收入为 140 欧元。",
+        "促销导致 2026 年 7 月的月度总收入为 140 欧元。",
+        "暴雨使得 2026 年 7 月的月度总收入变为 140 欧元。",
+        "暴雨导致 2026 年 7 月的月度总收入为 140 欧元，其他原因也可能存在。",
+    ),
+)
+async def test_native_answer_never_presents_recorded_phenomena_as_proven_causes(
+    causal_answer: str,
+) -> None:
+    model = FakeNativeToolModel(
+        turns=[
+            {
+                "message": {"role": "assistant", "content": "先核对月度总收入。"},
+                "tool_calls": [
+                    {
+                        "id": "revenue",
+                        "name": "monthly_total_revenue",
+                        "arguments": {"year": 2026, "month": 7},
+                    }
+                ],
+                "signal": "continue",
+            },
+            {
+                "message": {"role": "assistant", "content": causal_answer},
+                "answer_claims": [
+                    {
+                        "statement": causal_answer.rstrip("。"),
+                        "status": "verified_fact",
+                        "metric": "monthly_total_revenue",
+                        "period": {"start": "2026-07-01", "end": "2026-07-31"},
+                        "value": 140,
+                        "unit": "EUR",
+                        "relationship": "none",
+                        "evidence_references": ["ev_9500cd612f37e09b7cd7a96c"],
+                    }
+                ],
+                "signal": "end",
+            },
+        ]
+    )
+
+    result = await NativeToolAgentService(
+        model=model,
+        evidence_collector=MetricEvidenceCollector(),
+        scope_resolver=PassthroughScopeResolver(),
+    ).run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="调查 2026 年 7 月收入变化原因。")],
+    )
+
+    assert result.turn.route == "safe_failure"
+    assert result.turn.content == ANSWER_EVIDENCE_FAILURE_MESSAGE
+
+
+def test_answer_grounding_allows_a_percentage_backed_by_comparison_evidence() -> None:
+    evidence = _evidence(EvidenceMetric.MONTHLY_TOTAL_REVENUE, 140).model_copy(
+        update={
+            "comparison": EvidenceComparisonResult(
+                status="ok",
+                period={"start": "2026-06-01", "end": "2026-06-30"},
+                result={
+                    "daily_ledger_revenue": 100,
+                    "confirmed_settlement_income": 0,
+                    "monthly_total_revenue": 100,
+                },
+                amount_difference=40,
+                percentage_change=40,
+                percentage_status="available",
+                equal_length=False,
+            )
+        }
+    )
+    answer = "2026 年 7 月月度总收入增长 40%。"
+    reference = "ev_111111111111111111111111"
+    claim = NativeAnswerClaim(
+        statement=answer.rstrip("。"),
+        status="verified_fact",
+        metric="monthly_total_revenue",
+        period=evidence.period,
+        value=40,
+        unit="percent",
+        evidence_references=[reference],
+    )
+
+    assert answer_is_grounded(
+        answer,
+        [evidence],
+        [claim],
+        {reference: evidence},
+    )
+
+
+def test_answer_grounding_rejects_an_unclaimed_operating_judgment() -> None:
+    evidence = _evidence(EvidenceMetric.MONTHLY_TOTAL_REVENUE, 140)
+    answer = "2026 年 7 月月度总收入为 140 欧元。客流旺盛。"
+    reference = "ev_222222222222222222222222"
+    claim = NativeAnswerClaim(
+        statement="2026 年 7 月月度总收入为 140 欧元",
+        status="verified_fact",
+        metric="monthly_total_revenue",
+        period=evidence.period,
+        value=140,
+        unit="EUR",
+        evidence_references=[reference],
+    )
+
+    assert not answer_is_grounded(
+        answer,
+        [evidence],
+        [claim],
+        {reference: evidence},
+    )
+
+
+def test_answer_grounding_rejects_cross_period_literals_inside_one_claim() -> None:
+    july = _evidence(EvidenceMetric.MONTHLY_TOTAL_REVENUE, 140)
+    august = july.model_copy(
+        update={
+            "period": {"start": "2026-08-01", "end": "2026-08-31"},
+            "result": {
+                "daily_ledger_revenue": 999,
+                "confirmed_settlement_income": 0,
+                "monthly_total_revenue": 999,
+            },
+        }
+    )
+    answer = "2026 年 7 月月度总收入为 140 欧元，2026 年 8 月月度总收入也是 140 欧元。"
+    reference = "ev_333333333333333333333333"
+    claim = NativeAnswerClaim(
+        statement=answer.rstrip("。"),
+        status="verified_fact",
+        metric="monthly_total_revenue",
+        period=july.period,
+        value=140,
+        unit="EUR",
+        evidence_references=[reference],
+    )
+
+    assert not answer_is_grounded(
+        answer,
+        [july, august],
+        [claim],
+        {reference: july},
+    )
+
+
+def test_answer_grounding_rejects_a_month_without_year_outside_the_claim_period() -> None:
+    evidence = _evidence(EvidenceMetric.MONTHLY_TOTAL_REVENUE, 140)
+    answer = "8 月月度总收入为 140 欧元。"
+    reference = "ev_444444444444444444444444"
+    claim = NativeAnswerClaim(
+        statement=answer.rstrip("。"),
+        status="verified_fact",
+        metric="monthly_total_revenue",
+        period=evidence.period,
+        value=140,
+        unit="EUR",
+        evidence_references=[reference],
+    )
+
+    assert not answer_is_grounded(
+        answer,
+        [evidence],
+        [claim],
+        {reference: evidence},
+    )
+
+
+def test_answer_grounding_rejects_a_verified_claim_without_its_metric_and_value() -> None:
+    evidence = _evidence(EvidenceMetric.MONTHLY_TOTAL_REVENUE, 140)
+    reference = "ev_555555555555555555555555"
+    claim = NativeAnswerClaim(
+        statement="客流很多",
+        status="verified_fact",
+        metric="monthly_total_revenue",
+        period=evidence.period,
+        value=140,
+        unit="EUR",
+        evidence_references=[reference],
+    )
+
+    assert not answer_is_grounded(
+        "客流很多。",
+        [evidence],
+        [claim],
+        {reference: evidence},
+    )
+
+
+def test_answer_grounding_rejects_a_judgment_piggybacking_after_a_conjunction() -> None:
+    evidence = _evidence(EvidenceMetric.MONTHLY_TOTAL_REVENUE, 140).model_copy(
+        update={
+            "comparison": EvidenceComparisonResult(
+                status="ok",
+                period={"start": "2026-06-01", "end": "2026-06-30"},
+                result={
+                    "daily_ledger_revenue": 100,
+                    "confirmed_settlement_income": 0,
+                    "monthly_total_revenue": 100,
+                },
+                amount_difference=40,
+                percentage_change=40,
+                percentage_status="available",
+                equal_length=False,
+            )
+        }
+    )
+    reference = "ev_666666666666666666666666"
+    claim = NativeAnswerClaim(
+        statement="2026 年 7 月月度总收入增长 40%",
+        status="verified_fact",
+        metric="monthly_total_revenue",
+        period=evidence.period,
+        value=40,
+        unit="percent",
+        evidence_references=[reference],
+    )
+
+    assert not answer_is_grounded(
+        "2026 年 7 月月度总收入增长 40% 且客流旺盛。",
+        [evidence],
+        [claim],
+        {reference: evidence},
+    )
+
+
+def test_answer_grounding_keeps_hypotheses_and_unknowns_visibly_distinct() -> None:
+    wrongly_labelled_unknown = NativeAnswerClaim(
+        statement="收入可能下降",
+        status="unknown",
+    )
+
+    assert not answer_is_grounded(
+        "收入可能下降。",
+        [],
+        [wrongly_labelled_unknown],
+    )
+
+
+def test_answer_grounding_rejects_a_negated_verified_fact() -> None:
+    evidence = _evidence(EvidenceMetric.MONTHLY_TOTAL_REVENUE, 140)
+    reference = "ev_777777777777777777777777"
+    answer = "2026 年 7 月月度总收入不是 140 欧元。"
+    claim = NativeAnswerClaim(
+        statement=answer.rstrip("。"),
+        status="verified_fact",
+        metric="monthly_total_revenue",
+        period=evidence.period,
+        value=140,
+        unit="EUR",
+        evidence_references=[reference],
+    )
+
+    assert not answer_is_grounded(
+        answer,
+        [evidence],
+        [claim],
+        {reference: evidence},
+    )
+
+
+@pytest.mark.parametrize(
+    "answer",
+    (
+        "2026 年 7 月月度总收入低于 140 欧元。",
+        "2026 年 7 月月度总收入至少为 140 欧元。",
+        "工具证实：2026 年 7 月月度总收入不止 140 欧元。",
+        "2026 年 7 月月度总收入为 140 欧元以上。",
+        "2026 年 7 月月度总收入为 140 欧元或更多。",
+    ),
+)
+def test_answer_grounding_rejects_thresholds_presented_as_exact_verified_facts(
+    answer: str,
+) -> None:
+    evidence = _evidence(EvidenceMetric.MONTHLY_TOTAL_REVENUE, 140)
+    reference = "ev_909090909090909090909090"
+    claim = NativeAnswerClaim(
+        statement=answer.rstrip("。"),
+        status="verified_fact",
+        metric="monthly_total_revenue",
+        period=evidence.period,
+        value=140,
+        unit="EUR",
+        evidence_references=[reference],
+    )
+
+    assert not answer_is_grounded(
+        answer,
+        [evidence],
+        [claim],
+        {reference: evidence},
+    )
+
+
+def test_answer_grounding_rejects_any_recorded_weather_as_a_verified_fact() -> None:
+    evidence = _evidence(EvidenceMetric.MONTHLY_TOTAL_REVENUE, 140)
+    reference = "ev_919191919191919191919191"
+    answer = "大雪促成 2026 年 7 月月度总收入增长 40%。"
+    comparison_evidence = evidence.model_copy(
+        update={
+            "comparison": EvidenceComparisonResult(
+                status="ok",
+                period={"start": "2026-06-01", "end": "2026-06-30"},
+                result={
+                    "daily_ledger_revenue": 100,
+                    "confirmed_settlement_income": 0,
+                    "monthly_total_revenue": 100,
+                },
+                amount_difference=40,
+                percentage_change=40,
+                percentage_status="available",
+                equal_length=False,
+            )
+        }
+    )
+    claim = NativeAnswerClaim(
+        statement=answer.rstrip("。"),
+        status="verified_fact",
+        metric="monthly_total_revenue",
+        period=evidence.period,
+        value=40,
+        unit="percent",
+        evidence_references=[reference],
+    )
+
+    assert not answer_is_grounded(
+        answer,
+        [comparison_evidence],
+        [claim],
+        {reference: comparison_evidence},
+    )
+
+
+def test_answer_grounding_binds_percentage_direction_to_signed_evidence() -> None:
+    evidence = _evidence(EvidenceMetric.MONTHLY_TOTAL_REVENUE, 60).model_copy(
+        update={
+            "comparison": EvidenceComparisonResult(
+                status="ok",
+                period={"start": "2026-06-01", "end": "2026-06-30"},
+                result={
+                    "daily_ledger_revenue": 100,
+                    "confirmed_settlement_income": 0,
+                    "monthly_total_revenue": 100,
+                },
+                amount_difference=-40,
+                percentage_change=-40,
+                percentage_status="available",
+                equal_length=False,
+            )
+        }
+    )
+    reference = "ev_888888888888888888888888"
+    answer = "2026 年 7 月月度总收入下降 40%。"
+    claim = NativeAnswerClaim(
+        statement=answer.rstrip("。"),
+        status="verified_fact",
+        metric="monthly_total_revenue",
+        period=evidence.period,
+        value=-40,
+        unit="percent",
+        evidence_references=[reference],
+    )
+
+    assert answer_is_grounded(
+        answer,
+        [evidence],
+        [claim],
+        {reference: evidence},
+    )
+
+    wrong_direction = claim.model_copy(
+        update={
+            "statement": "2026 年 7 月月度总收入增长 40%",
+        }
+    )
+    assert not answer_is_grounded(
+        "2026 年 7 月月度总收入增长 40%。",
+        [evidence],
+        [wrong_direction],
+        {reference: evidence},
+    )
+
+
+@pytest.mark.parametrize(
+    "answer",
+    (
+        "2026 年 7 月月度总收入增长 40% 以上。",
+        "2026 年 7 月月度总收入增长不止 40%。",
+    ),
+)
+def test_answer_grounding_rejects_thresholds_around_exact_percentage_changes(
+    answer: str,
+) -> None:
+    evidence = _evidence(EvidenceMetric.MONTHLY_TOTAL_REVENUE, 140).model_copy(
+        update={
+            "comparison": EvidenceComparisonResult(
+                status="ok",
+                period={"start": "2026-06-01", "end": "2026-06-30"},
+                result={
+                    "daily_ledger_revenue": 100,
+                    "confirmed_settlement_income": 0,
+                    "monthly_total_revenue": 100,
+                },
+                amount_difference=40,
+                percentage_change=40,
+                percentage_status="available",
+                equal_length=False,
+            )
+        }
+    )
+    reference = "ev_929292929292929292929292"
+    claim = NativeAnswerClaim(
+        statement=answer.rstrip("。"),
+        status="verified_fact",
+        metric="monthly_total_revenue",
+        period=evidence.period,
+        value=40,
+        unit="percent",
+        evidence_references=[reference],
+    )
+
+    assert not answer_is_grounded(
+        answer,
+        [evidence],
+        [claim],
+        {reference: evidence},
+    )
+
+
+@pytest.mark.parametrize(
+    "unsupported_answer",
+    (
+        "2026 年 7 月当前门店经营表现良好。",
+        "促销导致当前门店收入下降。",
+        "本月生意很好。",
+    ),
+)
+async def test_native_answer_rejects_unsupported_operating_claims_without_evidence(
+    unsupported_answer: str,
+) -> None:
+    result = await NativeToolAgentService(
+        model=FakeNativeToolModel(
+            turns=[
+                {
+                    "message": {"role": "assistant", "content": unsupported_answer},
+                    "signal": "end",
+                }
+            ]
+        ),
+        evidence_collector=MetricEvidenceCollector(),
+        scope_resolver=PassthroughScopeResolver(),
+    ).run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="调查 2026 年 7 月的经营表现。")],
+    )
+
+    assert result.turn.route == "safe_failure"
+    assert result.turn.content == ANSWER_EVIDENCE_FAILURE_MESSAGE
+
+
+async def test_native_answer_allows_an_explicitly_unproven_analysis_hypothesis() -> None:
+    model = FakeNativeToolModel(
+        turns=[
+            {
+                "message": {"role": "assistant", "content": "先核对月度总收入。"},
+                "tool_calls": [
+                    {
+                        "id": "revenue",
+                        "name": "monthly_total_revenue",
+                        "arguments": {"year": 2026, "month": 7},
+                    }
+                ],
+                "signal": "continue",
+            },
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": (
+                        "工具证实：2026 年 7 月月度总收入为 140 欧元。"
+                        "分析假设：记录天气可能与收入表现相关，但仍待检验，当前不能证明因果。"
+                    ),
+                },
+                "hypotheses": [
+                    {
+                        "statement": "记录天气可能与收入表现相关",
+                        "status": "unresolved",
+                        "evidence_references": ["ev_9500cd612f37e09b7cd7a96c"],
+                    }
+                ],
+                "answer_claims": [
+                    {
+                        "statement": "工具证实：2026 年 7 月月度总收入为 140 欧元",
+                        "status": "verified_fact",
+                        "metric": "monthly_total_revenue",
+                        "period": {"start": "2026-07-01", "end": "2026-07-31"},
+                        "value": 140,
+                        "unit": "EUR",
+                        "evidence_references": ["ev_9500cd612f37e09b7cd7a96c"],
+                    },
+                    {
+                        "statement": "分析假设：记录天气可能与收入表现相关",
+                        "status": "analysis_hypothesis",
+                        "relationship": "correlation",
+                    },
+                ],
+                "signal": "end",
+            },
+        ]
+    )
+
+    result = await NativeToolAgentService(
+        model=model,
+        evidence_collector=MetricEvidenceCollector(),
+        scope_resolver=PassthroughScopeResolver(),
+    ).run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="调查 2026 年 7 月收入变化原因。")],
+    )
+
+    assert result.turn.route == "answer"
+    assert "分析假设" in result.turn.content
+    assert "仍待检验" in result.turn.content
+    assert "不能证明因果" in result.turn.content
+
+
 async def test_native_investigation_closes_on_an_invalid_parallel_tool_contract() -> None:
     collector = MetricEvidenceCollector()
     model = FakeNativeToolModel(
@@ -397,6 +1092,12 @@ async def test_native_investigation_returns_unknown_hypothesis_evidence_for_corr
                         "evidence_references": [],
                     }
                 ],
+                "answer_claims": [
+                    {
+                        "statement": "该假设目前仍无法确认",
+                        "status": "unknown",
+                    }
+                ],
                 "signal": "end",
             },
         ]
@@ -459,6 +1160,12 @@ class FailedEvidenceHypothesisModel:
                     "statement": "收入偏低与经营日偏少相关",
                     "status": "unresolved",
                     "evidence_references": [],
+                }
+            ],
+            answer_claims=[
+                {
+                    "statement": "查询失败，假设仍无法确认",
+                    "status": "unknown",
                 }
             ],
             signal="end",
@@ -538,6 +1245,10 @@ async def test_native_tool_failure_is_returned_to_the_model_in_the_unified_envel
                     "role": "assistant",
                     "content": "经营查询暂时不可用，目前无法确认月度总收入。",
                 },
+                "answer_claims": [
+                    {"statement": "经营查询暂时不可用", "status": "unknown"},
+                    {"statement": "目前无法确认月度总收入", "status": "unknown"},
+                ],
                 "signal": "end",
             },
         ]
