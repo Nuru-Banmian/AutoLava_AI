@@ -204,7 +204,12 @@ async def test_native_tool_execution_rechecks_live_scope_before_business_query(
         ) -> NativeModelTurn:
             del items
             self.calls += 1
-            assert [tool.name for tool in tools] == ["monthly_total_revenue"]
+            assert [tool.name for tool in tools] == [
+                "monthly_total_revenue",
+                "daily_ledger_revenue",
+                "confirmed_settlement_income",
+                "operating_days",
+            ]
             if revocation in {"inactive_user", "ordinary_role"}:
                 fresh_user = await db_session.get(User, user_id)
                 assert fresh_user is not None
