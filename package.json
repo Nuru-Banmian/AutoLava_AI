@@ -1,0 +1,15 @@
+{
+  "name": "autolava-development",
+  "private": true,
+  "scripts": {
+    "verify:quick": "python scripts/verify.py quick",
+    "verify:agent": "python scripts/verify.py agent",
+    "verify:full": "python scripts/verify.py full",
+    "verify:release": "python scripts/verify.py release",
+    "verify:ci:backend-static": "python scripts/verify.py ci-backend-static",
+    "verify:ci:backend-agent": "python scripts/verify.py ci-backend-agent",
+    "verify:ci:backend-non-agent": "python scripts/verify.py ci-backend-non-agent",
+    "verify:ci:frontend-unit": "python scripts/verify.py ci-frontend-unit",
+    "verify:ci:frontend-e2e": "python scripts/verify.py ci-frontend-e2e"
+  }
+}

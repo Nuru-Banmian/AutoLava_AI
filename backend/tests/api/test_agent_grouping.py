@@ -244,9 +244,7 @@ async def test_agent_http_groups_filters_and_daily_extremes_are_bounded(
         )
         assert response.status_code == 200
         assert response.json()["route"] == "answer"
-        evidence = await db_session.scalar(
-            select(AgentEvidence).order_by(AgentEvidence.id.desc())
-        )
+        evidence = await db_session.scalar(select(AgentEvidence).order_by(AgentEvidence.id.desc()))
         assert evidence is not None
         if group_by == "income_category":
             assert [
@@ -256,8 +254,7 @@ async def test_agent_http_groups_filters_and_daily_extremes_are_bounded(
         else:
             assert evidence.payload["result"]["group_by"] == group_by
             assert [
-                (row["label"], row["value"])
-                for row in evidence.payload["result"]["rows"]
+                (row["label"], row["value"]) for row in evidence.payload["result"]["rows"]
             ] == expected_groups[group_by]
         assert evidence.payload["current_store"] == {"id": store_id}
         assert "9999" not in str(evidence.payload)
@@ -296,9 +293,7 @@ async def test_agent_http_groups_filters_and_daily_extremes_are_bounded(
             json={"question": f"本月{direction}每日台账营业额。"},
         )
         assert response.status_code == 200
-        evidence = await db_session.scalar(
-            select(AgentEvidence).order_by(AgentEvidence.id.desc())
-        )
+        evidence = await db_session.scalar(select(AgentEvidence).order_by(AgentEvidence.id.desc()))
         assert evidence is not None
         assert evidence.payload["result"]["extreme"] == direction
         assert evidence.payload["result"]["dates"] == expected_dates

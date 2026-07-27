@@ -235,11 +235,7 @@ def test_evidence_metric_whitelist_fails_closed() -> None:
 
 def test_daily_ledger_request_requires_one_exact_date_and_no_metric_or_period() -> None:
     plan = EvidencePlan.model_validate(
-        {
-            "requests": [
-                {"kind": "daily_ledger", "date": "2026-07-05"}
-            ]
-        }
+        {"requests": [{"kind": "daily_ledger", "date": "2026-07-05"}]}
     )
 
     assert plan.requests[0].date.isoformat() == "2026-07-05"

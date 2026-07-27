@@ -48,9 +48,7 @@ def _is_enabled_for_release(
 
 
 @router.get("")
-async def get_agent_settings(
-    session: Session, _actor: Administrator
-) -> dict[str, bool]:
+async def get_agent_settings(session: Session, _actor: Administrator) -> dict[str, bool]:
     runtime = get_settings()
     release = agent_release_status(runtime)
     stored = await _stored_agent_settings(session)

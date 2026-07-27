@@ -16,9 +16,7 @@ def upgrade() -> None:
     op.create_table(
         "agent_settings",
         sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column(
-            "enabled", sa.Boolean(), server_default="0", nullable=False
-        ),
+        sa.Column("enabled", sa.Boolean(), server_default="0", nullable=False),
         sa.Column(
             "updated_at",
             sa.DateTime(),

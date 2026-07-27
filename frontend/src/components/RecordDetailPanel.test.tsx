@@ -6,13 +6,48 @@ import type { RecordSnapshot } from "@/api/types";
 import { RecordDetailPanel } from "@/components/RecordDetailPanel";
 
 const record: RecordSnapshot = {
-  id: 4, store_id: 1, date: "2026-07-14", daily_revenue: 100, income_mode: "composed",
-  wash_count: 8, is_open: "营业", weather: "晴", weather_auto: "晴", weather_code: 1, temperature_max: "20.0", temperature_min: "10.0", precipitation: "0.0",
-  activity: null, weather_edited: false, scanned: false, created_by: 1, updated_by: 1, created_at: "", updated_at: "", created_by_name: "admin", updated_by_name: "admin",
-  items: [{ id: 1, category_id: 1, category_name: "现金", include_in_total: true, sort_order: 1, amount: 100, created_at: "", updated_at: "" }],
+  id: 4,
+  store_id: 1,
+  date: "2026-07-14",
+  daily_revenue: 100,
+  income_mode: "composed",
+  wash_count: 8,
+  is_open: "营业",
+  weather: "晴",
+  weather_auto: "晴",
+  weather_code: 1,
+  temperature_max: "20.0",
+  temperature_min: "10.0",
+  precipitation: "0.0",
+  activity: null,
+  weather_edited: false,
+  scanned: false,
+  created_by: 1,
+  updated_by: 1,
+  created_at: "",
+  updated_at: "",
+  created_by_name: "admin",
+  updated_by_name: "admin",
+  items: [
+    {
+      id: 1,
+      category_id: 1,
+      category_name: "现金",
+      include_in_total: true,
+      sort_order: 1,
+      amount: 100,
+      created_at: "",
+      updated_at: "",
+    },
+  ],
 };
 
-function renderPanel(value: RecordSnapshot, canDelete = false, onDelete = vi.fn(), washCountEnabled = true) {
+function renderPanel(
+  value: RecordSnapshot,
+  canDelete = false,
+  onDelete = vi.fn(),
+  washCountEnabled = true,
+) {
   return render(
     <MemoryRouter>
       <RecordDetailPanel
@@ -43,7 +78,10 @@ describe("RecordDetailPanel", () => {
     expect(screen.getByRole("heading", { name: "2026年7月15日" })).toBeInTheDocument();
     expect(screen.getByText("未录入", { exact: true })).toBeInTheDocument();
     expect(screen.getAllByText("—", { exact: true })).toHaveLength(2);
-    expect(screen.getByRole("link", { name: "修改这天记录" })).toHaveAttribute("href", "/ledger?date=2026-07-15");
+    expect(screen.getByRole("link", { name: "修改这天记录" })).toHaveAttribute(
+      "href",
+      "/ledger?date=2026-07-15",
+    );
     expect(screen.queryByRole("button", { name: "删除记录" })).not.toBeInTheDocument();
   });
 
@@ -55,7 +93,9 @@ describe("RecordDetailPanel", () => {
     expect(heading.parentElement).toHaveTextContent("2026年7月14日提前休息");
     expect(screen.getByText("提前休息", { exact: true })).toBeInTheDocument();
     expect(screen.queryByText("营业状态", { exact: true })).not.toBeInTheDocument();
-    expect(screen.getByText("营业额", { exact: true }).parentElement).toHaveTextContent("营业额€100");
+    expect(screen.getByText("营业额", { exact: true }).parentElement).toHaveTextContent(
+      "营业额€100",
+    );
     expect(screen.getByText("晴", { exact: true })).toBeInTheDocument();
     expect(screen.getByText("洗车 8 辆", { exact: true })).toBeInTheDocument();
     expect(screen.queryByText("洗车数量", { exact: true })).not.toBeInTheDocument();
@@ -65,7 +105,10 @@ describe("RecordDetailPanel", () => {
     expect(screen.queryByText("计入总营业额")).not.toBeInTheDocument();
     expect(screen.queryByText("独立记录")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "收入明细" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "修改这天记录" })).toHaveAttribute("href", "/ledger?date=2026-07-14");
+    expect(screen.getByRole("link", { name: "修改这天记录" })).toHaveAttribute(
+      "href",
+      "/ledger?date=2026-07-14",
+    );
     expect(screen.getByRole("link", { name: "修改这天记录" })).toHaveClass("h-10", "text-base");
     expect(screen.queryByRole("button", { name: "删除记录" })).not.toBeInTheDocument();
   });
@@ -80,7 +123,11 @@ describe("RecordDetailPanel", () => {
     expect(onDelete).toHaveBeenCalledOnce();
   });
 
-  it.each(["营业", "休息", "提前休息"] as const)("shows the actual %s status beside the date heading", (is_open) => {
+  it.each([
+    "营业",
+    "休息",
+    "提前休息",
+  ] as const)("shows the actual %s status beside the date heading", (is_open) => {
     renderPanel({ ...record, is_open });
 
     const heading = screen.getByRole("heading", { name: "2026年7月14日" });
@@ -116,7 +163,9 @@ describe("RecordDetailPanel", () => {
     }));
     renderPanel({ ...record, items });
 
-    const details = screen.getByRole("heading", { name: "收入明细" }).parentElement?.querySelector("dl");
+    const details = screen
+      .getByRole("heading", { name: "收入明细" })
+      .parentElement?.querySelector("dl");
     expect(details).not.toBeNull();
     expect(details).toHaveTextContent("名称很长的多渠道合作伙伴收入分类");
     expect(details).toHaveClass("grid-cols-[repeat(auto-fit,minmax(min(100%,9rem),1fr))]");

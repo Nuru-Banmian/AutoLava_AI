@@ -156,9 +156,7 @@ async def refresh_dashboard(
             store_id=store_id,
             capability="analytics.view",
         )
-        cards = await BriefingService(
-            session, CachedWeatherService()
-        ).regenerate(
+        cards = await BriefingService(session, CachedWeatherService()).regenerate(
             store_id,
             ["yesterday", "today", "tomorrow"],
             local_date=local_date,

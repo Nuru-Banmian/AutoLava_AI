@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { http, HttpResponse } from "msw";
+import { HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -9,15 +9,33 @@ import { DeleteRecordDialog } from "@/components/DeleteRecordDialog";
 
 const server = setupServer();
 const record = {
-  id: 4, store_id: 1, date: "2026-07-14", daily_revenue: 100, income_mode: "composed",
-  wash_count: 8, is_open: "营业", weather: "晴", weather_auto: "晴", weather_code: 1,
-  temperature_max: "20.0", temperature_min: "10.0", precipitation: "0.0",
-  activity: null, weather_edited: false, scanned: false, created_by: 1, updated_by: 1,
-  created_at: "", updated_at: "", items: [],
+  id: 4,
+  store_id: 1,
+  date: "2026-07-14",
+  daily_revenue: 100,
+  income_mode: "composed",
+  wash_count: 8,
+  is_open: "营业",
+  weather: "晴",
+  weather_auto: "晴",
+  weather_code: 1,
+  temperature_max: "20.0",
+  temperature_min: "10.0",
+  precipitation: "0.0",
+  activity: null,
+  weather_edited: false,
+  scanned: false,
+  created_by: 1,
+  updated_by: 1,
+  created_at: "",
+  updated_at: "",
+  items: [],
 } satisfies RecordSnapshot;
 
 function renderDialog(recordValue: RecordSnapshot | null = record) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
   for (const key of [
     ["ledger", "record", 1, "2026-07-14"],
     ["ledgerMonth", 1, "2026-07"],
@@ -25,15 +43,29 @@ function renderDialog(recordValue: RecordSnapshot | null = record) {
     ["database", "records", 1, "query"],
     ["charts", 1, "query"],
     ["dashboard", 1],
-  ]) client.setQueryData(key, true);
+  ])
+    client.setQueryData(key, true);
   const onOpenChange = vi.fn();
   const onCompleted = vi.fn();
-  render(<QueryClientProvider client={client}><DeleteRecordDialog storeId={1} record={recordValue} open onOpenChange={onOpenChange} onCompleted={onCompleted} /></QueryClientProvider>);
+  render(
+    <QueryClientProvider client={client}>
+      <DeleteRecordDialog
+        storeId={1}
+        record={recordValue}
+        open
+        onOpenChange={onOpenChange}
+        onCompleted={onCompleted}
+      />
+    </QueryClientProvider>,
+  );
   return { client, onOpenChange, onCompleted };
 }
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
-afterEach(() => { server.resetHandlers(); vi.restoreAllMocks(); });
+afterEach(() => {
+  server.resetHandlers();
+  vi.restoreAllMocks();
+});
 afterAll(() => server.close());
 
 describe("DeleteRecordDialog", () => {
@@ -53,7 +85,9 @@ describe("DeleteRecordDialog", () => {
 
     await waitFor(() => expect(requests).toHaveLength(1));
     expect(requests[0]).toMatch(/\/api\/ledger\/1\/2026-07-14$/);
-    expect(requests.some((request) => request.includes("/history") || request.includes("/rollback"))).toBe(false);
+    expect(
+      requests.some((request) => request.includes("/history") || request.includes("/rollback")),
+    ).toBe(false);
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
     expect(onCompleted).toHaveBeenCalledOnce();
     expect(screen.getByRole("status", { hidden: true })).toHaveTextContent("删除成功");
@@ -65,16 +99,19 @@ describe("DeleteRecordDialog", () => {
         ["database", "records", 1, "query"],
         ["charts", 1, "query"],
         ["dashboard", 1],
-      ]) expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+      ])
+        expect(client.getQueryState(key)?.isInvalidated).toBe(true);
     });
   });
 
   it("keeps the final confirmation open and retryable after a conflict", async () => {
     let requests = 0;
-    server.use(http.delete("/api/ledger/1/2026-07-14", () => {
-      requests += 1;
-      return HttpResponse.json({ detail: "Record changed" }, { status: 409 });
-    }));
+    server.use(
+      http.delete("/api/ledger/1/2026-07-14", () => {
+        requests += 1;
+        return HttpResponse.json({ detail: "Record changed" }, { status: 409 });
+      }),
+    );
     renderDialog();
 
     fireEvent.click(screen.getByRole("button", { name: "确认永久删除" }));
@@ -90,11 +127,13 @@ describe("DeleteRecordDialog", () => {
     const deletePending = new Promise<void>((resolve) => {
       finishDelete = resolve;
     });
-    server.use(http.delete("/api/ledger/1/2026-07-14", async () => {
-      requests += 1;
-      await deletePending;
-      return new HttpResponse(null, { status: 204 });
-    }));
+    server.use(
+      http.delete("/api/ledger/1/2026-07-14", async () => {
+        requests += 1;
+        await deletePending;
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
     renderDialog();
 
     const confirm = screen.getByRole("button", { name: "确认永久删除" });
@@ -109,7 +148,9 @@ describe("DeleteRecordDialog", () => {
     expect(requests).toBe(1);
 
     finishDelete();
-    await waitFor(() => expect(screen.getByRole("status", { hidden: true })).toHaveTextContent("删除成功"));
+    await waitFor(() =>
+      expect(screen.getByRole("status", { hidden: true })).toHaveTextContent("删除成功"),
+    );
   });
 
   it("renders no confirmation when there is no saved record", () => {

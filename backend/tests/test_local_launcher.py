@@ -29,7 +29,7 @@ def test_launcher_initializes_sqlite_and_secret_safe_local_configuration() -> No
         "$PSScriptRoot",
         'Join-Path $RepoRoot ".env"',
         'Join-Path $StateDir "autolava.sqlite3"',
-        'AUTOLAVA_DATABASE_PATH',
+        "AUTOLAVA_DATABASE_PATH",
         "Get-EnvFileValues",
         "Initialize-LocalSettings",
         "Set-AutoLavaEnvironment",
@@ -75,7 +75,9 @@ def test_launcher_restores_process_environment_when_backend_setup_fails() -> Non
         assert match, f"missing {name}"
         definitions.append(match.group(0))
 
-    powershell = "\n".join(definitions) + r'''
+    powershell = (
+        "\n".join(definitions)
+        + r"""
 function Invoke-DatabaseSetup {
     if ($env:AUTOLAVA_TEST_RESTORE_PRESENT -ne "during") { throw "setup missing env" }
     if ($script:failurePoint -eq "setup") { throw "synthetic setup failure" }
@@ -116,7 +118,8 @@ try {
     [Environment]::SetEnvironmentVariable($present, $null, "Process")
     [Environment]::SetEnvironmentVariable($missing, $null, "Process")
 }
-'''
+"""
+    )
     completed = subprocess.run(
         [shutil.which("powershell.exe"), "-NoProfile", "-Command", powershell],
         capture_output=True,

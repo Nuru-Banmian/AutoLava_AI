@@ -65,9 +65,7 @@ def main() -> int:
         try:
             raw = path.read_bytes()
             samples = [
-                ReleaseSample.model_validate_json(line)
-                for line in raw.splitlines()
-                if line.strip()
+                ReleaseSample.model_validate_json(line) for line in raw.splitlines() if line.strip()
             ]
             measurements = summarize_release_samples(samples)
         except (OSError, UnicodeError, ValidationError, ValueError) as error:
@@ -88,9 +86,7 @@ def main() -> int:
         print(agent_adapter_config_sha256(settings))
         return 0
     if arguments.report is not None:
-        settings = settings.model_copy(
-            update={"agent_release_report_path": Path(arguments.report)}
-        )
+        settings = settings.model_copy(update={"agent_release_report_path": Path(arguments.report)})
     status = agent_release_status(settings)
     print(json.dumps(status.model_dump(mode="json"), ensure_ascii=False))
     return 0 if status.approved else 1

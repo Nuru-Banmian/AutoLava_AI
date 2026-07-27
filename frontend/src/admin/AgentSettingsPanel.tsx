@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 
-import { api, ApiError } from "@/api/client";
+import { ApiError, api } from "@/api/client";
 import type { AgentStatus } from "@/api/types";
 
 const agentSettingsKey = ["admin", "agent-settings"] as const;
@@ -19,8 +19,7 @@ export function AgentSettingsPanel({ isOwner }: { isOwner: boolean }) {
     onSuccess: (next) => settings.refetch().then(() => next),
   });
   const enabled = update.data?.enabled ?? settings.data?.enabled ?? false;
-  const releaseApproved =
-    update.data?.release_approved ?? settings.data?.release_approved ?? false;
+  const releaseApproved = update.data?.release_approved ?? settings.data?.release_approved ?? false;
 
   return (
     <section
@@ -28,7 +27,9 @@ export function AgentSettingsPanel({ isOwner }: { isOwner: boolean }) {
       className="space-y-3 rounded-xl border bg-card p-5 shadow-sm"
     >
       <div>
-        <h2 className="font-medium" id="agent-settings-title">Agent 全局开关</h2>
+        <h2 className="font-medium" id="agent-settings-title">
+          Agent 全局开关
+        </h2>
         <p className="text-sm text-muted-foreground">
           关闭只会隐藏 Agent 并拒绝 Agent 请求，不影响其他业务功能。
         </p>
@@ -58,15 +59,9 @@ export function AgentSettingsPanel({ isOwner }: { isOwner: boolean }) {
             </span>
             {enabled ? "已启用" : "已关闭"}
           </button>
-          {!isOwner && (
-            <p className="text-sm text-muted-foreground">
-              仅最终管理员可以修改此设置
-            </p>
-          )}
+          {!isOwner && <p className="text-sm text-muted-foreground">仅最终管理员可以修改此设置</p>}
           {!releaseApproved && (
-            <p className="text-sm text-amber-700">
-              生产发布门禁尚未通过，Agent 保持全局关闭
-            </p>
+            <p className="text-sm text-amber-700">生产发布门禁尚未通过，Agent 保持全局关闭</p>
           )}
           {update.isSuccess && (
             <p className="text-sm text-emerald-700" role="status">
@@ -75,9 +70,7 @@ export function AgentSettingsPanel({ isOwner }: { isOwner: boolean }) {
           )}
           {update.error && (
             <p className="text-sm text-destructive" role="alert">
-              {update.error instanceof ApiError
-                ? update.error.detail
-                : "Agent 设置保存失败"}
+              {update.error instanceof ApiError ? update.error.detail : "Agent 设置保存失败"}
             </p>
           )}
         </>

@@ -1,7 +1,24 @@
-import { createContext, type PropsWithChildren, useCallback, useContext, useEffect, useRef, useState } from "react";
+import {
+  createContext,
+  type PropsWithChildren,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { useBeforeUnload, useBlocker } from "react-router-dom";
 
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 interface PendingTransition {
   proceed(): void;
@@ -18,10 +35,12 @@ interface UnsavedChangesValue {
 const UnsavedChangesContext = createContext<UnsavedChangesValue | null>(null);
 
 function BeforeUnloadGuard() {
-  useBeforeUnload(useCallback((event) => {
-    event.preventDefault();
-    event.returnValue = "";
-  }, []));
+  useBeforeUnload(
+    useCallback((event) => {
+      event.preventDefault();
+      event.returnValue = "";
+    }, []),
+  );
   return null;
 }
 
@@ -29,19 +48,22 @@ export function UnsavedChangesProvider({ children }: PropsWithChildren) {
   const [dirty, setDirty] = useState(false);
   const [pending, setPending] = useState<PendingTransition | null>(null);
   const pendingRef = useRef<PendingTransition | null>(null);
-  const requestTransition = useCallback((proceed: () => void, cancel?: () => void) => {
-    if (!dirty) {
-      proceed();
-      return;
-    }
-    if (pendingRef.current) {
-      cancel?.();
-      return;
-    }
-    const next = { proceed, cancel };
-    pendingRef.current = next;
-    setPending(next);
-  }, [dirty]);
+  const requestTransition = useCallback(
+    (proceed: () => void, cancel?: () => void) => {
+      if (!dirty) {
+        proceed();
+        return;
+      }
+      if (pendingRef.current) {
+        cancel?.();
+        return;
+      }
+      const next = { proceed, cancel };
+      pendingRef.current = next;
+      setPending(next);
+    },
+    [dirty],
+  );
   const resetUnsavedChanges = useCallback(() => {
     const active = pendingRef.current;
     pendingRef.current = null;
@@ -63,16 +85,33 @@ export function UnsavedChangesProvider({ children }: PropsWithChildren) {
     proceed?.();
   };
 
-  return <UnsavedChangesContext.Provider value={{ dirty, markDirty: setDirty, requestTransition, resetUnsavedChanges }}>
-    {dirty && <BeforeUnloadGuard />}
-    {children}
-    <AlertDialog open={Boolean(pending)} onOpenChange={(open) => { if (!open) cancel(); }}>
-      <AlertDialogContent>
-        <AlertDialogHeader><AlertDialogTitle>放弃未保存的修改？</AlertDialogTitle><AlertDialogDescription>当前修改尚未保存。离开后，这些修改将丢失。</AlertDialogDescription></AlertDialogHeader>
-        <AlertDialogFooter><AlertDialogCancel>继续编辑</AlertDialogCancel><AlertDialogAction onClick={discard}>放弃修改</AlertDialogAction></AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  </UnsavedChangesContext.Provider>;
+  return (
+    <UnsavedChangesContext.Provider
+      value={{ dirty, markDirty: setDirty, requestTransition, resetUnsavedChanges }}
+    >
+      {dirty && <BeforeUnloadGuard />}
+      {children}
+      <AlertDialog
+        open={Boolean(pending)}
+        onOpenChange={(open) => {
+          if (!open) cancel();
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>放弃未保存的修改？</AlertDialogTitle>
+            <AlertDialogDescription>
+              当前修改尚未保存。离开后，这些修改将丢失。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>继续编辑</AlertDialogCancel>
+            <AlertDialogAction onClick={discard}>放弃修改</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </UnsavedChangesContext.Provider>
+  );
 }
 
 export function useUnsavedChanges() {
@@ -92,7 +131,10 @@ export function UnsavedRouteGuard() {
     }
     if (requested.current) return;
     requested.current = true;
-    requestTransition(() => blocker.proceed(), () => blocker.reset());
+    requestTransition(
+      () => blocker.proceed(),
+      () => blocker.reset(),
+    );
   }, [blocker, requestTransition]);
   return null;
 }

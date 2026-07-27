@@ -15,9 +15,7 @@ from app.models.settlement import (
 
 
 @pytest.fixture
-async def admin_client(
-    client: AsyncClient, user_factory, db_session: AsyncSession
-) -> AsyncClient:
+async def admin_client(client: AsyncClient, user_factory, db_session: AsyncSession) -> AsyncClient:
     await user_factory(username="settlement-admin", password="secret", role="admin")
     response = await client.post(
         "/api/auth/login",
@@ -34,9 +32,7 @@ async def test_admin_can_toggle_only_the_target_store_and_change_is_audited(
     first = await store_factory(name="First")
     second = await store_factory(name="Second")
     await db_session.commit()
-    actor = await db_session.scalar(
-        select(User).where(User.username == "settlement-admin")
-    )
+    actor = await db_session.scalar(select(User).where(User.username == "settlement-admin"))
     assert actor is not None
 
     response = await admin_client.patch(
@@ -70,9 +66,7 @@ async def test_admin_can_toggle_only_the_target_store_and_change_is_audited(
     assert await db_session.scalar(select(func.count()).select_from(SettlementAuditEvent)) == 1
 
 
-async def test_regular_user_cannot_modify_the_store_flag(
-    auth_client, store_factory
-) -> None:
+async def test_regular_user_cannot_modify_the_store_flag(auth_client, store_factory) -> None:
     store = await store_factory(name="Denied")
 
     response = await auth_client.patch(
@@ -223,9 +217,7 @@ async def test_toggling_off_and_on_preserves_existing_settlement_history(
 ) -> None:
     store = await store_factory(name="History")
     store.company_settlement_enabled = True
-    actor = await db_session.scalar(
-        select(User).where(User.username == "settlement-admin")
-    )
+    actor = await db_session.scalar(select(User).where(User.username == "settlement-admin"))
     assert actor is not None
     company = SettlementCompany(
         store_id=store.id,

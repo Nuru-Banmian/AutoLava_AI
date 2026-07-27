@@ -4,7 +4,12 @@ import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import type { DateRange, MonthSelection, MonthSelectionIssue, RecordRangeMode } from "@/lib/business-record-ranges";
+import type {
+  DateRange,
+  MonthSelection,
+  MonthSelectionIssue,
+  RecordRangeMode,
+} from "@/lib/business-record-ranges";
 import { customMonthRange, monthRange, monthSelectionIssue } from "@/lib/business-record-ranges";
 
 interface RecordFiltersProps {
@@ -24,10 +29,21 @@ const monthSelectionMessages: Record<MonthSelectionIssue, string> = {
   reversed: "结束月份不能早于开始月份",
 };
 
-export function RecordFilters({ mode, range, today, exporting, exportError, onChange, onExport }: RecordFiltersProps) {
+export function RecordFilters({
+  mode,
+  range,
+  today,
+  exporting,
+  exportError,
+  onChange,
+  onExport,
+}: RecordFiltersProps) {
   const currentMonth = today.slice(0, 7);
   const selectedMonth = range.start.slice(0, 7);
-  const [customDraft, setCustomDraft] = useState<MonthSelection>({ startMonth: selectedMonth, endMonth: range.end.slice(0, 7) });
+  const [customDraft, setCustomDraft] = useState<MonthSelection>({
+    startMonth: selectedMonth,
+    endMonth: range.end.slice(0, 7),
+  });
   const [customOpen, setCustomOpen] = useState(mode === "custom");
   const [validationError, setValidationError] = useState("");
 
@@ -79,39 +95,105 @@ export function RecordFilters({ mode, range, today, exporting, exportError, onCh
   };
 
   return (
-    <section aria-label="记录筛选" className="grid min-w-0 gap-3 md:grid-cols-[auto_1fr] md:items-end">
-      <div className="grid min-w-0 grid-cols-[2.5rem_minmax(0,1fr)_2.5rem] items-end gap-2 md:grid-cols-[2.5rem_9rem_2.5rem]" aria-label="月份导航">
-        <Button aria-label="前一月" className="h-10 w-10" onClick={() => moveMonth(-1)} size="icon" type="button" variant="outline">
+    <section
+      aria-label="记录筛选"
+      className="grid min-w-0 gap-3 md:grid-cols-[auto_1fr] md:items-end"
+    >
+      <div
+        className="grid min-w-0 grid-cols-[2.5rem_minmax(0,1fr)_2.5rem] items-end gap-2 md:grid-cols-[2.5rem_9rem_2.5rem]"
+        aria-label="月份导航"
+      >
+        <Button
+          aria-label="前一月"
+          className="h-10 w-10"
+          onClick={() => moveMonth(-1)}
+          size="icon"
+          type="button"
+          variant="outline"
+        >
           <ChevronLeft aria-hidden="true" />
         </Button>
         <label className="grid min-w-0 gap-1 text-sm font-medium">
           月份
-          <Input aria-label="月份" className="h-10 min-w-0" max={currentMonth} onChange={(event) => chooseMonth(event.target.value)} type="month" value={selectedMonth} />
+          <Input
+            aria-label="月份"
+            className="h-10 min-w-0"
+            max={currentMonth}
+            onChange={(event) => chooseMonth(event.target.value)}
+            type="month"
+            value={selectedMonth}
+          />
         </label>
-        <Button aria-label="后一月" className="h-10 w-10" disabled={selectedMonth >= currentMonth} onClick={() => moveMonth(1)} size="icon" type="button" variant="outline">
+        <Button
+          aria-label="后一月"
+          className="h-10 w-10"
+          disabled={selectedMonth >= currentMonth}
+          onClick={() => moveMonth(1)}
+          size="icon"
+          type="button"
+          variant="outline"
+        >
           <ChevronRight aria-hidden="true" />
         </Button>
       </div>
       {customOpen && (
-        <div className="grid min-w-0 grid-cols-2 gap-2 md:col-span-2 md:row-start-2" data-testid="record-filter-months">
-          <label className="grid min-w-0 gap-1 text-sm font-medium">开始月份
-            <Input aria-label="开始月份" className="h-10 min-w-0 px-2" max={currentMonth} onChange={(event) => updateCustom({ startMonth: event.target.value })} type="month" value={customDraft.startMonth} />
+        <div
+          className="grid min-w-0 grid-cols-2 gap-2 md:col-span-2 md:row-start-2"
+          data-testid="record-filter-months"
+        >
+          <label className="grid min-w-0 gap-1 text-sm font-medium">
+            开始月份
+            <Input
+              aria-label="开始月份"
+              className="h-10 min-w-0 px-2"
+              max={currentMonth}
+              onChange={(event) => updateCustom({ startMonth: event.target.value })}
+              type="month"
+              value={customDraft.startMonth}
+            />
           </label>
-          <label className="grid min-w-0 gap-1 text-sm font-medium">结束月份
-            <Input aria-label="结束月份" className="h-10 min-w-0 px-2" max={currentMonth} onChange={(event) => updateCustom({ endMonth: event.target.value })} type="month" value={customDraft.endMonth} />
+          <label className="grid min-w-0 gap-1 text-sm font-medium">
+            结束月份
+            <Input
+              aria-label="结束月份"
+              className="h-10 min-w-0 px-2"
+              max={currentMonth}
+              onChange={(event) => updateCustom({ endMonth: event.target.value })}
+              type="month"
+              value={customDraft.endMonth}
+            />
           </label>
         </div>
       )}
       <div className="grid min-w-0 grid-cols-2 gap-2 md:col-start-2 md:row-start-1 md:grid-cols-[auto_auto] md:justify-start">
-        <Button aria-pressed={customOpen} className="h-10 min-w-0" onClick={customOpen ? returnToMonth : openCustom} type="button" variant="outline">
+        <Button
+          aria-pressed={customOpen}
+          className="h-10 min-w-0"
+          onClick={customOpen ? returnToMonth : openCustom}
+          type="button"
+          variant="outline"
+        >
           {customOpen ? "单月浏览" : "自定义范围"}
         </Button>
-        <Button className="h-10 min-w-0" disabled={exporting || Boolean(validationError)} onClick={onExport} type="button">
+        <Button
+          className="h-10 min-w-0"
+          disabled={exporting || Boolean(validationError)}
+          onClick={onExport}
+          type="button"
+        >
           导出当前范围
         </Button>
       </div>
-      {validationError && <p role="alert" className="text-sm text-destructive md:col-span-2">{validationError}</p>}
-      {exportError && <p role="alert" className="text-sm text-destructive md:col-span-2">{exportError}</p>}
+      {validationError && (
+        <p role="alert" className="text-sm text-destructive md:col-span-2">
+          {validationError}
+        </p>
+      )}
+      {exportError && (
+        <p role="alert" className="text-sm text-destructive md:col-span-2">
+          {exportError}
+        </p>
+      )}
     </section>
   );
 }

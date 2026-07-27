@@ -26,13 +26,20 @@ function mockAuth(isLoggingIn = false) {
 
 function renderLogin() {
   mockAuth();
-  return render(<MemoryRouter><LoginPage /></MemoryRouter>);
+  return render(
+    <MemoryRouter>
+      <LoginPage />
+    </MemoryRouter>,
+  );
 }
 
 function contrastRatio(foreground: string, background: string) {
   const luminance = (hex: string) => {
-    const channels = hex.match(/[a-f\d]{2}/gi)?.map((value) => Number.parseInt(value, 16) / 255) ?? [];
-    const linear = channels.map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+    const channels =
+      hex.match(/[a-f\d]{2}/gi)?.map((value) => Number.parseInt(value, 16) / 255) ?? [];
+    const linear = channels.map((value) =>
+      value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4,
+    );
     return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
   };
   const lighter = Math.max(luminance(foreground), luminance(background));
@@ -61,8 +68,9 @@ describe("LoginPage", () => {
 
     const panel = screen.getByText("AUTOLAVA").closest("div.bg-gradient-to-br");
     expect(panel).toHaveClass("from-blue-950", "to-blue-800");
-    expect(screen.getByText("安全登录后即可查看经营数据、记录每日业务并管理门店。"))
-      .toHaveClass("text-blue-100");
+    expect(screen.getByText("安全登录后即可查看经营数据、记录每日业务并管理门店。")).toHaveClass(
+      "text-blue-100",
+    );
     expect(screen.getByText("安全、清晰、随时可用")).toHaveClass("text-blue-100");
 
     const approvedBlue = { start: "#172554", end: "#1e40af", smallText: "#dbeafe" };
@@ -118,7 +126,11 @@ describe("LoginPage", () => {
     expect(login).toHaveBeenCalledTimes(1);
 
     mockAuth(true);
-    view.rerender(<MemoryRouter><LoginPage /></MemoryRouter>);
+    view.rerender(
+      <MemoryRouter>
+        <LoginPage />
+      </MemoryRouter>,
+    );
     const loadingButton = screen.getByRole("button", { name: "正在登录…" });
     expect(loadingButton).toBeDisabled();
     fireEvent.click(loadingButton);

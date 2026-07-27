@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { http, HttpResponse } from "msw";
+import { HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 
@@ -10,37 +10,96 @@ import { UnsavedChangesProvider } from "@/navigation/UnsavedChanges";
 import { accessibleStoresKey } from "@/stores/StoreProvider";
 
 vi.mock("@/components/StoreLocationPicker", () => ({
-  StoreLocationPicker: ({ value, onConfirm, buttonLabel }: {
+  StoreLocationPicker: ({
+    value,
+    onConfirm,
+    buttonLabel,
+  }: {
     value: unknown;
     onConfirm: (location: unknown) => void;
     buttonLabel?: string;
-  }) => <button type="button" onClick={() => onConfirm({
-    label: "Via Nuova",
-    latitude: 45.46,
-    longitude: 9.19,
-    timezone: "Europe/Rome",
-  })}>{buttonLabel ?? (value ? "修改地图位置" : "打开地图选择")}</button>,
+  }) => (
+    <button
+      type="button"
+      onClick={() =>
+        onConfirm({
+          label: "Via Nuova",
+          latitude: 45.46,
+          longitude: 9.19,
+          timezone: "Europe/Rome",
+        })
+      }
+    >
+      {buttonLabel ?? (value ? "修改地图位置" : "打开地图选择")}
+    </button>
+  ),
 }));
 
-const roma = { id: 9, name: "Roma", address: "Roma Centro", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true };
-const milano = { id: 10, name: "Milano", address: "Milano Centro", latitude: "45.4", longitude: "9.2", timezone: "Europe/Rome", is_active: true };
+const roma = {
+  id: 9,
+  name: "Roma",
+  address: "Roma Centro",
+  latitude: "41.9",
+  longitude: "12.5",
+  timezone: "Europe/Rome",
+  is_active: true,
+};
+const milano = {
+  id: 10,
+  name: "Milano",
+  address: "Milano Centro",
+  latitude: "45.4",
+  longitude: "9.2",
+  timezone: "Europe/Rome",
+  is_active: true,
+};
 const romaIncome = {
   store_id: 9,
   enabled: true,
   formula: "营业额 = 现金",
-  items: [{ id: 1, store_id: 9, name: "现金", include_in_total: true, is_active: true, sort_order: 0, archived_at: null }],
+  items: [
+    {
+      id: 1,
+      store_id: 9,
+      name: "现金",
+      include_in_total: true,
+      is_active: true,
+      sort_order: 0,
+      archived_at: null,
+    },
+  ],
 };
 const milanoIncome = {
   store_id: 10,
   enabled: true,
   formula: "营业额 = 刷卡",
-  items: [{ id: 2, store_id: 10, name: "刷卡", include_in_total: true, is_active: true, sort_order: 0, archived_at: null }],
+  items: [
+    {
+      id: 2,
+      store_id: 10,
+      name: "刷卡",
+      include_in_total: true,
+      is_active: true,
+      sort_order: 0,
+      archived_at: null,
+    },
+  ],
 };
 const publishedIncomeConfig = {
   store_id: 9,
   enabled: true,
   formula: "营业额 = 现金",
-  items: [{ id: 1, store_id: 9, name: "现金", include_in_total: true, is_active: true, sort_order: 0, archived_at: null }],
+  items: [
+    {
+      id: 1,
+      store_id: 9,
+      name: "现金",
+      include_in_total: true,
+      is_active: true,
+      sort_order: 0,
+      archived_at: null,
+    },
+  ],
 };
 
 const server = setupServer();
@@ -53,7 +112,7 @@ afterEach(() => {
 afterAll(() => server.close());
 
 interface WorkspaceHandlers {
-  stores?: typeof roma[];
+  stores?: (typeof roma)[];
   patchStore?: () => Response | Promise<Response>;
   publishIncome?: () => Response | Promise<Response>;
   deleteStore?: () => Response | Promise<Response>;
@@ -72,12 +131,36 @@ function mockStoreWorkspace({
       onStoreRead();
       return HttpResponse.json(stores);
     }),
-    http.get("/api/income-config/:storeId/current", ({ params }) => HttpResponse.json(Number(params.storeId) === 9 ? romaIncome : milanoIncome)),
+    http.get("/api/income-config/:storeId/current", ({ params }) =>
+      HttpResponse.json(Number(params.storeId) === 9 ? romaIncome : milanoIncome),
+    ),
     http.get("/api/admin/income-categories", ({ request }) => {
       const storeId = Number(new URL(request.url).searchParams.get("store_id"));
-      return HttpResponse.json(storeId === 9
-        ? [{ id: 1, store_id: 9, name: "现金", include_in_total: true, is_active: true, sort_order: 0, archived_at: null }]
-        : [{ id: 2, store_id: 10, name: "刷卡", include_in_total: true, is_active: true, sort_order: 0, archived_at: null }]);
+      return HttpResponse.json(
+        storeId === 9
+          ? [
+              {
+                id: 1,
+                store_id: 9,
+                name: "现金",
+                include_in_total: true,
+                is_active: true,
+                sort_order: 0,
+                archived_at: null,
+              },
+            ]
+          : [
+              {
+                id: 2,
+                store_id: 10,
+                name: "刷卡",
+                include_in_total: true,
+                is_active: true,
+                sort_order: 0,
+                archived_at: null,
+              },
+            ],
+      );
     }),
     http.patch("/api/admin/stores/9", patchStore),
     http.put("/api/admin/stores/9/income-config", publishIncome),
@@ -86,17 +169,26 @@ function mockStoreWorkspace({
 }
 
 function renderWorkspace() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return { client, ...render(
-    <QueryClientProvider client={client}>
-      <UnsavedChangesProvider><StoreWorkspace /></UnsavedChangesProvider>
-    </QueryClientProvider>,
-  ) };
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return {
+    client,
+    ...render(
+      <QueryClientProvider client={client}>
+        <UnsavedChangesProvider>
+          <StoreWorkspace />
+        </UnsavedChangesProvider>
+      </QueryClientProvider>,
+    ),
+  };
 }
 
 function deferredResponse() {
   let resolve!: (response: Response) => void;
-  const promise = new Promise<Response>((done) => { resolve = done; });
+  const promise = new Promise<Response>((done) => {
+    resolve = done;
+  });
   return { promise, resolve };
 }
 
@@ -107,13 +199,11 @@ it("selects the first store on initial load and renders income before details", 
   expect(await screen.findByLabelText("门店名称 Roma")).toBeInTheDocument();
   const income = screen.getByRole("region", { name: "收入项目" });
   const details = screen.getByRole("region", { name: "门店资料" });
-  expect(income.compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING)
-    .toBeTruthy();
+  expect(income.compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
   const selector = screen.getByRole("combobox", { name: "门店" });
   expect(selector).toHaveValue("9");
-  expect(within(selector).queryByRole("option", { name: "请选择门店" }))
-    .not.toBeInTheDocument();
+  expect(within(selector).queryByRole("option", { name: "请选择门店" })).not.toBeInTheDocument();
   expect(screen.queryByText("请选择门店")).not.toBeInTheDocument();
 });
 
@@ -131,11 +221,13 @@ it("saves the company settlement switch only for the selected store", async () =
       return HttpResponse.json(stores[0]);
     },
   });
-  server.use(http.patch("/api/admin/stores/9", async ({ request }) => {
-    patchedBody = await request.json();
-    stores[0] = { ...stores[0], company_settlement_enabled: true };
-    return HttpResponse.json(stores[0]);
-  }));
+  server.use(
+    http.patch("/api/admin/stores/9", async ({ request }) => {
+      patchedBody = await request.json();
+      stores[0] = { ...stores[0], company_settlement_enabled: true };
+      return HttpResponse.json(stores[0]);
+    }),
+  );
   renderWorkspace();
 
   const toggle = await screen.findByRole("checkbox", { name: /为此门店启用公司结算/ });
@@ -155,11 +247,13 @@ it("saves the wash-count switch only for the selected store", async () => {
   ];
   let patchedBody: unknown;
   mockStoreWorkspace({ stores });
-  server.use(http.patch("/api/admin/stores/9", async ({ request }) => {
-    patchedBody = await request.json();
-    stores[0] = { ...stores[0], wash_count_enabled: false };
-    return HttpResponse.json(stores[0]);
-  }));
+  server.use(
+    http.patch("/api/admin/stores/9", async ({ request }) => {
+      patchedBody = await request.json();
+      stores[0] = { ...stores[0], wash_count_enabled: false };
+      return HttpResponse.json(stores[0]);
+    }),
+  );
   renderWorkspace();
 
   const toggle = await screen.findByRole("checkbox", { name: /为此门店记录洗车数量/ });
@@ -235,8 +329,12 @@ it("uses one store selection for independent details and income cards", async ()
 
   expect(screen.getByRole("heading", { name: "门店资料" })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "收入项目" })).toBeInTheDocument();
-  expect(within(screen.getByRole("region", { name: "门店资料" })).getByRole("button", { name: "保存" })).toBeInTheDocument();
-  expect(within(screen.getByRole("region", { name: "收入项目" })).getByRole("button", { name: "保存" })).toBeInTheDocument();
+  expect(
+    within(screen.getByRole("region", { name: "门店资料" })).getByRole("button", { name: "保存" }),
+  ).toBeInTheDocument();
+  expect(
+    within(screen.getByRole("region", { name: "收入项目" })).getByRole("button", { name: "保存" }),
+  ).toBeInTheDocument();
   expect(screen.getAllByLabelText("门店")).toHaveLength(1);
 });
 
@@ -276,10 +374,14 @@ it("keeps store and income saves independent when one request fails", async () =
   });
   renderWorkspace();
   await userEvent.click(await screen.findByRole("button", { name: /Roma/ }));
-  await userEvent.click(within(screen.getByRole("region", { name: "门店资料" })).getByRole("button", { name: "保存" }));
+  await userEvent.click(
+    within(screen.getByRole("region", { name: "门店资料" })).getByRole("button", { name: "保存" }),
+  );
   expect(await screen.findByRole("alert")).toHaveTextContent("门店保存失败");
 
-  await userEvent.click(within(screen.getByRole("region", { name: "收入项目" })).getByRole("button", { name: "保存" }));
+  await userEvent.click(
+    within(screen.getByRole("region", { name: "收入项目" })).getByRole("button", { name: "保存" }),
+  );
   await waitFor(() => expect(incomePublished).toBe(true));
   expect(screen.getByRole("alert")).toHaveTextContent("门店保存失败");
 });
@@ -287,12 +389,20 @@ it("keeps store and income saves independent when one request fails", async () =
 it("refreshes Roma after a stale success without replacing the newer Milano drafts", async () => {
   const pending = deferredResponse();
   let storeReads = 0;
-  mockStoreWorkspace({ stores: [roma, milano], patchStore: () => pending.promise, onStoreRead: () => { storeReads += 1; } });
+  mockStoreWorkspace({
+    stores: [roma, milano],
+    patchStore: () => pending.promise,
+    onStoreRead: () => {
+      storeReads += 1;
+    },
+  });
   renderWorkspace();
   await userEvent.click(await screen.findByRole("button", { name: /Roma/ }));
   await userEvent.clear(screen.getByLabelText("门店名称 Roma"));
   await userEvent.type(screen.getByLabelText("门店名称 Roma"), "Roma Draft");
-  await userEvent.click(within(screen.getByRole("region", { name: "门店资料" })).getByRole("button", { name: "保存" }));
+  await userEvent.click(
+    within(screen.getByRole("region", { name: "门店资料" })).getByRole("button", { name: "保存" }),
+  );
   await userEvent.click(screen.getByRole("button", { name: /Milano/ }));
   await userEvent.click(screen.getByRole("button", { name: "放弃修改" }));
   const milanoName = await screen.findByLabelText("门店名称 Milano");
@@ -315,7 +425,9 @@ it("does not render a stale Roma save error in the Milano cards", async () => {
   await userEvent.click(await screen.findByRole("button", { name: /Roma/ }));
   await userEvent.clear(screen.getByLabelText("门店名称 Roma"));
   await userEvent.type(screen.getByLabelText("门店名称 Roma"), "Roma Draft");
-  await userEvent.click(within(screen.getByRole("region", { name: "门店资料" })).getByRole("button", { name: "保存" }));
+  await userEvent.click(
+    within(screen.getByRole("region", { name: "门店资料" })).getByRole("button", { name: "保存" }),
+  );
   await userEvent.click(screen.getByRole("button", { name: /Milano/ }));
   await userEvent.click(screen.getByRole("button", { name: "放弃修改" }));
   await screen.findByLabelText("门店名称 Milano");
@@ -374,13 +486,19 @@ it("keeps both card save labels exact while their requests are pending", async (
 
   detailsPending.resolve(HttpResponse.json(roma));
   incomePending.resolve(HttpResponse.json(publishedIncomeConfig));
-  await waitFor(() => expect(within(details).getByRole("button", { name: "保存" })).not.toBeDisabled());
-  await waitFor(() => expect(within(income).getByRole("button", { name: "保存" })).not.toBeDisabled());
+  await waitFor(() =>
+    expect(within(details).getByRole("button", { name: "保存" })).not.toBeDisabled(),
+  );
+  await waitFor(() =>
+    expect(within(income).getByRole("button", { name: "保存" })).not.toBeDisabled(),
+  );
 });
 
 it("keeps lifecycle controls and explains a referenced-store delete conflict", async () => {
   vi.spyOn(window, "confirm").mockReturnValue(true);
-  mockStoreWorkspace({ deleteStore: () => HttpResponse.json({ detail: "已有历史记录" }, { status: 409 }) });
+  mockStoreWorkspace({
+    deleteStore: () => HttpResponse.json({ detail: "已有历史记录" }, { status: 409 }),
+  });
   renderWorkspace();
   await userEvent.click(await screen.findByRole("button", { name: /Roma/ }));
   const danger = screen.getByRole("region", { name: "危险操作" });
@@ -388,7 +506,9 @@ it("keeps lifecycle controls and explains a referenced-store delete conflict", a
   expect(within(danger).getByRole("button", { name: "停用门店 Roma" })).toBeInTheDocument();
   await userEvent.click(within(danger).getByRole("button", { name: "永久删除门店 Roma" }));
 
-  expect(window.confirm).toHaveBeenCalledWith("确定永久删除门店“Roma”吗？只有从未使用的门店可以删除。");
+  expect(window.confirm).toHaveBeenCalledWith(
+    "确定永久删除门店“Roma”吗？只有从未使用的门店可以删除。",
+  );
   expect(await screen.findByRole("alert")).toHaveTextContent("已有经营或历史记录，只能停用门店");
 });
 
@@ -397,7 +517,9 @@ it("invalidates store lists and selects the first remaining store after deletion
   vi.spyOn(window, "confirm").mockReturnValue(true);
   server.use(
     http.get("/api/admin/stores", () => HttpResponse.json(stores)),
-    http.get("/api/income-config/:storeId/current", ({ params }) => HttpResponse.json(Number(params.storeId) === 9 ? romaIncome : milanoIncome)),
+    http.get("/api/income-config/:storeId/current", ({ params }) =>
+      HttpResponse.json(Number(params.storeId) === 9 ? romaIncome : milanoIncome),
+    ),
     http.get("/api/admin/income-categories", () => HttpResponse.json([])),
     http.delete("/api/admin/stores/9", () => {
       stores = [milano];
@@ -419,7 +541,9 @@ it("guards a dirty income draft before permanently deleting the selected store",
   vi.spyOn(window, "confirm").mockReturnValue(true);
   server.use(
     http.get("/api/admin/stores", () => HttpResponse.json(stores)),
-    http.get("/api/income-config/:storeId/current", ({ params }) => HttpResponse.json(Number(params.storeId) === 9 ? romaIncome : milanoIncome)),
+    http.get("/api/income-config/:storeId/current", ({ params }) =>
+      HttpResponse.json(Number(params.storeId) === 9 ? romaIncome : milanoIncome),
+    ),
     http.get("/api/admin/income-categories", () => HttpResponse.json([])),
     http.delete("/api/admin/stores/9", () => {
       deleteCalls += 1;
@@ -524,7 +648,9 @@ it("does not reassert a clean income draft when a current pending delete is reje
   const income = screen.getByRole("region", { name: "收入项目" });
   await userEvent.click(within(income).getByRole("button", { name: "保存" }));
   await waitFor(() => expect(publishCalls).toBe(1));
-  await waitFor(() => expect(within(income).getByRole("button", { name: "保存" })).not.toBeDisabled());
+  await waitFor(() =>
+    expect(within(income).getByRole("button", { name: "保存" })).not.toBeDisabled(),
+  );
   expect(screen.getByRole("checkbox", { name: "计入营业额 现金" })).toBeChecked();
 
   await act(async () => {

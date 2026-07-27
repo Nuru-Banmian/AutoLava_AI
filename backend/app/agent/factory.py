@@ -45,9 +45,7 @@ def create_model_adapter(settings: Settings) -> ModelAdapter:
         return FakeModelAdapter()
     primary_profile, fallback_profile = configured_openai_profiles(settings)
     fallback = (
-        OpenAICompatibleModelAdapter(fallback_profile)
-        if fallback_profile is not None
-        else None
+        OpenAICompatibleModelAdapter(fallback_profile) if fallback_profile is not None else None
     )
     return ResilientModelAdapter(
         OpenAICompatibleModelAdapter(primary_profile),

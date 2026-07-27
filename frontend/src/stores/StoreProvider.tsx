@@ -1,12 +1,21 @@
 import { useQuery } from "@tanstack/react-query";
-import { createContext, type PropsWithChildren, useContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  createContext,
+  type PropsWithChildren,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { api } from "@/api/client";
 import type { AccessibleStore } from "@/api/types";
 import { UnsavedChangesProvider, useUnsavedChanges } from "@/navigation/UnsavedChanges";
 
 export const accessibleStoresKey = ["stores", "accessible"] as const;
-export const accessibleStoresKeyFor = (userId: number | undefined) => [...accessibleStoresKey, userId] as const;
+export const accessibleStoresKeyFor = (userId: number | undefined) =>
+  [...accessibleStoresKey, userId] as const;
 export const STORE_SELECTION_KEY = "autolava:selected-store";
 
 interface StoredSelection {
@@ -17,15 +26,22 @@ interface StoredSelection {
 function readStoredSelection(userId: number | undefined): number | null {
   if (userId === undefined) return null;
   try {
-    const value = JSON.parse(localStorage.getItem(STORE_SELECTION_KEY) ?? "null") as Partial<StoredSelection> | null;
-    return value?.userId === userId && Number.isInteger(value.storeId) ? value.storeId ?? null : null;
+    const value = JSON.parse(
+      localStorage.getItem(STORE_SELECTION_KEY) ?? "null",
+    ) as Partial<StoredSelection> | null;
+    return value?.userId === userId && Number.isInteger(value.storeId)
+      ? (value.storeId ?? null)
+      : null;
   } catch {
     return null;
   }
 }
 
 function writeStoredSelection(userId: number, storeId: number) {
-  localStorage.setItem(STORE_SELECTION_KEY, JSON.stringify({ userId, storeId } satisfies StoredSelection));
+  localStorage.setItem(
+    STORE_SELECTION_KEY,
+    JSON.stringify({ userId, storeId } satisfies StoredSelection),
+  );
 }
 
 interface StoreContextValue {
@@ -45,15 +61,25 @@ interface StoreProviderProps extends PropsWithChildren {
 
 function StoreStateProvider({ children, userId }: StoreProviderProps) {
   const { requestTransition, resetUnsavedChanges } = useUnsavedChanges();
-  const { data: stores = [], isLoading, isSuccess, error, refetch } = useQuery({
+  const {
+    data: stores = [],
+    isLoading,
+    isSuccess,
+    error,
+    refetch,
+  } = useQuery({
     queryKey: accessibleStoresKeyFor(userId),
     queryFn: () => api<AccessibleStore[]>("/stores/accessible"),
   });
-  const [selection, setSelection] = useState<{ userId: number | undefined; storeId: number | null; snapshot: AccessibleStore | null }>(() => ({ userId, storeId: readStoredSelection(userId), snapshot: null }));
+  const [selection, setSelection] = useState<{
+    userId: number | undefined;
+    storeId: number | null;
+    snapshot: AccessibleStore | null;
+  }>(() => ({ userId, storeId: readStoredSelection(userId), snapshot: null }));
   const reconciliationRef = useRef<string | null>(null);
   const sameUser = selection.userId === userId;
   const selectedId = sameUser ? selection.storeId : null;
-  const liveSelected = sameUser ? stores.find((store) => store.id === selectedId) ?? null : null;
+  const liveSelected = sameUser ? (stores.find((store) => store.id === selectedId) ?? null) : null;
   const selected = liveSelected ?? (sameUser ? selection.snapshot : null);
 
   useEffect(() => {
@@ -77,21 +103,41 @@ function StoreStateProvider({ children, userId }: StoreProviderProps) {
     const reconciliationKey = `${userId ?? "none"}:${selectedId ?? "none"}:${fallback?.id ?? "none"}:${stores.map((store) => store.id).join(",")}`;
     if (reconciliationRef.current === reconciliationKey) return;
     reconciliationRef.current = reconciliationKey;
-    requestTransition(() => {
-      setSelection({ userId, storeId: fallback?.id ?? null, snapshot: fallback });
-      if (userId === undefined) return;
-      if (fallback === null) localStorage.removeItem(STORE_SELECTION_KEY);
-      else writeStoredSelection(userId, fallback.id);
-    }, () => {
-      if (reconciliationRef.current === reconciliationKey) reconciliationRef.current = null;
-    });
-  }, [isSuccess, liveSelected, requestTransition, resetUnsavedChanges, sameUser, selectedId, selection.snapshot, stores, userId]);
+    requestTransition(
+      () => {
+        setSelection({ userId, storeId: fallback?.id ?? null, snapshot: fallback });
+        if (userId === undefined) return;
+        if (fallback === null) localStorage.removeItem(STORE_SELECTION_KEY);
+        else writeStoredSelection(userId, fallback.id);
+      },
+      () => {
+        if (reconciliationRef.current === reconciliationKey) reconciliationRef.current = null;
+      },
+    );
+  }, [
+    isSuccess,
+    liveSelected,
+    requestTransition,
+    resetUnsavedChanges,
+    sameUser,
+    selectedId,
+    selection.snapshot,
+    stores,
+    userId,
+  ]);
 
   const value = useMemo(
     () => ({
       stores,
       selected,
-      select: (id: number) => requestTransition(() => setSelection({ userId, storeId: id, snapshot: stores.find((store) => store.id === id) ?? null })),
+      select: (id: number) =>
+        requestTransition(() =>
+          setSelection({
+            userId,
+            storeId: id,
+            snapshot: stores.find((store) => store.id === id) ?? null,
+          }),
+        ),
       isLoading,
       error,
       refetch,
@@ -102,7 +148,11 @@ function StoreStateProvider({ children, userId }: StoreProviderProps) {
 }
 
 export function StoreProvider(props: StoreProviderProps) {
-  return <UnsavedChangesProvider><StoreStateProvider {...props} /></UnsavedChangesProvider>;
+  return (
+    <UnsavedChangesProvider>
+      <StoreStateProvider {...props} />
+    </UnsavedChangesProvider>
+  );
 }
 
 export function useStore() {

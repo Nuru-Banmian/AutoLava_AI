@@ -6,7 +6,14 @@ import { NativeDateInput } from "@/components/NativeDateInput";
 
 describe("NativeDateInput", () => {
   it("renders the shared native date contract and a touch-sized calendar trigger", () => {
-    render(<NativeDateInput aria-label="开始日期" value="2026-07-01" max="2026-07-17" onChange={vi.fn()} />);
+    render(
+      <NativeDateInput
+        aria-label="开始日期"
+        value="2026-07-01"
+        max="2026-07-17"
+        onChange={vi.fn()}
+      />,
+    );
 
     const input = screen.getByLabelText("开始日期");
     const trigger = screen.getByRole("button", { name: "打开开始日期日历" });
@@ -20,7 +27,9 @@ describe("NativeDateInput", () => {
     const user = userEvent.setup();
     render(<NativeDateInput aria-label="开始日期" value="2026-07-01" onChange={vi.fn()} />);
 
-    const input = screen.getByLabelText("开始日期") as HTMLInputElement & { showPicker?: () => void };
+    const input = screen.getByLabelText("开始日期") as HTMLInputElement & {
+      showPicker?: () => void;
+    };
     const showPicker = vi.fn();
     Object.defineProperty(input, "showPicker", { configurable: true, value: showPicker });
 
@@ -33,7 +42,9 @@ describe("NativeDateInput", () => {
     const user = userEvent.setup();
     render(<NativeDateInput aria-label="分析开始日期" value="2026-07-01" onChange={vi.fn()} />);
 
-    const input = screen.getByLabelText("分析开始日期") as HTMLInputElement & { showPicker?: () => void };
+    const input = screen.getByLabelText("分析开始日期") as HTMLInputElement & {
+      showPicker?: () => void;
+    };
     Object.defineProperty(input, "showPicker", { configurable: true, value: undefined });
 
     await user.click(screen.getByRole("button", { name: "打开分析开始日期日历" }));

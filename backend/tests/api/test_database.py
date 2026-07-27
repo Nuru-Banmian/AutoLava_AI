@@ -212,9 +212,7 @@ async def test_database_context_and_export_follow_the_requested_store_wash_setti
     filtered_page = await auth_client.get(
         f"/api/database/{store.id}/records?missing_wash_count=true"
     )
-    reenabled_export = await auth_client.get(
-        f"/api/database/{store.id}/export.xlsx"
-    )
+    reenabled_export = await auth_client.get(f"/api/database/{store.id}/export.xlsx")
 
     assert reenabled_page.json()["items"][0]["wash_count"] == 8
     assert filtered_page.json()["total"] == 0
@@ -250,9 +248,7 @@ async def test_database_records_and_export_filter_by_early_close_status(
     )
     await db_session.flush()
 
-    page = await auth_client.get(
-        f"/api/database/{store.id}/records", params={"status": "提前休息"}
-    )
+    page = await auth_client.get(f"/api/database/{store.id}/records", params={"status": "提前休息"})
     exported = await auth_client.get(
         f"/api/database/{store.id}/export.xlsx", params={"status": "提前休息"}
     )

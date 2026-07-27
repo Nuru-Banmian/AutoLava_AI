@@ -58,9 +58,7 @@ async def _setup_ledger(*, role: str = "user", with_record: bool = False):
             is_active=True,
             sort_order=0,
         )
-        session.add_all(
-            [category, StoreMember(store_id=store.id, user_id=user.id)]
-        )
+        session.add_all([category, StoreMember(store_id=store.id, user_id=user.id)])
         await session.flush()
         target = datetime.now(ZoneInfo(store.timezone)).date()
         if with_record:
@@ -90,9 +88,7 @@ async def _setup_ledger(*, role: str = "user", with_record: bool = False):
 
 async def _logged_in_client(username: str) -> AsyncClient:
     app = create_app()
-    client = AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://testserver"
-    )
+    client = AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver")
     response = await client.post(
         "/api/auth/login", json={"username": username, "password": "secret"}
     )
@@ -132,9 +128,7 @@ async def test_create_rejects_actor_deactivated_during_weather() -> None:
 
     assert response.status_code == 401
     async with async_session_factory() as verify:
-        assert await verify.scalar(
-            select(func.count()).select_from(StoreDailyRecord)
-        ) == 0
+        assert await verify.scalar(select(func.count()).select_from(StoreDailyRecord)) == 0
 
 
 async def test_update_rejects_membership_removed_during_weather() -> None:
@@ -164,25 +158,24 @@ async def test_update_rejects_membership_removed_during_weather() -> None:
 
     assert response.status_code == 403
     async with async_session_factory() as verify:
-        assert await verify.scalar(
-            select(StoreDailyRecord.daily_revenue).where(
-                StoreDailyRecord.store_id == store_id,
-                StoreDailyRecord.date == target,
+        assert (
+            await verify.scalar(
+                select(StoreDailyRecord.daily_revenue).where(
+                    StoreDailyRecord.store_id == store_id,
+                    StoreDailyRecord.date == target,
+                )
             )
-        ) == 100
+            == 100
+        )
 
 
 async def test_delete_rejects_store_archived_while_waiting_for_lock() -> None:
     await _reset_database()
-    _, store_id, _, target = await _setup_ledger(
-        role="admin", with_record=True
-    )
+    _, store_id, _, target = await _setup_ledger(role="admin", with_record=True)
     client = await _logged_in_client("ledger-admin")
     await SQLITE_WRITE_LOCK.acquire()
     try:
-        request = asyncio.create_task(
-            client.delete(f"/api/ledger/{store_id}/{target.isoformat()}")
-        )
+        request = asyncio.create_task(client.delete(f"/api/ledger/{store_id}/{target.isoformat()}"))
         while not SQLITE_WRITE_LOCK._waiters:
             await asyncio.sleep(0)
         async with async_session_factory() as archive:
@@ -197,11 +190,14 @@ async def test_delete_rejects_store_archived_while_waiting_for_lock() -> None:
 
     assert response.status_code == 404
     async with async_session_factory() as verify:
-        assert await verify.scalar(
-            select(func.count())
-            .select_from(StoreDailyRecord)
-            .where(StoreDailyRecord.store_id == store_id)
-        ) == 1
+        assert (
+            await verify.scalar(
+                select(func.count())
+                .select_from(StoreDailyRecord)
+                .where(StoreDailyRecord.store_id == store_id)
+            )
+            == 1
+        )
 
 
 async def test_create_uses_config_committed_during_weather_wait() -> None:

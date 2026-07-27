@@ -10,10 +10,7 @@ _BACKUP_NAME = re.compile(r"^autolava-(\d{8})\.sqlite3$")
 _REPRESENTATIVE_READS = (
     "SELECT id, name FROM stores ORDER BY id LIMIT 1",
     "SELECT id, username, password_hash FROM users ORDER BY id LIMIT 1",
-    (
-        "SELECT id, store_id, date, daily_revenue "
-        "FROM store_daily_records ORDER BY id LIMIT 1"
-    ),
+    ("SELECT id, store_id, date, daily_revenue FROM store_daily_records ORDER BY id LIMIT 1"),
 )
 
 
@@ -67,9 +64,7 @@ def _prune_old_backups(destination: Path, today: date) -> None:
             continue
         digits = match.group(1)
         try:
-            backup_date = date.fromisoformat(
-                f"{digits[0:4]}-{digits[4:6]}-{digits[6:8]}"
-            )
+            backup_date = date.fromisoformat(f"{digits[0:4]}-{digits[4:6]}-{digits[6:8]}")
         except ValueError:
             continue
         if backup_date < cutoff:

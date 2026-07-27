@@ -1,6 +1,6 @@
 import { useSearchParams } from "react-router-dom";
 
-import { AdminLayout, isAdminTab, type AdminTab } from "@/admin/AdminLayout";
+import { AdminLayout, type AdminTab, isAdminTab } from "@/admin/AdminLayout";
 import { AgentSettingsPanel } from "@/admin/AgentSettingsPanel";
 import { DatabaseBackupPanel } from "@/admin/DatabaseBackupPanel";
 import { StoreWorkspace } from "@/admin/StoreWorkspace";
@@ -20,18 +20,27 @@ export function AdminPage() {
     if (next === tab) return;
     requestTransition(() => {
       const nextParams = new URLSearchParams(searchParams);
-      if (next === "stores") nextParams.delete("tab"); else nextParams.set("tab", next);
+      if (next === "stores") nextParams.delete("tab");
+      else nextParams.set("tab", next);
       setSearchParams(nextParams, { replace: true });
     });
   }
 
-  return <AdminLayout tab={tab} onTabChange={selectTab} panels={{
-    stores: <StoreWorkspace />,
-    users: <UsersPanel />,
-    status: <>
-      <AgentSettingsPanel isOwner={Boolean(user?.is_owner)} />
-      <SystemStatusPanel />
-      {user?.is_owner && <DatabaseBackupPanel />}
-    </>,
-  }} />;
+  return (
+    <AdminLayout
+      tab={tab}
+      onTabChange={selectTab}
+      panels={{
+        stores: <StoreWorkspace />,
+        users: <UsersPanel />,
+        status: (
+          <>
+            <AgentSettingsPanel isOwner={Boolean(user?.is_owner)} />
+            <SystemStatusPanel />
+            {user?.is_owner && <DatabaseBackupPanel />}
+          </>
+        ),
+      }}
+    />
+  );
 }

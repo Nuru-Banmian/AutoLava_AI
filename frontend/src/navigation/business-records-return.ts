@@ -43,15 +43,19 @@ function isDateRange(value: unknown): value is DateRange {
 function isBusinessRecordsViewState(value: unknown): value is BusinessRecordsViewState {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Partial<BusinessRecordsViewState>;
-  return Number.isInteger(candidate.storeId) && candidate.storeId! > 0
-    && isRecordRangeMode(candidate.recordMode)
-    && isDateRange(candidate.range)
-    && Number.isInteger(candidate.page) && candidate.page! > 0
-    && isNullableDate(candidate.selectedDate)
-    && isNullableDate(candidate.mobileRecordDate)
-    && typeof candidate.scrollY === "number"
-    && Number.isFinite(candidate.scrollY)
-    && candidate.scrollY >= 0;
+  return (
+    Number.isInteger(candidate.storeId) &&
+    candidate.storeId! > 0 &&
+    isRecordRangeMode(candidate.recordMode) &&
+    isDateRange(candidate.range) &&
+    Number.isInteger(candidate.page) &&
+    candidate.page! > 0 &&
+    isNullableDate(candidate.selectedDate) &&
+    isNullableDate(candidate.mobileRecordDate) &&
+    typeof candidate.scrollY === "number" &&
+    Number.isFinite(candidate.scrollY) &&
+    candidate.scrollY >= 0
+  );
 }
 
 export function ledgerReturnState(value: unknown): BusinessRecordsViewState | null {
@@ -60,7 +64,10 @@ export function ledgerReturnState(value: unknown): BusinessRecordsViewState | nu
   return isBusinessRecordsViewState(candidate) ? candidate : null;
 }
 
-export function restoredBusinessRecordsState(value: unknown, storeId: number | null | undefined): BusinessRecordsViewState | null {
+export function restoredBusinessRecordsState(
+  value: unknown,
+  storeId: number | null | undefined,
+): BusinessRecordsViewState | null {
   if (!value || typeof value !== "object" || !("restoreBusinessRecords" in value)) return null;
   const candidate = (value as BusinessRecordsLocationState).restoreBusinessRecords;
   return isBusinessRecordsViewState(candidate) && candidate.storeId === storeId ? candidate : null;

@@ -51,9 +51,7 @@ async def test_user_operations_route_does_not_exist(admin_client, user_factory) 
     assert response.status_code == 404
 
 
-async def test_alerts_and_task_logs_remain_admin_only(
-    admin_client, auth_client
-) -> None:
+async def test_alerts_and_task_logs_remain_admin_only(admin_client, auth_client) -> None:
     login = await admin_client.post(
         "/api/auth/login",
         json={"username": "administrator", "password": "secret"},
@@ -86,9 +84,7 @@ async def test_store_creation_has_no_legacy_work_hours_payload(admin_client) -> 
     assert "standard_work_hours" not in response.json()
 
 
-async def test_admin_user_demotion_waits_for_sqlite_write_lock(
-    admin_client, user_factory
-) -> None:
+async def test_admin_user_demotion_waits_for_sqlite_write_lock(admin_client, user_factory) -> None:
     target = await user_factory(username="lock-target", password="secret")
     await SQLITE_WRITE_LOCK.acquire()
     try:
@@ -182,9 +178,7 @@ async def test_owner_protection_rejects_self_management(
         403,
         403,
     ]
-    assert (
-        await client.get("/api/admin/users")
-    ).status_code == 200
+    assert (await client.get("/api/admin/users")).status_code == 200
 
 
 @pytest.fixture
@@ -266,9 +260,7 @@ async def test_admin_can_create_list_patch_user_and_replace_store_access(
     ]
     assert [item["name"] for item in stores.json()] == ["Zulu"]
     assert list(
-        await db_session.scalars(
-            select(StoreMember.store_id).where(StoreMember.user_id == user_id)
-        )
+        await db_session.scalars(select(StoreMember.store_id).where(StoreMember.user_id == user_id))
     ) == [zulu.id]
 
 
@@ -286,9 +278,7 @@ async def test_admin_can_create_list_patch_user_and_replace_store_access(
         ("/api/admin/users/1", {"role": "manager"}),
     ],
 )
-async def test_user_validation_boundaries_return_422(
-    admin_client, path: str, body: dict
-) -> None:
+async def test_user_validation_boundaries_return_422(admin_client, path: str, body: dict) -> None:
     method = "post" if path == "/api/admin/users" else "patch"
     response = await admin_client.request(method, path, json=body)
     assert response.status_code == 422
@@ -338,9 +328,7 @@ async def test_non_owner_cannot_grant_or_manage_admin_roles(
             "role": "admin",
         },
     )
-    promote = await admin_client.patch(
-        f"/api/admin/users/{ordinary_id}", json={"role": "admin"}
-    )
+    promote = await admin_client.patch(f"/api/admin/users/{ordinary_id}", json={"role": "admin"})
     edit_owner = await admin_client.patch(
         f"/api/admin/users/{owner_id}", json={"password": "replacement123"}
     )
@@ -348,12 +336,15 @@ async def test_non_owner_cannot_grant_or_manage_admin_roles(
         f"/api/admin/users/{other_admin_id}", json={"is_active": False}
     )
 
-    assert [response.status_code for response in (
-        create_admin,
-        promote,
-        edit_owner,
-        edit_admin,
-    )] == [403, 403, 403, 403]
+    assert [
+        response.status_code
+        for response in (
+            create_admin,
+            promote,
+            edit_owner,
+            edit_admin,
+        )
+    ] == [403, 403, 403, 403]
 
 
 async def test_configured_owner_can_manage_another_admin(
@@ -383,9 +374,7 @@ async def test_configured_owner_can_manage_another_admin(
     target_id = target.id
     await db_session.commit()
 
-    response = await client.patch(
-        f"/api/admin/users/{target_id}", json={"role": "user"}
-    )
+    response = await client.patch(f"/api/admin/users/{target_id}", json={"role": "user"})
 
     assert response.status_code == 200
     assert response.json()["role"] == "user"
@@ -447,9 +436,7 @@ async def test_patch_user_invalid_store_preserves_existing_membership(
 
     assert response.status_code == 404
     assert list(
-        await db_session.scalars(
-            select(StoreMember.store_id).where(StoreMember.user_id == user_id)
-        )
+        await db_session.scalars(select(StoreMember.store_id).where(StoreMember.user_id == user_id))
     ) == [store_id]
 
 
@@ -471,9 +458,7 @@ async def test_unused_user_is_deleted_with_memberships(
     assert await db_session.get(User, user_id) is None
     assert (
         await db_session.scalar(
-            select(func.count())
-            .select_from(StoreMember)
-            .where(StoreMember.user_id == user_id)
+            select(func.count()).select_from(StoreMember).where(StoreMember.user_id == user_id)
         )
         == 0
     )
@@ -487,9 +472,7 @@ async def test_referenced_user_cannot_be_deleted(
     db_session: AsyncSession,
     reference_field: str,
 ) -> None:
-    referenced = await user_factory(
-        username=f"referenced-{reference_field}", password="secret"
-    )
+    referenced = await user_factory(username=f"referenced-{reference_field}", password="secret")
     other = await user_factory(username=f"other-{reference_field}", password="secret")
     store = await store_factory(name=f"User reference {reference_field}")
     record = StoreDailyRecord(
@@ -640,9 +623,7 @@ async def test_admin_can_create_list_patch_and_archive_stores(admin_client) -> N
         },
     ],
 )
-async def test_store_creation_validation_boundaries(
-    admin_client, body: dict
-) -> None:
+async def test_store_creation_validation_boundaries(admin_client, body: dict) -> None:
     response = await admin_client.post("/api/admin/stores", json=body)
     assert response.status_code == 422
 
@@ -676,9 +657,7 @@ async def test_unused_store_hard_delete_removes_memberships_and_categories(
     assert await db_session.get(Store, store_id) is None
     assert (
         await db_session.scalar(
-            select(func.count())
-            .select_from(StoreMember)
-            .where(StoreMember.store_id == store_id)
+            select(func.count()).select_from(StoreMember).where(StoreMember.store_id == store_id)
         )
         == 0
     )
@@ -749,9 +728,7 @@ async def test_referenced_store_must_be_archived_instead_of_hard_deleted(
     store_id = store.id
 
     deleted = await admin_client.delete(f"/api/admin/stores/{store_id}")
-    archived = await admin_client.patch(
-        f"/api/admin/stores/{store_id}", json={"is_active": False}
-    )
+    archived = await admin_client.patch(f"/api/admin/stores/{store_id}", json={"is_active": False})
 
     assert deleted.status_code == 409
     assert archived.status_code == 200
@@ -793,9 +770,7 @@ async def test_invalid_store_membership_replacement_is_atomic(
     db_session: AsyncSession,
 ) -> None:
     existing = await user_factory(username="existing-member", password="secret")
-    administrator = await db_session.scalar(
-        select(User).where(User.username == "administrator")
-    )
+    administrator = await db_session.scalar(select(User).where(User.username == "administrator"))
     assert administrator is not None
     store = await store_factory(name="Atomic member replacement")
     db_session.add(StoreMember(store_id=store.id, user_id=existing.id))
@@ -862,9 +837,7 @@ async def test_admin_can_create_list_and_patch_current_income_categories(
     )
     assert later.status_code == first.status_code == 201
 
-    listed = await admin_client.get(
-        "/api/admin/income-categories", params={"store_id": store.id}
-    )
+    listed = await admin_client.get("/api/admin/income-categories", params={"store_id": store.id})
     patched = await admin_client.patch(
         f"/api/admin/income-categories/{later.json()['id']}",
         json={"name": "Updated", "is_active": False, "sort_order": 1},
@@ -926,18 +899,10 @@ async def test_category_archive_restore_delete_and_reference_protection(
     await db_session.flush()
     used_id, unused_id = used.id, unused.id
 
-    archived = await admin_client.post(
-        f"/api/admin/income-categories/{used_id}/archive"
-    )
-    restored = await admin_client.post(
-        f"/api/admin/income-categories/{used_id}/restore"
-    )
-    protected = await admin_client.delete(
-        f"/api/admin/income-categories/{used_id}"
-    )
-    deleted = await admin_client.delete(
-        f"/api/admin/income-categories/{unused_id}"
-    )
+    archived = await admin_client.post(f"/api/admin/income-categories/{used_id}/archive")
+    restored = await admin_client.post(f"/api/admin/income-categories/{used_id}/restore")
+    protected = await admin_client.delete(f"/api/admin/income-categories/{used_id}")
+    deleted = await admin_client.delete(f"/api/admin/income-categories/{unused_id}")
 
     assert archived.status_code == 200
     assert archived.json()["archived_at"] is not None
@@ -999,9 +964,7 @@ async def test_category_patch_preserves_snapshot_and_refreshes_current_briefing(
             weather_transactions.append(db_session.in_transaction())
             return None
 
-    admin_client._transport.app.state.weather_service = (
-        TransactionObservingWeather()
-    )
+    admin_client._transport.app.state.weather_service = TransactionObservingWeather()
 
     async def record_regeneration(service, store_id, card_types, **_kwargs):
         calls.append((store_id, card_types))
@@ -1055,13 +1018,11 @@ async def test_admin_geocode_and_timezone_lookup_are_normalized(
             },
         )
     )
-    timezone_route = respx_mock.get(
-        "https://api.open-meteo.com/v1/forecast"
-    ).mock(return_value=httpx.Response(200, json={"timezone": "Europe/Rome"}))
-
-    geocoded = await admin_client.get(
-        "/api/admin/stores/geocode", params={"query": "Milano"}
+    timezone_route = respx_mock.get("https://api.open-meteo.com/v1/forecast").mock(
+        return_value=httpx.Response(200, json={"timezone": "Europe/Rome"})
     )
+
+    geocoded = await admin_client.get("/api/admin/stores/geocode", params={"query": "Milano"})
     timezone = await admin_client.get(
         "/api/admin/stores/timezone",
         params={"latitude": 45.46, "longitude": 9.19},

@@ -58,9 +58,7 @@ async def require_fresh_store_access(
     store_id: int,
     capability: Capability,
 ) -> tuple[User, Store]:
-    user = await require_fresh_user(
-        session, user_id=user_id, capability=capability
-    )
+    user = await require_fresh_user(session, user_id=user_id, capability=capability)
     store = await session.get(Store, store_id, populate_existing=True)
     if store is None or not store.is_active:
         raise HTTPException(404, "Store not found")
@@ -97,7 +95,9 @@ async def require_company_settlement_access(
 async def list_accessible_stores(session: AsyncSession, user: User) -> list[Store]:
     query = select(Store).order_by(Store.name)
     if not is_administrator(user):
-        query = query.where(Store.is_active.is_(True)).join(StoreMember).where(
-            StoreMember.user_id == user.id
+        query = (
+            query.where(Store.is_active.is_(True))
+            .join(StoreMember)
+            .where(StoreMember.user_id == user.id)
         )
     return list((await session.scalars(query)).all())

@@ -26,9 +26,7 @@ def _validated_admin(username: str, password: str) -> UserCreate:
             raise RuntimeError(
                 "AUTOLAVA_BOOTSTRAP_USERNAME must contain 3 to 80 characters"
             ) from None
-        raise RuntimeError(
-            "AUTOLAVA_BOOTSTRAP_PASSWORD must contain 8 to 128 characters"
-        ) from None
+        raise RuntimeError("AUTOLAVA_BOOTSTRAP_PASSWORD must contain 8 to 128 characters") from None
 
 
 def credentials_from_environment(environment: Mapping[str, str]) -> tuple[str, str]:

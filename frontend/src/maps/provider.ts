@@ -18,7 +18,10 @@ export const leafletMapAdapter: MapAdapter = {
   mount(container, value, onChange) {
     const initial = value ? L.latLng(value.latitude, value.longitude) : L.latLng(34, 105);
     const map = L.map(container).setView(initial, value ? 14 : 3);
-    L.tileLayer(mapProviderConfig.tiles, { attribution: mapProviderConfig.attribution, maxZoom: 19 }).addTo(map);
+    L.tileLayer(mapProviderConfig.tiles, {
+      attribution: mapProviderConfig.attribution,
+      maxZoom: 19,
+    }).addTo(map);
     const marker = L.marker(initial, { draggable: true, icon: markerIcon });
     if (value) marker.addTo(map);
 
@@ -28,7 +31,10 @@ export const leafletMapAdapter: MapAdapter = {
       onChange({ latitude, longitude });
     };
     const onClick = (event: L.LeafletMouseEvent) => select(event.latlng.lat, event.latlng.lng);
-    const onDrag = () => { const point = marker.getLatLng(); onChange({ latitude: point.lat, longitude: point.lng }); };
+    const onDrag = () => {
+      const point = marker.getLatLng();
+      onChange({ latitude: point.lat, longitude: point.lng });
+    };
     map.on("click", onClick);
     marker.on("dragend", onDrag);
     requestAnimationFrame(() => map.invalidateSize());

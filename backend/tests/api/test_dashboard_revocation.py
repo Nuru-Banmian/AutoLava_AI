@@ -71,9 +71,7 @@ async def test_refresh_rejects_user_deactivated_during_weather() -> None:
         )
         assert login.status_code == 200
 
-        refresh = asyncio.create_task(
-            client.post(f"/api/dashboard/{store_id}/refresh")
-        )
+        refresh = asyncio.create_task(client.post(f"/api/dashboard/{store_id}/refresh"))
         await weather.all_entered.wait()
         async with async_session_factory() as revoke:
             user = await revoke.get(User, user_id)
@@ -85,9 +83,7 @@ async def test_refresh_rejects_user_deactivated_during_weather() -> None:
 
     assert response.status_code == 401
     async with async_session_factory() as verify:
-        assert await verify.scalar(
-            select(func.count()).select_from(DailyBriefing)
-        ) == 0
+        assert await verify.scalar(select(func.count()).select_from(DailyBriefing)) == 0
 
 
 async def test_refresh_rejects_membership_removed_during_weather() -> None:
@@ -106,9 +102,7 @@ async def test_refresh_rejects_membership_removed_during_weather() -> None:
         )
         assert login.status_code == 200
 
-        refresh = asyncio.create_task(
-            client.post(f"/api/dashboard/{store_id}/refresh")
-        )
+        refresh = asyncio.create_task(client.post(f"/api/dashboard/{store_id}/refresh"))
         await weather.all_entered.wait()
         async with async_session_factory() as revoke:
             await revoke.execute(
@@ -123,6 +117,4 @@ async def test_refresh_rejects_membership_removed_during_weather() -> None:
 
     assert response.status_code == 403
     async with async_session_factory() as verify:
-        assert await verify.scalar(
-            select(func.count()).select_from(DailyBriefing)
-        ) == 0
+        assert await verify.scalar(select(func.count()).select_from(DailyBriefing)) == 0

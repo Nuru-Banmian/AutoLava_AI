@@ -1,5 +1,5 @@
-import { type FormEvent, useState } from "react";
 import { Eye, EyeOff, ShieldCheck } from "lucide-react";
+import { type FormEvent, useState } from "react";
 import { Navigate } from "react-router-dom";
 
 import { friendlyApiError } from "@/api/client";
@@ -12,7 +12,12 @@ export function LoginPage() {
   const [error, setError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
 
-  if (isLoading) return <main className="flex min-h-screen items-center justify-center" role="status">正在加载…</main>;
+  if (isLoading)
+    return (
+      <main className="flex min-h-screen items-center justify-center" role="status">
+        正在加载…
+      </main>
+    );
   if (user) return <Navigate to="/" replace />;
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -54,11 +59,15 @@ export function LoginPage() {
 
           <form className="space-y-5" onSubmit={submit}>
             <div className="space-y-2">
-              <label className="text-sm font-medium" htmlFor="username">用户名</label>
+              <label className="text-sm font-medium" htmlFor="username">
+                用户名
+              </label>
               <Input autoComplete="username" id="username" name="username" required />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium" htmlFor="password">密码</label>
+              <label className="text-sm font-medium" htmlFor="password">
+                密码
+              </label>
               <div className="relative min-w-0">
                 <Input
                   autoComplete="current-password"
@@ -80,7 +89,11 @@ export function LoginPage() {
                 </Button>
               </div>
             </div>
-            {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+            {error && (
+              <p role="alert" className="text-sm text-destructive">
+                {error}
+              </p>
+            )}
             <Button className="h-11 w-full" disabled={isLoggingIn} type="submit">
               {isLoggingIn ? "正在登录…" : "登录"}
             </Button>

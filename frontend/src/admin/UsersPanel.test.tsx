@@ -17,12 +17,23 @@ const authState = vi.hoisted(() => ({
 
 vi.mock("@/auth/AuthProvider", () => ({ useAuth: () => authState }));
 
-const roma = { id: 9, name: "Roma", address: "Via Roma", latitude: "41.9",
-  longitude: "12.5", timezone: "Europe/Rome", is_active: true };
-const maria = { id: 2, username: "maria", role: "user" as const,
-  is_active: true, store_ids: [9] };
-const operator = { id: 3, username: "operator", role: "user" as const,
-  is_active: true, store_ids: [] };
+const roma = {
+  id: 9,
+  name: "Roma",
+  address: "Via Roma",
+  latitude: "41.9",
+  longitude: "12.5",
+  timezone: "Europe/Rome",
+  is_active: true,
+};
+const maria = { id: 2, username: "maria", role: "user" as const, is_active: true, store_ids: [9] };
+const operator = {
+  id: 3,
+  username: "operator",
+  role: "user" as const,
+  is_active: true,
+  store_ids: [],
+};
 
 const server = setupServer();
 
@@ -36,32 +47,44 @@ afterAll(() => server.close());
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((next) => { resolve = next; });
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
   return { promise, resolve };
 }
 
 function renderPanel() {
-  const client = new QueryClient({ defaultOptions: {
-    queries: { retry: false }, mutations: { retry: false },
-  } });
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
   const result = render(
     <QueryClientProvider client={client}>
-      <UnsavedChangesProvider><UsersPanel /></UnsavedChangesProvider>
+      <UnsavedChangesProvider>
+        <UsersPanel />
+      </UnsavedChangesProvider>
     </QueryClientProvider>,
   );
   return { ...result, client };
 }
 
 function renderStrictPanel(items: AdminUser[]) {
-  const client = new QueryClient({ defaultOptions: {
-    queries: { retry: false }, mutations: { retry: false },
-  } });
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
   client.setQueryData(["admin", "users"], items);
   client.setQueryData(["admin", "stores"], [roma]);
   const result = render(
     <StrictMode>
       <QueryClientProvider client={client}>
-        <UnsavedChangesProvider><UsersPanel /></UnsavedChangesProvider>
+        <UnsavedChangesProvider>
+          <UsersPanel />
+        </UnsavedChangesProvider>
       </QueryClientProvider>
     </StrictMode>,
   );
@@ -73,40 +96,57 @@ function UnmountHarness() {
   const [transitioned, setTransitioned] = useState(false);
   const { markDirty, requestTransition } = useUnsavedChanges();
 
-  return <>
-    {showPanel
-      ? <><UsersPanel /><button type="button" onClick={() => setShowPanel(false)}>离开用户面板</button></>
-      : <>
-        <button type="button" onClick={() => markDirty(true)}>标记其他草稿</button>
-        <button type="button" onClick={() => requestTransition(() => setTransitioned(true))}>离开其他草稿</button>
-        <span>已离开：{String(transitioned)}</span>
-      </>}
-  </>;
+  return (
+    <>
+      {showPanel ? (
+        <>
+          <UsersPanel />
+          <button type="button" onClick={() => setShowPanel(false)}>
+            离开用户面板
+          </button>
+        </>
+      ) : (
+        <>
+          <button type="button" onClick={() => markDirty(true)}>
+            标记其他草稿
+          </button>
+          <button type="button" onClick={() => requestTransition(() => setTransitioned(true))}>
+            离开其他草稿
+          </button>
+          <span>已离开：{String(transitioned)}</span>
+        </>
+      )}
+    </>
+  );
 }
 
 function renderUnmountHarness() {
-  const client = new QueryClient({ defaultOptions: {
-    queries: { retry: false }, mutations: { retry: false },
-  } });
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
   const result = render(
     <QueryClientProvider client={client}>
-      <UnsavedChangesProvider><UnmountHarness /></UnsavedChangesProvider>
+      <UnsavedChangesProvider>
+        <UnmountHarness />
+      </UnsavedChangesProvider>
     </QueryClientProvider>,
   );
   return { ...result, client };
 }
 
-function mockUsers(
-  items: AdminUser[],
-  captureCreate?: (request: Request) => Promise<void>,
-) {
+function mockUsers(items: AdminUser[], captureCreate?: (request: Request) => Promise<void>) {
   server.use(
     http.get("/api/admin/users", () => HttpResponse.json(items)),
     http.get("/api/admin/stores", () => HttpResponse.json([roma])),
     http.post("/api/admin/users", async ({ request }) => {
       await captureCreate?.(request);
-      return HttpResponse.json({ id: 10, username: "operator", role: "user",
-        is_active: true, store_ids: [9] }, { status: 201 });
+      return HttpResponse.json(
+        { id: 10, username: "operator", role: "user", is_active: true, store_ids: [9] },
+        { status: 201 },
+      );
     }),
   );
 }
@@ -118,8 +158,11 @@ it("selects the first user and exposes only existing users in the selector", asy
   expect(await screen.findByRole("heading", { name: "编辑 maria" })).toBeInTheDocument();
   const selector = screen.getByRole("combobox", { name: "用户" });
   expect(selector).toHaveValue("2");
-  expect(within(selector).getAllByRole("option").map((option) => option.textContent))
-    .toEqual(["maria", "operator"]);
+  expect(
+    within(selector)
+      .getAllByRole("option")
+      .map((option) => option.textContent),
+  ).toEqual(["maria", "operator"]);
   expect(screen.queryByText("请选择用户", { selector: "p" })).not.toBeInTheDocument();
 });
 
@@ -150,10 +193,8 @@ it("starts user creation from the user list toolbar and leaves the selector blan
 
   const selector = within(controls).getByRole("combobox", { name: "用户" });
   expect(selector).toHaveValue("");
-  expect(within(selector).queryByRole("option", { name: "新建用户" }))
-    .not.toBeInTheDocument();
-  expect(within(selector).queryByRole("option", { name: "请选择用户" }))
-    .not.toBeInTheDocument();
+  expect(within(selector).queryByRole("option", { name: "新建用户" })).not.toBeInTheDocument();
+  expect(within(selector).queryByRole("option", { name: "请选择用户" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "添加用户" })).toBeInTheDocument();
 });
 
@@ -168,8 +209,13 @@ it("does not invent a user selection for an empty list", async () => {
 });
 
 it("selects a newly created user", async () => {
-  const created = { id: 10, username: "new-operator", role: "user" as const,
-    is_active: true, store_ids: [9] };
+  const created = {
+    id: 10,
+    username: "new-operator",
+    role: "user" as const,
+    is_active: true,
+    store_ids: [9],
+  };
   let users = [maria];
   server.use(
     http.get("/api/admin/users", () => HttpResponse.json(users)),
@@ -192,9 +238,7 @@ it("selects a newly created user", async () => {
 });
 
 it("selects a user into one editor and removes duplicate management surfaces", async () => {
-  mockUsers([
-    { id: 2, username: "maria", role: "user", is_active: true, store_ids: [9] },
-  ]);
+  mockUsers([{ id: 2, username: "maria", role: "user", is_active: true, store_ids: [9] }]);
   renderPanel();
   await userEvent.click(await screen.findByRole("button", { name: /maria/ }));
 
@@ -229,8 +273,11 @@ it("lets the owner edit another administrator", async () => {
   expect(screen.queryByLabelText("危险操作")).not.toBeInTheDocument();
   expect(screen.queryByText(/有历史记录.*只能停用/)).not.toBeInTheDocument();
   const footer = screen.getByTestId("user-editor-actions");
-  expect(within(footer).getAllByRole("button").map((button) => button.textContent))
-    .toEqual(["永久删除", "保存用户"]);
+  expect(
+    within(footer)
+      .getAllByRole("button")
+      .map((button) => button.textContent),
+  ).toEqual(["永久删除", "保存用户"]);
 });
 
 it("does not offer administrator creation to a non-owner", async () => {
@@ -290,7 +337,9 @@ it("keeps a dirty create editor dirty when the persistent new-user button is cli
 it("creates a user with store access in the right-hand workspace", async () => {
   let posted: unknown;
   authState.user = { id: 1, username: "Nuru_Banmian", role: "admin", is_owner: true };
-  mockUsers([], async (request) => { posted = await request.json(); });
+  mockUsers([], async (request) => {
+    posted = await request.json();
+  });
   renderPanel();
   await userEvent.click(await screen.findByRole("button", { name: "新建用户" }));
   await userEvent.type(screen.getByLabelText("用户名"), "operator");
@@ -298,12 +347,14 @@ it("creates a user with store access in the right-hand workspace", async () => {
   await userEvent.click(screen.getByRole("checkbox", { name: "Roma" }));
   await userEvent.click(screen.getByRole("button", { name: "添加用户" }));
 
-  await waitFor(() => expect(posted).toEqual({
-    username: "operator",
-    password: "operator123",
-    role: "user",
-    store_ids: [9],
-  }));
+  await waitFor(() =>
+    expect(posted).toEqual({
+      username: "operator",
+      password: "operator123",
+      role: "user",
+      store_ids: [9],
+    }),
+  );
 });
 
 it("preserves inactive and unknown memberships until they are explicitly removed", async () => {
@@ -311,10 +362,9 @@ it("preserves inactive and unknown memberships until they are explicitly removed
   const assigned = { ...maria, store_ids: [9, 10, 77] };
   server.use(
     http.get("/api/admin/users", () => HttpResponse.json([assigned])),
-    http.get("/api/admin/stores", () => HttpResponse.json([
-      roma,
-      { ...roma, id: 10, name: "Closed", is_active: false },
-    ])),
+    http.get("/api/admin/stores", () =>
+      HttpResponse.json([roma, { ...roma, id: 10, name: "Closed", is_active: false }]),
+    ),
     http.patch("/api/admin/users/2", async ({ request }) => {
       patches.push(await request.json());
       return HttpResponse.json(assigned);
@@ -368,7 +418,9 @@ it("does not let a superseded user request initialize another user's editor", as
   expect(screen.getByRole("button", { name: "保存用户" })).toBeEnabled();
   mariaResponse.resolve(HttpResponse.json({ ...maria, store_ids: [] }));
 
-  await waitFor(() => expect(screen.getByRole("heading", { name: "编辑 operator" })).toBeInTheDocument());
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "编辑 operator" })).toBeInTheDocument(),
+  );
   expect(screen.getByLabelText("重置密码（可选）")).toHaveValue("");
   expect(screen.getByRole("checkbox", { name: "Roma" })).not.toBeChecked();
 });
@@ -385,7 +437,9 @@ it("does not show a stale user error over a newer selection", async () => {
   await userEvent.click(screen.getByRole("button", { name: "放弃修改" }));
   mariaResponse.resolve(HttpResponse.json({ detail: "stale maria failure" }, { status: 409 }));
 
-  await waitFor(() => expect(screen.getByRole("heading", { name: "编辑 operator" })).toBeInTheDocument());
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "编辑 operator" })).toBeInTheDocument(),
+  );
   expect(screen.queryByText("stale maria failure")).not.toBeInTheDocument();
 });
 
@@ -393,7 +447,10 @@ it("invalidates authoritative users and accessible stores for a superseded succe
   const mariaResponse = deferred<HttpResponse<AdminUser>>();
   let userFetches = 0;
   server.use(
-    http.get("/api/admin/users", () => { userFetches += 1; return HttpResponse.json([maria, operator]); }),
+    http.get("/api/admin/users", () => {
+      userFetches += 1;
+      return HttpResponse.json([maria, operator]);
+    }),
     http.get("/api/admin/stores", () => HttpResponse.json([roma])),
     http.patch("/api/admin/users/2", () => mariaResponse.promise),
   );
@@ -457,10 +514,14 @@ it("clears a dirty selection when the authoritative refetch removes it", async (
 
 it("confirms permanent deletion in the editor footer and shows 409 guidance only after rejection", async () => {
   mockUsers([maria]);
-  server.use(http.delete("/api/admin/users/2", () => HttpResponse.json(
-    { detail: "该用户已有历史记录，不能永久删除；请停用账号" },
-    { status: 409 },
-  )));
+  server.use(
+    http.delete("/api/admin/users/2", () =>
+      HttpResponse.json(
+        { detail: "该用户已有历史记录，不能永久删除；请停用账号" },
+        { status: 409 },
+      ),
+    ),
+  );
   renderPanel();
   await userEvent.click(await screen.findByRole("button", { name: /maria/ }));
 

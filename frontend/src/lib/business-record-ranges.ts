@@ -1,4 +1,11 @@
-import { differenceInCalendarDays, endOfMonth, format, parseISO, startOfMonth, subMonths } from "date-fns";
+import {
+  differenceInCalendarDays,
+  endOfMonth,
+  format,
+  parseISO,
+  startOfMonth,
+  subMonths,
+} from "date-fns";
 import type { ChartBucket } from "@/api/types";
 
 export type RecordRangeMode = "month" | "custom";
@@ -43,7 +50,10 @@ export function monthRange(month: string): DateRange {
   return { start: iso(startOfMonth(value)), end: iso(endOfMonth(value)) };
 }
 
-export function monthSelectionIssue(selection: MonthSelection, currentMonth: string): MonthSelectionIssue | null {
+export function monthSelectionIssue(
+  selection: MonthSelection,
+  currentMonth: string,
+): MonthSelectionIssue | null {
   if (!selection.startMonth || !selection.endMonth) return "missing";
   try {
     parseMonth(selection.startMonth);
@@ -77,7 +87,12 @@ export function analysisRange(
   if (mode === "custom") {
     const range = validate(custom ?? { start: "", end: "" });
     const inclusiveDays = differenceInCalendarDays(parseISO(range.end), parseISO(range.start)) + 1;
-    return { ...range, compareStart: null, compareEnd: null, bucket: inclusiveDays <= 62 ? "day" : "month" };
+    return {
+      ...range,
+      compareStart: null,
+      compareEnd: null,
+      bucket: inclusiveDays <= 62 ? "day" : "month",
+    };
   }
 
   if (mode === "current-month") {

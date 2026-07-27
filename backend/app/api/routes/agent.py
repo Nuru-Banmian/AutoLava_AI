@@ -57,9 +57,7 @@ async def _require_agent_administrator(session: Session, user_id: int):
 
 
 @router.get("/status")
-async def get_agent_status(
-    session: Session, actor: CurrentUser
-) -> dict[str, bool]:
+async def get_agent_status(session: Session, actor: CurrentUser) -> dict[str, bool]:
     await _require_agent_administrator(session, actor.id)
     return {"enabled": await agent_enabled(session)}
 
@@ -108,9 +106,7 @@ async def run_agent_turn(
         )
         state = ConversationState.model_validate(conversation.state)
         conversation_id = conversation.id
-        recent_messages = await recent_model_messages(
-            session, conversation_id=conversation.id
-        )
+        recent_messages = await recent_model_messages(session, conversation_id=conversation.id)
 
     # The model call happens after the short write and outside any SQLite snapshot.
     await end_read_transaction(session)
@@ -126,19 +122,19 @@ async def run_agent_turn(
             store_id=authorized_store_id,
             capability="analytics.view",
         )
-        conversation = await get_conversation_by_id(
+        current_conversation = await get_conversation_by_id(
             session,
             conversation_id=conversation_id,
             user_id=user_id,
             store_id=authorized_store_id,
         )
-        if conversation is None:
+        if current_conversation is None:
             raise HTTPException(409, "当前对话已被重置")
-        conversation.state = run_result.state.model_dump(mode="json")
+        current_conversation.state = run_result.state.model_dump(mode="json")
         if run_result.evidence is not None:
             session.add(
                 AgentEvidence(
-                    conversation_id=conversation.id,
+                    conversation_id=current_conversation.id,
                     payload=run_result.evidence.model_dump(mode="json"),
                 )
             )
@@ -155,9 +151,7 @@ async def run_agent_turn(
                     output_tokens=attempt.output_tokens,
                     result=attempt.result,
                     error_category=(
-                        attempt.error_category.value
-                        if attempt.error_category is not None
-                        else None
+                        attempt.error_category.value if attempt.error_category is not None else None
                     ),
                     latency_ms=attempt.latency_ms,
                     estimated_cost=attempt.estimated_cost,
@@ -215,9 +209,7 @@ async def get_current_conversation(
         store_id=store_id,
         capability="analytics.view",
     )
-    return await conversation_response(
-        session, user_id=user.id, store_id=store.id
-    )
+    return await conversation_response(session, user_id=user.id, store_id=store.id)
 
 
 @router.delete("/stores/{store_id}/conversation", status_code=204)
@@ -238,7 +230,5 @@ async def reset_current_conversation(
     user_id = user.id
     authorized_store_id = store.id
     async with sqlite_short_write(session):
-        await delete_conversation(
-            session, user_id=user_id, store_id=authorized_store_id
-        )
+        await delete_conversation(session, user_id=user_id, store_id=authorized_store_id)
     return Response(status_code=204)

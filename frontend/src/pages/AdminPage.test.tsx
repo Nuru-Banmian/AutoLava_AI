@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
-import { http, HttpResponse } from "msw";
+import { HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
 import { MemoryRouter } from "react-router-dom";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -40,11 +40,15 @@ afterEach(() => {
 afterAll(() => server.close());
 
 function renderAdmin(initialEntry = "/admin") {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
   return render(
     <MemoryRouter initialEntries={[initialEntry]}>
       <QueryClientProvider client={client}>
-        <UnsavedChangesProvider><AdminPage /></UnsavedChangesProvider>
+        <UnsavedChangesProvider>
+          <AdminPage />
+        </UnsavedChangesProvider>
       </QueryClientProvider>
     </MemoryRouter>,
   );
@@ -57,7 +61,10 @@ describe("AdminPage", () => {
 
     const tabs = await screen.findAllByRole("tab");
     expect(tabs.map((tab) => tab.textContent)).toEqual(["门店与收入", "用户与权限", "系统状态"]);
-    expect(screen.getByRole("tab", { name: "门店与收入" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "门店与收入" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
     expect(screen.getByRole("button", { name: "新建门店" })).toBeInTheDocument();
   });
 
@@ -68,11 +75,17 @@ describe("AdminPage", () => {
     first.unmount();
 
     const second = renderAdmin("/admin?tab=users");
-    expect(screen.getByRole("tab", { name: "用户与权限" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "用户与权限" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
     second.unmount();
 
     renderAdmin("/admin?tab=unknown");
-    expect(screen.getByRole("tab", { name: "门店与收入" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "门店与收入" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 
   it("shows the database backup entry only to the final administrator", async () => {

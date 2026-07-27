@@ -1,19 +1,30 @@
-import { createBrowserRouter, createMemoryRouter, Navigate, Outlet, useLocation, type RouteObject } from "react-router-dom";
+import {
+  createBrowserRouter,
+  createMemoryRouter,
+  Navigate,
+  Outlet,
+  type RouteObject,
+  useLocation,
+} from "react-router-dom";
 
 import { AuthProvider, useAuth } from "@/auth/AuthProvider";
 import { AppShell } from "@/layouts/AppShell";
+import { AccountPasswordPage } from "@/pages/AccountPasswordPage";
 import { AdminPage } from "@/pages/AdminPage";
-import { LoginPage } from "@/pages/LoginPage";
+import { BusinessRecordsPage } from "@/pages/BusinessRecordsPage";
+import { CompanySettlementPage } from "@/pages/CompanySettlementPage";
 import { HomePage } from "@/pages/HomePage";
 import { LedgerPage } from "@/pages/LedgerPage";
+import { LoginPage } from "@/pages/LoginPage";
 import { MorePage } from "@/pages/MorePage";
-import { BusinessRecordsPage } from "@/pages/BusinessRecordsPage";
-import { AccountPasswordPage } from "@/pages/AccountPasswordPage";
-import { CompanySettlementPage } from "@/pages/CompanySettlementPage";
 import { StoreProvider } from "@/stores/StoreProvider";
 
 function AuthLoading() {
-  return <main className="flex min-h-screen items-center justify-center" role="status">正在加载…</main>;
+  return (
+    <main className="flex min-h-screen items-center justify-center" role="status">
+      正在加载…
+    </main>
+  );
 }
 
 function ProtectedShell() {
@@ -21,7 +32,11 @@ function ProtectedShell() {
   if (isLoading) return <AuthLoading />;
   if (error) return <main role="alert">登录状态加载失败，请重试</main>;
   if (!user) return <Navigate to="/login" replace />;
-  return <StoreProvider userId={user.id}><AppShell /></StoreProvider>;
+  return (
+    <StoreProvider userId={user.id}>
+      <AppShell />
+    </StoreProvider>
+  );
 }
 
 function AdminRoute() {
@@ -32,25 +47,45 @@ function AdminRoute() {
 function MoreRoute() {
   const location = useLocation();
   const status = (location.state as { status?: unknown } | null)?.status;
-  return <>{status === "密码已更新" && <p className="mb-4 text-sm text-primary" role="status">密码已更新</p>}<MorePage /></>;
+  return (
+    <>
+      {status === "密码已更新" && (
+        <p className="mb-4 text-sm text-primary" role="status">
+          密码已更新
+        </p>
+      )}
+      <MorePage />
+    </>
+  );
 }
 
-const routes: RouteObject[] = [{
-  element: <AuthProvider><Outlet /></AuthProvider>,
-  children: [
-    { path: "/login", element: <LoginPage /> },
-    { element: <ProtectedShell />, children: [
-      { index: true, element: <HomePage /> },
-      { path: "ledger", element: <LedgerPage /> },
-      { path: "settlements", element: <CompanySettlementPage /> },
-      { path: "database", element: <BusinessRecordsPage /> },
-      { path: "more", element: <MoreRoute /> },
-      { path: "account/password", element: <AccountPasswordPage /> },
-      { path: "admin", element: <AdminRoute /> },
-    ] },
-  ],
-}];
+const routes: RouteObject[] = [
+  {
+    element: (
+      <AuthProvider>
+        <Outlet />
+      </AuthProvider>
+    ),
+    children: [
+      { path: "/login", element: <LoginPage /> },
+      {
+        element: <ProtectedShell />,
+        children: [
+          { index: true, element: <HomePage /> },
+          { path: "ledger", element: <LedgerPage /> },
+          { path: "settlements", element: <CompanySettlementPage /> },
+          { path: "database", element: <BusinessRecordsPage /> },
+          { path: "more", element: <MoreRoute /> },
+          { path: "account/password", element: <AccountPasswordPage /> },
+          { path: "admin", element: <AdminRoute /> },
+        ],
+      },
+    ],
+  },
+];
 
 export function createAppRouter(initialEntries?: string[]) {
-  return initialEntries ? createMemoryRouter(routes, { initialEntries }) : createBrowserRouter(routes);
+  return initialEntries
+    ? createMemoryRouter(routes, { initialEntries })
+    : createBrowserRouter(routes);
 }

@@ -182,9 +182,7 @@ class OpenAICompatibleModelAdapter:
             raise
         except ValidationError:
             error = RepairableModelPlanError("invalid structured model output")
-            _observe_failure(
-                observer, self.profile, "plan", started, error
-            )
+            _observe_failure(observer, self.profile, "plan", started, error)
             raise error from None
         except Exception as error:
             failure = _classified_error(error)
@@ -263,9 +261,7 @@ class FakeModelAdapter:
             raise failure from scripted
         try:
             result = (
-                scripted
-                if isinstance(scripted, TurnPlan)
-                else TurnPlan.model_validate(scripted)
+                scripted if isinstance(scripted, TurnPlan) else TurnPlan.model_validate(scripted)
             )
             _observe_fake_success(observer, self, "plan", started)
             return result
@@ -317,9 +313,7 @@ class ResilientModelAdapter:
         *,
         observer: AttemptObserver | None = None,
     ) -> TurnPlan:
-        return await self._run_stage(
-            "plan", messages, None, observer=observer
-        )
+        return await self._run_stage("plan", messages, None, observer=observer)
 
     async def answer_turn(
         self,
@@ -328,9 +322,7 @@ class ResilientModelAdapter:
         *,
         observer: AttemptObserver | None = None,
     ) -> str:
-        return await self._run_stage(
-            "answer", messages, evidence, observer=observer
-        )
+        return await self._run_stage("answer", messages, evidence, observer=observer)
 
     async def _run_stage(
         self,
@@ -341,16 +333,12 @@ class ResilientModelAdapter:
         observer: AttemptObserver | None,
     ) -> Any:
         try:
-            return await self._attempt(
-                self.primary, stage, messages, evidence, observer=observer
-            )
+            return await self._attempt(self.primary, stage, messages, evidence, observer=observer)
         except ModelAdapterError as first:
             if first.category not in RECOVERABLE_CATEGORIES:
                 raise
         try:
-            return await self._attempt(
-                self.primary, stage, messages, evidence, observer=observer
-            )
+            return await self._attempt(self.primary, stage, messages, evidence, observer=observer)
         except ModelAdapterError as second:
             if second.category not in RECOVERABLE_CATEGORIES or self.fallback is None:
                 raise
@@ -498,8 +486,7 @@ def _classified_error(error: Exception) -> ModelAdapterError:
     elif any(marker in name for marker in ("connection", "network")):
         category = ModelErrorCategory.NETWORK
     elif any(
-        marker in text
-        for marker in ("insufficient_quota", "insufficient balance", "billing")
+        marker in text for marker in ("insufficient_quota", "insufficient balance", "billing")
     ):
         category = ModelErrorCategory.INSUFFICIENT_BALANCE
     elif status == 429 or "rate limit" in text:
@@ -514,9 +501,7 @@ def _classified_error(error: Exception) -> ModelAdapterError:
         category = ModelErrorCategory.PERMISSION_DENIED
     elif any(marker in text for marker in ("content policy", "safety", "moderation")):
         category = ModelErrorCategory.SAFETY_REFUSAL
-    elif status in (400, 404, 422) or isinstance(
-        error, (TypeError, ValueError, ValidationError)
-    ):
+    elif status in (400, 404, 422) or isinstance(error, (TypeError, ValueError, ValidationError)):
         category = ModelErrorCategory.INVALID_REQUEST
     else:
         category = ModelErrorCategory.UNKNOWN

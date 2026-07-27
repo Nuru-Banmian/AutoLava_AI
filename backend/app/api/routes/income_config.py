@@ -15,9 +15,7 @@ from app.services.income_config import IncomeConfigService
 from app.services.access import require_fresh_store_access
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
-IncomeConfigManager = Annotated[
-    User, Depends(require_capability("income_config.manage"))
-]
+IncomeConfigManager = Annotated[User, Depends(require_capability("income_config.manage"))]
 
 
 @router.get("/stores/{store_id}/income-config", response_model=IncomeConfigResponse)
@@ -48,9 +46,7 @@ async def put_income_config(
 async def _fresh_category_manager(
     session: Session, *, actor_id: int, category_id: int
 ) -> IncomeCategory:
-    category = await session.get(
-        IncomeCategory, category_id, populate_existing=True
-    )
+    category = await session.get(IncomeCategory, category_id, populate_existing=True)
     if category is None:
         raise HTTPException(404, "Category not found")
     await require_fresh_store_access(
@@ -68,9 +64,7 @@ async def archive_income_category(
 ) -> IncomeCategoryResponse:
     actor_id = actor.id
     async with sqlite_short_write(session):
-        await _fresh_category_manager(
-            session, actor_id=actor_id, category_id=category_id
-        )
+        await _fresh_category_manager(session, actor_id=actor_id, category_id=category_id)
         category = await IncomeConfigService(session).archive(category_id)
         response = IncomeCategoryResponse.model_validate(category)
     return response
@@ -82,11 +76,7 @@ async def restore_income_category(
 ) -> IncomeCategoryResponse:
     actor_id = actor.id
     async with sqlite_short_write(session):
-        await _fresh_category_manager(
-            session, actor_id=actor_id, category_id=category_id
-        )
-        category = await IncomeConfigService(session).restore_category(
-            category_id
-        )
+        await _fresh_category_manager(session, actor_id=actor_id, category_id=category_id)
+        category = await IncomeConfigService(session).restore_category(category_id)
         response = IncomeCategoryResponse.model_validate(category)
     return response

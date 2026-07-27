@@ -5,10 +5,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple
 
 WORKDIR /app
-COPY pyproject.toml alembic.ini ./
+COPY --from=ghcr.io/astral-sh/uv:0.11.26 /uv /uvx /bin/
+COPY pyproject.toml uv.lock alembic.ini ./
 COPY alembic ./alembic
 COPY app ./app
-RUN mkdir -p /data && pip install --no-cache-dir .
+RUN mkdir -p /data && uv sync --frozen --no-dev --no-editable
+
+ENV PATH="/app/.venv/bin:$PATH"
 
 EXPOSE 8000
 CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"]

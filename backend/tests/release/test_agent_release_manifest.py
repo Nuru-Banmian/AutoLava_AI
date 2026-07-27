@@ -72,9 +72,7 @@ EXPECTED_FRONTEND_TEST_TITLES = {
         "desktop business records action is user-triggered, prefills months, and does not overflow",
         "mobile business records action is user-triggered, prefills months, and does not overflow",
     ],
-    "ordinary-user-agent-hidden": [
-        "ordinary users cannot see or invoke the Agent"
-    ],
+    "ordinary-user-agent-hidden": ["ordinary users cannot see or invoke the Agent"],
 }
 EXPECTED_GOLD_AMOUNTS = {
     "monthly-total-gold": {
@@ -111,11 +109,7 @@ def test_release_evaluation_manifest_is_complete_and_points_to_real_tests() -> N
     assert {case["area"] for case in backend_cases} == REQUIRED_AREAS
     assert all(HAN_TEXT.search(case["question"]) for case in backend_cases)
 
-    coverage = {
-        item
-        for case in backend_cases
-        for item in case["covers"]
-    }
+    coverage = {item for case in backend_cases for item in case["covers"]}
     assert REQUIRED_PERIODS <= coverage
     assert REQUIRED_PROMPT_SOURCES <= coverage
     assert REQUIRED_PLAN_ATTACKS <= coverage
@@ -142,11 +136,7 @@ def test_release_evaluation_manifest_is_complete_and_points_to_real_tests() -> N
 
     vetoes = set(manifest["veto_categories"])
     assert vetoes
-    assert vetoes == {
-        veto
-        for case in backend_cases
-        for veto in case["vetoes"]
-    }
+    assert vetoes == {veto for case in backend_cases for veto in case["vetoes"]}
     for case in backend_cases:
         assert case["vetoes"]
         path_text, function_name = case["test_node"].split("::", maxsplit=1)
@@ -159,9 +149,7 @@ def test_release_evaluation_manifest_is_complete_and_points_to_real_tests() -> N
         ), case["id"]
 
     gold_cases = {
-        case["id"]: case["gold"]
-        for case in backend_cases
-        if "gold_amount" in case["covers"]
+        case["id"]: case["gold"] for case in backend_cases if "gold_amount" in case["covers"]
     }
     assert gold_cases == EXPECTED_GOLD_AMOUNTS
     assert all(
@@ -169,11 +157,7 @@ def test_release_evaluation_manifest_is_complete_and_points_to_real_tests() -> N
         for gold in gold_cases.values()
     )
 
-    frontend_coverage = {
-        item
-        for case in frontend_cases
-        for item in case["covers"]
-    }
+    frontend_coverage = {item for case in frontend_cases for item in case["covers"]}
     assert frontend_coverage == REQUIRED_FRONTEND_COVERAGE
     for case in frontend_cases:
         assert (REPOSITORY_ROOT / "frontend" / case["test_file"]).is_file()
@@ -184,23 +168,24 @@ def test_release_evaluation_manifest_is_complete_and_points_to_real_tests() -> N
 
 def test_ci_runs_the_fake_only_agent_release_veto_gate() -> None:
     workflow = yaml.safe_load(
-        (REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml").read_text(
-            encoding="utf-8"
-        )
+        (REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     )
-    backend = workflow["jobs"]["backend"]
-    commands = [step["run"] for step in backend["steps"] if "run" in step]
+    commands = [
+        step["run"] for job in workflow["jobs"].values() for step in job["steps"] if "run" in step
+    ]
 
-    assert backend["env"]["AUTOLAVA_MODEL_ADAPTER"] == "fake"
-    assert not any("MODEL_API_KEY" in key for key in backend["env"])
-    assert any(
-        "pytest -m agent_release_gate --strict-markers" in command
-        for command in commands
-    )
+    assert workflow["env"]["AUTOLAVA_MODEL_ADAPTER"] == "fake"
+    assert not any("MODEL_API_KEY" in key for key in workflow["env"])
+    verifier = (REPOSITORY_ROOT / "scripts" / "verify.py").read_text(encoding="utf-8")
+    assert commands.count("npm run verify:ci:backend-agent") == 1
+    assert '"agent_release_gate"' in verifier
 
-    frontend = workflow["jobs"]["frontend"]
     frontend_commands = [
-        step["run"] for step in frontend["steps"] if "run" in step
+        step["run"]
+        for name, job in workflow["jobs"].items()
+        if name.startswith("frontend-")
+        for step in job["steps"]
+        if "run" in step
     ]
     package = json.loads(
         (REPOSITORY_ROOT / "frontend" / "package.json").read_text(encoding="utf-8")
@@ -209,4 +194,5 @@ def test_ci_runs_the_fake_only_agent_release_veto_gate() -> None:
         package["scripts"]["test:agent-release-manifest"]
         == "node scripts/validate-agent-release-manifest.mjs"
     )
-    assert "npm run test:agent-release-manifest" in frontend_commands
+    assert "npm run verify:ci:frontend-unit" in frontend_commands
+    assert '"test:agent-release-manifest"' in verifier

@@ -194,9 +194,7 @@ class BusinessEvidenceCollector:
 
         if grouped_snapshot is not None:
             rows, recorded_dates, truncated = grouped_snapshot
-            warnings = (
-                ["结果过多，仅返回前 400 个分组。"] if truncated else []
-            )
+            warnings = ["结果过多，仅返回前 400 个分组。"] if truncated else []
             summary = _grouped_summary(
                 start=start,
                 end=end,
@@ -276,9 +274,7 @@ class BusinessEvidenceCollector:
                 "这只表示没有记录，不表示门店本应营业，也不推断记录起始日期。"
             )
         if snapshot.missing_weather_dates:
-            warnings.append(
-                f"有 {len(snapshot.missing_weather_dates)} 个每日台账缺少记录天气。"
-            )
+            warnings.append(f"有 {len(snapshot.missing_weather_dates)} 个每日台账缺少记录天气。")
         if context.features.wash_count_enabled and snapshot.wash_count_missing_dates:
             warnings.append(
                 f"洗车数量覆盖 {snapshot.wash_count_recorded_operating_days}/"
@@ -307,14 +303,12 @@ class BusinessEvidenceCollector:
             and comparison_period is not None
             and comparison_snapshot is not None
         ):
-            comparison, comparison_summary, comparison_warnings = (
-                self._comparison_result(
-                    current=snapshot,
-                    current_days=calendar_dates,
-                    comparison=comparison_snapshot,
-                    comparison_period=comparison_period,
-                    include_percentage=request.comparison.include_percentage,
-                )
+            comparison, comparison_summary, comparison_warnings = self._comparison_result(
+                current=snapshot,
+                current_days=calendar_dates,
+                comparison=comparison_snapshot,
+                comparison_period=comparison_period,
+                include_percentage=request.comparison.include_percentage,
             )
             warnings.extend(comparison_warnings)
             summary += comparison_summary + "".join(comparison_warnings)
@@ -350,9 +344,7 @@ class BusinessEvidenceCollector:
                 "missing_weather_dates": snapshot.missing_weather_dates,
                 "wash_count_enabled": context.features.wash_count_enabled,
                 "operating_days": snapshot.operating_days,
-                "wash_count_recorded_operating_days": (
-                    snapshot.wash_count_recorded_operating_days
-                ),
+                "wash_count_recorded_operating_days": (snapshot.wash_count_recorded_operating_days),
                 "wash_count_missing_dates": snapshot.wash_count_missing_dates,
                 "wash_count_coverage_percent": wash_count_coverage_percent,
                 "wash_count_sufficient": wash_count_sufficient,
@@ -449,12 +441,9 @@ class BusinessEvidenceCollector:
         comparison_total = comparison.daily_revenue + comparison.confirmed_settlement
         total_change = current_total - comparison_total
         ledger_change = current.daily_revenue - comparison.daily_revenue
-        settlement_change = (
-            current.confirmed_settlement - comparison.confirmed_settlement
-        )
+        settlement_change = current.confirmed_settlement - comparison.confirmed_settlement
         critical_data_complete = not (
-            current.category_total_mismatches
-            or comparison.category_total_mismatches
+            current.category_total_mismatches or comparison.category_total_mismatches
         )
         decomposition: DailyLedgerDecomposition
         verified_contributions: list[tuple[ContributionKind, Decimal]] = [
@@ -477,9 +466,7 @@ class BusinessEvidenceCollector:
             unexplained_amount = Decimal(ledger_change)
             warnings.append("每日台账营业额变化未执行经营日对称分解：" + "、".join(reasons) + "。")
         else:
-            current_average = Decimal(current.operating_revenue) / Decimal(
-                current.operating_days
-            )
+            current_average = Decimal(current.operating_revenue) / Decimal(current.operating_days)
             comparison_average = Decimal(comparison.operating_revenue) / Decimal(
                 comparison.operating_days
             )
@@ -525,16 +512,12 @@ class BusinessEvidenceCollector:
             percentage_status = "unavailable_zero_baseline"
             warnings.append("比较期间月度总收入为零，百分比变化不可用。")
         else:
-            percentage_change = (
-                Decimal(total_change) * Decimal(100) / Decimal(comparison_total)
-            )
+            percentage_change = Decimal(total_change) * Decimal(100) / Decimal(comparison_total)
             percentage_status = "available"
             current_days = (end - start).days + 1
             comparison_days = (comparison_end - comparison_start).days + 1
             if current_days != comparison_days:
-                warnings.append(
-                    "两个比较期间长度不同；百分比仅因用户明确要求而提供。"
-                )
+                warnings.append("两个比较期间长度不同；百分比仅因用户明确要求而提供。")
 
         income_category_changes = _analysis_category_changes(
             current,
@@ -564,17 +547,11 @@ class BusinessEvidenceCollector:
                 )
             )
         if income_category_changes:
-            verified.append(
-                "收入分类金额变化已按每日台账保存的历史分类快照精确计算。"
-            )
+            verified.append("收入分类金额变化已按每日台账保存的历史分类快照精确计算。")
         if other_data_changes:
-            verified.append(
-                "其他数据金额变化已精确计算，且没有计入月度总收入对账。"
-            )
+            verified.append("其他数据金额变化已精确计算，且没有计入月度总收入对账。")
         correlated = (
-            _analysis_correlations(current, comparison, context)
-            if unexplained_amount != 0
-            else []
+            _analysis_correlations(current, comparison, context) if unexplained_amount != 0 else []
         )
         unexplained = (
             []
@@ -696,22 +673,13 @@ class BusinessEvidenceCollector:
             )
             or 0
         )
-        operating_records = [
-            record for record in records if record.is_open in {"营业", "提前休息"}
-        ]
-        wash_records = [
-            record for record in operating_records if record.wash_count is not None
-        ]
+        operating_records = [record for record in records if record.is_open in {"营业", "提前休息"}]
+        wash_records = [record for record in operating_records if record.wash_count is not None]
         category_total_mismatches: list[dict[str, object]] = []
         categories: dict[tuple[int, str, bool, int], int] = defaultdict(int)
         for record in records:
-            included_amount = sum(
-                item.amount for item in record.items if item.include_in_total
-            )
-            if (
-                record.income_mode == "composed"
-                and included_amount != record.daily_revenue
-            ):
+            included_amount = sum(item.amount for item in record.items if item.include_in_total)
+            if record.income_mode == "composed" and included_amount != record.daily_revenue:
                 category_total_mismatches.append(
                     {
                         "date": record.date,
@@ -835,9 +803,7 @@ class BusinessEvidenceCollector:
                 "name": company.name,
                 "is_active": company.is_active,
                 "pending_amount": company_totals.get(company.id, {}).get("pending_amount", 0),
-                "confirmed_amount": company_totals.get(company.id, {}).get(
-                    "confirmed_amount", 0
-                ),
+                "confirmed_amount": company_totals.get(company.id, {}).get("confirmed_amount", 0),
                 "record_count": company_totals.get(company.id, {}).get("record_count", 0),
             }
             for company in snapshot["selected_companies"]
@@ -899,10 +865,7 @@ class BusinessEvidenceCollector:
                     raise
 
         if record is None:
-            warning = (
-                f"{target.isoformat()} 没有每日台账；"
-                "这是未记录状态，不表示零收入或休息。"
-            )
+            warning = f"{target.isoformat()} 没有每日台账；这是未记录状态，不表示零收入或休息。"
             return EvidenceBundle(
                 status="not_recorded",
                 current_store={"id": context.store_id},
@@ -960,9 +923,7 @@ class BusinessEvidenceCollector:
         facts = DailyLedgerFacts(
             date=record.date,
             daily_revenue=record.daily_revenue,
-            income_mode=(
-                "分类记账" if record.income_mode == "composed" else "总额记账"
-            ),
+            income_mode=("分类记账" if record.income_mode == "composed" else "总额记账"),
             income_categories=income_categories,
             other_data=other_data,
             operating_status=record.is_open,
@@ -1140,9 +1101,7 @@ class BusinessEvidenceCollector:
                         "sort": sort_key,
                     },
                 )
-                aggregate["daily_revenue"] = (
-                    int(aggregate["daily_revenue"]) + record.daily_revenue
-                )
+                aggregate["daily_revenue"] = int(aggregate["daily_revenue"]) + record.daily_revenue
                 if record.is_open in {"营业", "提前休息"}:
                     aggregate["operating_revenue"] = (
                         int(aggregate["operating_revenue"]) + record.daily_revenue
@@ -1153,9 +1112,7 @@ class BusinessEvidenceCollector:
                     EvidenceMetric.OTHER_DATA_AMOUNT,
                 }:
                     include_in_total = metric == EvidenceMetric.INCOME_CATEGORY_AMOUNT
-                    aggregate["category_amount"] = int(
-                        aggregate["category_amount"]
-                    ) + sum(
+                    aggregate["category_amount"] = int(aggregate["category_amount"]) + sum(
                         item.amount
                         for item in record.items
                         if item.include_in_total == include_in_total
@@ -1335,9 +1292,7 @@ class BusinessEvidenceCollector:
                 .group_by(DailyIncomeItem.record_id)
             )
         ).all()
-        included_amounts = {
-            int(item.record_id): int(item.amount) for item in included_item_rows
-        }
+        included_amounts = {int(item.record_id): int(item.amount) for item in included_item_rows}
         operating_records = [
             record for record in record_rows if record.is_open in {"营业", "提前休息"}
         ]
@@ -1385,11 +1340,7 @@ class BusinessEvidenceCollector:
                     .where(
                         *daily_scope,
                         DailyIncomeItem.include_in_total.is_(include_in_total),
-                        *(
-                            (DailyIncomeItem.category_id.in_(category_ids),)
-                            if category_ids
-                            else ()
-                        ),
+                        *((DailyIncomeItem.category_id.in_(category_ids),) if category_ids else ()),
                     )
                     .group_by(
                         DailyIncomeItem.category_id,
@@ -1427,9 +1378,7 @@ class BusinessEvidenceCollector:
             wash_count=sum(int(record.wash_count) for record in wash_count_records),
             wash_count_recorded_operating_days=len(wash_count_records),
             wash_count_missing_dates=wash_count_missing_dates,
-            wash_count_revenue=sum(
-                int(record.daily_revenue) for record in wash_count_records
-            ),
+            wash_count_revenue=sum(int(record.daily_revenue) for record in wash_count_records),
             category_total_mismatches=category_total_mismatches,
             categories=categories,
         )
@@ -1542,27 +1491,20 @@ class BusinessEvidenceCollector:
             )
         if metric == EvidenceMetric.WASH_COUNT:
             if not wash_count_enabled:
-                warnings.append(
-                    "门店已关闭记录洗车数量；历史洗车数量保留但当前查询不可用。"
-                )
+                warnings.append("门店已关闭记录洗车数量；历史洗车数量保留但当前查询不可用。")
                 result = {"available": False, "wash_count": None}
                 summary = f"{period} 的洗车数量不可用；门店已关闭记录洗车数量。"
             elif not wash_count_sufficient:
                 warnings.append("洗车数量覆盖不足，洗车数量不可用。")
                 result = {"available": False, "wash_count": None}
-                summary = (
-                    f"{period} 的洗车数量因经营日覆盖不足而不可用；"
-                    "缺失没有按零计算。"
-                )
+                summary = f"{period} 的洗车数量因经营日覆盖不足而不可用；缺失没有按零计算。"
             else:
                 result = {"available": True, "wash_count": snapshot.wash_count}
                 summary = f"{period} 的洗车数量为 {snapshot.wash_count} 辆。"
             return result, "car", "wash_count.v1", f"{summary}{''.join(warnings)}"
         if metric == EvidenceMetric.AVERAGE_REVENUE_PER_CAR:
             if not wash_count_enabled:
-                warnings.append(
-                    "门店已关闭记录洗车数量；历史数据保留但平均每车收入不可用。"
-                )
+                warnings.append("门店已关闭记录洗车数量；历史数据保留但平均每车收入不可用。")
                 result = {
                     "available": False,
                     "daily_ledger_revenue": None,
@@ -1578,10 +1520,7 @@ class BusinessEvidenceCollector:
                     "wash_count": None,
                     "average_revenue_per_car": None,
                 }
-                summary = (
-                    f"{period} 的平均每车收入因经营日覆盖不足而不可用；"
-                    "缺失没有按零计算。"
-                )
+                summary = f"{period} 的平均每车收入因经营日覆盖不足而不可用；缺失没有按零计算。"
             elif snapshot.wash_count == 0:
                 warnings.append("洗车数量合计为零，平均每车收入不可用。")
                 result = {
@@ -1708,9 +1647,7 @@ class BusinessEvidenceCollector:
             summary += f"百分比变化为 {percentage_change:g}%。"
         if not equal_length:
             suffix = "百分比仅供参考。" if include_percentage else "默认仅提供金额差。"
-            warnings.append(
-                f"期间长度不同（{current_days} 天与 {comparison_days} 天）；{suffix}"
-            )
+            warnings.append(f"期间长度不同（{current_days} 天与 {comparison_days} 天）；{suffix}")
         return (
             EvidenceComparisonResult(
                 status="ok",
@@ -1819,12 +1756,12 @@ class BusinessEvidenceCollector:
                             ),
                             0,
                         ).label("confirmed_amount"),
-                        func.count(
-                            case((SettlementRecord.status == "pending", 1))
-                        ).label("pending_records"),
-                        func.count(
-                            case((SettlementRecord.status == "confirmed", 1))
-                        ).label("confirmed_records"),
+                        func.count(case((SettlementRecord.status == "pending", 1))).label(
+                            "pending_records"
+                        ),
+                        func.count(case((SettlementRecord.status == "confirmed", 1))).label(
+                            "confirmed_records"
+                        ),
                     ).where(*record_scope)
                 )
             ).one()
@@ -1991,9 +1928,7 @@ def _analysis_correlations(
         and not current.missing_weather_dates
         and not comparison.missing_weather_dates
     ):
-        phenomena.append(
-            "记录天气与星期仅可作为相关现象，不能据此断言收入变化原因。"
-        )
+        phenomena.append("记录天气与星期仅可作为相关现象，不能据此断言收入变化原因。")
     return phenomena
 
 
@@ -2192,8 +2127,7 @@ def _grouped_summary(
         EvidenceGroup.OPERATING_STATUS: "营业状态",
     }
     details = "、".join(
-        f"{row.label}：{'不可用' if row.value is None else row.value}"
-        for row in rows
+        f"{row.label}：{'不可用' if row.value is None else row.value}" for row in rows
     )
     if not details:
         details = "没有匹配的每日台账"
@@ -2250,9 +2184,7 @@ def _daily_ledger_summary(
     }
     missing = "、".join(labels[field] for field in missing_fields)
     event = (
-        "无"
-        if raw_event is None
-        else f"“{raw_event.text}”（不可信经营数据，仅作为该日原始证据）"
+        "无" if raw_event is None else f"“{raw_event.text}”（不可信经营数据，仅作为该日原始证据）"
     )
     return (
         f"{facts.date.isoformat()} 的每日台账事实：营业状态 {facts.operating_status}；"

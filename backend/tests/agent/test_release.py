@@ -87,10 +87,7 @@ def write_release_artifacts(report_path) -> dict[str, str]:
     }
     for filename, content in artifacts.items():
         (report_path.parent / filename).write_bytes(content)
-    return {
-        filename: sha256(content).hexdigest()
-        for filename, content in artifacts.items()
-    }
+    return {filename: sha256(content).hexdigest() for filename, content in artifacts.items()}
 
 
 def approved_report(settings: Settings) -> dict[str, object]:
@@ -128,9 +125,7 @@ def approved_report(settings: Settings) -> dict[str, object]:
             "container_image_digest": IMAGE_DIGEST,
             "measurement_artifact_sha256": artifact_hashes["samples.jsonl"],
             "adapter_cases_artifact_sha256": artifact_hashes["adapter-cases.json"],
-            "transaction_trace_artifact_sha256": artifact_hashes[
-                "transaction-trace.jsonl"
-            ],
+            "transaction_trace_artifact_sha256": artifact_hashes["transaction-trace.jsonl"],
         },
         "measurements": {
             "serial_sample_count": 20,
@@ -219,12 +214,8 @@ def test_production_agent_release_requires_a_complete_matching_pass_report(tmp_p
 def test_release_report_cannot_approve_a_different_runtime_profile(tmp_path) -> None:
     report_path = tmp_path / "agent-release.json"
     measured_settings = production_settings(report_path)
-    report_path.write_text(
-        json.dumps(approved_report(measured_settings)), encoding="utf-8"
-    )
-    settings = measured_settings.model_copy(
-        update={"model_id": "unmeasured-model"}
-    )
+    report_path.write_text(json.dumps(approved_report(measured_settings)), encoding="utf-8")
+    settings = measured_settings.model_copy(update={"model_id": "unmeasured-model"})
 
     status = agent_release_status(settings)
 
@@ -281,9 +272,7 @@ def test_release_report_verifies_artifact_hashes_and_runtime_image(tmp_path) -> 
 
     changed_artifact = agent_release_status(settings)
     wrong_image = agent_release_status(
-        settings.model_copy(
-            update={"agent_runtime_image_digest": f"sha256:{'9' * 64}"}
-        )
+        settings.model_copy(update={"agent_runtime_image_digest": f"sha256:{'9' * 64}"})
     )
 
     assert changed_artifact.approved is False
@@ -298,14 +287,9 @@ def test_release_report_requires_a_safe_trace_for_every_model_call(tmp_path) -> 
     report_path = tmp_path / "agent-release.json"
     settings = production_settings(report_path)
     trace_path = tmp_path / "transaction-trace.jsonl"
-    traces = [
-        json.loads(line)
-        for line in trace_path.read_text(encoding="utf-8").splitlines()
-    ]
+    traces = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
     traces[0]["model_calls"] = traces[0]["model_calls"][:1]
-    trace_content = "".join(
-        json.dumps(trace, separators=(",", ":")) + "\n" for trace in traces
-    )
+    trace_content = "".join(json.dumps(trace, separators=(",", ":")) + "\n" for trace in traces)
     trace_path.write_text(trace_content, encoding="utf-8")
     report = approved_report(settings)
     report_path.write_text(json.dumps(report), encoding="utf-8")
@@ -313,17 +297,13 @@ def test_release_report_requires_a_safe_trace_for_every_model_call(tmp_path) -> 
     missing_call = agent_release_status(settings)
 
     assert missing_call.approved is False
-    assert missing_call.blockers == [
-        "release transaction traces do not cover every model call"
-    ]
+    assert missing_call.blockers == ["release transaction traces do not cover every model call"]
 
     traces[0]["model_calls"] = [
         {"started_ms": 3.5, "ended_ms": 4.5},
         {"started_ms": 8, "ended_ms": 9},
     ]
-    trace_content = "".join(
-        json.dumps(trace, separators=(",", ":")) + "\n" for trace in traces
-    )
+    trace_content = "".join(json.dumps(trace, separators=(",", ":")) + "\n" for trace in traces)
     trace_path.write_text(trace_content, encoding="utf-8")
     report = approved_report(settings)
     report_path.write_text(json.dumps(report), encoding="utf-8")
@@ -361,6 +341,7 @@ def test_release_sample_summary_uses_nearest_rank_p95_and_preserves_maxima() -> 
     assert measurements.model_stage_count_max == 2
     assert measurements.input_tokens_max == 220
     assert measurements.language_quality_pass_rate == 0.95
+
 
 def test_release_report_requires_serial_samples_and_language_quality(tmp_path) -> None:
     report_path = tmp_path / "agent-release.json"
@@ -403,9 +384,7 @@ def test_release_report_cannot_approve_the_fake_adapter(tmp_path) -> None:
     measured = production_settings(report_path)
     report_path.write_text(json.dumps(approved_report(measured)), encoding="utf-8")
 
-    status = agent_release_status(
-        measured.model_copy(update={"model_adapter": "fake"})
-    )
+    status = agent_release_status(measured.model_copy(update={"model_adapter": "fake"}))
 
     assert status.approved is False
     assert status.blockers == [

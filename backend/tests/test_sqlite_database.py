@@ -63,9 +63,10 @@ async def test_sqlite_short_write_commits_successful_work(db_session) -> None:
             )
         )
 
-    assert await db_session.scalar(
-        select(User.username).where(User.username == "short-write-commit")
-    ) == "short-write-commit"
+    assert (
+        await db_session.scalar(select(User.username).where(User.username == "short-write-commit"))
+        == "short-write-commit"
+    )
 
 
 async def test_sqlite_short_write_rolls_back_exceptions(db_session) -> None:
@@ -82,9 +83,9 @@ async def test_sqlite_short_write_rolls_back_exceptions(db_session) -> None:
             await db_session.flush()
             raise RuntimeError("stop write")
 
-    assert await db_session.scalar(
-        select(User.id).where(User.username == "short-write-error")
-    ) is None
+    assert (
+        await db_session.scalar(select(User.id).where(User.username == "short-write-error")) is None
+    )
 
 
 async def test_sqlite_short_write_rolls_back_cancellation_and_releases_lock(
@@ -113,6 +114,7 @@ async def test_sqlite_short_write_rolls_back_cancellation_and_releases_lock(
         await task
 
     assert SQLITE_WRITE_LOCK.locked() is False
-    assert await db_session.scalar(
-        select(User.id).where(User.username == "short-write-cancel")
-    ) is None
+    assert (
+        await db_session.scalar(select(User.id).where(User.username == "short-write-cancel"))
+        is None
+    )

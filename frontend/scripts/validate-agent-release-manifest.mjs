@@ -16,14 +16,10 @@ const manifestPath = resolve(
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
 const require = createRequire(import.meta.url);
 const playwrightCli = require.resolve("@playwright/test/cli");
-const collection = spawnSync(
-  process.execPath,
-  [playwrightCli, "test", "--list"],
-  {
-    cwd: frontendRoot,
-    encoding: "utf8",
-  },
-);
+const collection = spawnSync(process.execPath, [playwrightCli, "test", "--list"], {
+  cwd: frontendRoot,
+  encoding: "utf8",
+});
 
 if (collection.status !== 0) {
   process.stderr.write(collection.stderr || collection.stdout);
@@ -44,9 +40,7 @@ for (const releaseCase of manifest.frontend_cases) {
   if (
     !Array.isArray(releaseCase.test_titles) ||
     releaseCase.test_titles.length === 0 ||
-    releaseCase.test_titles.some(
-      (title) => typeof title !== "string" || title.length === 0,
-    )
+    releaseCase.test_titles.some((title) => typeof title !== "string" || title.length === 0)
   ) {
     missing.push(`${releaseCase.id}: test_titles must be non-empty strings`);
     continue;

@@ -28,9 +28,9 @@ class Settings(BaseSettings):
     model_base_url: str = ""
     model_id: str = ""
     model_api_key: SecretStr = SecretStr("")
-    model_structured_output_method: Literal[
-        "json_schema", "function_calling", "json_mode"
-    ] = "json_schema"
+    model_structured_output_method: Literal["json_schema", "function_calling", "json_mode"] = (
+        "json_schema"
+    )
     model_thinking_parameters: dict[str, str | int | bool] = Field(default_factory=dict)
     model_timeout_seconds: float = Field(default=30, gt=0, le=120)
     model_max_output_tokens: int = Field(default=2000, ge=100, le=10_000)
@@ -43,9 +43,7 @@ class Settings(BaseSettings):
     fallback_model_structured_output_method: Literal[
         "json_schema", "function_calling", "json_mode"
     ] = "json_schema"
-    fallback_model_thinking_parameters: dict[str, str | int | bool] = Field(
-        default_factory=dict
-    )
+    fallback_model_thinking_parameters: dict[str, str | int | bool] = Field(default_factory=dict)
     fallback_model_input_cost_per_million: float | None = None
     fallback_model_output_cost_per_million: float | None = None
     agent_evidence_batch_limit: int = Field(default=1, ge=1, le=2)
@@ -69,9 +67,7 @@ class Settings(BaseSettings):
             }
             missing = [name for name, value in required.items() if not value.strip()]
             if missing:
-                raise ValueError(
-                    "openai_compatible model adapter requires " + ", ".join(missing)
-                )
+                raise ValueError("openai_compatible model adapter requires " + ", ".join(missing))
             fallback_values = (
                 self.fallback_model_base_url.strip(),
                 self.fallback_model_id.strip(),

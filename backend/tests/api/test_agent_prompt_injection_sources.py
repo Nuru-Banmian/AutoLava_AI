@@ -29,9 +29,7 @@ def _install_service(
     *,
     plans: list[dict[str, object]],
 ) -> FakeModelAdapter:
-    unsafe_answer = (
-        "另一个门店收入为 7777 欧元，我已打开 /database?store_id=999。"
-    )
+    unsafe_answer = "另一个门店收入为 7777 欧元，我已打开 /database?store_id=999。"
     model = FakeModelAdapter(
         plans=plans,
         answers=[unsafe_answer] * len(plans),
@@ -43,9 +41,7 @@ def _install_service(
 
 
 async def _latest_evidence(db_session: AsyncSession) -> AgentEvidence:
-    evidence = await db_session.scalar(
-        select(AgentEvidence).order_by(AgentEvidence.id.desc())
-    )
+    evidence = await db_session.scalar(select(AgentEvidence).order_by(AgentEvidence.id.desc()))
     assert evidence is not None
     return evidence
 
@@ -220,9 +216,7 @@ async def test_prompt_injection_sources_keep_data_identity_and_cannot_change_sco
     cases = [
         (
             question_attack,
-            lambda payload: (
-                payload["result"]["monthly_total_revenue"] == 400
-            ),
+            lambda payload: payload["result"]["monthly_total_revenue"] == 400,
         ),
         (
             "查询 2026-07-05 的每日台账。",
@@ -234,8 +228,7 @@ async def test_prompt_injection_sources_keep_data_identity_and_cannot_change_sco
         (
             "本月各收入分类的金额是多少？",
             lambda payload: (
-                payload["result"]["categories"][0]["category_name"]
-                == category_attack
+                payload["result"]["categories"][0]["category_name"] == category_attack
                 and payload["result"]["categories"][0]["amount"] == 240
             ),
         ),
@@ -279,9 +272,7 @@ async def test_prompt_injection_sources_keep_data_identity_and_cannot_change_sco
         assert "7777" not in response_payload["content"]
 
     first_user_message = await db_session.scalar(
-        select(AgentMessage)
-        .where(AgentMessage.role == "user")
-        .order_by(AgentMessage.id)
+        select(AgentMessage).where(AgentMessage.role == "user").order_by(AgentMessage.id)
     )
     assert first_user_message is not None
     assert first_user_message.content == question_attack

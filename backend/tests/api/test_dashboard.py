@@ -166,9 +166,7 @@ async def test_yesterday_ledger_change_regenerates_only_yesterday(
     regenerate = AsyncMock(return_value=[])
     monkeypatch.setattr("app.services.briefing.BriefingService.regenerate", regenerate)
     local_date = datetime.now(ZoneInfo(store.timezone)).date()
-    user = await db_session.scalar(
-        select(User).where(User.username == "authenticated")
-    )
+    user = await db_session.scalar(select(User).where(User.username == "authenticated"))
     assert user is not None
     actor_id = user.id
     store_id = store.id

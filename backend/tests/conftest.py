@@ -29,17 +29,12 @@ import app.models.settlement  # noqa: F401
 
 UserFactory = Callable[..., Awaitable[User]]
 StoreFactory = Callable[..., Awaitable[Store]]
-AGENT_RELEASE_MANIFEST = (
-    Path(__file__).parent / "release" / "agent_release_cases.json"
-)
+AGENT_RELEASE_MANIFEST = Path(__file__).parent / "release" / "agent_release_cases.json"
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     manifest = json.loads(AGENT_RELEASE_MANIFEST.read_text(encoding="utf-8"))
-    release_nodes = {
-        case["test_node"].replace("\\", "/")
-        for case in manifest["backend_cases"]
-    }
+    release_nodes = {case["test_node"].replace("\\", "/") for case in manifest["backend_cases"]}
     for item in items:
         base_node = item.nodeid.replace("\\", "/").split("[", maxsplit=1)[0]
         if base_node in release_nodes or base_node.startswith("tests/release/"):
@@ -143,7 +138,10 @@ def user_factory(db_session: AsyncSession) -> UserFactory:
         role: str = "user",
         is_active: bool = True,
     ) -> User:
-        password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+        password_hash = bcrypt.hashpw(
+            password.encode(),
+            bcrypt.gensalt(rounds=4),
+        ).decode()
         user = User(
             username=username,
             password_hash=password_hash,

@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 
 type SettlementRecord = {
   id: number;
@@ -30,11 +30,12 @@ async function mockSettlementAnalysis(page: Page) {
     const request = route.request();
     const url = new URL(request.url());
     const path = url.pathname;
-    const json = (value: unknown, status = 200) => route.fulfill({
-      status,
-      contentType: "application/json",
-      body: JSON.stringify(value),
-    });
+    const json = (value: unknown, status = 200) =>
+      route.fulfill({
+        status,
+        contentType: "application/json",
+        body: JSON.stringify(value),
+      });
 
     if (path === "/api/auth/me") {
       return json({ id: 1, username: "administrator", role: "admin", is_owner: true });
@@ -85,7 +86,11 @@ async function mockSettlementAnalysis(page: Page) {
     const createRecordMatch = path.match(/^\/api\/settlements\/(\d+)\/records$/);
     if (createRecordMatch && request.method() === "POST") {
       const storeId = Number(createRecordMatch[1]);
-      const body = request.postDataJSON() as { company_id: number; opening_month: string; amount: number };
+      const body = request.postDataJSON() as {
+        company_id: number;
+        opening_month: string;
+        amount: number;
+      };
       const company = companies.get(storeId)!.find((item) => item.id === body.company_id)!;
       const record: SettlementRecord = {
         id: 20,
@@ -101,14 +106,22 @@ async function mockSettlementAnalysis(page: Page) {
       return json(record, 201);
     }
 
-    const recordMatch = path.match(/^\/api\/settlements\/(\d+)\/records\/(\d+)(?:\/(confirm|revoke-confirmation))?$/);
+    const recordMatch = path.match(
+      /^\/api\/settlements\/(\d+)\/records\/(\d+)(?:\/(confirm|revoke-confirmation))?$/,
+    );
     if (recordMatch) {
       const storeId = Number(recordMatch[1]);
       const record = records.get(storeId)!.find((item) => item.id === Number(recordMatch[2]))!;
       if (request.method() === "PATCH") {
-        const body = request.postDataJSON() as { company_id: number; amount: number; revision: number };
+        const body = request.postDataJSON() as {
+          company_id: number;
+          amount: number;
+          revision: number;
+        };
         record.company_id = body.company_id;
-        record.company_name = companies.get(storeId)!.find((item) => item.id === body.company_id)!.name;
+        record.company_name = companies
+          .get(storeId)!
+          .find((item) => item.id === body.company_id)!.name;
         record.amount = body.amount;
         record.revision += 1;
         return json(record);
@@ -120,17 +133,26 @@ async function mockSettlementAnalysis(page: Page) {
     }
 
     if (/^\/api\/database\/\d+\/records$/.test(path)) {
-      return json({ items: [], categories: [], sum_daily_revenue: 0, total: 0, page: 1, page_size: 200 });
+      return json({
+        items: [],
+        categories: [],
+        sum_daily_revenue: 0,
+        total: 0,
+        page: 1,
+        page_size: 200,
+      });
     }
     if (path === "/api/charts/1") {
       const startMonth = url.searchParams.get("start")!.slice(0, 7);
       const endMonth = url.searchParams.get("end")!.slice(0, 7);
-      const confirmed = records.get(1)!
-        .filter((record) => (
-          record.opening_month >= startMonth
-          && record.opening_month <= endMonth
-          && record.status === "confirmed"
-        ))
+      const confirmed = records
+        .get(1)!
+        .filter(
+          (record) =>
+            record.opening_month >= startMonth &&
+            record.opening_month <= endMonth &&
+            record.status === "confirmed",
+        )
         .reduce((total, record) => total + record.amount, 0);
       return json({
         kpis: {
@@ -156,17 +178,20 @@ async function mockSettlementAnalysis(page: Page) {
         },
         classified_included_total: confirmed,
         daily: [{ date: "2026-07-10", revenue: 900 }],
-        categories: confirmed > 0
-          ? [{ category_id: null, category_name: "公司结算", amount: confirmed }]
-          : [],
+        categories:
+          confirmed > 0
+            ? [{ category_id: null, category_name: "公司结算", amount: confirmed }]
+            : [],
         excluded_categories: [],
-        monthly: [{
-          month: "2026-07",
-          revenue: 900,
-          daily_ledger_revenue: 900,
-          confirmed_settlement_income: confirmed,
-          monthly_total_income: 900 + confirmed,
-        }],
+        monthly: [
+          {
+            month: "2026-07",
+            revenue: 900,
+            daily_ledger_revenue: 900,
+            confirmed_settlement_income: confirmed,
+            monthly_total_income: 900 + confirmed,
+          },
+        ],
         weather: [],
         weekday: [],
       });
@@ -178,7 +203,9 @@ async function mockSettlementAnalysis(page: Page) {
   });
 }
 
-test("settlement corrections feed current partial-month analysis without narrow-screen overflow", async ({ page }) => {
+test("settlement corrections feed current partial-month analysis without narrow-screen overflow", async ({
+  page,
+}) => {
   await page.clock.install({ time: new Date("2026-07-21T10:00:00Z") });
   await page.setViewportSize({ width: 320, height: 700 });
   await mockSettlementAnalysis(page);
@@ -187,7 +214,9 @@ test("settlement corrections feed current partial-month analysis without narrow-
   await page.getByRole("button", { name: "结算公司管理" }).click();
   await page.getByPlaceholder("输入结算公司名称").fill("Alpha");
   await page.getByRole("button", { name: "新增结算公司" }).click();
-  await expect(page.getByLabel("结算公司", { exact: true }).locator("option").last()).toHaveText("Alpha");
+  await expect(page.getByLabel("结算公司", { exact: true }).locator("option").last()).toHaveText(
+    "Alpha",
+  );
 
   await page.getByLabel("开票月份").fill("2026-07");
   await page.getByLabel("结算公司", { exact: true }).selectOption({ label: "Alpha" });
@@ -219,7 +248,11 @@ test("settlement corrections feed current partial-month analysis without narrow-
   await expect(mobileStore).toHaveValue("2");
   await mobileStore.selectOption("1");
   await expect(page.getByLabel("开票月份")).toHaveValue("2026-07");
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+    ),
+  ).toBe(true);
 
   await page.goto("/database");
   const summary = page.getByRole("region", { name: "月度收入汇总" });
@@ -232,5 +265,9 @@ test("settlement corrections feed current partial-month analysis without narrow-
   const incomeCategories = page.getByLabel("收入分类");
   await expect(incomeCategories.getByText("公司结算")).toBeVisible();
   await expect(incomeCategories.getByText("€250")).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+    ),
+  ).toBe(true);
 });

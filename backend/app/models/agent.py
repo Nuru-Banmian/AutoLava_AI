@@ -24,13 +24,9 @@ class AgentConversation(Base):
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id", ondelete="CASCADE"))
     state: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(
-        server_default=func.now(), onupdate=func.now()
-    )
+    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
     __table_args__ = (
-        UniqueConstraint(
-            "user_id", "store_id", name="uq_agent_conversations_user_store"
-        ),
+        UniqueConstraint("user_id", "store_id", name="uq_agent_conversations_user_store"),
     )
 
 
@@ -45,9 +41,7 @@ class AgentMessage(Base):
     content: Mapped[str] = mapped_column(Text)
     action: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    __table_args__ = (
-        CheckConstraint("role in ('user','assistant')", name="role"),
-    )
+    __table_args__ = (CheckConstraint("role in ('user','assistant')", name="role"),)
 
 
 class AgentEvidence(Base):

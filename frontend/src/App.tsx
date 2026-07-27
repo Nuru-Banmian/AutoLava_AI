@@ -4,8 +4,18 @@ import { RouterProvider, type RouterProviderProps } from "react-router-dom";
 
 import { createAppRouter } from "@/router";
 
-export function Application({ queryClient, router }: { queryClient: QueryClient; router: RouterProviderProps["router"] }) {
-  return <QueryClientProvider client={queryClient}><RouterProvider router={router} /></QueryClientProvider>;
+export function Application({
+  queryClient,
+  router,
+}: {
+  queryClient: QueryClient;
+  router: RouterProviderProps["router"];
+}) {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>
+  );
 }
 
 export default function App() {

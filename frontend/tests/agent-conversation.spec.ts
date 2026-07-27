@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 
 type Message = {
   id: number;
@@ -20,31 +20,31 @@ const emptyState = {
   pending_clarifications: [],
 };
 
-async function mockAgentApi(
-  page: Page,
-  role: "admin" | "user" = "admin",
-) {
+async function mockAgentApi(page: Page, role: "admin" | "user" = "admin") {
   let nextMessageId = 10;
   const messages = new Map<number, Message[]>([
-    [1, [
-      {
-        id: 1,
-        role: "user",
-        content: "之前的问题",
-        created_at: "2026-07-26T12:00:00Z",
-      },
-      {
-        id: 2,
-        role: "assistant",
-        content: "之前保存的完整回答",
-        action: {
-          type: "open_business_records",
-          start_month: "2025-01",
-          end_month: "2025-12",
+    [
+      1,
+      [
+        {
+          id: 1,
+          role: "user",
+          content: "之前的问题",
+          created_at: "2026-07-26T12:00:00Z",
         },
-        created_at: "2026-07-26T12:00:01Z",
-      },
-    ]],
+        {
+          id: 2,
+          role: "assistant",
+          content: "之前保存的完整回答",
+          action: {
+            type: "open_business_records",
+            start_month: "2025-01",
+            end_month: "2025-12",
+          },
+          created_at: "2026-07-26T12:00:01Z",
+        },
+      ],
+    ],
     [2, []],
   ]);
   const snapshot = (storeId: number) => {
@@ -121,9 +121,7 @@ async function mockAgentApi(
       });
     }
 
-    const conversationMatch = path.match(
-      /^\/api\/agent\/stores\/(\d+)\/conversation$/,
-    );
+    const conversationMatch = path.match(/^\/api\/agent\/stores\/(\d+)\/conversation$/);
     if (conversationMatch) {
       const storeId = Number(conversationMatch[1]);
       if (request.method() === "GET") return json(snapshot(storeId));

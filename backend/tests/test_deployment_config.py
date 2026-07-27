@@ -76,22 +76,12 @@ def test_compose_contains_exactly_api_and_web_with_persistent_sqlite_data() -> N
         ),
         "AUTOLAVA_MODEL_THINKING_PARAMETERS": "${AUTOLAVA_MODEL_THINKING_PARAMETERS:-{}}",
         "AUTOLAVA_MODEL_TIMEOUT_SECONDS": "${AUTOLAVA_MODEL_TIMEOUT_SECONDS:-30}",
-        "AUTOLAVA_MODEL_MAX_OUTPUT_TOKENS": (
-            "${AUTOLAVA_MODEL_MAX_OUTPUT_TOKENS:-2000}"
-        ),
-        "AUTOLAVA_MODEL_INPUT_COST_PER_MILLION": (
-            "${AUTOLAVA_MODEL_INPUT_COST_PER_MILLION:-0}"
-        ),
-        "AUTOLAVA_MODEL_OUTPUT_COST_PER_MILLION": (
-            "${AUTOLAVA_MODEL_OUTPUT_COST_PER_MILLION:-0}"
-        ),
+        "AUTOLAVA_MODEL_MAX_OUTPUT_TOKENS": ("${AUTOLAVA_MODEL_MAX_OUTPUT_TOKENS:-2000}"),
+        "AUTOLAVA_MODEL_INPUT_COST_PER_MILLION": ("${AUTOLAVA_MODEL_INPUT_COST_PER_MILLION:-0}"),
+        "AUTOLAVA_MODEL_OUTPUT_COST_PER_MILLION": ("${AUTOLAVA_MODEL_OUTPUT_COST_PER_MILLION:-0}"),
         "AUTOLAVA_MODEL_API_KEY": "${AUTOLAVA_MODEL_API_KEY:-}",
-        "AUTOLAVA_FALLBACK_MODEL_PROVIDER": (
-            "${AUTOLAVA_FALLBACK_MODEL_PROVIDER:-fallback}"
-        ),
-        "AUTOLAVA_FALLBACK_MODEL_BASE_URL": (
-            "${AUTOLAVA_FALLBACK_MODEL_BASE_URL:-}"
-        ),
+        "AUTOLAVA_FALLBACK_MODEL_PROVIDER": ("${AUTOLAVA_FALLBACK_MODEL_PROVIDER:-fallback}"),
+        "AUTOLAVA_FALLBACK_MODEL_BASE_URL": ("${AUTOLAVA_FALLBACK_MODEL_BASE_URL:-}"),
         "AUTOLAVA_FALLBACK_MODEL_ID": "${AUTOLAVA_FALLBACK_MODEL_ID:-}",
         "AUTOLAVA_FALLBACK_MODEL_STRUCTURED_OUTPUT_METHOD": (
             "${AUTOLAVA_FALLBACK_MODEL_STRUCTURED_OUTPUT_METHOD:-json_schema}"
@@ -105,18 +95,10 @@ def test_compose_contains_exactly_api_and_web_with_persistent_sqlite_data() -> N
         "AUTOLAVA_FALLBACK_MODEL_OUTPUT_COST_PER_MILLION": (
             "${AUTOLAVA_FALLBACK_MODEL_OUTPUT_COST_PER_MILLION:-0}"
         ),
-        "AUTOLAVA_FALLBACK_MODEL_API_KEY": (
-            "${AUTOLAVA_FALLBACK_MODEL_API_KEY:-}"
-        ),
-        "AUTOLAVA_AGENT_EVIDENCE_BATCH_LIMIT": (
-            "${AUTOLAVA_AGENT_EVIDENCE_BATCH_LIMIT:-1}"
-        ),
-        "AUTOLAVA_AGENT_RELEASE_REPORT_PATH": (
-            "${AUTOLAVA_AGENT_RELEASE_REPORT_PATH:-}"
-        ),
-        "AUTOLAVA_AGENT_RUNTIME_IMAGE_DIGEST": (
-            "${AUTOLAVA_AGENT_RUNTIME_IMAGE_DIGEST:-}"
-        ),
+        "AUTOLAVA_FALLBACK_MODEL_API_KEY": ("${AUTOLAVA_FALLBACK_MODEL_API_KEY:-}"),
+        "AUTOLAVA_AGENT_EVIDENCE_BATCH_LIMIT": ("${AUTOLAVA_AGENT_EVIDENCE_BATCH_LIMIT:-1}"),
+        "AUTOLAVA_AGENT_RELEASE_REPORT_PATH": ("${AUTOLAVA_AGENT_RELEASE_REPORT_PATH:-}"),
+        "AUTOLAVA_AGENT_RUNTIME_IMAGE_DIGEST": ("${AUTOLAVA_AGENT_RUNTIME_IMAGE_DIGEST:-}"),
     }
     assert api["volumes"] == ["autolava_data:/data"]
     assert "ports" not in api
@@ -242,30 +224,37 @@ def test_ci_runs_backend_and_frontend_checks_without_containers() -> None:
     ci_text = read(".github/workflows/ci.yml")
     workflow = yaml.safe_load(ci_text)
     jobs = workflow["jobs"]
-    assert set(jobs) == {"backend", "frontend"}
+    required = {
+        "backend-static",
+        "backend-agent",
+        "backend-non-agent",
+        "frontend-unit-build",
+        "frontend-e2e",
+        "ci-summary",
+    }
+    assert required <= jobs.keys()
 
-    backend = jobs["backend"]
-    frontend = jobs["frontend"]
-    backend_commands = [step["run"] for step in backend["steps"] if "run" in step]
-    frontend_commands = [step["run"] for step in frontend["steps"] if "run" in step]
-
-    assert "services" not in backend
-    assert "services" not in frontend
-    assert backend["env"]["AUTOLAVA_DATABASE_PATH"] == "/tmp/autolava-ci.sqlite3"
-    assert any('pip install -e ".[dev]"' in command for command in backend_commands)
-    assert any("alembic upgrade head" in command for command in backend_commands)
-    assert any("ruff check ." in command for command in backend_commands)
-    assert any("pytest -n 2 --dist loadscope" in command for command in backend_commands)
-    assert any("--cov=app --cov-report=term-missing" in command for command in backend_commands)
-
-    for contract in (
-        "npm ci",
-        "npm test",
-        "npm run build",
-        "playwright install --with-deps chromium",
-        "npm run test:e2e",
+    all_commands = [step["run"] for job in jobs.values() for step in job["steps"] if "run" in step]
+    verifier = read("scripts/verify.py")
+    for job in jobs.values():
+        assert "services" not in job
+    for entrypoint in (
+        "verify:ci:backend-static",
+        "verify:ci:backend-agent",
+        "verify:ci:backend-non-agent",
+        "verify:ci:frontend-unit",
+        "verify:ci:frontend-e2e",
     ):
-        assert any(contract in command for command in frontend_commands)
+        assert any(entrypoint in command for command in all_commands)
+    assert "alembic" in verifier
+    assert "ruff" in verifier
+    assert "--cov=app" in verifier
+
+    assert 'run("npm", "ci"' in verifier
+    assert 'run("npm", "test"' in verifier
+    assert '"build"' in verifier
+    assert '"playwright",\n        "install"' in verifier
+    assert '"playwright", "test"' in verifier
 
 
 def test_ci_does_not_execute_container_release_or_runtime_checks() -> None:
@@ -360,10 +349,13 @@ def test_development_defaults_remain_available() -> None:
 
 
 def test_agent_evidence_batch_limit_is_configurable_within_the_fixed_graph() -> None:
-    assert Settings(
-        _env_file=None,
-        agent_evidence_batch_limit=2,
-    ).agent_evidence_batch_limit == 2
+    assert (
+        Settings(
+            _env_file=None,
+            agent_evidence_batch_limit=2,
+        ).agent_evidence_batch_limit
+        == 2
+    )
     with pytest.raises(ValidationError):
         Settings(_env_file=None, agent_evidence_batch_limit=3)
 

@@ -37,9 +37,7 @@ class LedgerContext:
 
 @pytest.fixture
 async def ledger_context(db_session, user_factory, store_factory) -> LedgerContext:
-    user = await user_factory(
-        username="ledger-user", password="secret", role="admin"
-    )
+    user = await user_factory(username="ledger-user", password="secret", role="admin")
     store = await store_factory(name="Ledger Store", timezone="Europe/Berlin")
     store.income_items_enabled = True
     cash = IncomeCategory(
@@ -148,8 +146,7 @@ async def test_existing_snapshot_survives_current_category_edits(
 
     assert result.record.daily_revenue == 125
     assert [
-        (item.category_name, item.include_in_total, item.sort_order)
-        for item in result.record.items
+        (item.category_name, item.include_in_total, item.sort_order) for item in result.record.items
     ] == [("Cash", True, 0), ("Agency", False, 1)]
 
 
@@ -187,9 +184,7 @@ async def test_rest_day_zeros_total_wash_and_all_items(
 async def test_legacy_total_uses_integer_and_rejects_items(
     db_session: AsyncSession, user_factory, store_factory
 ) -> None:
-    user = await user_factory(
-        username="direct-user", password="secret", role="admin"
-    )
+    user = await user_factory(username="direct-user", password="secret", role="admin")
     store = await store_factory(name="Direct", timezone="Europe/Berlin")
     user_id, store_id, timezone = user.id, store.id, store.timezone
     await db_session.commit()
@@ -224,10 +219,7 @@ async def test_future_date_and_duplicate_categories_do_not_write(
             actor_id=ledger_context.user_id,
         )
     assert (
-        await ledger_context.session.scalar(
-            select(func.count()).select_from(StoreDailyRecord)
-        )
-        == 0
+        await ledger_context.session.scalar(select(func.count()).select_from(StoreDailyRecord)) == 0
     )
 
 

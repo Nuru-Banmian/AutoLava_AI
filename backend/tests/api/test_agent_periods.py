@@ -236,9 +236,7 @@ async def test_agent_http_applies_comparison_limits(
     assert response.status_code == 200
     assert "2026-07-01 至 2026-07-26" in response.json()["content"]
     assert "2026-06-01 至 2026-06-30" in response.json()["content"]
-    evidence = await db_session.scalar(
-        select(AgentEvidence).order_by(AgentEvidence.id.desc())
-    )
+    evidence = await db_session.scalar(select(AgentEvidence).order_by(AgentEvidence.id.desc()))
     assert evidence is not None
     comparison = evidence.payload["comparison"]
     assert comparison["percentage_status"] == expected_status

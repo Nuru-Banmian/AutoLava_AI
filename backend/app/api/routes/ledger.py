@@ -41,7 +41,9 @@ async def _refresh_briefing_after_commit(
     card_type = (
         "today"
         if record_date == local_date
-        else "yesterday" if record_date == local_date - timedelta(days=1) else None
+        else "yesterday"
+        if record_date == local_date - timedelta(days=1)
+        else None
     )
     if card_type is None:
         return
@@ -151,9 +153,7 @@ async def get_form_config(
     session: Session,
     access: StoreAccess = Depends(require_store_read_access),
 ) -> dict:
-    return await LedgerService(session).form_config(
-        store=access.store, record_date=record_date
-    )
+    return await LedgerService(session).form_config(store=access.store, record_date=record_date)
 
 
 @router.put(
@@ -177,9 +177,7 @@ async def put_record(
     weather_service: WeatherService = get_weather_service(request)
     await end_read_transaction(session)
     try:
-        result = await asyncio.wait_for(
-            weather_service.get_daily(location, record_date), timeout=9
-        )
+        result = await asyncio.wait_for(weather_service.get_daily(location, record_date), timeout=9)
     except Exception:
         result = None
     if result is not None:
@@ -212,9 +210,7 @@ async def put_record(
         location=location,
         capability="ledger.edit",
         record_date=write.event.record_date,
-        weather_overrides={
-            record_date: result.weather if result is not None else "天气暂时不可用"
-        },
+        weather_overrides={record_date: result.weather if result is not None else "天气暂时不可用"},
     )
     return JSONResponse(
         content=response_content,

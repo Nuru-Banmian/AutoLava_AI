@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { http, HttpResponse } from "msw";
+import { HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
 import { MemoryRouter } from "react-router-dom";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -49,19 +49,25 @@ function StoreControls() {
 function renderPage(extra: Parameters<typeof server.use> = []) {
   server.use(
     ...extra,
-    http.get("/api/stores/accessible", () => HttpResponse.json([
-      { id: 1, name: "Berlin", timezone: "Europe/Berlin", company_settlement_enabled: true },
-      { id: 2, name: "Roma", timezone: "Europe/Rome", company_settlement_enabled: true },
-    ])),
-    http.get("/api/settlements/:storeId", ({ params }) => HttpResponse.json({
-      store_id: Number(params.storeId),
-      store_name: params.storeId === "1" ? "Berlin" : "Roma",
-      company_settlement_enabled: true,
-    })),
+    http.get("/api/stores/accessible", () =>
+      HttpResponse.json([
+        { id: 1, name: "Berlin", timezone: "Europe/Berlin", company_settlement_enabled: true },
+        { id: 2, name: "Roma", timezone: "Europe/Rome", company_settlement_enabled: true },
+      ]),
+    ),
+    http.get("/api/settlements/:storeId", ({ params }) =>
+      HttpResponse.json({
+        store_id: Number(params.storeId),
+        store_name: params.storeId === "1" ? "Berlin" : "Roma",
+        company_settlement_enabled: true,
+      }),
+    ),
     http.get("/api/settlements/:storeId/companies", ({ request }) =>
-      HttpResponse.json(new URL(request.url).searchParams.has("archived") ? [] : companies)),
+      HttpResponse.json(new URL(request.url).searchParams.has("archived") ? [] : companies),
+    ),
     http.get("/api/settlements/:storeId/months/:month", ({ params }) =>
-      HttpResponse.json(monthResponse(params.storeId === "1" ? [record()] : []))),
+      HttpResponse.json(monthResponse(params.storeId === "1" ? [record()] : [])),
+    ),
   );
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -126,10 +132,20 @@ describe("CompanySettlementPage record corrections", () => {
 
   it("presents the monthly workbench in task order with textual record states", async () => {
     renderPage([
-      http.get("/api/settlements/1/months/:month", () => HttpResponse.json(monthResponse([
-        record(),
-        record({ id: 21, company_id: 11, company_name: "Beta", amount: 300, status: "confirmed" }),
-      ]))),
+      http.get("/api/settlements/1/months/:month", () =>
+        HttpResponse.json(
+          monthResponse([
+            record(),
+            record({
+              id: 21,
+              company_id: 11,
+              company_name: "Beta",
+              amount: 300,
+              status: "confirmed",
+            }),
+          ]),
+        ),
+      ),
     ]);
 
     const pageTitle = await screen.findByRole("heading", { name: "公司结算" });
@@ -141,7 +157,9 @@ describe("CompanySettlementPage record corrections", () => {
     const ordered = [pageTitle, monthNavigation, summary, registration, records, companyManagement];
 
     ordered.slice(0, -1).forEach((node, index) => {
-      expect(node.compareDocumentPosition(ordered[index + 1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(
+        node.compareDocumentPosition(ordered[index + 1]) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
     });
     expect(records).toHaveTextContent("待到账");
     expect(records).toHaveTextContent("已确认");
@@ -163,12 +181,20 @@ describe("CompanySettlementPage record corrections", () => {
 
     fireEvent.click(companyManagement);
     expect(companyManagement).toHaveAttribute("aria-expanded", "true");
-    expect(await screen.findByRole("tab", { name: "使用中（2）" })).toHaveAttribute("aria-selected", "true");
-    expect(await screen.findByRole("tab", { name: "已归档（0）" })).toHaveAttribute("aria-selected", "false");
+    expect(await screen.findByRole("tab", { name: "使用中（2）" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(await screen.findByRole("tab", { name: "已归档（0）" })).toHaveAttribute(
+      "aria-selected",
+      "false",
+    );
     expect(screen.getByRole("button", { name: "新增结算公司" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Alpha更多操作" }));
-    expect(await screen.findByRole("menuitem", { name: "重命名Alpha" })).toHaveTextContent(/^重命名$/);
+    expect(await screen.findByRole("menuitem", { name: "重命名Alpha" })).toHaveTextContent(
+      /^重命名$/,
+    );
     expect(screen.getByRole("menuitem", { name: "归档Alpha" })).toHaveTextContent(/^归档$/);
     expect(screen.getByRole("menuitem", { name: "永久删除Alpha" })).toHaveTextContent(/^永久删除$/);
 
@@ -181,12 +207,14 @@ describe("CompanySettlementPage record corrections", () => {
     let submitted: unknown;
     let current = record();
     const { client } = renderPage([
-      http.get("/api/settlements/1/months/:month", () => HttpResponse.json({
-        ...monthResponse([current]),
-        confirmed_settlement_income: current.status === "confirmed" ? current.amount : 0,
-        pending_amount: current.status === "pending" ? current.amount : 0,
-        monthly_total: current.status === "confirmed" ? 1020 : 900,
-      })),
+      http.get("/api/settlements/1/months/:month", () =>
+        HttpResponse.json({
+          ...monthResponse([current]),
+          confirmed_settlement_income: current.status === "confirmed" ? current.amount : 0,
+          pending_amount: current.status === "pending" ? current.amount : 0,
+          monthly_total: current.status === "confirmed" ? 1020 : 900,
+        }),
+      ),
       http.post("/api/settlements/1/records/20/confirm", async ({ request }) => {
         submitted = await request.json();
         current = record({ status: "confirmed", revision: 2 });
@@ -211,16 +239,21 @@ describe("CompanySettlementPage record corrections", () => {
   it("adopts an already-confirmed canonical state after a concurrent confirmation", async () => {
     let current = record();
     const { client } = renderPage([
-      http.get("/api/settlements/1/months/:month", () => HttpResponse.json(monthResponse([current]))),
+      http.get("/api/settlements/1/months/:month", () =>
+        HttpResponse.json(monthResponse([current])),
+      ),
       http.post("/api/settlements/1/records/20/confirm", () => {
         current = record({ status: "confirmed", revision: 2 });
-        return HttpResponse.json({
-          detail: {
-            code: "settlement_record_state_conflict",
-            message: "开票记录已经确认到账",
-            current_record: current,
+        return HttpResponse.json(
+          {
+            detail: {
+              code: "settlement_record_state_conflict",
+              message: "开票记录已经确认到账",
+              current_record: current,
+            },
           },
-        }, { status: 409 });
+          { status: 409 },
+        );
       }),
     ]);
     const chartsQueryKey = ["charts", 1, "start=2026-07-01&end=2026-07-31"];
@@ -240,7 +273,9 @@ describe("CompanySettlementPage record corrections", () => {
     let requests = 0;
     let current = record({ status: "confirmed", revision: 2 });
     renderPage([
-      http.get("/api/settlements/1/months/:month", () => HttpResponse.json(monthResponse([current]))),
+      http.get("/api/settlements/1/months/:month", () =>
+        HttpResponse.json(monthResponse([current])),
+      ),
       http.post("/api/settlements/1/records/20/revoke-confirmation", () => {
         requests += 1;
         if (requests === 1) {
@@ -270,7 +305,9 @@ describe("CompanySettlementPage record corrections", () => {
     let submitted: unknown;
     let current = record();
     renderPage([
-      http.get("/api/settlements/1/months/:month", () => HttpResponse.json(monthResponse([current]))),
+      http.get("/api/settlements/1/months/:month", () =>
+        HttpResponse.json(monthResponse([current])),
+      ),
       http.patch("/api/settlements/1/records/20", async ({ request }) => {
         submitted = await request.json();
         current = record({ company_id: 11, company_name: "Beta", amount: 250, revision: 2 });
@@ -318,13 +355,16 @@ describe("CompanySettlementPage record corrections", () => {
         const body = await request.json();
         submitted.push(body);
         if (submitted.length === 1) {
-          return HttpResponse.json({
-            detail: {
-              code: "settlement_record_revision_conflict",
-              message: "开票记录已被其他用户修改，请重新加载后再试",
-              current_record: record({ amount: 200, revision: 2 }),
+          return HttpResponse.json(
+            {
+              detail: {
+                code: "settlement_record_revision_conflict",
+                message: "开票记录已被其他用户修改，请重新加载后再试",
+                current_record: record({ amount: 200, revision: 2 }),
+              },
             },
-          }, { status: 409 });
+            { status: 409 },
+          );
         }
         return HttpResponse.json(record({ amount: 250, revision: 3 }));
       }),
@@ -339,10 +379,12 @@ describe("CompanySettlementPage record corrections", () => {
     expect(screen.getByLabelText("编辑金额（整数欧元）")).toHaveValue(250);
     fireEvent.click(screen.getByRole("button", { name: "重试修改" }));
 
-    await waitFor(() => expect(submitted).toEqual([
-      { company_id: 10, amount: 250, revision: 1 },
-      { company_id: 10, amount: 250, revision: 2 },
-    ]));
+    await waitFor(() =>
+      expect(submitted).toEqual([
+        { company_id: 10, amount: 250, revision: 1 },
+        { company_id: 10, amount: 250, revision: 2 },
+      ]),
+    );
     expect(await screen.findByRole("status")).toHaveTextContent("开票记录已修改");
   });
 
@@ -351,7 +393,8 @@ describe("CompanySettlementPage record corrections", () => {
     let deleted = false;
     renderPage([
       http.get("/api/settlements/1/months/:month", () =>
-        HttpResponse.json(monthResponse(deleted ? [] : [record()]))),
+        HttpResponse.json(monthResponse(deleted ? [] : [record()])),
+      ),
       http.delete("/api/settlements/1/records/20", async ({ request }) => {
         submitted = await request.json();
         deleted = true;
@@ -375,13 +418,16 @@ describe("CompanySettlementPage record corrections", () => {
       http.delete("/api/settlements/1/records/20", async ({ request }) => {
         submitted.push(await request.json());
         if (submitted.length === 1) {
-          return HttpResponse.json({
-            detail: {
-              code: "settlement_record_revision_conflict",
-              message: "开票记录已被其他用户修改，请重新加载后再试",
-              current_record: record({ amount: 200, revision: 2 }),
+          return HttpResponse.json(
+            {
+              detail: {
+                code: "settlement_record_revision_conflict",
+                message: "开票记录已被其他用户修改，请重新加载后再试",
+                current_record: record({ amount: 200, revision: 2 }),
+              },
             },
-          }, { status: 409 });
+            { status: 409 },
+          );
         }
         return new HttpResponse(null, { status: 204 });
       }),
@@ -401,7 +447,8 @@ describe("CompanySettlementPage record corrections", () => {
     let romaArchivedReads = 0;
     renderPage([
       http.patch("/api/settlements/1/records/20", () =>
-        HttpResponse.json({ detail: "Internal Server Error" }, { status: 500 })),
+        HttpResponse.json({ detail: "Internal Server Error" }, { status: 500 }),
+      ),
       http.get("/api/settlements/:storeId/companies", ({ params, request }) => {
         const archived = new URL(request.url).searchParams.has("archived");
         if (params.storeId === "2" && archived) romaArchivedReads += 1;
@@ -425,7 +472,10 @@ describe("CompanySettlementPage record corrections", () => {
     expect(screen.getByLabelText("开票月份")).toHaveValue("2026-07");
     expect(screen.queryByRole("dialog", { name: "修改开票记录" })).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "结算公司管理" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: "结算公司管理" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
     expect(romaArchivedReads).toBe(0);
   });
 });

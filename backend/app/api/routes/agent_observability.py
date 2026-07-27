@@ -58,9 +58,7 @@ async def list_agent_runs(
     limit: Limit = 100,
 ) -> list[AgentRunStat]:
     return list(
-        await session.scalars(
-            select(AgentRunStat).order_by(AgentRunStat.id.desc()).limit(limit)
-        )
+        await session.scalars(select(AgentRunStat).order_by(AgentRunStat.id.desc()).limit(limit))
     )
 
 
@@ -70,7 +68,5 @@ async def list_agent_alerts(
     limit: Limit = 100,
 ) -> list[AgentAlert]:
     return list(
-        await session.scalars(
-            select(AgentAlert).order_by(AgentAlert.id.desc()).limit(limit)
-        )
+        await session.scalars(select(AgentAlert).order_by(AgentAlert.id.desc()).limit(limit))
     )

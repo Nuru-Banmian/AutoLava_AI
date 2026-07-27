@@ -36,9 +36,7 @@ async def _reset_database() -> None:
 
 
 def test_refreshed_weather_preserves_user_edited_final_value() -> None:
-    record = StoreDailyRecord(
-        weather="手工天气", weather_auto="旧天气", weather_edited=True
-    )
+    record = StoreDailyRecord(weather="手工天气", weather_auto="旧天气", weather_edited=True)
     apply_refreshed_weather(record, WeatherResult("晴", 0, 30.0, 20.0, 0.0))
     assert record.weather == "手工天气"
     assert record.weather_auto == "晴"
@@ -49,9 +47,7 @@ async def test_background_refresh_is_bounded_and_can_be_stopped() -> None:
         await asyncio.sleep(60)
 
     refresh = AsyncMock(side_effect=hang)
-    scheduler = BackgroundRefreshScheduler(
-        refresh, interval_seconds=0.01, timeout_seconds=0.01
-    )
+    scheduler = BackgroundRefreshScheduler(refresh, interval_seconds=0.01, timeout_seconds=0.01)
     scheduler.start()
     await asyncio.sleep(0.04)
     await scheduler.stop()
@@ -142,9 +138,7 @@ async def test_sqlite_maintenance_runs_retention_after_failed_backup(
         order.append("retention")
 
     monkeypatch.setattr("app.services.scheduler.backup_sqlite", fail_backup)
-    monkeypatch.setattr(
-        "app.services.scheduler.prune_operational_rows", record_retention
-    )
+    monkeypatch.setattr("app.services.scheduler.prune_operational_rows", record_retention)
     callback = make_sqlite_maintenance_callback(
         async_session_factory,
         source=tmp_path / "missing.sqlite3",
@@ -158,9 +152,7 @@ async def test_sqlite_maintenance_runs_retention_after_failed_backup(
     assert order == ["backup", "retention"]
     async with async_session_factory() as verify:
         task = await verify.scalar(
-            select(ScheduledTaskLog).where(
-                ScheduledTaskLog.task_type == "sqlite_backup"
-            )
+            select(ScheduledTaskLog).where(ScheduledTaskLog.task_type == "sqlite_backup")
         )
         assert task is not None
         assert task.status == "failed"
@@ -187,9 +179,7 @@ async def test_sqlite_maintenance_runs_retention_after_successful_backup(
         order.append("retention")
 
     monkeypatch.setattr("app.services.scheduler.backup_sqlite", observe_backup)
-    monkeypatch.setattr(
-        "app.services.scheduler.prune_operational_rows", record_retention
-    )
+    monkeypatch.setattr("app.services.scheduler.prune_operational_rows", record_retention)
     callback = make_sqlite_maintenance_callback(
         async_session_factory,
         source=source,
@@ -203,9 +193,7 @@ async def test_sqlite_maintenance_runs_retention_after_successful_backup(
     assert order == ["backup", "retention"]
     async with async_session_factory() as verify:
         task = await verify.scalar(
-            select(ScheduledTaskLog).where(
-                ScheduledTaskLog.task_type == "sqlite_backup"
-            )
+            select(ScheduledTaskLog).where(ScheduledTaskLog.task_type == "sqlite_backup")
         )
         assert task is not None
         assert task.status == "success"
@@ -313,9 +301,7 @@ async def test_weather_fetches_overlap_and_store_writes_follow_id_order(
         write_order.append(store_id)
         return []
 
-    monkeypatch.setattr(
-        "app.services.scheduler.BriefingService.regenerate", record_write
-    )
+    monkeypatch.setattr("app.services.scheduler.BriefingService.regenerate", record_write)
     await make_refresh_callback(async_session_factory, ConcurrentWeather())()
     assert seen_stores == set(expected_order)
     assert write_order == expected_order
@@ -356,9 +342,7 @@ async def _held_ledger_write(
 
     monkeypatch.setattr(LedgerService, "_upsert_locked", hold)
     monkeypatch.setattr(LedgerService, "_find_record", canonical)
-    monkeypatch.setattr(
-        ledger_service_module, "require_fresh_store_access", fresh_access
-    )
+    monkeypatch.setattr(ledger_service_module, "require_fresh_store_access", fresh_access)
     task = asyncio.create_task(
         LedgerService(
             SimpleNamespace(
@@ -434,9 +418,7 @@ async def test_ledger_write_blocks_scheduler_task_log_commit(
         timezone="Europe/Berlin",
         is_active=False,
     )
-    release_ledger, ledger_task = await _held_ledger_write(
-        detached_store, monkeypatch
-    )
+    release_ledger, ledger_task = await _held_ledger_write(detached_store, monkeypatch)
     refresh_task = asyncio.create_task(
         make_refresh_callback(
             async_session_factory,

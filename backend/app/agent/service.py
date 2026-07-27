@@ -74,9 +74,7 @@ VAGUE_PERIOD_TERMS = (
     "这几天",
     "不久前",
 )
-NEGATED_VAGUE_PERIOD_PREFIX = re.compile(
-    r"(?:不要|不用|别|不查|不看|不是|并非)(?:查|看|说|指)?$"
-)
+NEGATED_VAGUE_PERIOD_PREFIX = re.compile(r"(?:不要|不用|别|不查|不看|不是|并非)(?:查|看|说|指)?$")
 
 
 class AgentService:
@@ -150,9 +148,7 @@ class AgentService:
                         end=evidence.period.end,
                     ),
                     "metrics": [metric_label],
-                    "filters": _conversation_filters(
-                        getattr(evidence, "filters", None)
-                    ),
+                    "filters": _conversation_filters(getattr(evidence, "filters", None)),
                     "comparison": (
                         ConversationComparison(
                             period=ConfirmedPeriod(
@@ -210,8 +206,4 @@ def _conversation_filters(filters: object) -> dict[str, list[str]]:
     if filters is None or not hasattr(filters, "model_dump"):
         return {}
     payload = filters.model_dump(mode="json")
-    return {
-        key: [str(value) for value in values]
-        for key, values in payload.items()
-        if values
-    }
+    return {key: [str(value) for value in values] for key, values in payload.items() if values}
