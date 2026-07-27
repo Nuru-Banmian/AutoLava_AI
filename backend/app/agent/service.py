@@ -23,7 +23,7 @@ from app.agent.contracts import (
 )
 from app.agent.factory import create_model_adapter
 from app.agent.model import ModelAttempt
-from app.agent.native import NativeToolAgentService, NativeToolModel
+from app.agent.native import NativeInvestigationLimits, NativeToolAgentService, NativeToolModel
 from app.agent.runtime import RuntimeContext
 from app.agent.tool_access import DatabaseNativeToolScopeResolver
 from app.agent.workflow import AgentTurnWorkflow
@@ -199,6 +199,14 @@ def create_agent_service(
             model=native_model,
             evidence_collector=evidence_collector,
             scope_resolver=scope_resolver,
+            limits=NativeInvestigationLimits(
+                max_model_calls=settings.agent_investigation_max_model_calls,
+                max_tool_calls=settings.agent_investigation_max_tool_calls,
+                timeout_seconds=settings.agent_investigation_timeout_seconds,
+                max_tokens=settings.agent_investigation_max_tokens,
+                max_cost_eur=settings.agent_investigation_max_cost_eur,
+                retry_attempts=settings.agent_investigation_retry_attempts,
+            ),
             **native_options,
         )
     return AgentService(

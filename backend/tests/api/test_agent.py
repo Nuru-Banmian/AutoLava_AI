@@ -8,7 +8,12 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.business_evidence import BusinessEvidenceCollector
-from app.agent.conversation import AgentRunResult, ConversationState
+from app.agent.conversation import (
+    AgentRunResult,
+    ConversationState,
+    InvestigationPartial,
+    InvestigationProgress,
+)
 from app.agent.contracts import ModelMessage, OpenBusinessRecordsAction, TurnResult
 from app.agent.model import FakeModelAdapter
 from app.agent.release import AgentReleaseStatus
@@ -38,6 +43,8 @@ class RecordingAgentService:
         default_factory=list
     )
     state: ConversationState | None = None
+    progress: list[InvestigationProgress] = field(default_factory=list)
+    partial: InvestigationPartial | None = None
 
     async def run(
         self,
@@ -46,7 +53,12 @@ class RecordingAgentService:
         recent_messages: list[ModelMessage],
     ) -> AgentRunResult:
         self.calls.append((context, state, recent_messages))
-        return AgentRunResult(turn=self.result, state=self.state or state)
+        return AgentRunResult(
+            turn=self.result,
+            state=self.state or state,
+            progress=self.progress,
+            partial=self.partial,
+        )
 
 
 async def _login(client: AsyncClient, username: str, password: str = "secret") -> None:
@@ -211,6 +223,17 @@ async def test_agent_route_builds_trusted_runtime_context_for_current_store(
     owner_id, store_id = owner.id, store.id
     await db_session.commit()
     await _login(client, "owner")
+    agent_service.progress = [
+        InvestigationProgress(
+            status="waiting",
+            message="模型服务暂时不可用，正在进行有限重试。",
+        )
+    ]
+    agent_service.partial = InvestigationPartial(
+        verified_facts=["monthly_total_revenue=400"],
+        incomplete_directions=["经营日"],
+        unknowns=["经营日目前无法根据已返回证据判断"],
+    )
     assert (
         await client.patch("/api/admin/agent-settings", json={"enabled": True})
     ).status_code == 200
@@ -223,6 +246,19 @@ async def test_agent_route_builds_trusted_runtime_context_for_current_store(
     assert response.status_code == 200
     assert response.json()["route"] == "answer"
     assert response.json()["content"] == "这是完整回答。"
+    assert response.json()["progress"] == [
+        {
+            "status": "waiting",
+            "message": "模型服务暂时不可用，正在进行有限重试。",
+        }
+    ]
+    assert response.json()["partial"] == {
+        "verified_facts": ["monthly_total_revenue=400"],
+        "incomplete_directions": ["经营日"],
+        "unknowns": ["经营日目前无法根据已返回证据判断"],
+    }
+    assert "SQL" not in response.text
+    assert "provider" not in response.text
     assert len(agent_service.calls) == 1
     context, state, recent_messages = agent_service.calls[0]
     assert state.model_dump(mode="json") == {

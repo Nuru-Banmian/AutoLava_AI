@@ -5,16 +5,23 @@ import hashlib
 import json
 import re
 from calendar import monthrange
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, TypeVar
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.agent.answer_grounding import NativeAnswerClaim, answer_is_grounded
-from app.agent.conversation import AgentRunResult, ConfirmedPeriod, ConversationState
+from app.agent.conversation import (
+    AgentRunResult,
+    ConfirmedPeriod,
+    ConversationState,
+    InvestigationPartial,
+    InvestigationProgress,
+)
+from app.agent.model import ModelAdapterError, RECOVERABLE_CATEGORIES
 from app.agent.contracts import (
     CurrentStoreScope,
     AverageRevenuePerCarResult,
@@ -47,6 +54,7 @@ from app.agent.contracts import (
 from app.agent.runtime import RuntimeContext
 
 NativeCollectedEvidence = EvidenceBundle | SettlementDetailsEvidenceBundle
+AwaitedResult = TypeVar("AwaitedResult")
 
 MONTHLY_TOTAL_REVENUE_TOOL = "monthly_total_revenue"
 DAILY_LEDGER_REVENUE_TOOL = "daily_ledger_revenue"
@@ -60,22 +68,75 @@ AVERAGE_REVENUE_PER_CAR_TOOL = "average_revenue_per_car"
 INCOME_CATEGORY_AMOUNT_TOOL = "income_category_amount"
 OTHER_DATA_AMOUNT_TOOL = "other_data_amount"
 DAILY_LEDGER_REVENUE_EXTREME_TOOL = "daily_ledger_revenue_extreme"
-MAX_NATIVE_TOOL_ROUNDS = 4
-MAX_NATIVE_TOOL_CALLS = 8
-INVESTIGATION_LIMIT_MESSAGE = "调查已达到本轮资源上限；以下结论仅基于已返回的证据。"
 ANSWER_EVIDENCE_FAILURE_MESSAGE = "回答中的关键经营声明缺少本轮有效证据支持，请缩小范围后重试。"
 EXPLICIT_CALENDAR_MONTH = re.compile(
     r"(?P<year>20\d{2}|21\d{2}|2200)\s*年\s*(?P<month>1[0-2]|0?[1-9])\s*月"
 )
 EXACT_MONTH_CLARIFICATION = "请提供要查询的准确自然月，例如“2026 年 7 月”。"
+UNSAFE_ANSWER_CONTENT = re.compile(
+    r"(?is)(?:\bselect\b.*\bfrom\b|"
+    r"\b(?:insert|replace|merge)\s+into\b|\bupdate\s+\w+\s+set\b|"
+    r"\bdelete\s+from\b|\bwith\b.*\bselect\b|"
+    r"\b(?:drop|alter|create)\s+(?:table|view|index|trigger|database)\b|"
+    r"\b(?:pragma|explain(?:\s+query\s+plan)?|vacuum|attach|detach|truncate)\b|"
+    r"```|[{}]|"
+    r"\"(?:call_id|tool_calls|input_schema|data_version|queried_at)\"\s*:|"
+    r"system prompt|chain of thought|系统提示词|内部推理|原始工具)"
+)
+VISIBLE_UNCERTAINTY = re.compile(r"未知|无法|不能确认|尚未|未完成|不可用")
 
 
 class NativeToolAccessDenied(RuntimeError):
     """A non-retryable authorization or tool-contract failure."""
 
 
+RECOVERABLE_NATIVE_TOOL_ERRORS = frozenset(
+    {"network", "timeout", "rate_limit", "service_unavailable"}
+)
+NATIVE_TOOL_ERROR_CATEGORIES = RECOVERABLE_NATIVE_TOOL_ERRORS | {
+    "permission",
+    "safety",
+    "configuration",
+    "data_integrity",
+}
+
+
+class NativeToolError(RuntimeError):
+    """A classified tool-adapter failure whose raw message is never user-facing."""
+
+    def __init__(self, message: str, *, category: str) -> None:
+        if category not in NATIVE_TOOL_ERROR_CATEGORIES:
+            raise ValueError("unsupported native tool error category")
+        super().__init__(message)
+        self.category = category
+
+
+class _NativeInvestigationLimitReached(RuntimeError):
+    pass
+
+
+@dataclass
+class _ToolCallBudget:
+    maximum: int
+    used: int = 0
+
+    def reserve(self) -> None:
+        if self.used >= self.maximum:
+            raise _NativeInvestigationLimitReached
+        self.used += 1
+
+
 class ClosedModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class NativeInvestigationLimits(ClosedModel):
+    max_model_calls: int = Field(default=4, ge=1, le=20)
+    max_tool_calls: int = Field(default=8, ge=1, le=50)
+    timeout_seconds: float = Field(default=90, gt=0, le=600)
+    max_tokens: int = Field(default=50_000, ge=1, le=1_000_000)
+    max_cost_eur: float = Field(default=0.50, gt=0, le=100)
+    retry_attempts: int = Field(default=1, ge=0, le=3)
 
 
 class NativeToolDefinition(ClosedModel):
@@ -195,11 +256,22 @@ class NativeTranscriptItem(ClosedModel):
         return self
 
 
+class NativeModelUsage(ClosedModel):
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    estimated_cost_eur: float = Field(default=0, ge=0)
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+
 class NativeModelTurn(ClosedModel):
     message: ModelMessage
     tool_calls: list[NativeToolCall] = Field(default_factory=list, max_length=4)
     hypotheses: list[NativeAnalysisHypothesis] = Field(default_factory=list, max_length=8)
     answer_claims: list[NativeAnswerClaim] = Field(default_factory=list, max_length=20)
+    usage: NativeModelUsage
     signal: Literal["continue", "end"]
 
     @model_validator(mode="after")
@@ -389,7 +461,9 @@ class FakeNativeToolModel:
         return (
             scripted
             if isinstance(scripted, NativeModelTurn)
-            else NativeModelTurn.model_validate(scripted)
+            else NativeModelTurn.model_validate(
+                scripted if "usage" in scripted else {**scripted, "usage": {}}
+            )
         )
 
 
@@ -403,11 +477,13 @@ class NativeToolAgentService:
         evidence_collector: NativeEvidenceCollector,
         scope_resolver: NativeToolScopeResolver,
         now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        limits: NativeInvestigationLimits = NativeInvestigationLimits(),
     ) -> None:
         self.model = model
         self.evidence_collector = evidence_collector
         self.scope_resolver = scope_resolver
         self.now = now
+        self.limits = limits
         self.tool_registry = tuple(
             NativeToolRegistration(
                 definition=NativeToolDefinition(
@@ -426,17 +502,20 @@ class NativeToolAgentService:
         state: ConversationState,
         recent_messages: list[ModelMessage],
     ) -> AgentRunResult:
+        deadline = asyncio.get_running_loop().time() + self.limits.timeout_seconds
         if not _available_tools(context, self.tool_registry):
             raise NativeToolAccessDenied("native tools are not available for this runtime scope")
-        catalog_context = await self.scope_resolver.refresh(context)
-        if (
-            catalog_context.user_id != context.user_id
-            or catalog_context.store_id != context.store_id
-        ):
-            raise NativeToolAccessDenied("native tools are not available for this runtime scope")
-        tools = _available_tools(catalog_context, self.tool_registry)
-        if not tools:
-            raise NativeToolAccessDenied("native tools are not available for this runtime scope")
+        try:
+            catalog_context, tools = await _before_deadline(
+                self._refresh_authorized_context(context, expected=context),
+                deadline,
+            )
+        except TimeoutError:
+            return _partial_agent_result(
+                state,
+                [],
+                reason="本轮调查已达到总时间上限。",
+            )
         trusted_period = _explicit_calendar_month(recent_messages)
         if trusted_period is None:
             return AgentRunResult(
@@ -448,23 +527,110 @@ class NativeToolAgentService:
         items = [NativeTranscriptItem(message=message) for message in recent_messages]
         collected: list[NativeCollectedEvidence] = []
         evidence_by_reference: dict[str, NativeCollectedEvidence] = {}
-        tool_call_count = 0
-        for round_number in range(MAX_NATIVE_TOOL_ROUNDS):
+        tool_budget = _ToolCallBudget(self.limits.max_tool_calls)
+        model_call_count = 0
+        total_tokens = 0
+        total_cost_eur = 0.0
+        retried = False
+        progress: list[InvestigationProgress] = []
+        failed_directions: list[str] = []
+        while True:
+            if model_call_count >= self.limits.max_model_calls:
+                return _partial_agent_result(
+                    state,
+                    collected,
+                    reason="本轮调查已达到模型调用上限。",
+                    retried=retried,
+                    progress=progress,
+                    pending_directions=failed_directions,
+                )
+            round_number = model_call_count
             if round_number:
-                catalog_context = await self.scope_resolver.refresh(catalog_context)
-                if (
-                    catalog_context.user_id != context.user_id
-                    or catalog_context.store_id != context.store_id
-                ):
-                    raise NativeToolAccessDenied(
-                        "native tools are not available for this runtime scope"
+                try:
+                    catalog_context, tools = await _before_deadline(
+                        self._refresh_authorized_context(
+                            catalog_context,
+                            expected=context,
+                        ),
+                        deadline,
                     )
-                tools = _available_tools(catalog_context, self.tool_registry)
-                if not tools:
-                    raise NativeToolAccessDenied(
-                        "native tools are not available for this runtime scope"
+                except TimeoutError:
+                    return _partial_agent_result(
+                        state,
+                        collected,
+                        reason="本轮调查已达到总时间上限。",
+                        retried=retried,
+                        progress=progress,
+                        pending_directions=failed_directions,
                     )
-            turn = await self.model.next_turn(items, tools=tools)
+            turn: NativeModelTurn | None = None
+            for retry_number in range(self.limits.retry_attempts + 1):
+                if model_call_count >= self.limits.max_model_calls:
+                    return _partial_agent_result(
+                        state,
+                        collected,
+                        reason="本轮调查已达到模型调用上限。",
+                        retried=retried,
+                        progress=progress,
+                        pending_directions=failed_directions,
+                    )
+                model_call_count += 1
+                try:
+                    turn = await _before_deadline(
+                        self.model.next_turn(items, tools=tools),
+                        deadline,
+                    )
+                    break
+                except TimeoutError:
+                    return _partial_agent_result(
+                        state,
+                        collected,
+                        reason="本轮调查已达到总时间上限。",
+                        retried=retried,
+                        progress=progress,
+                        pending_directions=failed_directions,
+                    )
+                except ModelAdapterError as error:
+                    if (
+                        error.category in RECOVERABLE_CATEGORIES
+                        and retry_number < self.limits.retry_attempts
+                    ):
+                        retried = True
+                        progress.append(
+                            InvestigationProgress(
+                                status="waiting",
+                                message="模型服务暂时不可用，正在进行有限重试。",
+                            )
+                        )
+                        continue
+                    return _model_failure_result(
+                        state,
+                        collected,
+                        recoverable=error.category in RECOVERABLE_CATEGORIES,
+                        retried=retried,
+                        progress=progress,
+                    )
+            assert turn is not None
+            total_tokens += turn.usage.total_tokens
+            total_cost_eur += turn.usage.estimated_cost_eur
+            if total_tokens > self.limits.max_tokens:
+                return _partial_agent_result(
+                    state,
+                    collected,
+                    reason="本轮调查已达到 Token 上限。",
+                    retried=retried,
+                    progress=progress,
+                    pending_directions=_tool_directions(turn.tool_calls),
+                )
+            if total_cost_eur > self.limits.max_cost_eur:
+                return _partial_agent_result(
+                    state,
+                    collected,
+                    reason="本轮调查已达到费用上限。",
+                    retried=retried,
+                    progress=progress,
+                    pending_directions=_tool_directions(turn.tool_calls),
+                )
             hypothesis_error = _hypothesis_reference_error(turn.hypotheses, items)
             if hypothesis_error is not None:
                 items.append(
@@ -473,6 +639,20 @@ class NativeToolAgentService:
                     )
                 )
                 continue
+            if turn.signal == "end":
+                exposure_error = _answer_exposure_error(turn.message.content, items)
+                failed_direction_error = _failed_direction_answer_error(
+                    turn.message.content,
+                    failed_directions,
+                )
+                correction = exposure_error or failed_direction_error
+                if correction is not None:
+                    items.append(
+                        NativeTranscriptItem(
+                            message=ModelMessage(role="system", content=correction)
+                        )
+                    )
+                    continue
             items.append(
                 NativeTranscriptItem(
                     message=turn.message,
@@ -497,34 +677,96 @@ class NativeToolAgentService:
                     state,
                     collected,
                     content=turn.message.content,
+                    retried=retried,
+                    progress=progress,
                 )
-            if tool_call_count + len(turn.tool_calls) > MAX_NATIVE_TOOL_CALLS:
-                return _agent_result(
+            if tool_budget.used + len(turn.tool_calls) > self.limits.max_tool_calls:
+                return _partial_agent_result(
                     state,
                     collected,
-                    content=INVESTIGATION_LIMIT_MESSAGE,
+                    reason="本轮调查已达到工具调用上限。",
+                    retried=retried,
+                    progress=progress,
+                    pending_directions=_tool_directions(turn.tool_calls),
                 )
-            outcomes = await asyncio.gather(
-                *(
+            tasks = [
+                asyncio.create_task(
                     self._execute(
                         tool_call,
                         catalog_context,
                         trusted_period=trusted_period,
+                        tool_budget=tool_budget,
                     )
-                    for tool_call in turn.tool_calls
                 )
-            )
-            tool_call_count += len(turn.tool_calls)
-            for tool_result, new_evidence in outcomes:
+                for tool_call in turn.tool_calls
+            ]
+            timed_out = False
+            try:
+                raw_outcomes = await _before_deadline(
+                    asyncio.gather(*tasks, return_exceptions=True),
+                    deadline,
+                )
+            except TimeoutError:
+                timed_out = True
+                raw_outcomes = [
+                    task.result()
+                    for task in tasks
+                    if task.done() and not task.cancelled() and task.exception() is None
+                ]
+            limit_reached = False
+            for outcome in raw_outcomes:
+                if isinstance(outcome, _NativeInvestigationLimitReached):
+                    limit_reached = True
+                    continue
+                if isinstance(outcome, BaseException):
+                    raise outcome
+                tool_result, new_evidence, tool_retried = outcome
+                retried = retried or tool_retried
+                if tool_retried and not any(
+                    item.message == "经营工具暂时不可用，已完成有限重试。" for item in progress
+                ):
+                    progress.append(
+                        InvestigationProgress(
+                            status="waiting",
+                            message="经营工具暂时不可用，已完成有限重试。",
+                        )
+                    )
                 if new_evidence is not None:
                     collected.append(new_evidence)
                     evidence_by_reference[tool_result.evidence.reference] = new_evidence
+                    resolved_directions = set(_tool_directions_by_name([tool_result.name]))
+                    failed_directions = [
+                        direction
+                        for direction in failed_directions
+                        if direction not in resolved_directions
+                    ]
+                elif tool_result.evidence.failure.status == "failed":
+                    failed_directions.extend(_tool_directions_by_name([tool_result.name]))
                 items.append(NativeTranscriptItem(tool_result=tool_result))
-        return _agent_result(
-            state,
-            collected,
-            content=INVESTIGATION_LIMIT_MESSAGE,
-        )
+            if timed_out:
+                return _partial_agent_result(
+                    state,
+                    collected,
+                    reason="本轮调查已达到总时间上限。",
+                    retried=retried,
+                    progress=progress,
+                    pending_directions=[
+                        *failed_directions,
+                        *_tool_directions(turn.tool_calls),
+                    ],
+                )
+            if limit_reached:
+                return _partial_agent_result(
+                    state,
+                    collected,
+                    reason="本轮调查已达到工具调用上限。",
+                    retried=retried,
+                    progress=progress,
+                    pending_directions=[
+                        *failed_directions,
+                        *_tool_directions(turn.tool_calls),
+                    ],
+                )
 
     async def _execute(
         self,
@@ -532,7 +774,8 @@ class NativeToolAgentService:
         context: RuntimeContext,
         *,
         trusted_period: MonthlyTotalRevenueArguments,
-    ) -> tuple[NativeToolResult, NativeCollectedEvidence | None]:
+        tool_budget: _ToolCallBudget,
+    ) -> tuple[NativeToolResult, NativeCollectedEvidence | None, bool]:
         tool_spec = NATIVE_TOOLS.get(call.name)
         if tool_spec is None or call.name not in {
             tool.name for tool in _available_tools(context, self.tool_registry)
@@ -542,14 +785,11 @@ class NativeToolAgentService:
             arguments = tool_spec.arguments_type.model_validate(call.arguments)
         except ValidationError as error:
             raise NativeToolAccessDenied("native tool call is not authorized") from error
-        fresh_context = await self.scope_resolver.refresh(context)
-        if (
-            fresh_context.user_id != context.user_id
-            or fresh_context.store_id != context.store_id
-            or call.name
-            not in {tool.name for tool in _available_tools(fresh_context, self.tool_registry)}
-        ):
-            raise NativeToolAccessDenied("native tool call is not authorized")
+        fresh_context, _ = await self._refresh_authorized_context(
+            context,
+            expected=context,
+            call_name=call.name,
+        )
         if arguments.year != trusted_period.year or arguments.month != trusted_period.month:
             return (
                 _failed_tool_result(
@@ -562,6 +802,7 @@ class NativeToolAgentService:
                     message="工具期间与用户确认的自然月不一致",
                 ),
                 None,
+                False,
             )
         request: dict[str, Any] = {
             "kind": "settlement_details" if tool_spec.metric is None else "business_metrics",
@@ -581,21 +822,53 @@ class NativeToolAgentService:
             plan = EvidencePlan.model_validate({"requests": [request]})
         except ValidationError as error:
             raise NativeToolAccessDenied("native tool call is not authorized") from error
-        try:
-            evidence = await self.evidence_collector.collect(plan, fresh_context)
-        except NativeToolAccessDenied:
-            raise
-        except Exception:
-            return (
-                _failed_tool_result(
-                    call,
-                    fresh_context,
-                    arguments,
-                    self.now(),
-                    tool_spec=tool_spec,
-                ),
-                None,
-            )
+        tool_retried = False
+        evidence: object | None = None
+        for retry_number in range(self.limits.retry_attempts + 1):
+            tool_budget.reserve()
+            try:
+                evidence = await self.evidence_collector.collect(plan, fresh_context)
+                break
+            except NativeToolAccessDenied:
+                raise
+            except NativeToolError as error:
+                if (
+                    error.category in RECOVERABLE_NATIVE_TOOL_ERRORS
+                    and retry_number < self.limits.retry_attempts
+                ):
+                    tool_retried = True
+                    fresh_context, _ = await self._refresh_authorized_context(
+                        fresh_context,
+                        expected=context,
+                        call_name=call.name,
+                    )
+                    continue
+                return (
+                    _failed_tool_result(
+                        call,
+                        fresh_context,
+                        arguments,
+                        self.now(),
+                        tool_spec=tool_spec,
+                        category="tool_unavailable",
+                        message="经营查询暂时不可用",
+                    ),
+                    None,
+                    tool_retried,
+                )
+            except Exception:
+                return (
+                    _failed_tool_result(
+                        call,
+                        fresh_context,
+                        arguments,
+                        self.now(),
+                        tool_spec=tool_spec,
+                    ),
+                    None,
+                    tool_retried,
+                )
+        assert evidence is not None
         if not _evidence_matches_tool(
             evidence,
             tool_spec,
@@ -611,6 +884,7 @@ class NativeToolAgentService:
                     tool_spec=tool_spec,
                 ),
                 None,
+                tool_retried,
             )
         assert isinstance(evidence, (EvidenceBundle, SettlementDetailsEvidenceBundle))
         envelope = _native_envelope(evidence, tool_spec=tool_spec, queried_at=self.now())
@@ -621,7 +895,26 @@ class NativeToolAgentService:
                 evidence=envelope,
             ),
             evidence,
+            tool_retried,
         )
+
+    async def _refresh_authorized_context(
+        self,
+        context: RuntimeContext,
+        *,
+        expected: RuntimeContext,
+        call_name: str | None = None,
+    ) -> tuple[RuntimeContext, tuple[NativeToolDefinition, ...]]:
+        fresh_context = await self.scope_resolver.refresh(context)
+        tools = _available_tools(fresh_context, self.tool_registry)
+        if (
+            fresh_context.user_id != expected.user_id
+            or fresh_context.store_id != expected.store_id
+            or not tools
+            or (call_name is not None and call_name not in {tool.name for tool in tools})
+        ):
+            raise NativeToolAccessDenied("native tools are not available for this runtime scope")
+        return fresh_context, tools
 
 
 def _available_tools(
@@ -633,6 +926,19 @@ def _available_tools(
         for registration in registrations
         if registration.is_available(context)
     )
+
+
+async def _before_deadline(
+    awaitable: Awaitable[AwaitedResult],
+    deadline: float,
+) -> AwaitedResult:
+    remaining = deadline - asyncio.get_running_loop().time()
+    if remaining <= 0:
+        close = getattr(awaitable, "close", None)
+        if close is not None:
+            close()
+        raise TimeoutError
+    return await asyncio.wait_for(awaitable, timeout=remaining)
 
 
 def _native_envelope(
@@ -781,16 +1087,29 @@ def _agent_result(
     collected: Sequence[NativeCollectedEvidence],
     *,
     content: str,
+    retried: bool = False,
+    progress: Sequence[InvestigationProgress] = (),
+    partial: InvestigationPartial | None = None,
 ) -> AgentRunResult:
     if not collected:
         return AgentRunResult(
-            turn=TurnResult(route="answer", content=content),
+            turn=TurnResult(
+                route="answer",
+                content=content,
+                recovery_status="retried" if retried else "none",
+            ),
             state=state,
+            progress=list(progress),
+            partial=partial,
         )
     last_evidence = collected[-1]
     metric_labels = list(dict.fromkeys(_evidence_label(evidence) for evidence in collected))
     return AgentRunResult(
-        turn=TurnResult(route="answer", content=content),
+        turn=TurnResult(
+            route="answer",
+            content=content,
+            recovery_status="retried" if retried else "none",
+        ),
         state=state.model_copy(
             update={
                 "confirmed_period": ConfirmedPeriod(
@@ -802,6 +1121,124 @@ def _agent_result(
             }
         ),
         evidence=last_evidence,
+        progress=list(progress),
+        partial=partial,
+    )
+
+
+def _partial_agent_result(
+    state: ConversationState,
+    collected: Sequence[NativeCollectedEvidence],
+    *,
+    reason: str,
+    retried: bool = False,
+    progress: Sequence[InvestigationProgress] = (),
+    pending_directions: Sequence[str] = (),
+) -> AgentRunResult:
+    verified = list(dict.fromkeys(evidence.summary.strip() for evidence in collected))
+    incomplete = list(dict.fromkeys(pending_directions)) or ["后续证据核对与最终综合"]
+    unknowns = [f"{direction}目前无法根据已返回证据判断" for direction in incomplete]
+    partial = InvestigationPartial(
+        verified_facts=verified,
+        incomplete_directions=incomplete,
+        unknowns=unknowns,
+    )
+    return _agent_result(
+        state,
+        collected,
+        content=reason,
+        retried=retried,
+        progress=[
+            *progress,
+            InvestigationProgress(status="partial", message=reason),
+        ],
+        partial=partial,
+    )
+
+
+def _tool_directions(calls: Sequence[NativeToolCall]) -> list[str]:
+    return _tool_directions_by_name([call.name for call in calls])
+
+
+def _tool_directions_by_name(names: Sequence[str]) -> list[str]:
+    directions: list[str] = []
+    for name in names:
+        spec = NATIVE_TOOLS.get(name)
+        if spec is None:
+            directions.append("受控经营证据核对")
+        elif spec.metric is None:
+            directions.append(SETTLEMENT_DETAILS_LABEL)
+        else:
+            directions.append(EVIDENCE_METRIC_LABELS[spec.metric])
+    return directions
+
+
+def _failed_direction_answer_error(
+    answer: str,
+    failed_directions: Sequence[str],
+) -> str | None:
+    clauses = [
+        clause.strip() for clause in re.split(r"[。！？；;，,\n]+", answer) if clause.strip()
+    ]
+    missing = [
+        direction
+        for direction in dict.fromkeys(failed_directions)
+        if not any(direction in clause and VISIBLE_UNCERTAINTY.search(clause) for clause in clauses)
+    ]
+    if not missing:
+        return None
+    directions = "、".join(missing)
+    return f"回答必须明确说明以下未完成方向目前未知或无法确认：{directions}。"
+
+
+def _answer_exposure_error(
+    answer: str,
+    items: Sequence[NativeTranscriptItem],
+) -> str | None:
+    if UNSAFE_ANSWER_CONTENT.search(answer):
+        return "回答包含内部运行信息。请仅提供简短、自然、证据约束的用户可见结论。"
+    internal_messages = [
+        item.message.content
+        for item in items
+        if item.message is not None and item.message.role == "system"
+    ]
+    if any(message and message in answer for message in internal_messages):
+        return "回答回显了内部指令。请仅提供简短、自然、证据约束的用户可见结论。"
+    return None
+
+
+def _model_failure_result(
+    state: ConversationState,
+    collected: Sequence[NativeCollectedEvidence],
+    *,
+    recoverable: bool,
+    retried: bool,
+    progress: Sequence[InvestigationProgress],
+) -> AgentRunResult:
+    reason = (
+        "模型服务暂时不可用，本轮调查无法继续。"
+        if recoverable
+        else "本轮调查因安全或配置校验未通过而停止。"
+    )
+    if collected:
+        return _partial_agent_result(
+            state,
+            collected,
+            reason=reason,
+            retried=retried,
+            progress=progress,
+        )
+    return AgentRunResult(
+        turn=TurnResult(
+            route="safe_failure",
+            content=reason,
+            recovery_status="retried" if retried else "none",
+        ),
+        state=state,
+        progress=[
+            *progress,
+            InvestigationProgress(status="partial", message=reason),
+        ],
     )
 
 

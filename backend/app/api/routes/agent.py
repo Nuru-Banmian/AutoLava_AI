@@ -196,6 +196,8 @@ async def run_agent_turn(
         route=result.route,
         content=result.content,
         recovery_status=result.recovery_status,
+        progress=run_result.progress,
+        partial=run_result.partial,
         conversation=snapshot,
     )
 

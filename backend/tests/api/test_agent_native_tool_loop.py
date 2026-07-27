@@ -51,6 +51,7 @@ class GroundedMonthlyRevenueModel:
                             "arguments": {"year": 2026, "month": 7},
                         }
                     ],
+                    "usage": {},
                     "signal": "continue",
                 }
             )
@@ -72,6 +73,7 @@ class GroundedMonthlyRevenueModel:
                         "evidence_references": [evidence.reference],
                     }
                 ],
+                "usage": {},
                 "signal": "end",
             }
         )
@@ -97,6 +99,7 @@ class GroundedSettlementModel:
                             },
                         }
                     ],
+                    "usage": {},
                     "signal": "continue",
                 }
             )
@@ -132,6 +135,7 @@ class GroundedSettlementModel:
                         "settlement_scope": "all_companies",
                     },
                 ],
+                "usage": {},
                 "signal": "end",
             }
         )
@@ -452,6 +456,7 @@ async def test_native_tool_execution_rechecks_live_scope_before_business_query(
                             "arguments": {"year": 2026, "month": 7},
                         }
                     ],
+                    "usage": {},
                     "signal": "continue",
                 }
             )
