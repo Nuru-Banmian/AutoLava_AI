@@ -40,6 +40,18 @@ _EUR_PER_OPERATING_DAY = re.compile(
 )
 _RATIO = re.compile(r"(?<![\d.])(-?\d+(?:[.,]\d+)?)\s*倍")
 _PERCENTAGE = re.compile(r"(?<![\d.])(-?\d+(?:[.,]\d+)?)\s*(?:%|％|百分比)")
+_EXACT_UNIT_PATTERNS = {
+    "EUR": _MONEY,
+    "day": _DAY_COUNT,
+    "car": _CAR_COUNT,
+    "EUR/car": _EUR_PER_CAR,
+    "EUR/operating_day": _EUR_PER_OPERATING_DAY,
+    "ratio": _RATIO,
+}
+_DERIVED_EXACT_UNIT_PATTERNS = {
+    unit: pattern for unit, pattern in _EXACT_UNIT_PATTERNS.items() if unit not in {"EUR", "day"}
+}
+_DERIVED_MONEY_PATTERNS = (_EUR_PER_CAR, _EUR_PER_OPERATING_DAY)
 _CROSS_SCOPE = re.compile(r"另一个门店|其他门店|其它门店|全部门店|所有门店")
 _UNSUPPORTED_METRIC = re.compile(r"利润|毛利|净利|客单价")
 _PHENOMENON = re.compile(r"天气|暴雨|降雨|下雨|降雪|高温|低温|事件|公共假期|节假日|假期|促销")
@@ -335,12 +347,6 @@ def _claim_literals_match_metadata(claim: NativeAnswerClaim) -> bool:
         _decimal(match.group(1)) for match in _PERCENTAGE.finditer(claim.statement)
     ]
     day_values = [_decimal(match.group(1)) for match in _DAY_COUNT.finditer(claim.statement)]
-    car_values = [_decimal(match.group(1)) for match in _CAR_COUNT.finditer(claim.statement)]
-    per_car_values = [_decimal(match.group(1)) for match in _EUR_PER_CAR.finditer(claim.statement)]
-    per_operating_day_values = [
-        _decimal(match.group(1)) for match in _EUR_PER_OPERATING_DAY.finditer(claim.statement)
-    ]
-    ratio_values = [_decimal(match.group(1)) for match in _RATIO.finditer(claim.statement)]
     metric_is_visible = any(
         field == _metric_value(claim.metric) and term in claim.statement
         for term, field in _METRIC_FIELDS.items()
@@ -372,29 +378,18 @@ def _claim_literals_match_metadata(claim: NativeAnswerClaim) -> bool:
         or percentage_values
     ):
         return False
-    values_by_unit = {
-        "car": car_values,
-        "EUR/car": per_car_values,
-        "EUR/operating_day": per_operating_day_values,
-        "ratio": ratio_values,
-    }
-    visible_values = values_by_unit.get(claim.unit or "")
-    if visible_values is not None and (
-        not visible_values or any(value != claim.value for value in visible_values)
-    ):
-        return False
+    derived_pattern = _DERIVED_EXACT_UNIT_PATTERNS.get(claim.unit or "")
+    if derived_pattern is not None:
+        visible_values = [
+            _decimal(match.group(1)) for match in derived_pattern.finditer(claim.statement)
+        ]
+        if not visible_values or any(value != claim.value for value in visible_values):
+            return False
     return True
 
 
 def _has_exact_value_relation(claim: NativeAnswerClaim) -> bool:
-    value_pattern = {
-        "EUR": _MONEY,
-        "day": _DAY_COUNT,
-        "car": _CAR_COUNT,
-        "EUR/car": _EUR_PER_CAR,
-        "EUR/operating_day": _EUR_PER_OPERATING_DAY,
-        "ratio": _RATIO,
-    }.get(claim.unit or "")
+    value_pattern = _EXACT_UNIT_PATTERNS.get(claim.unit or "")
     if value_pattern is None:
         return False
     return _has_metric_value_relation(claim, value_pattern, _EXACT_VALUE_CONNECTOR)
@@ -460,12 +455,7 @@ def _key_literals_are_claimed(
             _CHINESE_DATE,
             _CHINESE_MONTH,
             _CHINESE_MONTH_WITHOUT_YEAR,
-            _MONEY,
-            _DAY_COUNT,
-            _CAR_COUNT,
-            _EUR_PER_CAR,
-            _EUR_PER_OPERATING_DAY,
-            _RATIO,
+            *_EXACT_UNIT_PATTERNS.values(),
             _PERCENTAGE,
         )
         for match in pattern.finditer(answer)
@@ -494,12 +484,7 @@ def _operating_statements_are_claimed(
 
 def _contains_business_fact(answer: str) -> bool:
     return bool(
-        _MONEY.search(answer)
-        or _DAY_COUNT.search(answer)
-        or _CAR_COUNT.search(answer)
-        or _EUR_PER_CAR.search(answer)
-        or _EUR_PER_OPERATING_DAY.search(answer)
-        or _RATIO.search(answer)
+        any(pattern.search(answer) for pattern in _EXACT_UNIT_PATTERNS.values())
         or _PERCENTAGE.search(answer)
         or _UNSUPPORTED_METRIC.search(answer)
         or _CROSS_SCOPE.search(answer)
@@ -553,7 +538,7 @@ def _quantities_are_supported(answer: str, evidence: Sequence[GroundedEvidence])
     for clause in _clauses(answer):
         derived_unit_spans = [
             match.span()
-            for pattern in (_EUR_PER_CAR, _EUR_PER_OPERATING_DAY)
+            for pattern in _DERIVED_MONEY_PATTERNS
             for match in pattern.finditer(clause)
         ]
         for match in _MONEY.finditer(clause):
@@ -571,12 +556,7 @@ def _quantities_are_supported(answer: str, evidence: Sequence[GroundedEvidence])
             )
             if value not in supported_values:
                 return False
-        for pattern, unit in (
-            (_CAR_COUNT, "car"),
-            (_EUR_PER_CAR, "EUR/car"),
-            (_EUR_PER_OPERATING_DAY, "EUR/operating_day"),
-            (_RATIO, "ratio"),
-        ):
+        for unit, pattern in _DERIVED_EXACT_UNIT_PATTERNS.items():
             for match in pattern.finditer(clause):
                 value = _decimal(match.group(1))
                 if value is None or value not in facts_by_unit.get(unit, set()):

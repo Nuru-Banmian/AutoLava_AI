@@ -12,7 +12,7 @@ from decimal import Decimal
 from typing import Any, Literal, Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from app.agent.answer_grounding import GroundedEvidence, NativeAnswerClaim, answer_is_grounded
 from app.agent.conversation import AgentRunResult, ConfirmedPeriod, ConversationState
@@ -28,6 +28,7 @@ from app.agent.contracts import (
     CurrentStoreScope,
     AverageRevenuePerCarResult,
     CategoryAmountResult,
+    ClosedModel,
     DailyLedgerRevenueResult,
     DailyLedgerExtremeResult,
     EVIDENCE_METRIC_LABELS,
@@ -82,10 +83,6 @@ EXACT_MONTH_CLARIFICATION = "请提供要查询的准确自然月，例如“202
 
 class NativeToolAccessDenied(RuntimeError):
     """A non-retryable authorization or tool-contract failure."""
-
-
-class ClosedModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
 
 
 class NativeToolDefinition(ClosedModel):
