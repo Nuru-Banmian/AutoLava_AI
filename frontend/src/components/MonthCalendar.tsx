@@ -1,4 +1,13 @@
-import { addDays, eachDayOfInterval, endOfMonth, endOfWeek, format, parseISO, startOfMonth, startOfWeek } from "date-fns";
+import {
+  addDays,
+  eachDayOfInterval,
+  endOfMonth,
+  endOfWeek,
+  format,
+  parseISO,
+  startOfMonth,
+  startOfWeek,
+} from "date-fns";
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
@@ -13,16 +22,23 @@ export interface MonthCalendarProps {
 
 const weekdayLabels = ["一", "二", "三", "四", "五", "六", "日"];
 
-export function MonthCalendar({ month, selected, today, recordedDates, onSelect }: MonthCalendarProps) {
+export function MonthCalendar({
+  month,
+  selected,
+  today,
+  recordedDates,
+  onSelect,
+}: MonthCalendarProps) {
   const monthDate = parseISO(`${month}-01`);
   const days = eachDayOfInterval({
     start: startOfWeek(startOfMonth(monthDate), { weekStartsOn: 1 }),
     end: endOfWeek(endOfMonth(monthDate), { weekStartsOn: 1 }),
   });
   const dayIds = days.map((day) => format(day, "yyyy-MM-dd"));
-  const initialFocus = dayIds.includes(selected) && selected <= today
-    ? selected
-    : [...dayIds].reverse().find((iso) => iso <= today) ?? "";
+  const initialFocus =
+    dayIds.includes(selected) && selected <= today
+      ? selected
+      : ([...dayIds].reverse().find((iso) => iso <= today) ?? "");
   const [focusedDate, setFocusedDate] = useState(initialFocus);
   const buttonRefs = useRef(new Map<string, HTMLButtonElement>());
 
@@ -44,13 +60,20 @@ export function MonthCalendar({ month, selected, today, recordedDates, onSelect 
     setFocusedDate(iso);
     buttonRefs.current.get(iso)?.focus();
   };
-  const weeks = Array.from({ length: days.length / 7 }, (_, index) => days.slice(index * 7, index * 7 + 7));
+  const weeks = Array.from({ length: days.length / 7 }, (_, index) =>
+    days.slice(index * 7, index * 7 + 7),
+  );
 
   return (
     <div aria-label={`${format(monthDate, "yyyy年M月")}日历`} role="grid" className="grid gap-1">
       <div role="row" className="grid grid-cols-7 gap-1">
         {weekdayLabels.map((label) => (
-          <div key={label} role="columnheader" aria-label={`星期${label}`} className="pb-1 text-center text-xs text-muted-foreground">
+          <div
+            key={label}
+            role="columnheader"
+            aria-label={`星期${label}`}
+            className="pb-1 text-center text-xs text-muted-foreground"
+          >
             {label}
           </div>
         ))}
@@ -62,7 +85,12 @@ export function MonthCalendar({ month, selected, today, recordedDates, onSelect 
             const recorded = recordedDates.has(iso);
             const inMonth = iso.startsWith(`${month}-`);
             return (
-              <div key={iso} role="gridcell" aria-selected={iso === selected} className="aspect-square min-w-0">
+              <div
+                key={iso}
+                role="gridcell"
+                aria-selected={iso === selected}
+                className="aspect-square min-w-0"
+              >
                 <button
                   type="button"
                   aria-label={`${format(day, "yyyy年M月d日")}${recorded ? "，已有记录" : ""}`}
@@ -81,11 +109,21 @@ export function MonthCalendar({ month, selected, today, recordedDates, onSelect 
                   className={cn(
                     "relative flex size-full min-w-0 items-center justify-center rounded-lg text-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-30",
                     inMonth ? "text-foreground" : "text-muted-foreground",
-                    iso === selected ? "bg-primary font-semibold text-primary-foreground" : "hover:bg-accent",
+                    iso === selected
+                      ? "bg-primary font-semibold text-primary-foreground"
+                      : "hover:bg-accent",
                   )}
                 >
                   {format(day, "d")}
-                  {recorded && <span aria-hidden="true" className={cn("absolute bottom-1 size-1 rounded-full", iso === selected ? "bg-primary-foreground" : "bg-primary")} />}
+                  {recorded && (
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        "absolute bottom-1 size-1 rounded-full",
+                        iso === selected ? "bg-primary-foreground" : "bg-primary",
+                      )}
+                    />
+                  )}
                 </button>
               </div>
             );

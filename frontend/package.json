@@ -10,6 +10,7 @@
     "check:ci": "biome ci .",
     "test": "vitest run",
     "test:agent-release-manifest": "node scripts/validate-agent-release-manifest.mjs",
+    "redact:e2e-diagnostics": "node scripts/redact-playwright-diagnostics.mjs",
     "test:e2e": "playwright test"
   },
   "dependencies": {

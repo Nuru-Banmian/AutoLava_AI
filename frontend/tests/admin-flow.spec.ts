@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 
 type Capture = {
   incomePublish?: unknown;
@@ -8,8 +8,27 @@ type Capture = {
   updatedStore?: unknown;
 };
 
-const store = { id: 1, name: "Roma", address: "Roma, Italia", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true, company_settlement_enabled: false, wash_count_enabled: true };
-const alternateStore = { id: 2, name: "Milano Nord", address: "Milano, Italia", latitude: "45.4642", longitude: "9.19", timezone: "Europe/Rome", is_active: true, wash_count_enabled: true };
+const store = {
+  id: 1,
+  name: "Roma",
+  address: "Roma, Italia",
+  latitude: "41.9",
+  longitude: "12.5",
+  timezone: "Europe/Rome",
+  is_active: true,
+  company_settlement_enabled: false,
+  wash_count_enabled: true,
+};
+const alternateStore = {
+  id: 2,
+  name: "Milano Nord",
+  address: "Milano, Italia",
+  latitude: "45.4642",
+  longitude: "9.19",
+  timezone: "Europe/Rome",
+  is_active: true,
+  wash_count_enabled: true,
+};
 
 async function mockAdminApi(
   page: Page,
@@ -33,24 +52,46 @@ async function mockAdminApi(
       },
     });
   });
-  await page.route("https://tile.openstreetmap.org/**", (route) => route.fulfill({ status: 204, body: "" }));
+  await page.route("https://tile.openstreetmap.org/**", (route) =>
+    route.fulfill({ status: 204, body: "" }),
+  );
   await page.route(/^http:\/\/127\.0\.0\.1:4173\/api\//, async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     const path = url.pathname;
-    const json = (value: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(value) });
+    const json = (value: unknown, status = 200) =>
+      route.fulfill({ status, contentType: "application/json", body: JSON.stringify(value) });
 
-    if (path === "/api/auth/me") return authenticated ? json({ id: 1, username: "administrator", role: "admin", is_owner: isOwner }) : json({ detail: "Authentication required" }, 401);
-    if (path === "/api/auth/login" && request.method() === "POST") { authenticated = true; return json({ id: 1, username: "administrator", role: "admin", is_owner: isOwner }); }
+    if (path === "/api/auth/me")
+      return authenticated
+        ? json({ id: 1, username: "administrator", role: "admin", is_owner: isOwner })
+        : json({ detail: "Authentication required" }, 401);
+    if (path === "/api/auth/login" && request.method() === "POST") {
+      authenticated = true;
+      return json({ id: 1, username: "administrator", role: "admin", is_owner: isOwner });
+    }
     if (path === "/api/stores/accessible") {
       if (accessibleStoresFailed) {
         accessibleStoreFailures += 1;
         return json({ detail: "Stores unavailable" }, 500);
       }
-      return json([{ ...store, company_settlement_enabled: companySettlementEnabled, wash_count_enabled: washCountEnabled }, alternateStore]);
+      return json([
+        {
+          ...store,
+          company_settlement_enabled: companySettlementEnabled,
+          wash_count_enabled: washCountEnabled,
+        },
+        alternateStore,
+      ]);
     }
     if (path === "/api/admin/stores" && request.method() === "GET") {
-      return json([{ ...store, company_settlement_enabled: companySettlementEnabled, wash_count_enabled: washCountEnabled }]);
+      return json([
+        {
+          ...store,
+          company_settlement_enabled: companySettlementEnabled,
+          wash_count_enabled: washCountEnabled,
+        },
+      ]);
     }
     if (path === "/api/admin/users" && request.method() === "GET") return json(users);
     if (path === "/api/admin/users" && request.method() === "POST") {
@@ -64,7 +105,20 @@ async function mockAdminApi(
       return json(users[0]);
     }
     if (path === "/api/admin/alerts") return json([]);
-    if (path === "/api/admin/task-logs") return json([{ id: 1, store_id: 1, task_type: "weather", status: "success", message: null, retry_count: 0, started_at: "2026-07-16T08:00:00Z", finished_at: "2026-07-16T08:05:00Z", created_at: "2026-07-16T08:00:00Z" }]);
+    if (path === "/api/admin/task-logs")
+      return json([
+        {
+          id: 1,
+          store_id: 1,
+          task_type: "weather",
+          status: "success",
+          message: null,
+          retry_count: 0,
+          started_at: "2026-07-16T08:00:00Z",
+          finished_at: "2026-07-16T08:05:00Z",
+          created_at: "2026-07-16T08:00:00Z",
+        },
+      ]);
     if (path === "/api/admin/database-backup") {
       databaseBackupRequests += 1;
       return route.fulfill({
@@ -77,28 +131,107 @@ async function mockAdminApi(
         body: "sqlite-snapshot",
       });
     }
-    if (/^\/api\/dashboard\/\d+$/.test(path)) return json([{ card_type: "today", state: "recorded", revenue: 100, weather: "晴", weekday: null, temperature_max: null, temperature_min: null, precipitation: null, hint: null, generated_at: "2026-07-16T08:30:00Z" }]);
-    if (path === "/api/income-config/1/current") return json({ store_id: 1, enabled: true, formula: "营业额 = 现金", items: [{ id: 1, store_id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 0, archived_at: null }] });
-    if (path === "/api/admin/income-categories") return json([{ id: 1, store_id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 0, archived_at: null }]);
+    if (/^\/api\/dashboard\/\d+$/.test(path))
+      return json([
+        {
+          card_type: "today",
+          state: "recorded",
+          revenue: 100,
+          weather: "晴",
+          weekday: null,
+          temperature_max: null,
+          temperature_min: null,
+          precipitation: null,
+          hint: null,
+          generated_at: "2026-07-16T08:30:00Z",
+        },
+      ]);
+    if (path === "/api/income-config/1/current")
+      return json({
+        store_id: 1,
+        enabled: true,
+        formula: "营业额 = 现金",
+        items: [
+          {
+            id: 1,
+            store_id: 1,
+            name: "现金",
+            include_in_total: true,
+            is_active: true,
+            sort_order: 0,
+            archived_at: null,
+          },
+        ],
+      });
+    if (path === "/api/admin/income-categories")
+      return json([
+        {
+          id: 1,
+          store_id: 1,
+          name: "现金",
+          include_in_total: true,
+          is_active: true,
+          sort_order: 0,
+          archived_at: null,
+        },
+      ]);
     if (path === "/api/admin/stores/1/income-config" && request.method() === "PUT") {
       capture.incomePublish = request.postDataJSON();
-      return json({ store_id: 1, enabled: true, formula: "营业额 = 现金 + 其他", items: [
-        { id: 1, store_id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 0, archived_at: null },
-        { id: 2, store_id: 1, name: "其他", include_in_total: true, is_active: true, sort_order: 1, archived_at: null },
-      ] });
+      return json({
+        store_id: 1,
+        enabled: true,
+        formula: "营业额 = 现金 + 其他",
+        items: [
+          {
+            id: 1,
+            store_id: 1,
+            name: "现金",
+            include_in_total: true,
+            is_active: true,
+            sort_order: 0,
+            archived_at: null,
+          },
+          {
+            id: 2,
+            store_id: 1,
+            name: "其他",
+            include_in_total: true,
+            is_active: true,
+            sort_order: 1,
+            archived_at: null,
+          },
+        ],
+      });
     }
     if (path === "/api/admin/stores/1" && request.method() === "PATCH") {
       capture.updatedStore = request.postDataJSON();
-      const update = capture.updatedStore as { company_settlement_enabled?: boolean; wash_count_enabled?: boolean };
+      const update = capture.updatedStore as {
+        company_settlement_enabled?: boolean;
+        wash_count_enabled?: boolean;
+      };
       if (typeof update.company_settlement_enabled === "boolean") {
         companySettlementEnabled = update.company_settlement_enabled;
       }
       if (typeof update.wash_count_enabled === "boolean") {
         washCountEnabled = update.wash_count_enabled;
       }
-      return json({ ...store, company_settlement_enabled: companySettlementEnabled, wash_count_enabled: washCountEnabled, ...update });
+      return json({
+        ...store,
+        company_settlement_enabled: companySettlementEnabled,
+        wash_count_enabled: washCountEnabled,
+        ...update,
+      });
     }
-    if (path === "/api/admin/stores/geocode") return json([{ name: "Milano", country: "Italia", latitude: 45.4642, longitude: 9.19, timezone: "Europe/Rome" }]);
+    if (path === "/api/admin/stores/geocode")
+      return json([
+        {
+          name: "Milano",
+          country: "Italia",
+          latitude: 45.4642,
+          longitude: 9.19,
+          timezone: "Europe/Rome",
+        },
+      ]);
     if (path === "/api/admin/stores/timezone") return json({ timezone: "Europe/Rome" });
     if (path === "/api/admin/stores" && request.method() === "POST") {
       capture.createdStore = request.postDataJSON();
@@ -107,7 +240,9 @@ async function mockAdminApi(
     return json({ detail: `unmocked ${request.method()} ${path}` }, 500);
   });
   return {
-    failAccessibleStores: () => { accessibleStoresFailed = true; },
+    failAccessibleStores: () => {
+      accessibleStoresFailed = true;
+    },
     accessibleStoreFailures: () => accessibleStoreFailures,
     databaseBackupRequests: () => databaseBackupRequests,
   };
@@ -135,9 +270,7 @@ test("final administrator confirms the sensitive database backup download", asyn
   await page.getByRole("button", { name: "确认并下载" }).click();
   const download = await downloadPromise;
 
-  expect(download.suggestedFilename()).toBe(
-    "autolava-backup-20260723-210000.sqlite3",
-  );
+  expect(download.suggestedFilename()).toBe("autolava-backup-20260723-210000.sqlite3");
   expect(api.databaseBackupRequests()).toBe(1);
 });
 
@@ -153,7 +286,9 @@ test("ordinary administrator cannot see the database backup entry", async ({ pag
   await expect(page.getByRole("button", { name: "下载数据库备份" })).toHaveCount(0);
 });
 
-test("owner configures shared-store income, a user membership, and a mapped store", async ({ page }) => {
+test("owner configures shared-store income, a user membership, and a mapped store", async ({
+  page,
+}) => {
   const capture: Capture = {};
   await mockAdminApi(page, capture);
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -162,7 +297,9 @@ test("owner configures shared-store income, a user membership, and a mapped stor
   await page.getByLabel("密码", { exact: true }).fill("password-123");
   await page.getByRole("button", { name: "登录" }).click();
   await page.goto("/");
-  const preAdminStorePicker = page.getByTestId("desktop-store-picker").getByRole("combobox", { name: "门店" });
+  const preAdminStorePicker = page
+    .getByTestId("desktop-store-picker")
+    .getByRole("combobox", { name: "门店" });
   await expect(preAdminStorePicker).toHaveValue("1");
   await preAdminStorePicker.selectOption("2");
   await expect(preAdminStorePicker).toHaveValue("2");
@@ -170,10 +307,11 @@ test("owner configures shared-store income, a user membership, and a mapped stor
 
   await expect(page.getByRole("combobox", { name: "门店" })).toHaveCount(0);
   await expect(page.getByText("门店加载失败，请重试")).toHaveCount(0);
-  await expect(page.getByRole("tab")).toHaveText([
-    "门店与收入", "用户与权限", "系统状态",
-  ]);
-  await expect(page.getByRole("tab", { name: "门店与收入" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab")).toHaveText(["门店与收入", "用户与权限", "系统状态"]);
+  await expect(page.getByRole("tab", { name: "门店与收入" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   await page.getByRole("tab", { name: "用户与权限" }).click();
   await expect(page).toHaveURL(/\/admin\?tab=users$/);
   await page.getByRole("tab", { name: "系统状态" }).click();
@@ -203,11 +341,15 @@ test("owner configures shared-store income, a user membership, and a mapped stor
   await expect(washCountToggle).not.toBeChecked();
   await storeDetails.getByLabel("门店名称 Roma").fill("Roma Centro");
   await storeDetails.getByRole("button", { name: "保存", exact: true }).click();
-  await expect.poll(() => capture.updatedStore).toMatchObject({ name: "Roma Centro", address: "Roma, Italia" });
+  await expect
+    .poll(() => capture.updatedStore)
+    .toMatchObject({ name: "Roma Centro", address: "Roma, Italia" });
   await page.getByLabel("新收入项目名称").fill("其他");
   await page.getByRole("button", { name: "添加收入项目" }).click();
   await incomeItems.getByRole("button", { name: "保存", exact: true }).click();
-  await expect.poll(() => capture.incomePublish).toMatchObject({ enabled: true, items: [{ name: "现金" }, { name: "其他" }] });
+  await expect
+    .poll(() => capture.incomePublish)
+    .toMatchObject({ enabled: true, items: [{ name: "现金" }, { name: "其他" }] });
 
   await page.getByRole("tab", { name: "用户与权限" }).click();
   await page.getByRole("button", { name: "新建用户" }).click();
@@ -216,13 +358,17 @@ test("owner configures shared-store income, a user membership, and a mapped stor
   await newUserEditor.getByLabel("初始密码").fill("operator-123");
   await newUserEditor.getByLabel("Roma").check();
   await newUserEditor.getByRole("button", { name: "添加用户" }).click();
-  await expect.poll(() => capture.createdUser).toEqual({ username: "operator", password: "operator-123", role: "user", store_ids: [1] });
+  await expect
+    .poll(() => capture.createdUser)
+    .toEqual({ username: "operator", password: "operator-123", role: "user", store_ids: [1] });
   await expect(page.getByRole("heading", { name: "编辑 operator" })).toBeVisible();
   const editUserEditor = page.getByRole("heading", { name: "编辑 operator" }).locator("..");
   const userActions = page.getByTestId("user-editor-actions");
   await expect(userActions.getByRole("button")).toHaveText(["永久删除", "保存用户"]);
   await expect(userActions.getByRole("button", { name: "永久删除" })).toBeVisible();
-  const actionPositions = await userActions.getByRole("button").evaluateAll((buttons) => buttons.map((button) => button.getBoundingClientRect().left));
+  const actionPositions = await userActions
+    .getByRole("button")
+    .evaluateAll((buttons) => buttons.map((button) => button.getBoundingClientRect().left));
   expect(actionPositions[1]).toBeGreaterThan(actionPositions[0]);
   await expect(page.getByText("门店成员", { exact: true })).toHaveCount(0);
   await expect(page.getByText("用户操作历史", { exact: true })).toHaveCount(0);
@@ -231,7 +377,9 @@ test("owner configures shared-store income, a user membership, and a mapped stor
   await expect(page.getByText(/该用户有历史记录.*永久删除/)).toHaveCount(0);
   await editUserEditor.getByLabel("重置密码（可选）").fill("operator-reset");
   await editUserEditor.getByRole("button", { name: "保存用户" }).click();
-  await expect.poll(() => capture.updatedUser).toEqual({ role: "user", is_active: true, store_ids: [1], password: "operator-reset" });
+  await expect
+    .poll(() => capture.updatedUser)
+    .toEqual({ role: "user", is_active: true, store_ids: [1], password: "operator-reset" });
   await editUserEditor.getByLabel("账号启用").uncheck();
   await page.getByRole("tab", { name: "门店与收入" }).click();
   const unsavedChanges = page.getByRole("alertdialog", { name: "放弃未保存的修改？" });
@@ -248,14 +396,26 @@ test("owner configures shared-store income, a user membership, and a mapped stor
   await page.getByRole("button", { name: "Milano, Italia" }).click();
   await page.getByRole("button", { name: "确认位置" }).click();
   await page.getByRole("button", { name: "添加门店" }).click();
-  await expect.poll(() => capture.createdStore).toEqual({ name: "Milano", address: "Milano, Italia", latitude: 45.4642, longitude: 9.19, timezone: "Europe/Rome" });
+  await expect
+    .poll(() => capture.createdStore)
+    .toEqual({
+      name: "Milano",
+      address: "Milano, Italia",
+      latitude: 45.4642,
+      longitude: 9.19,
+      timezone: "Europe/Rome",
+    });
   await page.goto("/");
-  const globalStorePicker = page.getByTestId("desktop-store-picker").getByRole("combobox", { name: "门店" });
+  const globalStorePicker = page
+    .getByTestId("desktop-store-picker")
+    .getByRole("combobox", { name: "门店" });
   await expect(globalStorePicker).toBeVisible();
   await expect(globalStorePicker.locator("option:checked")).toHaveText("Milano Nord");
 });
 
-test("store and user creation stays attached to each list across admin breakpoints", async ({ page }) => {
+test("store and user creation stays attached to each list across admin breakpoints", async ({
+  page,
+}) => {
   await mockAdminApi(page, {});
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/login");
@@ -265,8 +425,20 @@ test("store and user creation stays attached to each list across admin breakpoin
   await page.goto("/admin");
 
   for (const view of [
-    { tab: "门店与收入", toolbar: "门店列表操作", list: "门店列表", button: "新建门店", heading: "新建门店" },
-    { tab: "用户与权限", toolbar: "用户列表操作", list: "用户列表", button: "新建用户", heading: "新建用户" },
+    {
+      tab: "门店与收入",
+      toolbar: "门店列表操作",
+      list: "门店列表",
+      button: "新建门店",
+      heading: "新建门店",
+    },
+    {
+      tab: "用户与权限",
+      toolbar: "用户列表操作",
+      list: "用户列表",
+      button: "新建用户",
+      heading: "新建用户",
+    },
   ]) {
     await page.getByRole("tab", { name: view.tab }).click();
     const toolbar = page.getByRole("toolbar", { name: view.toolbar });
@@ -289,14 +461,29 @@ test("store and user creation stays attached to each list across admin breakpoin
     await page.setViewportSize({ width, height: 844 });
     await page.goto("/admin");
     for (const view of [
-      { tab: "门店与收入", toolbar: "门店列表操作", selector: "门店", button: "新建门店", heading: "新建门店" },
-      { tab: "用户与权限", toolbar: "用户列表操作", selector: "用户", button: "新建用户", heading: "新建用户" },
+      {
+        tab: "门店与收入",
+        toolbar: "门店列表操作",
+        selector: "门店",
+        button: "新建门店",
+        heading: "新建门店",
+      },
+      {
+        tab: "用户与权限",
+        toolbar: "用户列表操作",
+        selector: "用户",
+        button: "新建用户",
+        heading: "新建用户",
+      },
     ]) {
       await page.getByRole("tab", { name: view.tab }).click();
       const toolbar = page.getByRole("toolbar", { name: view.toolbar });
       const selector = toolbar.getByRole("combobox", { name: view.selector });
       const button = toolbar.getByRole("button", { name: view.button });
-      const [selectorBox, buttonBox] = await Promise.all([selector.boundingBox(), button.boundingBox()]);
+      const [selectorBox, buttonBox] = await Promise.all([
+        selector.boundingBox(),
+        button.boundingBox(),
+      ]);
       expect(selectorBox).not.toBeNull();
       expect(buttonBox).not.toBeNull();
       expect(Math.abs(selectorBox!.y - buttonBox!.y)).toBeLessThanOrEqual(1);
@@ -323,7 +510,10 @@ test("admin keeps a failed global store load hidden until the user leaves", asyn
   await expect(page.getByText("门店加载失败，请重试")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "重试门店" })).toHaveCount(0);
 
-  await page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "首页" }).click();
+  await page
+    .getByRole("navigation", { name: "主导航" })
+    .getByRole("link", { name: "首页" })
+    .click();
   await expect(page.getByText("门店加载失败，请重试")).toBeVisible();
   await expect(page.getByRole("button", { name: "重试门店" })).toBeVisible();
 });

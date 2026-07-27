@@ -17,9 +17,7 @@ def _rounded_average(total: int, count: int) -> int:
     """Round fractional euro averages to a whole euro using ROUND_HALF_UP."""
     if count == 0:
         return 0
-    return int(
-        (Decimal(total) / Decimal(count)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
-    )
+    return int((Decimal(total) / Decimal(count)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
 @dataclass(frozen=True)
@@ -50,18 +48,14 @@ def _composition_rows(totals: dict[CompositionKey, int]) -> list[dict]:
 
 def _revenue_kpis(records: list[StoreDailyRecord]) -> dict:
     total = sum(record.daily_revenue for record in records)
-    operating_records = [
-        record for record in records if record.is_open in {"营业", "提前休息"}
-    ]
+    operating_records = [record for record in records if record.is_open in {"营业", "提前休息"}]
     operating_day_count = len(operating_records)
     operating_revenue = sum(record.daily_revenue for record in operating_records)
     return {
         "total_revenue": total,
         "record_days": len(records),
         "open_days": operating_day_count,
-        "average_revenue": _rounded_average(
-            operating_revenue, operating_day_count
-        ),
+        "average_revenue": _rounded_average(operating_revenue, operating_day_count),
     }
 
 
@@ -113,10 +107,7 @@ class AnalyticsService:
                 .group_by(SettlementRecord.opening_month)
             )
         ).tuples()
-        return {
-            opening_month.strftime("%Y-%m"): int(amount)
-            for opening_month, amount in rows
-        }
+        return {opening_month.strftime("%Y-%m"): int(amount) for opening_month, amount in rows}
 
     async def calculate(
         self,
@@ -199,9 +190,7 @@ class AnalyticsService:
         total_wash = sum(recorded_wash) if recorded_wash else None
         included_rows = _composition_rows(included_totals)
         excluded_rows = _composition_rows(excluded_totals)
-        compositions = (
-            included_rows if category_ids is None else _composition_rows(selected_totals)
-        )
+        compositions = included_rows if category_ids is None else _composition_rows(selected_totals)
         classified_included_total = sum(included_totals.values())
         primary_categories = sorted(
             compositions,
@@ -210,9 +199,7 @@ class AnalyticsService:
         kpis = _revenue_kpis(records)
         daily_ledger_revenue = kpis["total_revenue"]
         confirmed_settlement_income = sum(settlement_by_month.values())
-        includes_settlement_income = (
-            company_settlement_enabled or confirmed_settlement_income > 0
-        )
+        includes_settlement_income = company_settlement_enabled or confirmed_settlement_income > 0
         total_income = daily_ledger_revenue + confirmed_settlement_income
         if confirmed_settlement_income:
             compositions.append(
@@ -238,9 +225,7 @@ class AnalyticsService:
         comparison_kpis = None
         if compare_start is not None and compare_end is not None:
             comparison = _revenue_kpis(comparison_records)
-            comparison["total_revenue"] += sum(
-                comparison_settlement_by_month.values()
-            )
+            comparison["total_revenue"] += sum(comparison_settlement_by_month.values())
             comparison_kpis = {
                 "start": compare_start.isoformat(),
                 "end": compare_end.isoformat(),

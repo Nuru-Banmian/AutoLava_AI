@@ -75,9 +75,7 @@ def weather_label(code: int) -> str | None:
 
 
 class WeatherProvider(Protocol):
-    async def get_daily(
-        self, store: WeatherLocation, target: date
-    ) -> WeatherResult | None: ...
+    async def get_daily(self, store: WeatherLocation, target: date) -> WeatherResult | None: ...
 
 
 class OpenMeteoProvider:
@@ -90,9 +88,7 @@ class OpenMeteoProvider:
         async with httpx.AsyncClient() as client:
             return await client.get(url, **kwargs)
 
-    async def get_daily(
-        self, store: WeatherLocation, target: date
-    ) -> WeatherResult | None:
+    async def get_daily(self, store: WeatherLocation, target: date) -> WeatherResult | None:
         today = datetime.now(ZoneInfo(store.timezone)).date()
         base = (
             "https://api.open-meteo.com/v1/forecast"
@@ -174,9 +170,7 @@ class WeatherService:
         self.primary = primary
         self.fallback = fallback
 
-    async def get_daily(
-        self, store: WeatherLocation, target: date
-    ) -> WeatherResult | None:
+    async def get_daily(self, store: WeatherLocation, target: date) -> WeatherResult | None:
         try:
             result = await self.primary.get_daily(store, target)
         except Exception:

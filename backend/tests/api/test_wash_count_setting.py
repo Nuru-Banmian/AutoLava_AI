@@ -7,9 +7,7 @@ from app.models.identity import StoreMember, User
 
 
 @pytest.fixture
-async def admin_client(
-    client: AsyncClient, user_factory, db_session: AsyncSession
-) -> AsyncClient:
+async def admin_client(client: AsyncClient, user_factory, db_session: AsyncSession) -> AsyncClient:
     await user_factory(username="wash-count-admin", password="secret", role="admin")
     response = await client.post(
         "/api/auth/login",
@@ -47,9 +45,7 @@ async def test_store_contract_defaults_and_scopes_wash_count_setting(
     assert changed.json()["wash_count_enabled"] is False
     await db_session.refresh(other)
     assert other.wash_count_enabled is True
-    by_id = {
-        item["id"]: item for item in (await admin_client.get("/api/admin/stores")).json()
-    }
+    by_id = {item["id"]: item for item in (await admin_client.get("/api/admin/stores")).json()}
     assert by_id[created.json()["id"]]["wash_count_enabled"] is False
     assert by_id[other.id]["wash_count_enabled"] is True
 
@@ -57,9 +53,7 @@ async def test_store_contract_defaults_and_scopes_wash_count_setting(
 async def test_regular_user_cannot_modify_but_can_read_assigned_setting(
     auth_client: AsyncClient, store_factory, db_session: AsyncSession
 ) -> None:
-    user = await db_session.scalar(
-        select(User).where(User.username == "authenticated")
-    )
+    user = await db_session.scalar(select(User).where(User.username == "authenticated"))
     assert user is not None
     store = await store_factory(name="Assigned")
     store.wash_count_enabled = False
@@ -106,9 +100,7 @@ async def test_write_rules_preserve_history_while_setting_is_disabled(
             json=body | {"daily_revenue": 180, "wash_count": 99},
         )
     ).status_code == 200
-    assert (
-        await admin_client.put(second_path, json=body | {"wash_count": 19})
-    ).status_code == 201
+    assert (await admin_client.put(second_path, json=body | {"wash_count": 19})).status_code == 201
 
     assert (await admin_client.get(first_path)).json()["wash_count"] == 7
     assert (await admin_client.get(second_path)).json()["wash_count"] is None

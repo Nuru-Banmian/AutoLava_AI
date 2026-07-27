@@ -12,7 +12,8 @@ export class ApiError extends Error {
 const friendlyMessages: Record<string, string> = {
   "Invalid credentials": "用户名或密码错误，请重新输入",
   "Inactive user": "这个账号已停用，请联系管理员",
-  "Income configuration version does not match": "收入项目刚刚发生变化，页面已为你重新加载，请确认金额后再次保存",
+  "Income configuration version does not match":
+    "收入项目刚刚发生变化，页面已为你重新加载，请确认金额后再次保存",
 };
 
 export function friendlyApiError(error: unknown, fallback: string): string {
@@ -33,12 +34,19 @@ function errorDetail(body: unknown, fallback: string): string {
   if (typeof body === "object" && body !== null && "detail" in body) {
     const detail = (body as { detail: unknown }).detail;
     if (typeof detail === "string") return detail;
-    if (typeof detail === "object" && detail !== null && "message" in detail && typeof detail.message === "string") {
+    if (
+      typeof detail === "object" &&
+      detail !== null &&
+      "message" in detail &&
+      typeof detail.message === "string"
+    ) {
       return detail.message;
     }
     if (Array.isArray(detail)) {
       const messages = detail
-        .map((item) => (typeof item === "object" && item !== null && "msg" in item ? String(item.msg) : ""))
+        .map((item) =>
+          typeof item === "object" && item !== null && "msg" in item ? String(item.msg) : "",
+        )
         .filter(Boolean);
       if (messages.length) return messages.join("; ");
     }
@@ -49,7 +57,8 @@ function errorDetail(body: unknown, fallback: string): string {
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   const headers = new Headers(init.headers);
-  if (init.body != null && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  if (init.body != null && !headers.has("Content-Type"))
+    headers.set("Content-Type", "application/json");
   const response = await fetch(`/api${normalizedPath}`, {
     ...init,
     credentials: "include",

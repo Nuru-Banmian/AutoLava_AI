@@ -1,4 +1,4 @@
-import { http, HttpResponse } from "msw";
+import { HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
@@ -14,7 +14,12 @@ describe("friendlyApiError", () => {
   it.each([
     [401, "Invalid credentials", "登录失败", "用户名或密码错误，请重新输入"],
     [403, "Inactive user", "登录失败", "这个账号已停用，请联系管理员"],
-    [422, "Income configuration version does not match", "保存失败", "收入项目刚刚发生变化，页面已为你重新加载，请确认金额后再次保存"],
+    [
+      422,
+      "Income configuration version does not match",
+      "保存失败",
+      "收入项目刚刚发生变化，页面已为你重新加载，请确认金额后再次保存",
+    ],
   ])("localizes the exact technical message %s %s", (status, detail, fallback, expected) => {
     expect(friendlyApiError(new ApiError(status, detail), fallback)).toBe(expected);
   });
@@ -28,8 +33,9 @@ describe("friendlyApiError", () => {
   });
 
   it("localizes an unmapped ASCII 401 response", () => {
-    expect(friendlyApiError(new ApiError(401, "Authentication required"), "登录失败"))
-      .toBe("登录状态已失效，请重新登录");
+    expect(friendlyApiError(new ApiError(401, "Authentication required"), "登录失败")).toBe(
+      "登录状态已失效，请重新登录",
+    );
   });
 
   it.each([
@@ -41,8 +47,9 @@ describe("friendlyApiError", () => {
   });
 
   it("uses the contextual fallback for a network error", () => {
-    expect(friendlyApiError(new TypeError("Failed to fetch"), "网络连接失败，请稍后重试"))
-      .toBe("网络连接失败，请稍后重试");
+    expect(friendlyApiError(new TypeError("Failed to fetch"), "网络连接失败，请稍后重试")).toBe(
+      "网络连接失败，请稍后重试",
+    );
   });
 
   it("uses the contextual fallback for an empty API detail", () => {
@@ -50,8 +57,9 @@ describe("friendlyApiError", () => {
   });
 
   it("preserves a useful Chinese API detail", () => {
-    expect(friendlyApiError(new ApiError(422, "金额不能为负数"), "保存失败"))
-      .toBe("金额不能为负数");
+    expect(friendlyApiError(new ApiError(422, "金额不能为负数"), "保存失败")).toBe(
+      "金额不能为负数",
+    );
   });
 });
 
@@ -59,13 +67,18 @@ describe("api", () => {
   it("prefixes API paths, includes credentials, sends JSON, and handles 204", async () => {
     let credentials: RequestCredentials | undefined;
     let body: unknown;
-    server.use(http.post("/api/example", async ({ request }) => {
-      credentials = request.credentials;
-      body = await request.json();
-      return new HttpResponse(null, { status: 204 });
-    }));
+    server.use(
+      http.post("/api/example", async ({ request }) => {
+        credentials = request.credentials;
+        body = await request.json();
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
 
-    const result = await api<void>("example", { method: "POST", body: JSON.stringify({ ok: true }) });
+    const result = await api<void>("example", {
+      method: "POST",
+      body: JSON.stringify({ ok: true }),
+    });
 
     expect(result).toBeUndefined();
     expect(credentials).toBe("include");
@@ -73,10 +86,19 @@ describe("api", () => {
   });
 
   it("surfaces FastAPI 422 validation messages", async () => {
-    server.use(http.get("/api/invalid", () => HttpResponse.json({ detail: [
-      { loc: ["body", "name"], msg: "Field required", type: "missing" },
-      { loc: ["body", "password"], msg: "Too short", type: "value_error" },
-    ] }, { status: 422 })));
+    server.use(
+      http.get("/api/invalid", () =>
+        HttpResponse.json(
+          {
+            detail: [
+              { loc: ["body", "name"], msg: "Field required", type: "missing" },
+              { loc: ["body", "password"], msg: "Too short", type: "value_error" },
+            ],
+          },
+          { status: 422 },
+        ),
+      ),
+    );
 
     await expect(api("/invalid")).rejects.toMatchObject({
       status: 422,
@@ -85,10 +107,16 @@ describe("api", () => {
   });
 
   it("uses a readable plain-text server error instead of throwing a JSON parse error", async () => {
-    server.use(http.get("/api/unavailable", () => new HttpResponse("Gateway unavailable", {
-      status: 502,
-      headers: { "Content-Type": "text/plain" },
-    })));
+    server.use(
+      http.get(
+        "/api/unavailable",
+        () =>
+          new HttpResponse("Gateway unavailable", {
+            status: 502,
+            headers: { "Content-Type": "text/plain" },
+          }),
+      ),
+    );
 
     await expect(api("/unavailable")).rejects.toMatchObject({
       status: 502,
@@ -99,11 +127,13 @@ describe("api", () => {
   it("preserves a Headers instance and does not add content type to a bodyless request", async () => {
     let authorization: string | null = null;
     let contentType: string | null = null;
-    server.use(http.get("/api/headers", ({ request }) => {
-      authorization = request.headers.get("authorization");
-      contentType = request.headers.get("content-type");
-      return HttpResponse.json({ ok: true });
-    }));
+    server.use(
+      http.get("/api/headers", ({ request }) => {
+        authorization = request.headers.get("authorization");
+        contentType = request.headers.get("content-type");
+        return HttpResponse.json({ ok: true });
+      }),
+    );
 
     await api("/headers", { headers: new Headers({ Authorization: "Bearer secret" }) });
 
@@ -114,11 +144,13 @@ describe("api", () => {
   it("preserves tuple headers and an explicit content type for a request body", async () => {
     let authorization: string | null = null;
     let contentType: string | null = null;
-    server.use(http.post("/api/headers", ({ request }) => {
-      authorization = request.headers.get("authorization");
-      contentType = request.headers.get("content-type");
-      return HttpResponse.json({ ok: true });
-    }));
+    server.use(
+      http.post("/api/headers", ({ request }) => {
+        authorization = request.headers.get("authorization");
+        contentType = request.headers.get("content-type");
+        return HttpResponse.json({ ok: true });
+      }),
+    );
     const headers: [string, string][] = [
       ["Authorization", "Bearer tuple"],
       ["Content-Type", "application/merge-patch+json"],

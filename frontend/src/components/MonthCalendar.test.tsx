@@ -28,7 +28,10 @@ describe("MonthCalendar", () => {
       expect(marker).toHaveAttribute("data-recorded", "true");
       expect(marker.querySelector(".bg-primary")).toBeInTheDocument();
     }
-    expect(screen.getByRole("button", { name: "2026年7月29日" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "2026年7月29日" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     expect(screen.getByRole("button", { name: "2026年7月31日" })).toBeDisabled();
 
     fireEvent.click(recorded);
@@ -46,14 +49,38 @@ describe("MonthCalendar", () => {
       />,
     );
 
-    expect(screen.getAllByRole("columnheader").map((header) => header.textContent)).toEqual(["一", "二", "三", "四", "五", "六", "日"]);
-    expect(screen.getByRole("button", { name: "2026年6月29日" })).toHaveAttribute("data-outside", "true");
-    expect(screen.getByRole("button", { name: "2026年8月2日" })).toHaveAttribute("data-outside", "true");
-    expect(screen.getByRole("button", { name: "2026年7月1日" })).not.toHaveAttribute("data-outside");
+    expect(screen.getAllByRole("columnheader").map((header) => header.textContent)).toEqual([
+      "一",
+      "二",
+      "三",
+      "四",
+      "五",
+      "六",
+      "日",
+    ]);
+    expect(screen.getByRole("button", { name: "2026年6月29日" })).toHaveAttribute(
+      "data-outside",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "2026年8月2日" })).toHaveAttribute(
+      "data-outside",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "2026年7月1日" })).not.toHaveAttribute(
+      "data-outside",
+    );
   });
 
   it("owns headers and days through row elements with one roving tab stop", () => {
-    render(<MonthCalendar month="2026-07" selected="2026-07-14" today="2026-07-15" recordedDates={new Set()} onSelect={() => undefined} />);
+    render(
+      <MonthCalendar
+        month="2026-07"
+        selected="2026-07-14"
+        today="2026-07-15"
+        recordedDates={new Set()}
+        onSelect={() => undefined}
+      />,
+    );
 
     const grid = screen.getByRole("grid", { name: "2026年7月日历" });
     expect(grid.querySelectorAll(":scope > [role=row]")).toHaveLength(6);
@@ -64,12 +91,22 @@ describe("MonthCalendar", () => {
 
     const julyThirteenth = screen.getByRole("button", { name: "2026年7月13日" });
     fireEvent.focus(julyThirteenth);
-    expect(screen.getAllByRole("button").filter((button) => button.tabIndex === 0)).toEqual([julyThirteenth]);
+    expect(screen.getAllByRole("button").filter((button) => button.tabIndex === 0)).toEqual([
+      julyThirteenth,
+    ]);
   });
 
   it("moves focus by day and week without entering future dates", async () => {
     const user = userEvent.setup();
-    render(<MonthCalendar month="2026-07" selected="2026-07-15" today="2026-07-15" recordedDates={new Set()} onSelect={() => undefined} />);
+    render(
+      <MonthCalendar
+        month="2026-07"
+        selected="2026-07-15"
+        today="2026-07-15"
+        recordedDates={new Set()}
+        onSelect={() => undefined}
+      />,
+    );
     const selected = screen.getByRole("button", { name: "2026年7月15日" });
     selected.focus();
 
@@ -86,7 +123,15 @@ describe("MonthCalendar", () => {
   it("moves to week boundaries, crosses visible month edges, and selects from the keyboard", async () => {
     const onSelect = vi.fn();
     const user = userEvent.setup();
-    render(<MonthCalendar month="2026-07" selected="2026-07-01" today="2026-07-15" recordedDates={new Set()} onSelect={onSelect} />);
+    render(
+      <MonthCalendar
+        month="2026-07"
+        selected="2026-07-01"
+        today="2026-07-15"
+        recordedDates={new Set()}
+        onSelect={onSelect}
+      />,
+    );
     const julyFirst = screen.getByRole("button", { name: "2026年7月1日" });
     julyFirst.focus();
 
@@ -176,18 +221,28 @@ describe("LedgerDatePicker", () => {
   });
 
   it("uses a bottom sheet on narrow screens", () => {
-    vi.stubGlobal("matchMedia", vi.fn(() => ({
-      matches: false,
-      media: "(min-width: 640px)",
-      onchange: null,
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    })));
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => ({
+        matches: false,
+        media: "(min-width: 640px)",
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    );
 
-    render(<LedgerDatePicker value="2026-07-15" today="2026-07-15" recordedDates={new Set()} onChange={() => undefined} />);
+    render(
+      <LedgerDatePicker
+        value="2026-07-15"
+        today="2026-07-15"
+        recordedDates={new Set()}
+        onChange={() => undefined}
+      />,
+    );
     const trigger = screen.getByRole("button", { name: "选择台账日期：2026年7月15日" });
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(trigger);
@@ -201,7 +256,14 @@ describe("LedgerDatePicker", () => {
   it("exposes dialog trigger state and restores focus after closing", async () => {
     const onChange = vi.fn();
     const user = userEvent.setup();
-    render(<LedgerDatePicker value="2026-07-15" today="2026-07-15" recordedDates={new Set()} onChange={onChange} />);
+    render(
+      <LedgerDatePicker
+        value="2026-07-15"
+        today="2026-07-15"
+        recordedDates={new Set()}
+        onChange={onChange}
+      />,
+    );
     const trigger = screen.getByRole("button", { name: "选择台账日期：2026年7月15日" });
 
     expect(trigger).toHaveAttribute("aria-haspopup", "dialog");

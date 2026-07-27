@@ -165,11 +165,9 @@ async def test_revenue_analysis_reconciles_symmetric_and_settlement_contribution
     decomposition = payload["result"]["daily_ledger_decomposition"]
     assert Decimal(decomposition["operating_days_contribution"]) == Decimal("110")
     assert Decimal(decomposition["operating_day_average_contribution"]) == Decimal("50")
-    assert (
-        Decimal(decomposition["operating_days_contribution"])
-        + Decimal(decomposition["operating_day_average_contribution"])
-        == Decimal(payload["result"]["daily_ledger_revenue_change"])
-    )
+    assert Decimal(decomposition["operating_days_contribution"]) + Decimal(
+        decomposition["operating_day_average_contribution"]
+    ) == Decimal(payload["result"]["daily_ledger_revenue_change"])
     assert payload["evidence_sufficiency"] == {
         "critical_data_complete": True,
         "largest_verified_contribution": "operating_days",

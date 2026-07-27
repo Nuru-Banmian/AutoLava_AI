@@ -52,9 +52,7 @@ class BackgroundRefreshScheduler:
 
     def start(self) -> None:
         if not self.running:
-            self._task = asyncio.create_task(
-                self._run(), name="autolava-background-refresh"
-            )
+            self._task = asyncio.create_task(self._run(), name="autolava-background-refresh")
 
     async def stop(self) -> None:
         if self._task is None:
@@ -70,9 +68,7 @@ class BackgroundRefreshScheduler:
                 if self.timeout_seconds is None:
                     await self.refresh()
                 else:
-                    await asyncio.wait_for(
-                        self.refresh(), timeout=self.timeout_seconds
-                    )
+                    await asyncio.wait_for(self.refresh(), timeout=self.timeout_seconds)
             except Exception:
                 pass
             await asyncio.sleep(self.interval_seconds)
@@ -105,9 +101,7 @@ class DailyScheduler:
 
     def start(self) -> None:
         if not self.running:
-            self._task = asyncio.create_task(
-                self._run(), name="autolava-daily-maintenance"
-            )
+            self._task = asyncio.create_task(self._run(), name="autolava-daily-maintenance")
 
     async def stop(self) -> None:
         if self._task is None:
@@ -125,14 +119,10 @@ class DailyScheduler:
 
     def _seconds_until_next_run(self) -> float:
         now = self._local_now()
-        next_run = now.replace(
-            hour=self.hour, minute=0, second=0, microsecond=0
-        )
+        next_run = now.replace(hour=self.hour, minute=0, second=0, microsecond=0)
         if next_run <= now:
             next_run += timedelta(days=1)
-        return (
-            next_run.astimezone(UTC) - now.astimezone(UTC)
-        ).total_seconds()
+        return (next_run.astimezone(UTC) - now.astimezone(UTC)).total_seconds()
 
     async def _invoke_callback(self) -> None:
         try:
@@ -182,9 +172,7 @@ def make_sqlite_maintenance_callback(
             local_today = started_value.astimezone(timezone).date()
         status = "success"
         try:
-            backup_path = await asyncio.to_thread(
-                backup_sqlite, source, destination, local_today
-            )
+            backup_path = await asyncio.to_thread(backup_sqlite, source, destination, local_today)
             message = f"SQLite backup completed: {backup_path.name}"
         except Exception as error:
             status = "failed"
@@ -295,9 +283,7 @@ def make_refresh_callback(
                         ["yesterday", "today", "tomorrow"],
                         local_date=weather.today,
                     )
-                    succeeded = all(
-                        result is not None for result in weather.results.values()
-                    )
+                    succeeded = all(result is not None for result in weather.results.values())
                 return succeeded
             except Exception:
                 return False
@@ -309,9 +295,7 @@ def make_refresh_callback(
             async with session_factory() as session:
                 stores = list(
                     await session.scalars(
-                        select(Store)
-                        .where(Store.is_active.is_(True))
-                        .order_by(Store.id)
+                        select(Store).where(Store.is_active.is_(True)).order_by(Store.id)
                     )
                 )
         except Exception:
@@ -334,8 +318,7 @@ def make_refresh_callback(
         else:
             status = "success" if failed == 0 else "failed"
             message = (
-                f"天气刷新完成：共 {len(stores)} 个门店，"
-                f"成功 {succeeded} 个，失败 {failed} 个"
+                f"天气刷新完成：共 {len(stores)} 个门店，成功 {succeeded} 个，失败 {failed} 个"
             )
 
         async with session_factory() as session:

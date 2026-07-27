@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createContext, type PropsWithChildren, useContext } from "react";
 
-import { api, ApiError } from "@/api/client";
+import { ApiError, api } from "@/api/client";
 import type { AuthenticatedUser } from "@/api/types";
 
 export const authQueryKey = ["auth", "me"] as const;

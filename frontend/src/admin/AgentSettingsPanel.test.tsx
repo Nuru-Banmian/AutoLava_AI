@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { http, HttpResponse } from "msw";
+import { HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 
@@ -32,7 +32,7 @@ it("lets the final administrator persist the global Agent switch", async () => {
       HttpResponse.json({ enabled, release_approved: true }),
     ),
     http.patch("/api/admin/agent-settings", async ({ request }) => {
-      enabled = (await request.json() as { enabled: boolean }).enabled;
+      enabled = ((await request.json()) as { enabled: boolean }).enabled;
       return HttpResponse.json({ enabled, release_approved: true });
     }),
   );
@@ -75,7 +75,5 @@ it("keeps the switch disabled until the production release gate passes", async (
     name: "全局启用 Agent",
   });
   expect(toggle).toBeDisabled();
-  expect(
-    screen.getByText("生产发布门禁尚未通过，Agent 保持全局关闭"),
-  ).toBeInTheDocument();
+  expect(screen.getByText("生产发布门禁尚未通过，Agent 保持全局关闭")).toBeInTheDocument();
 });

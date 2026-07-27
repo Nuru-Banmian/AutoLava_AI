@@ -3,9 +3,7 @@ from typing import Any
 from app.models.ledger import StoreDailyRecord
 
 
-def record_payload(
-    record: StoreDailyRecord, *, include_wash_count: bool = True
-) -> dict[str, Any]:
+def record_payload(record: StoreDailyRecord, *, include_wash_count: bool = True) -> dict[str, Any]:
     payload = {
         "id": record.id,
         "store_id": record.store_id,

@@ -10,20 +10,23 @@ import { BusinessAnalysisCard } from "@/components/BusinessAnalysisCard";
 import { DeleteRecordDialog } from "@/components/DeleteRecordDialog";
 import { MobileRecordList } from "@/components/MobileRecordList";
 import { MobileRecordSheet } from "@/components/MobileRecordSheet";
-import { RecordDetailPanel, type RecordDetail } from "@/components/RecordDetailPanel";
+import { type RecordDetail, RecordDetailPanel } from "@/components/RecordDetailPanel";
 import { RecordFilters } from "@/components/RecordFilters";
 import { RecordPagination } from "@/components/RecordPagination";
 import { RecordTable, type RecordTableRow } from "@/components/RecordTable";
+import { downloadBusinessRecords } from "@/lib/business-record-export";
 import type { DateRange, RecordRangeMode } from "@/lib/business-record-ranges";
 import { monthRange } from "@/lib/business-record-ranges";
-import { downloadBusinessRecords } from "@/lib/business-record-export";
 import { databaseKey, loadBusinessRecords, storeLocalToday } from "@/lib/user-api";
-import { useStore } from "@/stores/StoreProvider";
-import { restoredBusinessRecordsState, type BusinessRecordsViewState } from "@/navigation/business-records-return";
 import {
   businessRecordsRangeFromAction,
   validatedBusinessRecordsAction,
 } from "@/navigation/agent-actions";
+import {
+  type BusinessRecordsViewState,
+  restoredBusinessRecordsState,
+} from "@/navigation/business-records-return";
+import { useStore } from "@/stores/StoreProvider";
 
 const PAGE_SIZE = 15 as const;
 const FETCH_SIZE = 200 as const;
@@ -36,23 +39,27 @@ export function BusinessRecordsPage() {
   const today = selected ? storeLocalToday(selected) : "1970-01-01";
   const isAdmin = user?.role === "admin";
   const restored = useRef(restoredBusinessRecordsState(location.state, selected?.id)).current;
-  const action = useRef(validatedBusinessRecordsAction(
-    location.state && typeof location.state === "object"
-      ? (location.state as Record<string, unknown>).agentBusinessRecordsAction
-      : null,
-    today.slice(0, 7),
-  )).current;
+  const action = useRef(
+    validatedBusinessRecordsAction(
+      location.state && typeof location.state === "object"
+        ? (location.state as Record<string, unknown>).agentBusinessRecordsAction
+        : null,
+      today.slice(0, 7),
+    ),
+  ).current;
   const actionRange = action ? businessRecordsRangeFromAction(action, today) : null;
   const hasNavigationEnvelope = Boolean(
-    location.state
-    && typeof location.state === "object"
-    && (
-      "restoreBusinessRecords" in location.state
-      || "agentBusinessRecordsAction" in location.state
-    )
+    location.state &&
+      typeof location.state === "object" &&
+      ("restoreBusinessRecords" in location.state ||
+        "agentBusinessRecordsAction" in location.state),
   );
-  const [recordMode, setRecordMode] = useState<RecordRangeMode>(actionRange ? "custom" : (restored?.recordMode ?? "month"));
-  const [range, setRange] = useState<DateRange>(() => actionRange ?? restored?.range ?? monthRange(today.slice(0, 7)));
+  const [recordMode, setRecordMode] = useState<RecordRangeMode>(
+    actionRange ? "custom" : (restored?.recordMode ?? "month"),
+  );
+  const [range, setRange] = useState<DateRange>(
+    () => actionRange ?? restored?.range ?? monthRange(today.slice(0, 7)),
+  );
   const [page, setPage] = useState(restored?.page ?? 1);
   const [selectedDate, setSelectedDate] = useState<string | null>(restored?.selectedDate ?? null);
   const [mobileRecord, setMobileRecord] = useState<RecordDetail | null>(null);
@@ -97,22 +104,23 @@ export function BusinessRecordsPage() {
     navigate(location.pathname, { replace: true, state: null });
   }, [hasNavigationEnvelope, location.pathname, navigate, selected]);
 
-  const recordQueryString = useMemo(() => new URLSearchParams({
-    start: range.start,
-    end: range.end,
-    page: "1",
-    page_size: String(FETCH_SIZE),
-  }).toString(), [range.end, range.start]);
+  const recordQueryString = useMemo(
+    () =>
+      new URLSearchParams({
+        start: range.start,
+        end: range.end,
+        page: "1",
+        page_size: String(FETCH_SIZE),
+      }).toString(),
+    [range.end, range.start],
+  );
   const recordStateReady = selected !== null && recordStoreId === selected.id;
   const records = useQuery({
-    queryKey: recordStateReady ? databaseKey(selected.id, recordQueryString) : ["database", "records", "pending", selected?.id ?? null],
+    queryKey: recordStateReady
+      ? databaseKey(selected.id, recordQueryString)
+      : ["database", "records", "pending", selected?.id ?? null],
     enabled: recordStateReady,
-    queryFn: ({ signal }) => loadBusinessRecords(
-      selected!.id,
-      range.start,
-      range.end,
-      signal,
-    ),
+    queryFn: ({ signal }) => loadBusinessRecords(selected!.id, range.start, range.end, signal),
   });
 
   useEffect(() => {
@@ -127,7 +135,9 @@ export function BusinessRecordsPage() {
     const mobileDate = pendingMobileRestoreDate.current;
     if (mobileDate) {
       pendingMobileRestoreDate.current = null;
-      setMobileRecord(items.find((item) => item.date === mobileDate) ?? { id: null, date: mobileDate });
+      setMobileRecord(
+        items.find((item) => item.date === mobileDate) ?? { id: null, date: mobileDate },
+      );
     }
   }, [records.data, records.isSuccess, selected?.id]);
 
@@ -138,14 +148,15 @@ export function BusinessRecordsPage() {
     return () => cancelAnimationFrame(frame);
   }, [records.isSuccess, restored]);
 
-  const selectedRecordFromResponse = records.data?.items.find((item) => (
-    item.date === selectedDate && item.store_id === selected?.id
-  )) ?? null;
+  const selectedRecordFromResponse =
+    records.data?.items.find(
+      (item) => item.date === selectedDate && item.store_id === selected?.id,
+    ) ?? null;
   if (!selectedRecordFromResponse) {
     selectedRecordRef.current = null;
   } else if (
-    selectedRecordRef.current?.id === selectedRecordFromResponse.id
-    && selectedRecordRef.current.store_id === selectedRecordFromResponse.store_id
+    selectedRecordRef.current?.id === selectedRecordFromResponse.id &&
+    selectedRecordRef.current.store_id === selectedRecordFromResponse.store_id
   ) {
     Object.assign(selectedRecordRef.current, selectedRecordFromResponse);
   } else {
@@ -157,16 +168,17 @@ export function BusinessRecordsPage() {
     const byDate = new Map(visibleRecords.map((record) => [record.date, record]));
     const tableEnd = range.end > today ? today : range.end;
     return eachDayOfInterval({ start: parseISO(range.start), end: parseISO(tableEnd) })
-      .map((day) => byDate.get(format(day, "yyyy-MM-dd")) ?? { id: null, date: format(day, "yyyy-MM-dd") })
+      .map(
+        (day) =>
+          byDate.get(format(day, "yyyy-MM-dd")) ?? { id: null, date: format(day, "yyyy-MM-dd") },
+      )
       .reverse();
   }, [range.end, range.start, today, visibleRecords]);
   const selectedTableRow = tableRows.find((record) => record.date === selectedDate) ?? null;
   const pagedTableRows = tableRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const exportMutation = useMutation({
-    mutationFn: ({ storeId, requestedRange }: {
-      storeId: number;
-      requestedRange: DateRange;
-    }) => downloadBusinessRecords(storeId, requestedRange),
+    mutationFn: ({ storeId, requestedRange }: { storeId: number; requestedRange: DateRange }) =>
+      downloadBusinessRecords(storeId, requestedRange),
   });
   const exportError = exportMutation.isError
     ? friendlyApiError(exportMutation.error, "导出失败，请重试")
@@ -198,12 +210,19 @@ export function BusinessRecordsPage() {
   };
 
   if (!selected) {
-    return <section className="grid w-full gap-4"><h1 className="text-2xl font-semibold">营业记录</h1><p role="status">请先选择门店。</p></section>;
+    return (
+      <section className="grid w-full gap-4">
+        <h1 className="text-2xl font-semibold">营业记录</h1>
+        <p role="status">请先选择门店。</p>
+      </section>
+    );
   }
 
   return (
     <section className="grid w-full gap-4 lg:min-h-0 lg:flex-1 lg:grid-rows-[auto_auto_minmax(0,1fr)]">
-      <header><h1 className="text-2xl font-semibold">营业记录</h1></header>
+      <header>
+        <h1 className="text-2xl font-semibold">营业记录</h1>
+      </header>
       <RecordFilters
         mode={recordMode}
         range={range}
@@ -211,10 +230,12 @@ export function BusinessRecordsPage() {
         exporting={exportMutation.isPending}
         exportError={exportError}
         onChange={handleRecordRangeChange}
-        onExport={() => exportMutation.mutate({
-          storeId: selected.id,
-          requestedRange: range,
-        })}
+        onExport={() =>
+          exportMutation.mutate({
+            storeId: selected.id,
+            requestedRange: range,
+          })
+        }
       />
       <div className="grid gap-4 lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_minmax(30rem,32rem)]">
         <div className="min-w-0 overflow-x-hidden lg:flex lg:min-h-0 lg:flex-col">
@@ -241,7 +262,16 @@ export function BusinessRecordsPage() {
             {records.isSuccess && visibleRecords.length === 0 && (
               <div className="grid gap-2 rounded-md border border-dashed p-4">
                 <p>暂无可查看记录</p>
-                <Link className="w-fit text-primary underline-offset-4 hover:underline" to={`/ledger?date=${today}`} onClick={(event) => { event.preventDefault(); editRecord(today); }}>补记记录</Link>
+                <Link
+                  className="w-fit text-primary underline-offset-4 hover:underline"
+                  to={`/ledger?date=${today}`}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    editRecord(today);
+                  }}
+                >
+                  补记记录
+                </Link>
               </div>
             )}
           </div>
@@ -271,12 +301,23 @@ export function BusinessRecordsPage() {
               <div className="grid gap-2 rounded-md border border-dashed p-4">
                 <p>暂无可查看记录</p>
                 {!records.isLoading && !records.error && (
-                  <Link className="w-fit text-primary underline-offset-4 hover:underline" to={`/ledger?date=${today}`} onClick={(event) => { event.preventDefault(); editRecord(today); }}>补记记录</Link>
+                  <Link
+                    className="w-fit text-primary underline-offset-4 hover:underline"
+                    to={`/ledger?date=${today}`}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      editRecord(today);
+                    }}
+                  >
+                    补记记录
+                  </Link>
                 )}
               </div>
             )}
           </div>
-          {recordStateReady && <BusinessAnalysisCard key={selected.id} storeId={selected.id} range={range} />}
+          {recordStateReady && (
+            <BusinessAnalysisCard key={selected.id} storeId={selected.id} range={range} />
+          )}
         </aside>
       </div>
       {mobileRecord && (mobileRecord.id === null || mobileRecord.store_id === selected.id) && (

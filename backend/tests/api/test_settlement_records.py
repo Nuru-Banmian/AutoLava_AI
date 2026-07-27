@@ -32,9 +32,7 @@ async def record_context(client, user_factory, store_factory, db_session):
 
 
 async def create_company(client: AsyncClient, store_id: int, name: str = "Alpha") -> dict:
-    response = await client.post(
-        f"/api/settlements/{store_id}/companies", json={"name": name}
-    )
+    response = await client.post(f"/api/settlements/{store_id}/companies", json={"name": name})
     assert response.status_code == 201
     return response.json()
 
@@ -133,9 +131,7 @@ async def test_month_summary_uses_daily_ledger_and_stable_business_order(
     records[0].status = "confirmed"
     await db_session.commit()
 
-    response = await client.get(
-        f"/api/settlements/{store.id}/months/{month.strftime('%Y-%m')}"
-    )
+    response = await client.get(f"/api/settlements/{store.id}/months/{month.strftime('%Y-%m')}")
     assert response.status_code == 200
     body = response.json()
     assert [(item["status"], item["company_name"], item["amount"]) for item in body["records"]] == [
@@ -155,7 +151,16 @@ async def test_month_summary_uses_daily_ledger_and_stable_business_order(
 
 @pytest.mark.parametrize(
     ("month", "amount"),
-    [("2026-1", 1), ("2026-13", 1), ("not-a-month", 1), ("2026-01", 0), ("2026-01", -1), ("2026-01", 1.5), ("2026-01", "10"), ("2026-01", 10_000_000_000)],
+    [
+        ("2026-1", 1),
+        ("2026-13", 1),
+        ("not-a-month", 1),
+        ("2026-01", 0),
+        ("2026-01", -1),
+        ("2026-01", 1.5),
+        ("2026-01", "10"),
+        ("2026-01", 10_000_000_000),
+    ],
 )
 async def test_create_rejects_invalid_months_and_non_positive_or_non_integer_amounts(
     client: AsyncClient, record_context, month: str, amount: object
@@ -216,9 +221,7 @@ async def test_record_reads_and_writes_recheck_membership_and_feature_flag(
     month = datetime.now(ZoneInfo(store.timezone)).strftime("%Y-%m")
     record = await create_record(client, store_id, company["id"], month)
     membership = await db_session.scalar(
-        select(StoreMember).where(
-            StoreMember.store_id == store_id, StoreMember.user_id == user_id
-        )
+        select(StoreMember).where(StoreMember.store_id == store_id, StoreMember.user_id == user_id)
     )
     assert membership is not None
     await db_session.delete(membership)
@@ -530,9 +533,7 @@ async def test_repeated_transitions_return_canonical_state_without_double_counti
     assert (
         await client.post(f"{path}/revoke-confirmation", json={"revision": 2})
     ).status_code == 200
-    repeated_revoke = await client.post(
-        f"{path}/revoke-confirmation", json={"revision": 3}
-    )
+    repeated_revoke = await client.post(f"{path}/revoke-confirmation", json={"revision": 3})
     assert repeated_revoke.status_code == 409
     assert repeated_revoke.json()["detail"]["current_record"]["status"] == "pending"
     summary = (await client.get(f"/api/settlements/{store_id}/months/{month}")).json()
@@ -621,11 +622,14 @@ async def test_concurrent_confirm_and_revoke_requests_each_apply_once() -> None:
             "settlement_record.confirm",
             "settlement_record.revoke_confirmation",
         ]
-        assert await verification.scalar(
-            select(func.count())
-            .select_from(SettlementRecord)
-            .where(SettlementRecord.id == record_id)
-        ) == 1
+        assert (
+            await verification.scalar(
+                select(func.count())
+                .select_from(SettlementRecord)
+                .where(SettlementRecord.id == record_id)
+            )
+            == 1
+        )
 
 
 @pytest.mark.parametrize(
@@ -648,9 +652,7 @@ async def test_update_rejects_missing_changes_or_invalid_amount_and_revision(
     company = await create_company(client, store.id)
     record = await create_record(client, store.id, company["id"], month)
 
-    response = await client.patch(
-        f"/api/settlements/{store.id}/records/{record['id']}", json=body
-    )
+    response = await client.patch(f"/api/settlements/{store.id}/records/{record['id']}", json=body)
 
     assert response.status_code == 422
 

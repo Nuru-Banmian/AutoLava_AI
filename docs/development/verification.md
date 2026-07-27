@@ -29,3 +29,12 @@ CI 不配置真实模型 key，不调用付费供应商。Playwright 失败产�
 错误通常在 30 秒内出现。本地可用 PowerShell `Measure-Command {
 npm run verify:quick }` 和 `Measure-Command { npm run verify:agent }` 记录同一台
 开发机热缓存耗时，目标分别为 15 秒与 30 秒。
+
+以下命令以最近十次成功运行计算可重复的最近秩 p95；少于十次或超过 120 秒都会
+失败，单次偶然快结果不能替代它：
+
+```powershell
+gh run list --workflow CI --status success --limit 10 `
+  --json conclusion,createdAt,updatedAt | Set-Content ci-runs.json
+python scripts/ci_performance.py ci-runs.json
+```

@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
-import { UserEditor, type UserDraft } from "@/admin/UserEditor";
-import { api, ApiError } from "@/api/client";
+import { type UserDraft, UserEditor } from "@/admin/UserEditor";
+import { ApiError, api } from "@/api/client";
 import type { AdminStore, AdminUser, UserRole } from "@/api/types";
 import { useAuth } from "@/auth/AuthProvider";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,12 @@ const usersKey = ["admin", "users"] as const;
 const storesKey = ["admin", "stores"] as const;
 
 type UserSelection = number | "new" | null;
-type UserPatchBody = { password?: string; role?: UserRole; is_active?: boolean; store_ids?: number[] };
+type UserPatchBody = {
+  password?: string;
+  role?: UserRole;
+  is_active?: boolean;
+  store_ids?: number[];
+};
 type TargetState = { requestId: number; pending: boolean; error: Error | null };
 
 function targetFor(selection: UserSelection) {
@@ -22,9 +27,11 @@ function targetFor(selection: UserSelection) {
 
 function ErrorMessage({ error }: { error: Error | null }) {
   if (!error) return null;
-  return <p className="text-sm text-destructive" role="alert">
-    {error instanceof ApiError ? error.detail : "请求失败"}
-  </p>;
+  return (
+    <p className="text-sm text-destructive" role="alert">
+      {error instanceof ApiError ? error.detail : "请求失败"}
+    </p>
+  );
 }
 
 export function UsersPanel() {
@@ -41,7 +48,10 @@ export function UsersPanel() {
   const [successVersions, setSuccessVersions] = useState<Record<string, number>>({});
 
   const users = useQuery({ queryKey: usersKey, queryFn: () => api<AdminUser[]>("/admin/users") });
-  const stores = useQuery({ queryKey: storesKey, queryFn: () => api<AdminStore[]>("/admin/stores") });
+  const stores = useQuery({
+    queryKey: storesKey,
+    queryFn: () => api<AdminStore[]>("/admin/stores"),
+  });
 
   function commitSelection(next: UserSelection) {
     selectionRef.current = next;
@@ -71,9 +81,11 @@ export function UsersPanel() {
   }
 
   function isMountedTarget(target: string, generation: number) {
-    return mountedRef.current
-      && lifecycleGeneration.current === generation
-      && targetFor(selectionRef.current) === target;
+    return (
+      mountedRef.current &&
+      lifecycleGeneration.current === generation &&
+      targetFor(selectionRef.current) === target
+    );
   }
 
   function recordSuccess(target: string) {
@@ -83,11 +95,20 @@ export function UsersPanel() {
     }));
   }
 
-  function finishPending(target: string, requestId: number, generation: number, error: Error | null) {
+  function finishPending(
+    target: string,
+    requestId: number,
+    generation: number,
+    error: Error | null,
+  ) {
     if (!isLatest(target, requestId)) return;
     setRequestStates((current) => ({
       ...current,
-      [target]: { requestId, pending: false, error: isMountedTarget(target, generation) ? error : null },
+      [target]: {
+        requestId,
+        pending: false,
+        error: isMountedTarget(target, generation) ? error : null,
+      },
     }));
   }
 
@@ -99,8 +120,14 @@ export function UsersPanel() {
   }
 
   const createUser = useMutation({
-    mutationFn: ({ body }: { target: "new"; requestId: number; generation: number; body: { username: string; password: string; role: UserRole; store_ids: number[] } }) =>
-      api<AdminUser>("/admin/users", { method: "POST", body: JSON.stringify(body) }),
+    mutationFn: ({
+      body,
+    }: {
+      target: "new";
+      requestId: number;
+      generation: number;
+      body: { username: string; password: string; role: UserRole; store_ids: number[] };
+    }) => api<AdminUser>("/admin/users", { method: "POST", body: JSON.stringify(body) }),
     onSuccess: async (created, { target, requestId, generation }) => {
       await invalidateAuthoritativeData();
       finishPending(target, requestId, generation, null);
@@ -109,12 +136,21 @@ export function UsersPanel() {
       recordSuccess(target);
       commitSelection(created.id);
     },
-    onError: (error: Error, { target, requestId, generation }) => finishPending(target, requestId, generation, error),
+    onError: (error: Error, { target, requestId, generation }) =>
+      finishPending(target, requestId, generation, error),
   });
 
   const patchUser = useMutation({
-    mutationFn: ({ userId, body }: { target: string; requestId: number; generation: number; userId: number; body: UserPatchBody }) =>
-      api<AdminUser>(`/admin/users/${userId}`, { method: "PATCH", body: JSON.stringify(body) }),
+    mutationFn: ({
+      userId,
+      body,
+    }: {
+      target: string;
+      requestId: number;
+      generation: number;
+      userId: number;
+      body: UserPatchBody;
+    }) => api<AdminUser>(`/admin/users/${userId}`, { method: "PATCH", body: JSON.stringify(body) }),
     onSuccess: async (_updated, { target, requestId, generation }) => {
       await invalidateAuthoritativeData();
       finishPending(target, requestId, generation, null);
@@ -122,12 +158,19 @@ export function UsersPanel() {
       markDirty(false);
       recordSuccess(target);
     },
-    onError: (error: Error, { target, requestId, generation }) => finishPending(target, requestId, generation, error),
+    onError: (error: Error, { target, requestId, generation }) =>
+      finishPending(target, requestId, generation, error),
   });
 
   const deleteUser = useMutation({
-    mutationFn: ({ userId }: { target: string; requestId: number; generation: number; userId: number }) =>
-      api<void>(`/admin/users/${userId}`, { method: "DELETE" }),
+    mutationFn: ({
+      userId,
+    }: {
+      target: string;
+      requestId: number;
+      generation: number;
+      userId: number;
+    }) => api<void>(`/admin/users/${userId}`, { method: "DELETE" }),
     onSuccess: async (_result, { target, requestId, generation }) => {
       await invalidateAuthoritativeData();
       finishPending(target, requestId, generation, null);
@@ -136,21 +179,22 @@ export function UsersPanel() {
       commitSelection(null);
     },
     onError: (error: Error, { target, requestId, generation }) => {
-      const friendly = error instanceof ApiError && error.status === 409 && error.detail.includes("历史")
-        ? new ApiError(409, "该用户有历史记录，只能停用账号，不能永久删除。")
-        : error;
+      const friendly =
+        error instanceof ApiError && error.status === 409 && error.detail.includes("历史")
+          ? new ApiError(409, "该用户有历史记录，只能停用账号，不能永久删除。")
+          : error;
       finishPending(target, requestId, generation, friendly);
     },
   });
 
   const createSuccessVersion = successVersions.new ?? 0;
-  const editSuccessVersion = typeof selection === "number"
-    ? successVersions[String(selection)] ?? 0
-    : 0;
+  const editSuccessVersion =
+    typeof selection === "number" ? (successVersions[String(selection)] ?? 0) : 0;
 
-  const selectedUser = typeof selection === "number"
-    ? users.data?.find((user) => user.id === selection) ?? null
-    : null;
+  const selectedUser =
+    typeof selection === "number"
+      ? (users.data?.find((user) => user.id === selection) ?? null)
+      : null;
   const mountedTarget = targetFor(selection);
   const mountedRequest = mountedTarget ? requestStates[mountedTarget] : undefined;
 
@@ -222,89 +266,103 @@ export function UsersPanel() {
 
   let editor;
   if (selection === "new") {
-    editor = <UserEditor
-      error={mountedRequest?.error ?? null}
-      isOwner={actor?.is_owner === true}
-      key="new"
-      mode="create"
-      onDirtyChange={markDirty}
-      onSubmit={submitCreate}
-      pending={mountedRequest?.pending === true}
-      stores={stores.data ?? []}
-      successVersion={createSuccessVersion}
-      user={null}
-    />;
+    editor = (
+      <UserEditor
+        error={mountedRequest?.error ?? null}
+        isOwner={actor?.is_owner === true}
+        key="new"
+        mode="create"
+        onDirtyChange={markDirty}
+        onSubmit={submitCreate}
+        pending={mountedRequest?.pending === true}
+        stores={stores.data ?? []}
+        successVersion={createSuccessVersion}
+        user={null}
+      />
+    );
   } else if (!selectedUser) {
     editor = null;
   } else if (selectedUser.role === "admin" && !actor?.is_owner) {
-    editor = <section className="rounded-lg border bg-card p-4">
-      <h2 className="font-medium">{selectedUser.username}</h2>
-      <p className="text-sm text-muted-foreground">管理员账号只能由最终管理员编辑</p>
-    </section>;
+    editor = (
+      <section className="rounded-lg border bg-card p-4">
+        <h2 className="font-medium">{selectedUser.username}</h2>
+        <p className="text-sm text-muted-foreground">管理员账号只能由最终管理员编辑</p>
+      </section>
+    );
   } else {
-    editor = <UserEditor
-      error={mountedRequest?.error ?? null}
-      isOwner={actor?.is_owner === true}
-      key={selectedUser.id}
-      mode="edit"
-      onDelete={() => removeUser(selectedUser.id)}
-      onDirtyChange={markDirty}
-      onSubmit={submitEdit}
-      pending={mountedRequest?.pending === true}
-      stores={stores.data ?? []}
-      successVersion={editSuccessVersion}
-      user={selectedUser}
-    />;
+    editor = (
+      <UserEditor
+        error={mountedRequest?.error ?? null}
+        isOwner={actor?.is_owner === true}
+        key={selectedUser.id}
+        mode="edit"
+        onDelete={() => removeUser(selectedUser.id)}
+        onDirtyChange={markDirty}
+        onSubmit={submitEdit}
+        pending={mountedRequest?.pending === true}
+        stores={stores.data ?? []}
+        successVersion={editSuccessVersion}
+        user={selectedUser}
+      />
+    );
   }
 
-  return <div className="space-y-4">
-    <ErrorMessage error={users.error} />
-    <ErrorMessage error={stores.error} />
-    <div className="grid min-w-0 gap-4 md:grid-cols-[minmax(13rem,18rem)_minmax(0,1fr)] md:grid-rows-[auto_1fr]">
-      <div
-        aria-label="用户列表操作"
-        className="flex min-w-0 items-center gap-2 md:col-start-1 md:row-start-1"
-        data-testid="user-panel-controls"
-        role="toolbar"
-      >
-        <span className="hidden min-w-0 flex-1 text-sm font-medium md:block">用户列表</span>
-        <label className="min-w-0 flex-1 md:hidden">
-          <span className="sr-only">用户</span>
-          <select
-            aria-label="用户"
-            className="h-9 w-full rounded-md border bg-background px-2"
-            onChange={(event) => {
-              if (event.target.value) select(Number(event.target.value));
-            }}
-            value={typeof selection === "number" ? selection : ""}
-          >
-            <option hidden value="" />
-            {list.map((user) => <option key={user.id} value={user.id}>{user.username}</option>)}
-          </select>
-        </label>
-        <Button className="ml-auto" onClick={() => select("new")} type="button">
-          新建用户
-        </Button>
-      </div>
-      <aside aria-label="用户列表" className="hidden md:col-start-1 md:row-start-2 md:block">
-        <ul className="divide-y rounded-lg border bg-card">
-          {list.map((user) => <li key={user.id}>
-            <button
-              className="w-full p-3 text-left hover:bg-accent disabled:opacity-50"
-              onClick={() => select(user.id)}
-              type="button"
+  return (
+    <div className="space-y-4">
+      <ErrorMessage error={users.error} />
+      <ErrorMessage error={stores.error} />
+      <div className="grid min-w-0 gap-4 md:grid-cols-[minmax(13rem,18rem)_minmax(0,1fr)] md:grid-rows-[auto_1fr]">
+        <div
+          aria-label="用户列表操作"
+          className="flex min-w-0 items-center gap-2 md:col-start-1 md:row-start-1"
+          data-testid="user-panel-controls"
+          role="toolbar"
+        >
+          <span className="hidden min-w-0 flex-1 text-sm font-medium md:block">用户列表</span>
+          <label className="min-w-0 flex-1 md:hidden">
+            <span className="sr-only">用户</span>
+            <select
+              aria-label="用户"
+              className="h-9 w-full rounded-md border bg-background px-2"
+              onChange={(event) => {
+                if (event.target.value) select(Number(event.target.value));
+              }}
+              value={typeof selection === "number" ? selection : ""}
             >
-              <span className="block font-medium">{user.username}</span>
-              <span className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                <span>{user.role === "admin" ? "管理员" : "普通用户"}</span>
-                <span>{user.is_active ? "启用" : "停用"}</span>
-                <span>{user.store_ids.length} 个门店</span>
-              </span>
-            </button>
-          </li>)}
-        </ul>
-      </aside>
-      <main className="min-w-0 md:col-start-2 md:row-span-2 md:row-start-1">{editor}</main>
+              <option hidden value="" />
+              {list.map((user) => (
+                <option key={user.id} value={user.id}>
+                  {user.username}
+                </option>
+              ))}
+            </select>
+          </label>
+          <Button className="ml-auto" onClick={() => select("new")} type="button">
+            新建用户
+          </Button>
+        </div>
+        <aside aria-label="用户列表" className="hidden md:col-start-1 md:row-start-2 md:block">
+          <ul className="divide-y rounded-lg border bg-card">
+            {list.map((user) => (
+              <li key={user.id}>
+                <button
+                  className="w-full p-3 text-left hover:bg-accent disabled:opacity-50"
+                  onClick={() => select(user.id)}
+                  type="button"
+                >
+                  <span className="block font-medium">{user.username}</span>
+                  <span className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                    <span>{user.role === "admin" ? "管理员" : "普通用户"}</span>
+                    <span>{user.is_active ? "启用" : "停用"}</span>
+                    <span>{user.store_ids.length} 个门店</span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </aside>
+        <main className="min-w-0 md:col-start-2 md:row-span-2 md:row-start-1">{editor}</main>
+      </div>
     </div>
-  </div>;
+  );
 }

@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -51,15 +52,13 @@ def backend(*arguments: str, env: dict[str, str]) -> None:
 
 def quick(env: dict[str, str]) -> None:
     sync_backend()
-    backend(
-        "ruff",
-        "format",
-        "--check",
-        "app/core/security.py",
-        "tests/conftest.py",
-        "tests/test_development_feedback.py",
-        env=env,
-    )
+    backend("ruff", "format", "--check", ".", env=env)
+    with tempfile.TemporaryDirectory() as directory:
+        migration_environment = env.copy()
+        migration_environment["AUTOLAVA_DATABASE_PATH"] = str(
+            Path(directory) / "migration-check.sqlite3"
+        )
+        backend("alembic", "upgrade", "head", env=migration_environment)
     backend("ruff", "check", ".", env=env)
     backend(
         "mypy",
@@ -104,7 +103,7 @@ def agent(env: dict[str, str]) -> None:
 
 
 def full(env: dict[str, str]) -> None:
-    sync_backend()
+    quick(env)
     sync_frontend()
     backend(
         "pytest",

@@ -12,9 +12,7 @@ def _safe_text(value: object) -> object:
     return value
 
 
-def build_ledger_workbook(
-    records: Iterable[dict], *, include_wash_count: bool = True
-) -> bytes:
+def build_ledger_workbook(records: Iterable[dict], *, include_wash_count: bool = True) -> bytes:
     records = list(records)
     workbook = Workbook(write_only=True)
     summary = workbook.create_sheet(title="经营记录")
@@ -49,9 +47,7 @@ def build_ledger_workbook(
             ]
         )
         summary.append(summary_row)
-        for item in sorted(
-            record["items"], key=lambda value: (value["sort_order"], value["id"])
-        ):
+        for item in sorted(record["items"], key=lambda value: (value["sort_order"], value["id"])):
             detail.append(
                 [
                     date.fromisoformat(record["date"]),

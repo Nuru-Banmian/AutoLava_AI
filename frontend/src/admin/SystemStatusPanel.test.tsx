@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
-import { http, HttpResponse } from "msw";
+import { HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -11,31 +11,35 @@ vi.mock("@/stores/StoreProvider", () => ({
 }));
 
 const server = setupServer();
-const dashboard = [{
-  card_type: "today",
-  state: "recorded",
+const dashboard = [
+  {
+    card_type: "today",
+    state: "recorded",
     revenue: 100,
-  weather: "晴",
-  weekday: null,
-  temperature_max: null,
-  temperature_min: null,
-  precipitation: null,
-  hint: null,
-  generated_at: "2026-07-16T08:30:00Z",
-  timestamp_status: "utc",
-}];
-const weatherTask = [{
-  id: 1,
-  store_id: 1,
-  task_type: "weather_refresh",
-  status: "success",
-  message: null,
-  retry_count: 0,
-  started_at: "2026-07-16T08:00:00Z",
-  finished_at: "2026-07-16T08:05:00Z",
-  created_at: "2026-07-16T08:00:00Z",
-  timestamp_status: "utc",
-}];
+    weather: "晴",
+    weekday: null,
+    temperature_max: null,
+    temperature_min: null,
+    precipitation: null,
+    hint: null,
+    generated_at: "2026-07-16T08:30:00Z",
+    timestamp_status: "utc",
+  },
+];
+const weatherTask = [
+  {
+    id: 1,
+    store_id: 1,
+    task_type: "weather_refresh",
+    status: "success",
+    message: null,
+    retry_count: 0,
+    started_at: "2026-07-16T08:00:00Z",
+    finished_at: "2026-07-16T08:05:00Z",
+    created_at: "2026-07-16T08:00:00Z",
+    timestamp_status: "utc",
+  },
+];
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => server.resetHandlers());
@@ -44,7 +48,17 @@ afterAll(() => server.close());
 function mockStatus({
   alerts = [],
   taskLogs = weatherTask,
-  stores = [{ id: 1, name: "Roma", address: "Roma", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true }],
+  stores = [
+    {
+      id: 1,
+      name: "Roma",
+      address: "Roma",
+      latitude: "41.9",
+      longitude: "12.5",
+      timezone: "Europe/Rome",
+      is_active: true,
+    },
+  ],
   cardsByStore = { 1: dashboard },
 }: {
   alerts?: unknown[];
@@ -56,13 +70,19 @@ function mockStatus({
     http.get("/api/admin/stores", () => HttpResponse.json(stores)),
     http.get("/api/admin/alerts", () => HttpResponse.json(alerts)),
     http.get("/api/admin/task-logs", () => HttpResponse.json(taskLogs)),
-    http.get("/api/dashboard/:storeId", ({ params }) => HttpResponse.json(cardsByStore[Number(params.storeId)] ?? [])),
+    http.get("/api/dashboard/:storeId", ({ params }) =>
+      HttpResponse.json(cardsByStore[Number(params.storeId)] ?? []),
+    ),
   );
 }
 
 function renderStatus() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={client}><SystemStatusPanel /></QueryClientProvider>);
+  return render(
+    <QueryClientProvider client={client}>
+      <SystemStatusPanel />
+    </QueryClientProvider>,
+  );
 }
 
 describe("SystemStatusPanel", () => {
@@ -73,7 +93,12 @@ describe("SystemStatusPanel", () => {
     expect(screen.queryByText("运行正常")).not.toBeInTheDocument();
   });
 
-  it.each(["/api/admin/stores", "/api/admin/alerts", "/api/admin/task-logs", "/api/dashboard/1"])("does not claim healthy when required request %s fails", async (endpoint) => {
+  it.each([
+    "/api/admin/stores",
+    "/api/admin/alerts",
+    "/api/admin/task-logs",
+    "/api/dashboard/1",
+  ])("does not claim healthy when required request %s fails", async (endpoint) => {
     mockStatus();
     server.use(http.get(endpoint, () => HttpResponse.json({ detail: "boom" }, { status: 500 })));
     renderStatus();
@@ -97,17 +122,21 @@ describe("SystemStatusPanel", () => {
   });
 
   it("shows unresolved alerts and blocks healthy state for error-level alerts", async () => {
-    mockStatus({ alerts: [{
-      id: 8,
-      store_id: 1,
-      alert_type: "weather",
-      level: "error",
-      message: "天气同步失败",
-      is_resolved: false,
-      created_at: "2026-07-16T08:10:00Z",
-      resolved_at: null,
-      timestamp_status: "utc",
-    }] });
+    mockStatus({
+      alerts: [
+        {
+          id: 8,
+          store_id: 1,
+          alert_type: "weather",
+          level: "error",
+          message: "天气同步失败",
+          is_resolved: false,
+          created_at: "2026-07-16T08:10:00Z",
+          resolved_at: null,
+          timestamp_status: "utc",
+        },
+      ],
+    });
     renderStatus();
     expect(await screen.findByText("系统存在未解决错误")).toBeInTheDocument();
     expect(screen.getByText(/天气同步失败/)).toBeInTheDocument();
@@ -116,17 +145,21 @@ describe("SystemStatusPanel", () => {
   });
 
   it("claims healthy only with complete successful data and no unresolved error", async () => {
-    mockStatus({ alerts: [{
-      id: 9,
-      store_id: null,
-      alert_type: "reminder",
-      level: "warning",
-      message: "一条提醒",
-      is_resolved: false,
-      created_at: "2026-07-16T08:15:00Z",
-      resolved_at: null,
-      timestamp_status: "utc",
-    }] });
+    mockStatus({
+      alerts: [
+        {
+          id: 9,
+          store_id: null,
+          alert_type: "reminder",
+          level: "warning",
+          message: "一条提醒",
+          is_resolved: false,
+          created_at: "2026-07-16T08:15:00Z",
+          resolved_at: null,
+          timestamp_status: "utc",
+        },
+      ],
+    });
     renderStatus();
     expect(await screen.findByText("运行正常")).toBeInTheDocument();
     expect(screen.getByText(/最近天气更新/)).toBeInTheDocument();
@@ -142,23 +175,50 @@ describe("SystemStatusPanel", () => {
     const summary = screen.getByRole("region", { name: "运行状态" });
     const unresolvedAlerts = screen.getByRole("region", { name: /未解决告警/ });
 
-    expect(summary.parentElement).toHaveClass("grid", "gap-4", "lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.7fr)]");
+    expect(summary.parentElement).toHaveClass(
+      "grid",
+      "gap-4",
+      "lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.7fr)]",
+    );
     expect(summary).toHaveClass("space-y-3", "rounded-xl", "border", "bg-card", "p-5", "shadow-sm");
-    expect(unresolvedAlerts).toHaveClass("space-y-3", "rounded-xl", "border", "bg-card", "p-5", "shadow-sm");
+    expect(unresolvedAlerts).toHaveClass(
+      "space-y-3",
+      "rounded-xl",
+      "border",
+      "bg-card",
+      "p-5",
+      "shadow-sm",
+    );
   });
 
   it("reports the production weather refresh task when its latest run failed", async () => {
-    mockStatus({ taskLogs: [{ ...weatherTask[0], status: "failed", message: "天气刷新完成：共 2 个门店，成功 1 个，失败 1 个" }] });
+    mockStatus({
+      taskLogs: [
+        {
+          ...weatherTask[0],
+          status: "failed",
+          message: "天气刷新完成：共 2 个门店，成功 1 个，失败 1 个",
+        },
+      ],
+    });
     renderStatus();
     expect(await screen.findByRole("alert")).toHaveTextContent("最近天气任务未成功");
     expect(screen.queryByText("运行正常")).not.toBeInTheDocument();
   });
 
   it("does not let a newer weather backfill hide a failed weather refresh", async () => {
-    mockStatus({ taskLogs: [
-      { ...weatherTask[0], status: "failed", finished_at: "2026-07-16T08:05:00Z" },
-      { ...weatherTask[0], id: 2, task_type: "weather_backfill", status: "success", finished_at: "2026-07-16T09:05:00Z" },
-    ] });
+    mockStatus({
+      taskLogs: [
+        { ...weatherTask[0], status: "failed", finished_at: "2026-07-16T08:05:00Z" },
+        {
+          ...weatherTask[0],
+          id: 2,
+          task_type: "weather_backfill",
+          status: "success",
+          finished_at: "2026-07-16T09:05:00Z",
+        },
+      ],
+    });
     renderStatus();
 
     expect(await screen.findByRole("alert")).toHaveTextContent("最近天气任务未成功");
@@ -168,8 +228,24 @@ describe("SystemStatusPanel", () => {
 
   it("keeps store-to-dashboard completeness and treats one empty store as partial", async () => {
     const stores = [
-      { id: 1, name: "Roma", address: "Roma", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true },
-      { id: 2, name: "Milano", address: "Milano", latitude: "45.4", longitude: "9.2", timezone: "Europe/Rome", is_active: true },
+      {
+        id: 1,
+        name: "Roma",
+        address: "Roma",
+        latitude: "41.9",
+        longitude: "12.5",
+        timezone: "Europe/Rome",
+        is_active: true,
+      },
+      {
+        id: 2,
+        name: "Milano",
+        address: "Milano",
+        latitude: "45.4",
+        longitude: "9.2",
+        timezone: "Europe/Rome",
+        is_active: true,
+      },
     ];
     mockStatus({ stores, cardsByStore: { 1: dashboard, 2: [] } });
     renderStatus();
@@ -181,10 +257,32 @@ describe("SystemStatusPanel", () => {
 
   it("claims healthy when every active store has a valid generated timestamp", async () => {
     const stores = [
-      { id: 1, name: "Roma", address: "Roma", latitude: "41.9", longitude: "12.5", timezone: "Europe/Rome", is_active: true },
-      { id: 2, name: "Milano", address: "Milano", latitude: "45.4", longitude: "9.2", timezone: "Europe/Rome", is_active: true },
+      {
+        id: 1,
+        name: "Roma",
+        address: "Roma",
+        latitude: "41.9",
+        longitude: "12.5",
+        timezone: "Europe/Rome",
+        is_active: true,
+      },
+      {
+        id: 2,
+        name: "Milano",
+        address: "Milano",
+        latitude: "45.4",
+        longitude: "9.2",
+        timezone: "Europe/Rome",
+        is_active: true,
+      },
     ];
-    mockStatus({ stores, cardsByStore: { 1: dashboard, 2: [{ ...dashboard[0], generated_at: "2026-07-16T09:00:00Z" }] } });
+    mockStatus({
+      stores,
+      cardsByStore: {
+        1: dashboard,
+        2: [{ ...dashboard[0], generated_at: "2026-07-16T09:00:00Z" }],
+      },
+    });
     renderStatus();
     expect(await screen.findByText("运行正常")).toBeInTheDocument();
     expect(screen.getByText(/Roma/)).toBeInTheDocument();
@@ -192,10 +290,12 @@ describe("SystemStatusPanel", () => {
   });
 
   it("orders timestamps by epoch across offsets and labels UTC explicitly", async () => {
-    mockStatus({ taskLogs: [
-      { ...weatherTask[0], id: 1, finished_at: "2026-07-16T10:00:00+02:00" },
-      { ...weatherTask[0], id: 2, finished_at: "2026-07-16T09:30:00Z" },
-    ] });
+    mockStatus({
+      taskLogs: [
+        { ...weatherTask[0], id: 1, finished_at: "2026-07-16T10:00:00+02:00" },
+        { ...weatherTask[0], id: 2, finished_at: "2026-07-16T09:30:00Z" },
+      ],
+    });
     renderStatus();
     expect(await screen.findByText("运行正常")).toBeInTheDocument();
     expect(screen.getByText(/最近天气更新/).parentElement).toHaveTextContent(/UTC.*09:30/);
@@ -214,8 +314,28 @@ describe("SystemStatusPanel", () => {
 
   it("blocks healthy when valid and legacy-unknown required timestamps are mixed", async () => {
     mockStatus({
-      taskLogs: [weatherTask[0], { ...weatherTask[0], id: 2, timestamp_status: "legacy_unknown", started_at: null, finished_at: null, created_at: null }],
-      cardsByStore: { 1: [dashboard[0], { ...dashboard[0], card_type: "tomorrow", timestamp_status: "legacy_unknown", generated_at: null }] },
+      taskLogs: [
+        weatherTask[0],
+        {
+          ...weatherTask[0],
+          id: 2,
+          timestamp_status: "legacy_unknown",
+          started_at: null,
+          finished_at: null,
+          created_at: null,
+        },
+      ],
+      cardsByStore: {
+        1: [
+          dashboard[0],
+          {
+            ...dashboard[0],
+            card_type: "tomorrow",
+            timestamp_status: "legacy_unknown",
+            generated_at: null,
+          },
+        ],
+      },
     });
     renderStatus();
     expect(await screen.findByText("状态数据不完整")).toBeInTheDocument();

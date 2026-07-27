@@ -34,9 +34,7 @@ class ReleaseProfile(ClosedModel):
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "ReleaseProfile":
-        fallback_provider = (
-            settings.fallback_model_provider if settings.fallback_model_id else None
-        )
+        fallback_provider = settings.fallback_model_provider if settings.fallback_model_id else None
         return cls(
             provider=settings.model_provider,
             model=settings.model_id,
@@ -148,8 +146,7 @@ class TransactionTraceSample(ClosedModel):
         ):
             raise ValueError("model calls must not overlap SQLite snapshots or write locks")
         if not any(
-            write_lock.overlaps(self.evidence_stage)
-            for write_lock in self.short_write_locks
+            write_lock.overlaps(self.evidence_stage) for write_lock in self.short_write_locks
         ):
             raise ValueError("a bounded short write must overlap the evidence stage")
         return self
@@ -228,20 +225,14 @@ def summarize_release_samples(samples: list[ReleaseSample]) -> ReleaseMeasuremen
     return ReleaseMeasurements(
         serial_sample_count=len(samples),
         idle_peak_memory_mb=max(sample.idle_peak_memory_mb for sample in samples),
-        business_peak_memory_mb=max(
-            sample.business_peak_memory_mb for sample in samples
-        ),
+        business_peak_memory_mb=max(sample.business_peak_memory_mb for sample in samples),
         agent_peak_memory_mb=max(sample.agent_peak_memory_mb for sample in samples),
         request_p95_ms=nearest_rank_p95([sample.request_ms for sample in samples]),
         model_stage_count_max=max(sample.model_stage_count for sample in samples),
         input_tokens_max=max(sample.input_tokens for sample in samples),
         output_tokens_max=max(sample.output_tokens for sample in samples),
-        estimated_cost_eur_max=max(
-            sample.estimated_cost_eur for sample in samples
-        ),
-        sqlite_snapshot_p95_ms=nearest_rank_p95(
-            [sample.sqlite_snapshot_ms for sample in samples]
-        ),
+        estimated_cost_eur_max=max(sample.estimated_cost_eur for sample in samples),
+        sqlite_snapshot_p95_ms=nearest_rank_p95([sample.sqlite_snapshot_ms for sample in samples]),
         short_write_baseline_p95_ms=nearest_rank_p95(
             [sample.short_write_baseline_ms for sample in samples]
         ),
@@ -249,8 +240,7 @@ def summarize_release_samples(samples: list[ReleaseSample]) -> ReleaseMeasuremen
             [sample.short_write_with_agent_ms for sample in samples]
         ),
         language_quality_pass_rate=(
-            sum(sample.language_quality_passed for sample in samples)
-            / len(samples)
+            sum(sample.language_quality_passed for sample in samples) / len(samples)
         ),
     )
 
@@ -269,8 +259,7 @@ def _report_blockers(report: AgentReleaseReport) -> list[str]:
         blockers.append("release target splits the application container")
     if measurements.serial_sample_count < thresholds.minimum_serial_samples:
         blockers.append(
-            "release measurements need at least "
-            f"{thresholds.minimum_serial_samples} serial samples"
+            f"release measurements need at least {thresholds.minimum_serial_samples} serial samples"
         )
     peak_memory = max(
         measurements.idle_peak_memory_mb,
@@ -285,23 +274,14 @@ def _report_blockers(report: AgentReleaseReport) -> list[str]:
         blockers.append("estimated model cost exceeds the release threshold")
     if measurements.sqlite_snapshot_p95_ms > thresholds.sqlite_snapshot_p95_ms:
         blockers.append("SQLite snapshot duration exceeds the release threshold")
-    if (
-        measurements.short_write_with_agent_p95_ms
-        > thresholds.short_write_with_agent_p95_ms
-    ):
+    if measurements.short_write_with_agent_p95_ms > thresholds.short_write_with_agent_p95_ms:
         blockers.append("short write latency exceeds the release threshold")
-    slowdown = (
-        measurements.short_write_with_agent_p95_ms
-        / measurements.short_write_baseline_p95_ms
-    )
+    slowdown = measurements.short_write_with_agent_p95_ms / measurements.short_write_baseline_p95_ms
     if slowdown > thresholds.short_write_slowdown_max:
         blockers.append("Agent load slows normal short writes beyond the release threshold")
     if measurements.output_tokens_max > report.profile.max_output_tokens:
         blockers.append("measured output tokens exceed the configured limit")
-    if (
-        measurements.language_quality_pass_rate
-        < thresholds.language_quality_pass_rate
-    ):
+    if measurements.language_quality_pass_rate < thresholds.language_quality_pass_rate:
         blockers.append("language quality does not meet the release threshold")
     check_messages = (
         ("language_quality", "language quality validation failed"),
@@ -447,21 +427,13 @@ def agent_release_status(settings: Settings) -> AgentReleaseStatus:
         return AgentReleaseStatus(approved=True, blockers=[])
     path = settings.agent_release_report_path
     if path is None:
-        return AgentReleaseStatus(
-            approved=False, blockers=["release report is missing"]
-        )
+        return AgentReleaseStatus(approved=False, blockers=["release report is missing"])
     if not path.is_file():
-        return AgentReleaseStatus(
-            approved=False, blockers=["release report is missing"]
-        )
+        return AgentReleaseStatus(approved=False, blockers=["release report is missing"])
     try:
-        report = AgentReleaseReport.model_validate_json(
-            path.read_text(encoding="utf-8")
-        )
+        report = AgentReleaseReport.model_validate_json(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError, ValidationError):
-        return AgentReleaseStatus(
-            approved=False, blockers=["release report is invalid"]
-        )
+        return AgentReleaseStatus(approved=False, blockers=["release report is invalid"])
     blockers = _report_blockers(report)
     blockers.extend(_release_artifact_blockers(report, path))
     if settings.model_adapter != "openai_compatible":

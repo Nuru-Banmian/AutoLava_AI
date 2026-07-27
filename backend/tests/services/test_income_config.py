@@ -28,9 +28,12 @@ async def test_replace_keeps_one_current_configuration_without_versions(
     assert response.enabled is True
     assert response.formula == "营业额 = 现金；“代收款”只记录，不计入营业额"
     assert not hasattr(response, "version")
-    assert [category.name for category in await db_session.scalars(
-        select(IncomeCategory).order_by(IncomeCategory.sort_order)
-    )] == ["现金", "代收款"]
+    assert [
+        category.name
+        for category in await db_session.scalars(
+            select(IncomeCategory).order_by(IncomeCategory.sort_order)
+        )
+    ] == ["现金", "代收款"]
 
 
 async def test_replace_reorders_existing_categories_archives_omissions_and_formats_many_recorded_items(
@@ -54,8 +57,18 @@ async def test_replace_reorders_existing_categories_archives_omissions_and_forma
         IncomeConfigPublishBody(
             enabled=True,
             items=[
-                {"category_id": second.id, "name": "Second", "include_in_total": False, "sort_order": 99},
-                {"category_id": first.id, "name": "First", "include_in_total": False, "sort_order": 77},
+                {
+                    "category_id": second.id,
+                    "name": "Second",
+                    "include_in_total": False,
+                    "sort_order": 99,
+                },
+                {
+                    "category_id": first.id,
+                    "name": "First",
+                    "include_in_total": False,
+                    "sort_order": 77,
+                },
             ],
         ),
     )

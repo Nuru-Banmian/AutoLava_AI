@@ -43,9 +43,7 @@ class LedgerService:
     def _local_today(store: Store) -> date:
         return datetime.now(ZoneInfo(store.timezone)).date()
 
-    async def _find_record(
-        self, *, store_id: int, record_date: date
-    ) -> StoreDailyRecord | None:
+    async def _find_record(self, *, store_id: int, record_date: date) -> StoreDailyRecord | None:
         return await self.session.scalar(
             select(StoreDailyRecord)
             .where(
@@ -91,9 +89,7 @@ class LedgerService:
                         "is_active": True,
                         "sort_order": item.sort_order,
                     }
-                    for item in sorted(
-                        record.items, key=lambda item: (item.sort_order, item.id)
-                    )
+                    for item in sorted(record.items, key=lambda item: (item.sort_order, item.id))
                 ],
             }
         categories = list(
@@ -124,9 +120,7 @@ class LedgerService:
     @staticmethod
     def _amount(value: Any, *, field: str, rest_day: bool) -> int:
         if type(value) is not int or not 0 <= value <= _MAX_MONEY:
-            raise HTTPException(
-                422, f"{field} must be an integer between 0 and {_MAX_MONEY}"
-            )
+            raise HTTPException(422, f"{field} must be an integer between 0 and {_MAX_MONEY}")
         return 0 if rest_day else value
 
     async def _upsert_locked(
@@ -140,8 +134,10 @@ class LedgerService:
         record = await self._find_record(store_id=store.id, record_date=record_date)
         created = record is None
         income_mode = (
-            "composed" if store.income_items_enabled else "legacy_total"
-        ) if record is None else record.income_mode
+            ("composed" if store.income_items_enabled else "legacy_total")
+            if record is None
+            else record.income_mode
+        )
         rest_day = payload["is_open"] == "休息"
         items = payload.get("items", [])
         category_ids = [item["category_id"] for item in items]
@@ -192,15 +188,11 @@ class LedgerService:
                     for item in record.items
                 }
             if set(category_ids) != set(snapshots) or len(items) != len(snapshots):
-                raise HTTPException(
-                    422, "Every active income item must be provided exactly once"
-                )
+                raise HTTPException(422, "Every active income item must be provided exactly once")
             item_values = [
                 (
                     item["category_id"],
-                    self._amount(
-                        item["amount"], field="Income amount", rest_day=rest_day
-                    ),
+                    self._amount(item["amount"], field="Income amount", rest_day=rest_day),
                 )
                 for item in items
             ]
@@ -289,9 +281,7 @@ class LedgerService:
                 payload=payload,
                 actor_id=actor_id,
             )
-        canonical = await self._find_record(
-            store_id=store_id, record_date=record_date
-        )
+        canonical = await self._find_record(store_id=store_id, record_date=record_date)
         assert canonical is not None
         return LedgerWriteResult(
             record=canonical,
@@ -319,9 +309,7 @@ class LedgerService:
                 store_id=store_id,
                 capability="ledger.delete",
             )
-            record = await self._find_record(
-                store_id=store_id, record_date=record_date
-            )
+            record = await self._find_record(store_id=store_id, record_date=record_date)
             if record is None:
                 raise HTTPException(404, "Record not found")
             event = LedgerChanged(

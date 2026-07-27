@@ -333,9 +333,7 @@ async def test_wash_metrics_follow_the_requested_store_setting(
 async def test_reenabled_wash_metrics_restore_historical_zero_values(
     db_session: AsyncSession,
 ) -> None:
-    store, category_ids = await _seed_records(
-        db_session, suffix="-reenabled-zero-wash"
-    )
+    store, category_ids = await _seed_records(db_session, suffix="-reenabled-zero-wash")
     records = await db_session.scalars(
         select(StoreDailyRecord).where(StoreDailyRecord.store_id == store.id)
     )
@@ -518,9 +516,10 @@ async def test_operating_day_average_uses_open_and_early_close_records(
         {"date": "2026-07-14", "revenue": 50},
         {"date": "2026-07-15", "revenue": 0},
     ]
-    assert {
-        item["category_name"]: item["amount"] for item in result["categories"]
-    } == {"现金": 100, "刷卡": 50}
+    assert {item["category_name"]: item["amount"] for item in result["categories"]} == {
+        "现金": 100,
+        "刷卡": 50,
+    }
     assert result["classified_included_total"] == 150
     assert result["monthly"] == [
         {

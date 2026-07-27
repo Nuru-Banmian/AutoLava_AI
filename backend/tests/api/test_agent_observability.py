@@ -100,9 +100,5 @@ async def test_ordinary_admin_cannot_read_agent_observability(
     await user_factory(username="admin", password="secret", role="admin")
     await _login(client, "admin")
 
-    assert (
-        await client.get("/api/admin/agent-observability/runs")
-    ).status_code == 403
-    assert (
-        await client.get("/api/admin/agent-observability/alerts")
-    ).status_code == 403
+    assert (await client.get("/api/admin/agent-observability/runs")).status_code == 403
+    assert (await client.get("/api/admin/agent-observability/alerts")).status_code == 403

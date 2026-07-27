@@ -9,8 +9,7 @@ function attachmentFilename(disposition: string | null): string {
       // Fall through to the plain filename or safe default.
     }
   }
-  return disposition?.match(/filename="?([^";]+)"?/i)?.[1]
-    ?? "autolava-backup.sqlite3";
+  return disposition?.match(/filename="?([^";]+)"?/i)?.[1] ?? "autolava-backup.sqlite3";
 }
 
 export async function downloadDatabaseBackup(): Promise<void> {

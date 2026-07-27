@@ -1,14 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { http, HttpResponse } from "msw";
+import { HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
 import type { PropsWithChildren } from "react";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { RouterProvider } from "react-router-dom";
-
-import { StoreProvider, useStore } from "@/stores/StoreProvider";
-import { createAppRouter } from "@/router";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { AuthProvider, useAuth } from "@/auth/AuthProvider";
+import { createAppRouter } from "@/router";
+import { StoreProvider, useStore } from "@/stores/StoreProvider";
 
 const admin = { id: 1, username: "admin", role: "admin" as const, is_owner: false };
 const member = { id: 2, username: "member", role: "user" as const, is_owner: false };
@@ -20,7 +19,9 @@ afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
 function createClient() {
-  return new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  return new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
 }
 
 function renderTestRouter(path: string) {
@@ -43,7 +44,14 @@ function StoreProbe() {
 function OwnerLoginProbe() {
   const { user, login } = useAuth();
   if (user) return <span>owner:{String(user.is_owner)}</span>;
-  return <button type="button" onClick={() => void login({ username: "owner", password: "long-password" })}>probe login</button>;
+  return (
+    <button
+      type="button"
+      onClick={() => void login({ username: "owner", password: "long-password" })}
+    >
+      probe login
+    </button>
+  );
 }
 
 describe("authenticated application shell", () => {
@@ -75,7 +83,9 @@ describe("authenticated application shell", () => {
     let resolveMe!: () => void;
     server.use(
       http.get("/api/auth/me", async () => {
-        await new Promise<void>((resolve) => { resolveMe = resolve; });
+        await new Promise<void>((resolve) => {
+          resolveMe = resolve;
+        });
         return HttpResponse.json(admin);
       }),
       http.get("/api/stores/accessible", () => HttpResponse.json([])),
@@ -91,10 +101,14 @@ describe("authenticated application shell", () => {
 
   it("shows the login form only after a delayed session check returns 401", async () => {
     let resolveMe!: () => void;
-    server.use(http.get("/api/auth/me", async () => {
-      await new Promise<void>((resolve) => { resolveMe = resolve; });
-      return HttpResponse.json({ detail: "Authentication required" }, { status: 401 });
-    }));
+    server.use(
+      http.get("/api/auth/me", async () => {
+        await new Promise<void>((resolve) => {
+          resolveMe = resolve;
+        });
+        return HttpResponse.json({ detail: "Authentication required" }, { status: 401 });
+      }),
+    );
     renderTestRouter("/login");
 
     expect(screen.getByRole("status")).toBeInTheDocument();
@@ -128,7 +142,9 @@ describe("authenticated application shell", () => {
   it("sends only username and password and opens the authenticated shell after login", async () => {
     let loginBody: unknown;
     server.use(
-      http.get("/api/auth/me", () => HttpResponse.json({ detail: "Authentication required" }, { status: 401 })),
+      http.get("/api/auth/me", () =>
+        HttpResponse.json({ detail: "Authentication required" }, { status: 401 }),
+      ),
       http.post("/api/auth/login", async ({ request }) => {
         loginBody = await request.json();
         return HttpResponse.json(admin);
@@ -152,14 +168,22 @@ describe("authenticated application shell", () => {
         sessionFetches += 1;
         return HttpResponse.json({ detail: "Authentication required" }, { status: 401 });
       }),
-      http.post("/api/auth/login", () => HttpResponse.json({
-        id: 1,
-        username: "owner",
-        role: "admin",
-        is_owner: true,
-      })),
+      http.post("/api/auth/login", () =>
+        HttpResponse.json({
+          id: 1,
+          username: "owner",
+          role: "admin",
+          is_owner: true,
+        }),
+      ),
     );
-    render(<QueryWrapper><AuthProvider><OwnerLoginProbe /></AuthProvider></QueryWrapper>);
+    render(
+      <QueryWrapper>
+        <AuthProvider>
+          <OwnerLoginProbe />
+        </AuthProvider>
+      </QueryWrapper>,
+    );
 
     fireEvent.click(await screen.findByRole("button", { name: "probe login" }));
 
@@ -189,7 +213,9 @@ describe("authenticated application shell", () => {
     server.use(
       http.get("/api/auth/me", () => HttpResponse.json(admin)),
       http.get("/api/stores/accessible", () => HttpResponse.json([])),
-      http.post("/api/auth/logout", () => HttpResponse.json({ detail: "Logout unavailable" }, { status: 500 })),
+      http.post("/api/auth/logout", () =>
+        HttpResponse.json({ detail: "Logout unavailable" }, { status: 500 }),
+      ),
     );
     renderTestRouter("/");
 
@@ -204,7 +230,9 @@ describe("authenticated application shell", () => {
     let resolveSecondStores!: () => void;
     let secondStoresRequested = false;
     let memberLoggedIn = false;
-    const secondStores = new Promise<void>((resolve) => { resolveSecondStores = resolve; });
+    const secondStores = new Promise<void>((resolve) => {
+      resolveSecondStores = resolve;
+    });
     server.use(
       http.get("/api/auth/me", () => HttpResponse.json(admin)),
       http.get("/api/stores/accessible", async () => {
@@ -217,11 +245,16 @@ describe("authenticated application shell", () => {
       }),
       http.get("/api/dashboard/:storeId", () => HttpResponse.json([])),
       http.post("/api/auth/logout", () => new HttpResponse(null, { status: 204 })),
-      http.post("/api/auth/login", () => { memberLoggedIn = true; return HttpResponse.json(member); }),
+      http.post("/api/auth/login", () => {
+        memberLoggedIn = true;
+        return HttpResponse.json(member);
+      }),
     );
     renderTestRouter("/");
     const desktopPicker = await screen.findByTestId("desktop-store-picker");
-    expect(await within(desktopPicker).findByRole("option", { name: "Admin Store" })).toBeInTheDocument();
+    expect(
+      await within(desktopPicker).findByRole("option", { name: "Admin Store" }),
+    ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "退出登录" }));
     fireEvent.change(await screen.findByLabelText("用户名"), { target: { value: "member" } });
@@ -233,7 +266,9 @@ describe("authenticated application shell", () => {
     const memberDesktopPicker = screen.getByTestId("desktop-store-picker");
     expect(within(memberDesktopPicker).getByRole("combobox", { name: "门店" })).toHaveValue("");
     resolveSecondStores();
-    expect(await within(memberDesktopPicker).findByRole("option", { name: "Member Store" })).toBeInTheDocument();
+    expect(
+      await within(memberDesktopPicker).findByRole("option", { name: "Member Store" }),
+    ).toBeInTheDocument();
   });
 
   it("automatically selects the only accessible store", async () => {
@@ -260,7 +295,8 @@ describe("authenticated application shell", () => {
       http.get("/api/auth/me", () => HttpResponse.json(admin)),
       http.get("/api/stores/accessible", () => {
         requests += 1;
-        if (requests === 1) return HttpResponse.json({ detail: "Stores unavailable" }, { status: 500 });
+        if (requests === 1)
+          return HttpResponse.json({ detail: "Stores unavailable" }, { status: 500 });
         return HttpResponse.json([{ id: 7, name: "Recovered Store", timezone: "Europe/Rome" }]);
       }),
     );
@@ -270,7 +306,9 @@ describe("authenticated application shell", () => {
     const desktopPicker = screen.getByTestId("desktop-store-picker");
     expect(within(desktopPicker).getByRole("combobox", { name: "门店" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "重试门店" }));
-    expect(await within(desktopPicker).findByRole("option", { name: "Recovered Store" })).toBeInTheDocument();
+    expect(
+      await within(desktopPicker).findByRole("option", { name: "Recovered Store" }),
+    ).toBeInTheDocument();
     expect(requests).toBe(2);
   });
 
@@ -297,17 +335,15 @@ describe("authenticated application shell", () => {
     const mobile = screen.getByRole("navigation", { name: "移动导航" });
     expect(desktop.closest("aside")).toHaveClass("hidden", "md:flex");
     expect(mobile).toHaveClass("fixed", "md:hidden");
-    expect(within(desktop).getAllByRole("link").map((link) => link.textContent)).toEqual([
-      "首页",
-      "记账",
-      "营业记录",
-      "管理中心",
-    ]);
-    expect(within(mobile).getAllByRole("link").map((link) => link.textContent)).toEqual([
-      "首页",
-      "记账",
-      "记录",
-      "更多",
-    ]);
+    expect(
+      within(desktop)
+        .getAllByRole("link")
+        .map((link) => link.textContent),
+    ).toEqual(["首页", "记账", "营业记录", "管理中心"]);
+    expect(
+      within(mobile)
+        .getAllByRole("link")
+        .map((link) => link.textContent),
+    ).toEqual(["首页", "记账", "记录", "更多"]);
   });
 });

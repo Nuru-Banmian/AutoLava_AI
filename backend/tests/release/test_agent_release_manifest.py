@@ -72,9 +72,7 @@ EXPECTED_FRONTEND_TEST_TITLES = {
         "desktop business records action is user-triggered, prefills months, and does not overflow",
         "mobile business records action is user-triggered, prefills months, and does not overflow",
     ],
-    "ordinary-user-agent-hidden": [
-        "ordinary users cannot see or invoke the Agent"
-    ],
+    "ordinary-user-agent-hidden": ["ordinary users cannot see or invoke the Agent"],
 }
 EXPECTED_GOLD_AMOUNTS = {
     "monthly-total-gold": {
@@ -111,11 +109,7 @@ def test_release_evaluation_manifest_is_complete_and_points_to_real_tests() -> N
     assert {case["area"] for case in backend_cases} == REQUIRED_AREAS
     assert all(HAN_TEXT.search(case["question"]) for case in backend_cases)
 
-    coverage = {
-        item
-        for case in backend_cases
-        for item in case["covers"]
-    }
+    coverage = {item for case in backend_cases for item in case["covers"]}
     assert REQUIRED_PERIODS <= coverage
     assert REQUIRED_PROMPT_SOURCES <= coverage
     assert REQUIRED_PLAN_ATTACKS <= coverage
@@ -142,11 +136,7 @@ def test_release_evaluation_manifest_is_complete_and_points_to_real_tests() -> N
 
     vetoes = set(manifest["veto_categories"])
     assert vetoes
-    assert vetoes == {
-        veto
-        for case in backend_cases
-        for veto in case["vetoes"]
-    }
+    assert vetoes == {veto for case in backend_cases for veto in case["vetoes"]}
     for case in backend_cases:
         assert case["vetoes"]
         path_text, function_name = case["test_node"].split("::", maxsplit=1)
@@ -159,9 +149,7 @@ def test_release_evaluation_manifest_is_complete_and_points_to_real_tests() -> N
         ), case["id"]
 
     gold_cases = {
-        case["id"]: case["gold"]
-        for case in backend_cases
-        if "gold_amount" in case["covers"]
+        case["id"]: case["gold"] for case in backend_cases if "gold_amount" in case["covers"]
     }
     assert gold_cases == EXPECTED_GOLD_AMOUNTS
     assert all(
@@ -169,11 +157,7 @@ def test_release_evaluation_manifest_is_complete_and_points_to_real_tests() -> N
         for gold in gold_cases.values()
     )
 
-    frontend_coverage = {
-        item
-        for case in frontend_cases
-        for item in case["covers"]
-    }
+    frontend_coverage = {item for case in frontend_cases for item in case["covers"]}
     assert frontend_coverage == REQUIRED_FRONTEND_COVERAGE
     for case in frontend_cases:
         assert (REPOSITORY_ROOT / "frontend" / case["test_file"]).is_file()
@@ -184,15 +168,10 @@ def test_release_evaluation_manifest_is_complete_and_points_to_real_tests() -> N
 
 def test_ci_runs_the_fake_only_agent_release_veto_gate() -> None:
     workflow = yaml.safe_load(
-        (REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml").read_text(
-            encoding="utf-8"
-        )
+        (REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     )
     commands = [
-        step["run"]
-        for job in workflow["jobs"].values()
-        for step in job["steps"]
-        if "run" in step
+        step["run"] for job in workflow["jobs"].values() for step in job["steps"] if "run" in step
     ]
 
     assert workflow["env"]["AUTOLAVA_MODEL_ADAPTER"] == "fake"

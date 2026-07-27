@@ -1,8 +1,8 @@
-import type { ComponentProps } from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ComponentProps } from "react";
 import { expect, it } from "vitest";
-import { IncomeComposition, compositionPercentage } from "@/components/IncomeComposition";
+import { compositionPercentage, IncomeComposition } from "@/components/IncomeComposition";
 
 const included = Array.from({ length: 6 }, (_, index) => ({
   category_id: index + 1,
@@ -56,13 +56,7 @@ it("shows only the groups that contain rows and uses the domain term other data"
   expect(screen.queryByRole("region", { name: "其他数据" })).not.toBeInTheDocument();
   expect(screen.queryByRole("separator")).not.toBeInTheDocument();
 
-  rerender(
-    <IncomeComposition
-      included={[]}
-      excluded={excluded}
-      classifiedIncludedTotal={0}
-    />,
-  );
+  rerender(<IncomeComposition included={[]} excluded={excluded} classifiedIncludedTotal={0} />);
 
   expect(screen.getByRole("region", { name: "收入分类" })).toBeInTheDocument();
   expect(screen.getByText("暂无分类金额")).toBeInTheDocument();
@@ -73,17 +67,15 @@ it("shows only the groups that contain rows and uses the domain term other data"
 });
 
 it("does not render proportion bars for a single category or zero classified total", () => {
-  const { rerender } = renderComposition({ included: [included[0]], excluded: [], classifiedIncludedTotal: 50 });
+  const { rerender } = renderComposition({
+    included: [included[0]],
+    excluded: [],
+    classifiedIncludedTotal: 50,
+  });
 
   expect(screen.queryByTestId("composition-proportion")).not.toBeInTheDocument();
 
-  rerender(
-    <IncomeComposition
-      included={included}
-      excluded={[]}
-      classifiedIncludedTotal={0}
-    />,
-  );
+  rerender(<IncomeComposition included={included} excluded={[]} classifiedIncludedTotal={0} />);
 
   expect(screen.queryByTestId("composition-proportion")).not.toBeInTheDocument();
 });

@@ -14,16 +14,33 @@ beforeEach(() => {
     value: { getCurrentPosition: vi.fn() },
   });
 });
-afterEach(() => { server.resetHandlers(); vi.restoreAllMocks(); });
+afterEach(() => {
+  server.resetHandlers();
+  vi.restoreAllMocks();
+});
 afterAll(() => server.close());
 
-const initial: MapLocation = { label: "Roma Centro", latitude: 41.9, longitude: 12.5, timezone: "Europe/Rome" };
+const initial: MapLocation = {
+  label: "Roma Centro",
+  latitude: 41.9,
+  longitude: 12.5,
+  timezone: "Europe/Rome",
+};
 
 function adapterHarness() {
   let move: ((point: { latitude: number; longitude: number }) => void) | undefined;
   const cleanup = vi.fn();
-  const adapter: MapAdapter = { mount: vi.fn((_node, _value, onChange) => { move = onChange; return cleanup; }) };
-  return { adapter, cleanup, move: (point: { latitude: number; longitude: number }) => move?.(point) };
+  const adapter: MapAdapter = {
+    mount: vi.fn((_node, _value, onChange) => {
+      move = onChange;
+      return cleanup;
+    }),
+  };
+  return {
+    adapter,
+    cleanup,
+    move: (point: { latitude: number; longitude: number }) => move?.(point),
+  };
 }
 
 it("mounts the injected adapter and cleans it up when closed", async () => {
@@ -37,35 +54,68 @@ it("mounts the injected adapter and cleans it up when closed", async () => {
 
 it("searches through the backend and confirms only a complete location", async () => {
   const onConfirm = vi.fn();
-  server.use(http.get("/api/admin/stores/geocode", () => HttpResponse.json([
-    { name: "Milano", country: "Italia", latitude: 45.46, longitude: 9.19, timezone: "Europe/Rome" },
-  ])));
-  render(<StoreLocationPicker adapter={adapterHarness().adapter} value={null} onConfirm={onConfirm} />);
+  server.use(
+    http.get("/api/admin/stores/geocode", () =>
+      HttpResponse.json([
+        {
+          name: "Milano",
+          country: "Italia",
+          latitude: 45.46,
+          longitude: 9.19,
+          timezone: "Europe/Rome",
+        },
+      ]),
+    ),
+  );
+  render(
+    <StoreLocationPicker adapter={adapterHarness().adapter} value={null} onConfirm={onConfirm} />,
+  );
   fireEvent.click(screen.getByRole("button", { name: "打开地图选择" }));
   fireEvent.change(screen.getByLabelText("搜索城市、区域或地点"), { target: { value: "Milano" } });
   fireEvent.submit(screen.getByRole("search"));
   fireEvent.click(await screen.findByRole("button", { name: /Milano.*Italia/ }));
   fireEvent.click(screen.getByRole("button", { name: "确认位置" }));
-  expect(onConfirm).toHaveBeenCalledWith({ label: "Milano, Italia", latitude: 45.46, longitude: 9.19, timezone: "Europe/Rome" });
+  expect(onConfirm).toHaveBeenCalledWith({
+    label: "Milano, Italia",
+    latitude: 45.46,
+    longitude: 9.19,
+    timezone: "Europe/Rome",
+  });
 });
 
 it("requests browser location immediately on open and shows a Chinese fallback when denied", async () => {
-  const getCurrentPosition = vi.fn((_ok: unknown, fail: (error: unknown) => void) => fail(new Error("denied")));
-  Object.defineProperty(navigator, "geolocation", { configurable: true, value: { getCurrentPosition } });
-  render(<StoreLocationPicker adapter={adapterHarness().adapter} value={null} onConfirm={vi.fn()} />);
+  const getCurrentPosition = vi.fn((_ok: unknown, fail: (error: unknown) => void) =>
+    fail(new Error("denied")),
+  );
+  Object.defineProperty(navigator, "geolocation", {
+    configurable: true,
+    value: { getCurrentPosition },
+  });
+  render(
+    <StoreLocationPicker adapter={adapterHarness().adapter} value={null} onConfirm={vi.fn()} />,
+  );
   fireEvent.click(screen.getByRole("button", { name: "打开地图选择" }));
   await waitFor(() => expect(getCurrentPosition).toHaveBeenCalledOnce());
-  expect(await screen.findByRole("alert")).toHaveTextContent("无法获取当前位置，你仍然可以搜索地点");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "无法获取当前位置，你仍然可以搜索地点",
+  );
   fireEvent.click(screen.getByRole("button", { name: "使用当前位置" }));
   expect(getCurrentPosition).toHaveBeenCalledTimes(2);
 });
 
 it("ignores geolocation success after the dialog closes", async () => {
   let success!: (position: GeolocationPosition) => void;
-  const getCurrentPosition = vi.fn((ok: (position: GeolocationPosition) => void) => { success = ok; });
-  Object.defineProperty(navigator, "geolocation", { configurable: true, value: { getCurrentPosition } });
+  const getCurrentPosition = vi.fn((ok: (position: GeolocationPosition) => void) => {
+    success = ok;
+  });
+  Object.defineProperty(navigator, "geolocation", {
+    configurable: true,
+    value: { getCurrentPosition },
+  });
   const fetchSpy = vi.spyOn(globalThis, "fetch");
-  render(<StoreLocationPicker adapter={adapterHarness().adapter} value={null} onConfirm={vi.fn()} />);
+  render(
+    <StoreLocationPicker adapter={adapterHarness().adapter} value={null} onConfirm={vi.fn()} />,
+  );
   fireEvent.click(screen.getByRole("button", { name: "打开地图选择" }));
   await waitFor(() => expect(getCurrentPosition).toHaveBeenCalledOnce());
   fireEvent.click(screen.getByRole("button", { name: "取消" }));
@@ -76,14 +126,30 @@ it("ignores geolocation success after the dialog closes", async () => {
 it("search invalidates a pending geolocation callback", async () => {
   let success!: (position: GeolocationPosition) => void;
   let failure!: (error: GeolocationPositionError) => void;
-  const getCurrentPosition = vi.fn((ok: (position: GeolocationPosition) => void, fail: (error: GeolocationPositionError) => void) => { success = ok; failure = fail; });
-  Object.defineProperty(navigator, "geolocation", { configurable: true, value: { getCurrentPosition } });
+  const getCurrentPosition = vi.fn(
+    (
+      ok: (position: GeolocationPosition) => void,
+      fail: (error: GeolocationPositionError) => void,
+    ) => {
+      success = ok;
+      failure = fail;
+    },
+  );
+  Object.defineProperty(navigator, "geolocation", {
+    configurable: true,
+    value: { getCurrentPosition },
+  });
   const timezoneRequests: string[] = [];
   server.use(
     http.get("/api/admin/stores/geocode", () => HttpResponse.json([])),
-    http.get("/api/admin/stores/timezone", ({ request }) => { timezoneRequests.push(request.url); return HttpResponse.json({ timezone: "Europe/Rome" }); }),
+    http.get("/api/admin/stores/timezone", ({ request }) => {
+      timezoneRequests.push(request.url);
+      return HttpResponse.json({ timezone: "Europe/Rome" });
+    }),
   );
-  render(<StoreLocationPicker adapter={adapterHarness().adapter} value={null} onConfirm={vi.fn()} />);
+  render(
+    <StoreLocationPicker adapter={adapterHarness().adapter} value={null} onConfirm={vi.fn()} />,
+  );
   fireEvent.click(screen.getByRole("button", { name: "打开地图选择" }));
   await waitFor(() => expect(getCurrentPosition).toHaveBeenCalledOnce());
   fireEvent.change(screen.getByLabelText("搜索城市、区域或地点"), { target: { value: "Milano" } });
@@ -98,10 +164,20 @@ it("search invalidates a pending geolocation callback", async () => {
 it("map selection invalidates a pending geolocation callback", async () => {
   const map = adapterHarness();
   let geolocationSuccess!: (position: GeolocationPosition) => void;
-  const getCurrentPosition = vi.fn((ok: (position: GeolocationPosition) => void) => { geolocationSuccess = ok; });
-  Object.defineProperty(navigator, "geolocation", { configurable: true, value: { getCurrentPosition } });
+  const getCurrentPosition = vi.fn((ok: (position: GeolocationPosition) => void) => {
+    geolocationSuccess = ok;
+  });
+  Object.defineProperty(navigator, "geolocation", {
+    configurable: true,
+    value: { getCurrentPosition },
+  });
   const timezoneRequests: string[] = [];
-  server.use(http.get("/api/admin/stores/timezone", ({ request }) => { timezoneRequests.push(request.url); return HttpResponse.json({ timezone: "Europe/Rome" }); }));
+  server.use(
+    http.get("/api/admin/stores/timezone", ({ request }) => {
+      timezoneRequests.push(request.url);
+      return HttpResponse.json({ timezone: "Europe/Rome" });
+    }),
+  );
   render(<StoreLocationPicker adapter={map.adapter} value={null} onConfirm={vi.fn()} />);
   fireEvent.click(screen.getByRole("button", { name: "打开地图选择" }));
   await waitFor(() => expect(map.adapter.mount).toHaveBeenCalledOnce());
@@ -114,12 +190,20 @@ it("map selection invalidates a pending geolocation callback", async () => {
 
 it("clears pending search when closed and ignores its response after reopening", async () => {
   let finishSearch!: () => void;
-  const pending = new Promise<void>((resolve) => { finishSearch = resolve; });
-  server.use(http.get("/api/admin/stores/geocode", async () => {
-    await pending;
-    return HttpResponse.json([{ name: "Late", country: "Italia", latitude: 1, longitude: 1, timezone: "Europe/Rome" }]);
-  }));
-  render(<StoreLocationPicker adapter={adapterHarness().adapter} value={null} onConfirm={vi.fn()} />);
+  const pending = new Promise<void>((resolve) => {
+    finishSearch = resolve;
+  });
+  server.use(
+    http.get("/api/admin/stores/geocode", async () => {
+      await pending;
+      return HttpResponse.json([
+        { name: "Late", country: "Italia", latitude: 1, longitude: 1, timezone: "Europe/Rome" },
+      ]);
+    }),
+  );
+  render(
+    <StoreLocationPicker adapter={adapterHarness().adapter} value={null} onConfirm={vi.fn()} />,
+  );
   fireEvent.click(screen.getByRole("button", { name: "打开地图选择" }));
   fireEvent.change(screen.getByLabelText("搜索城市、区域或地点"), { target: { value: "Late" } });
   fireEvent.submit(screen.getByRole("search"));
@@ -128,15 +212,24 @@ it("clears pending search when closed and ignores its response after reopening",
   fireEvent.click(screen.getByRole("button", { name: "打开地图选择" }));
   expect(screen.getByRole("button", { name: "搜索" })).not.toBeDisabled();
   finishSearch();
-  await waitFor(() => expect(screen.queryByRole("button", { name: /Late.*Italia/ })).not.toBeInTheDocument());
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: /Late.*Italia/ })).not.toBeInTheDocument(),
+  );
 });
 
 it("map selection clears pending search and ignores the late search result", async () => {
   const map = adapterHarness();
   let finishSearch!: () => void;
-  const pending = new Promise<void>((resolve) => { finishSearch = resolve; });
+  const pending = new Promise<void>((resolve) => {
+    finishSearch = resolve;
+  });
   server.use(
-    http.get("/api/admin/stores/geocode", async () => { await pending; return HttpResponse.json([{ name: "Late", country: "Italia", latitude: 1, longitude: 1, timezone: "Europe/Rome" }]); }),
+    http.get("/api/admin/stores/geocode", async () => {
+      await pending;
+      return HttpResponse.json([
+        { name: "Late", country: "Italia", latitude: 1, longitude: 1, timezone: "Europe/Rome" },
+      ]);
+    }),
     http.get("/api/admin/stores/timezone", () => HttpResponse.json({ timezone: "Europe/Rome" })),
   );
   render(<StoreLocationPicker adapter={map.adapter} value={null} onConfirm={vi.fn()} />);
@@ -153,14 +246,30 @@ it("map selection clears pending search and ignores the late search result", asy
 
 it("re-locating clears pending search and ignores the late search result", async () => {
   const successes: ((position: GeolocationPosition) => void)[] = [];
-  Object.defineProperty(navigator, "geolocation", { configurable: true, value: { getCurrentPosition: vi.fn((ok: (position: GeolocationPosition) => void) => successes.push(ok)) } });
+  Object.defineProperty(navigator, "geolocation", {
+    configurable: true,
+    value: {
+      getCurrentPosition: vi.fn((ok: (position: GeolocationPosition) => void) =>
+        successes.push(ok),
+      ),
+    },
+  });
   let finishSearch!: () => void;
-  const pending = new Promise<void>((resolve) => { finishSearch = resolve; });
+  const pending = new Promise<void>((resolve) => {
+    finishSearch = resolve;
+  });
   server.use(
-    http.get("/api/admin/stores/geocode", async () => { await pending; return HttpResponse.json([{ name: "Late", country: "Italia", latitude: 1, longitude: 1, timezone: "Europe/Rome" }]); }),
+    http.get("/api/admin/stores/geocode", async () => {
+      await pending;
+      return HttpResponse.json([
+        { name: "Late", country: "Italia", latitude: 1, longitude: 1, timezone: "Europe/Rome" },
+      ]);
+    }),
     http.get("/api/admin/stores/timezone", () => HttpResponse.json({ timezone: "Europe/Rome" })),
   );
-  render(<StoreLocationPicker adapter={adapterHarness().adapter} value={null} onConfirm={vi.fn()} />);
+  render(
+    <StoreLocationPicker adapter={adapterHarness().adapter} value={null} onConfirm={vi.fn()} />,
+  );
   fireEvent.click(screen.getByRole("button", { name: "打开地图选择" }));
   await waitFor(() => expect(successes).toHaveLength(1));
   fireEvent.change(screen.getByLabelText("搜索城市、区域或地点"), { target: { value: "Late" } });
@@ -175,11 +284,23 @@ it("re-locating clears pending search and ignores the late search result", async
 
 it("only accepts the newest of consecutive geolocation requests", async () => {
   const successes: ((position: GeolocationPosition) => void)[] = [];
-  const getCurrentPosition = vi.fn((ok: (position: GeolocationPosition) => void) => { successes.push(ok); });
-  Object.defineProperty(navigator, "geolocation", { configurable: true, value: { getCurrentPosition } });
+  const getCurrentPosition = vi.fn((ok: (position: GeolocationPosition) => void) => {
+    successes.push(ok);
+  });
+  Object.defineProperty(navigator, "geolocation", {
+    configurable: true,
+    value: { getCurrentPosition },
+  });
   const timezoneRequests: string[] = [];
-  server.use(http.get("/api/admin/stores/timezone", ({ request }) => { timezoneRequests.push(request.url); return HttpResponse.json({ timezone: "Europe/Rome" }); }));
-  render(<StoreLocationPicker adapter={adapterHarness().adapter} value={null} onConfirm={vi.fn()} />);
+  server.use(
+    http.get("/api/admin/stores/timezone", ({ request }) => {
+      timezoneRequests.push(request.url);
+      return HttpResponse.json({ timezone: "Europe/Rome" });
+    }),
+  );
+  render(
+    <StoreLocationPicker adapter={adapterHarness().adapter} value={null} onConfirm={vi.fn()} />,
+  );
   fireEvent.click(screen.getByRole("button", { name: "打开地图选择" }));
   await waitFor(() => expect(getCurrentPosition).toHaveBeenCalledOnce());
   fireEvent.click(screen.getByRole("button", { name: "使用当前位置" }));
@@ -195,14 +316,29 @@ it("ignores a late timezone response after a newer map move", async () => {
   const map = adapterHarness();
   let resolveFirst!: (value: Response) => void;
   vi.spyOn(globalThis, "fetch")
-    .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ timezone: "Europe/Rome" }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirst = resolve;
+        }),
+    )
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ timezone: "Europe/Rome" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
   render(<StoreLocationPicker adapter={map.adapter} value={initial} onConfirm={vi.fn()} />);
   fireEvent.click(screen.getByRole("button", { name: "修改地图位置" }));
   await waitFor(() => expect(map.adapter.mount).toHaveBeenCalledOnce());
   map.move({ latitude: 10, longitude: 10 });
   map.move({ latitude: 45, longitude: 9 });
   await screen.findByText("地图选点 · Europe/Rome");
-  resolveFirst(new Response(JSON.stringify({ timezone: "Asia/Shanghai" }), { status: 200, headers: { "Content-Type": "application/json" } }));
+  resolveFirst(
+    new Response(JSON.stringify({ timezone: "Asia/Shanghai" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
   await waitFor(() => expect(screen.queryByText(/Asia\/Shanghai/)).not.toBeInTheDocument());
 });

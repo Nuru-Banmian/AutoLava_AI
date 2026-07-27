@@ -38,9 +38,7 @@ def create_app() -> FastAPI:
             ),
             timezone=maintenance_timezone,
             hour=3,
-            startup_complete=lambda today: has_valid_backup(
-                settings.backup_directory, today
-            ),
+            startup_complete=lambda today: has_valid_backup(settings.backup_directory, today),
         )
 
     @asynccontextmanager

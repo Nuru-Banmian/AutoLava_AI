@@ -1,23 +1,28 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.4.8/schema.json",
   "files": {
-    "includes": [
-      "src/components/AgentPanel.tsx",
-      "src/components/AgentPanel.test.tsx",
-      "src/navigation/agent-actions.ts",
-      "src/navigation/agent-actions.test.ts",
-      "scripts/validate-agent-release-manifest.mjs"
-    ]
+    "includes": ["src/**", "scripts/**", "tests/**", "*.ts", "*.tsx", "*.js", "*.mjs"]
   },
   "formatter": {
     "enabled": true,
     "indentStyle": "space",
     "lineWidth": 100
   },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  },
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true
+      "recommended": false,
+      "correctness": {
+        "noUnusedImports": "error"
+      },
+      "suspicious": {
+        "noDuplicateObjectKeys": "error"
+      }
     }
   },
   "assist": {

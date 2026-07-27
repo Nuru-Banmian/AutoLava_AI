@@ -55,9 +55,7 @@ async def test_wash_count_and_completeness_http_gold_paths(
                 store_id=store_id,
                 date=date(2026, 7, 1),
                 daily_revenue=120,
-                income_mode=(
-                    "composed" if scenario == "category_mismatch" else "legacy_total"
-                ),
+                income_mode=("composed" if scenario == "category_mismatch" else "legacy_total"),
                 wash_count=0 if scenario == "all_zero" else 4,
                 is_open="营业",
                 weather=None if scenario == "missing_weather" else "晴",
@@ -135,9 +133,7 @@ async def test_wash_count_and_completeness_http_gold_paths(
         plans=[
             {
                 "route": "evidence",
-                "evidence_plan": {
-                    "requests": [{"kind": "business_metrics", "metric": metric}]
-                },
+                "evidence_plan": {"requests": [{"kind": "business_metrics", "metric": metric}]},
             }
         ],
         answers=["按后端证据回答。"],
@@ -284,8 +280,6 @@ async def test_wash_count_http_gold_path_recovers_history_after_reenabling(
     assert disabled.status_code == 200
     assert enabled.status_code == 200
     assert reenabled.status_code == 200
-    evidence = list(
-        await db_session.scalars(select(AgentEvidence).order_by(AgentEvidence.id))
-    )
+    evidence = list(await db_session.scalars(select(AgentEvidence).order_by(AgentEvidence.id)))
     assert evidence[0].payload["result"] == {"available": False, "wash_count": None}
     assert evidence[1].payload["result"] == {"available": True, "wash_count": 6}

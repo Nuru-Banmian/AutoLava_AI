@@ -7,19 +7,49 @@ import type { RecordSnapshot } from "@/api/types";
 import { MobileRecordSheet } from "@/components/MobileRecordSheet";
 
 const record: RecordSnapshot = {
-  id: 4, store_id: 1, date: "2026-07-14", daily_revenue: 100, income_mode: "composed",
-  wash_count: 8, is_open: "营业", weather: "晴", weather_auto: "晴", weather_code: 1, temperature_max: "20.0", temperature_min: "10.0", precipitation: "0.0",
-  activity: null, weather_edited: false, scanned: false, created_by: 1, updated_by: 1, created_at: "", updated_at: "",
+  id: 4,
+  store_id: 1,
+  date: "2026-07-14",
+  daily_revenue: 100,
+  income_mode: "composed",
+  wash_count: 8,
+  is_open: "营业",
+  weather: "晴",
+  weather_auto: "晴",
+  weather_code: 1,
+  temperature_max: "20.0",
+  temperature_min: "10.0",
+  precipitation: "0.0",
+  activity: null,
+  weather_edited: false,
+  scanned: false,
+  created_by: 1,
+  updated_by: 1,
+  created_at: "",
+  updated_at: "",
   items: [],
 };
 
 function ControlledSheet() {
   const [open, setOpen] = useState(false);
   const [trigger, setTrigger] = useState<HTMLButtonElement | null>(null);
-  return <MemoryRouter>
-    <button ref={setTrigger} type="button" onClick={() => setOpen(true)}>打开记录</button>
-    <MobileRecordSheet open={open} record={record} canEdit canDelete={false} washCountEnabled onDelete={vi.fn()} returnFocusTo={trigger} onOpenChange={setOpen} />
-  </MemoryRouter>;
+  return (
+    <MemoryRouter>
+      <button ref={setTrigger} type="button" onClick={() => setOpen(true)}>
+        打开记录
+      </button>
+      <MobileRecordSheet
+        open={open}
+        record={record}
+        canEdit
+        canDelete={false}
+        washCountEnabled
+        onDelete={vi.fn()}
+        returnFocusTo={trigger}
+        onOpenChange={setOpen}
+      />
+    </MemoryRouter>
+  );
 }
 
 describe("MobileRecordSheet", () => {
@@ -34,7 +64,11 @@ describe("MobileRecordSheet", () => {
     expect(screen.getByRole("heading", { name: "2026年7月14日" })).toHaveClass("text-2xl");
     expect(screen.getByText("营业", { exact: true })).toHaveClass("text-sm");
     expect(screen.getByText("洗车 8 辆", { exact: true })).toHaveClass("text-sm");
-    expect(screen.getByRole("link", { name: "修改这天记录" })).toHaveClass("h-11", "w-full", "text-base");
+    expect(screen.getByRole("link", { name: "修改这天记录" })).toHaveClass(
+      "h-11",
+      "w-full",
+      "text-base",
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     await waitFor(() => expect(trigger).toHaveFocus());

@@ -37,10 +37,10 @@ export function DatabaseBackupPanel() {
       aria-labelledby="database-backup-title"
     >
       <div>
-        <h2 className="font-medium" id="database-backup-title">数据库备份</h2>
-        <p className="text-sm text-muted-foreground">
-          生成当前数据库的一致快照，用于离线保管。
-        </p>
+        <h2 className="font-medium" id="database-backup-title">
+          数据库备份
+        </h2>
+        <p className="text-sm text-muted-foreground">生成当前数据库的一致快照，用于离线保管。</p>
       </div>
       <AlertDialog>
         <AlertDialogTrigger asChild>
@@ -58,13 +58,15 @@ export function DatabaseBackupPanel() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void download()}>
-              确认并下载
-            </AlertDialogAction>
+            <AlertDialogAction onClick={() => void download()}>确认并下载</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+      {error && (
+        <p role="alert" className="text-sm text-destructive">
+          {error}
+        </p>
+      )}
     </section>
   );
 }

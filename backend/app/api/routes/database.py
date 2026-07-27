@@ -169,9 +169,7 @@ async def export_records(
     )
     record_query = build_record_query(store_id, filters)
     records = await _load_records(session, record_query)
-    payloads = await _record_payloads(
-        session, records, include_wash_count=include_wash_count
-    )
+    payloads = await _record_payloads(session, records, include_wash_count=include_wash_count)
     if start is not None and end is not None:
         suffix = f"{start.isoformat()}-{end.isoformat()}"
     elif start is not None:
@@ -182,9 +180,7 @@ async def export_records(
         suffix = "all"
     filename = f"ledger-{access.store.id}-{suffix}.xlsx"
     return Response(
-        content=build_ledger_workbook(
-            payloads, include_wash_count=include_wash_count
-        ),
+        content=build_ledger_workbook(payloads, include_wash_count=include_wash_count),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
@@ -222,9 +218,7 @@ async def record_page(
     page_query = record_query.offset((page - 1) * page_size).limit(page_size)
     records = await _load_records(session, page_query)
     return {
-        "items": await _record_payloads(
-            session, records, include_wash_count=include_wash_count
-        ),
+        "items": await _record_payloads(session, records, include_wash_count=include_wash_count),
         "categories": await _categories_for_query(
             session, store_id=store_id, record_query=page_query
         ),

@@ -158,9 +158,7 @@ async def test_workflow_finishes_clarification_without_collecting_evidence() -> 
 async def test_direct_answer_cannot_add_business_claims_without_evidence(
     unsupported_answer: str,
 ) -> None:
-    model = FakeModelAdapter(
-        plans=[{"route": "direct_answer", "answer": unsupported_answer}]
-    )
+    model = FakeModelAdapter(plans=[{"route": "direct_answer", "answer": unsupported_answer}])
     collector = RecordingEvidenceCollector()
 
     result = await AgentTurnWorkflow(
@@ -181,9 +179,7 @@ async def test_direct_answer_allows_a_general_capability_explanation() -> None:
     collector = RecordingEvidenceCollector()
 
     result = await AgentTurnWorkflow(
-        model=FakeModelAdapter(
-            plans=[{"route": "direct_answer", "answer": answer}]
-        ),
+        model=FakeModelAdapter(plans=[{"route": "direct_answer", "answer": answer}]),
         evidence_collector=collector,
     ).run(
         [ModelMessage(role="user", content="你能做什么？")],
@@ -214,9 +210,7 @@ async def test_capability_direct_answer_never_returns_model_owned_claims() -> No
     )
 
     assert result.turn.route == "answer"
-    assert result.turn.content == (
-        "我可以说明能力范围，并基于当前门店的可验证证据回答经营问题。"
-    )
+    assert result.turn.content == ("我可以说明能力范围，并基于当前门店的可验证证据回答经营问题。")
     assert "利润翻倍" not in result.turn.content
     assert collector.calls == 0
 
@@ -282,9 +276,7 @@ async def test_workflow_rejects_model_provided_urls_and_internal_routes() -> Non
         "请求 /api/database/999/records",
     ):
         result = await AgentTurnWorkflow(
-            model=FakeModelAdapter(
-                plans=[{"route": "direct_answer", "answer": answer}]
-            ),
+            model=FakeModelAdapter(plans=[{"route": "direct_answer", "answer": answer}]),
             evidence_collector=RecordingEvidenceCollector(),
         ).run([ModelMessage(role="user", content="打开营业记录")], CONTEXT)
 
@@ -524,8 +516,7 @@ async def test_prompt_injection_from_untrusted_sources_cannot_change_backend_ans
     payload: str,
 ) -> None:
     safe_summary = (
-        "2026-07-01 至 2026-07-26 的月度总收入为 100 欧元。"
-        f"不可信{source}数据：「{payload}」。"
+        f"2026-07-01 至 2026-07-26 的月度总收入为 100 欧元。不可信{source}数据：「{payload}」。"
     )
     evidence_plan = {
         "route": "evidence",
@@ -583,9 +574,7 @@ async def test_transient_failure_retries_current_model_once(
         evidence_collector=RecordingEvidenceCollector(),
     ).run([ModelMessage(role="user", content="你能做什么？")], CONTEXT)
 
-    assert result.turn.content == (
-        "我可以说明能力范围，并基于当前门店的可验证证据回答经营问题。"
-    )
+    assert result.turn.content == ("我可以说明能力范围，并基于当前门店的可验证证据回答经营问题。")
     assert result.turn.recovery_status == "retried"
     assert primary.plan_calls == 2
 
@@ -649,9 +638,7 @@ async def test_non_recoverable_failure_never_retries_or_uses_fallback(
     primary = FakeModelAdapter(
         plans=[ModelAdapterError("secret provider detail", category=category)]
     )
-    fallback = FakeModelAdapter(
-        plans=[{"route": "direct_answer", "answer": "不应绕过"}]
-    )
+    fallback = FakeModelAdapter(plans=[{"route": "direct_answer", "answer": "不应绕过"}])
 
     result = await AgentTurnWorkflow(
         model=ResilientModelAdapter(primary, fallback=fallback),
@@ -666,12 +653,9 @@ async def test_non_recoverable_failure_never_retries_or_uses_fallback(
 
 async def test_all_providers_unavailable_returns_sanitized_failure() -> None:
     def unavailable(message: str) -> ModelAdapterError:
-        return ModelAdapterError(
-            message, category=ModelErrorCategory.PROVIDER_5XX
-        )
-    primary = FakeModelAdapter(
-        plans=[unavailable("primary raw"), unavailable("primary raw again")]
-    )
+        return ModelAdapterError(message, category=ModelErrorCategory.PROVIDER_5XX)
+
+    primary = FakeModelAdapter(plans=[unavailable("primary raw"), unavailable("primary raw again")])
     fallback = FakeModelAdapter(plans=[unavailable("fallback raw")])
 
     result = await AgentTurnWorkflow(

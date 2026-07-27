@@ -106,9 +106,7 @@ async def get_conversation_by_id(
 async def create_or_get_conversation(
     session: AsyncSession, *, user_id: int, store_id: int
 ) -> AgentConversation:
-    conversation = await get_conversation(
-        session, user_id=user_id, store_id=store_id
-    )
+    conversation = await get_conversation(session, user_id=user_id, store_id=store_id)
     if conversation is not None:
         return conversation
     conversation = AgentConversation(
@@ -161,9 +159,7 @@ async def recent_model_messages(
 async def conversation_response(
     session: AsyncSession, *, user_id: int, store_id: int
 ) -> ConversationResponse:
-    conversation = await get_conversation(
-        session, user_id=user_id, store_id=store_id
-    )
+    conversation = await get_conversation(session, user_id=user_id, store_id=store_id)
     if conversation is None:
         return empty_conversation_response()
     messages = list(
@@ -191,9 +187,7 @@ async def conversation_response(
     )
 
 
-async def delete_conversation(
-    session: AsyncSession, *, user_id: int, store_id: int
-) -> None:
+async def delete_conversation(session: AsyncSession, *, user_id: int, store_id: int) -> None:
     await session.execute(
         delete(AgentConversation).where(
             AgentConversation.user_id == user_id,

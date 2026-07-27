@@ -139,12 +139,8 @@ async def test_used_category_can_be_archived_but_not_permanently_deleted(
     await db_session.commit()
 
     category_id = category.id
-    archived = await admin_client.post(
-        f"/api/admin/income-categories/{category_id}/archive"
-    )
-    rejected = await admin_client.delete(
-        f"/api/admin/income-categories/{category_id}"
-    )
+    archived = await admin_client.post(f"/api/admin/income-categories/{category_id}/archive")
+    rejected = await admin_client.delete(f"/api/admin/income-categories/{category_id}")
 
     assert rejected.status_code == 409
     assert archived.status_code == 200
@@ -250,9 +246,7 @@ async def test_income_configuration_writes_wait_for_active_ledger_write_lock(
             },
         )
     elif operation in {"archive", "restore"}:
-        request = admin_client.post(
-            f"/api/admin/income-categories/{category.id}/{operation}"
-        )
+        request = admin_client.post(f"/api/admin/income-categories/{category.id}/{operation}")
     elif operation == "delete":
         request = admin_client.delete(f"/api/admin/income-categories/{category.id}")
     elif operation == "create":
@@ -274,9 +268,7 @@ async def test_income_configuration_writes_wait_for_active_ledger_write_lock(
     try:
         mutation_task = asyncio.create_task(request)
         try:
-            response = await asyncio.wait_for(
-                asyncio.shield(mutation_task), timeout=0.5
-            )
+            response = await asyncio.wait_for(asyncio.shield(mutation_task), timeout=0.5)
             was_blocked = False
         except TimeoutError:
             was_blocked = True

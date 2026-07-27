@@ -40,9 +40,7 @@ class Store(Base):
     company_settlement_enabled: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="0"
     )
-    wash_count_enabled: Mapped[bool] = mapped_column(
-        Boolean, default=True, server_default="1"
-    )
+    wash_count_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
 

@@ -120,9 +120,7 @@ class CustomDateRangePeriod(ClosedModel):
         if self.end < self.start:
             raise ValueError("custom date range end must not precede start")
         if (self.end - self.start).days + 1 > MAXIMUM_CUSTOM_RANGE_DAYS:
-            raise ValueError(
-                f"custom date range cannot exceed {MAXIMUM_CUSTOM_RANGE_DAYS} days"
-            )
+            raise ValueError(f"custom date range cannot exceed {MAXIMUM_CUSTOM_RANGE_DAYS} days")
         return self
 
 
@@ -224,10 +222,7 @@ class EvidenceRequest(ClosedModel):
     def require_compatible_query_shape(self) -> "EvidenceRequest":
         if self.metric == EvidenceMetric.DAILY_LEDGER:
             raise ValueError("daily ledger requires the daily_ledger request kind")
-        if (
-            self.comparison is not None
-            and self.metric != EvidenceMetric.MONTHLY_TOTAL_REVENUE
-        ):
+        if self.comparison is not None and self.metric != EvidenceMetric.MONTHLY_TOTAL_REVENUE:
             raise ValueError("period comparison requires monthly total revenue")
         if self.comparison is not None and (
             self.group_by is not None or self.filters is not None or self.extreme is not None
@@ -247,15 +242,11 @@ class EvidenceRequest(ClosedModel):
             }
             if self.metric not in daily_metrics:
                 raise ValueError("this metric has no safe daily grouping grain")
-            if (
-                self.group_by == EvidenceGroup.INCOME_CATEGORY
-                and self.metric
-                not in {
-                    EvidenceMetric.DAILY_LEDGER_REVENUE,
-                    EvidenceMetric.INCOME_CATEGORY_AMOUNT,
-                    EvidenceMetric.OTHER_DATA_AMOUNT,
-                }
-            ):
+            if self.group_by == EvidenceGroup.INCOME_CATEGORY and self.metric not in {
+                EvidenceMetric.DAILY_LEDGER_REVENUE,
+                EvidenceMetric.INCOME_CATEGORY_AMOUNT,
+                EvidenceMetric.OTHER_DATA_AMOUNT,
+            }:
                 raise ValueError("income category grouping requires an amount metric")
         if self.filters is not None and self.metric in {
             EvidenceMetric.MONTHLY_TOTAL_REVENUE,
@@ -292,10 +283,7 @@ class RevenueAnalysisRequest(ClosedModel):
 
 
 EvidenceRequestUnion = Annotated[
-    EvidenceRequest
-    | SettlementDetailsRequest
-    | DailyLedgerRequest
-    | RevenueAnalysisRequest,
+    EvidenceRequest | SettlementDetailsRequest | DailyLedgerRequest | RevenueAnalysisRequest,
     Field(discriminator="kind"),
 ]
 
@@ -354,9 +342,7 @@ class TurnPlan(ClosedModel):
             "message": self.message,
         }
         if primary_payloads[expected] is None or any(
-            value is not None
-            for name, value in primary_payloads.items()
-            if name != expected
+            value is not None for name, value in primary_payloads.items() if name != expected
         ):
             raise ValueError(f"{self.route.value} requires only {expected}")
         if self.route != TurnRoute.EVIDENCE and self.supplemental_evidence_plan is not None:
@@ -364,9 +350,7 @@ class TurnPlan(ClosedModel):
         if self.supplemental_evidence_plan is not None:
             supplemental_request = self.supplemental_evidence_plan.requests[0]
             if not isinstance(supplemental_request, EvidenceRequest):
-                raise ValueError(
-                    "supplemental evidence is limited to one business metric request"
-                )
+                raise ValueError("supplemental evidence is limited to one business metric request")
         return self
 
 
@@ -472,9 +456,7 @@ class UntrustedRawEvent(ClosedModel):
 
 class DailyLedgerResult(ClosedModel):
     facts: DailyLedgerFacts | None
-    missing_fields: list[Literal["recorded_weather", "wash_count"]] = Field(
-        default_factory=list
-    )
+    missing_fields: list[Literal["recorded_weather", "wash_count"]] = Field(default_factory=list)
     unavailable_fields: list[Literal["wash_count"]] = Field(default_factory=list)
     raw_event: UntrustedRawEvent | None = None
 
@@ -687,11 +669,14 @@ class RevenueAnalysisResult(ClosedModel):
 
 class RevenueAnalysisSufficiency(ClosedModel):
     critical_data_complete: bool
-    largest_verified_contribution: Literal[
-        "operating_days",
-        "operating_day_average",
-        "confirmed_settlement_income",
-    ] | None
+    largest_verified_contribution: (
+        Literal[
+            "operating_days",
+            "operating_day_average",
+            "confirmed_settlement_income",
+        ]
+        | None
+    )
     largest_absolute_share: Decimal | None = Field(default=None, ge=0, le=1)
     major_driver_threshold: Decimal = Field(ge=0, le=1)
     allows_mainly_from: bool
@@ -755,11 +740,7 @@ class SettlementDetailsEvidenceBundle(ClosedModel):
     summary: str = Field(min_length=1, max_length=20_000)
 
 
-CollectedEvidence = (
-    EvidenceBundle
-    | SettlementDetailsEvidenceBundle
-    | RevenueAnalysisEvidenceBundle
-)
+CollectedEvidence = EvidenceBundle | SettlementDetailsEvidenceBundle | RevenueAnalysisEvidenceBundle
 
 
 class TurnResult(ClosedModel):

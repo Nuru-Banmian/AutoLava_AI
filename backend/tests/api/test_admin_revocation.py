@@ -52,9 +52,7 @@ async def _setup_admin_mutation(operation: str):
             is_active=operation != "restore",
             sort_order=0,
             archived_at=(
-                datetime.now(UTC).replace(tzinfo=None)
-                if operation == "restore"
-                else None
+                datetime.now(UTC).replace(tzinfo=None) if operation == "restore" else None
             ),
         )
         session.add(category)
@@ -87,13 +85,9 @@ def _request_for(
             },
         )
     if operation in {"archive", "restore"}:
-        return client.post(
-            f"/api/admin/income-categories/{category_id}/{operation}"
-        )
+        return client.post(f"/api/admin/income-categories/{category_id}/{operation}")
     if operation == "delete":
-        return client.delete(
-            f"/api/admin/income-categories/{category_id}"
-        )
+        return client.delete(f"/api/admin/income-categories/{category_id}")
     if operation == "category-create":
         return client.post(
             "/api/admin/income-categories",
@@ -142,9 +136,7 @@ def _request_for(
             f"/api/admin/stores/{store_id}/members",
             json={"user_ids": []},
         )
-    return client.patch(
-        f"/api/admin/users/{target_id}", json={"is_active": False}
-    )
+    return client.patch(f"/api/admin/users/{target_id}", json={"is_active": False})
 
 
 @pytest.mark.parametrize(
@@ -169,9 +161,7 @@ async def test_admin_mutation_revalidates_actor_after_lock_wait(
     operation: str,
 ) -> None:
     await _reset_database()
-    actor_id, target_id, store_id, category_id = (
-        await _setup_admin_mutation(operation)
-    )
+    actor_id, target_id, store_id, category_id = await _setup_admin_mutation(operation)
     app = create_app()
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"
@@ -206,9 +196,7 @@ async def test_admin_mutation_revalidates_actor_after_lock_wait(
             SQLITE_WRITE_LOCK.release()
         response = await mutation
 
-    assert response.status_code == (
-        401 if operation == "user-patch" else 403
-    )
+    assert response.status_code == (401 if operation == "user-patch" else 403)
     async with async_session_factory() as verify:
         category = await verify.get(IncomeCategory, category_id)
         target = await verify.get(User, target_id)
@@ -218,39 +206,39 @@ async def test_admin_mutation_revalidates_actor_after_lock_wait(
         assert store is not None
         assert target.is_active is True
         assert store.name == "Admin revocation"
-        assert await verify.scalar(
-            select(func.count()).select_from(Store)
-        ) == 1
-        assert await verify.scalar(
-            select(func.count()).select_from(User)
-        ) == 2
+        assert await verify.scalar(select(func.count()).select_from(Store)) == 1
+        assert await verify.scalar(select(func.count()).select_from(User)) == 2
         assert category.name == "Before"
         assert store.income_items_enabled is False
-        assert await verify.scalar(
-            select(func.count())
-            .select_from(IncomeCategory)
-            .where(IncomeCategory.store_id == store_id)
-        ) == 1
+        assert (
+            await verify.scalar(
+                select(func.count())
+                .select_from(IncomeCategory)
+                .where(IncomeCategory.store_id == store_id)
+            )
+            == 1
+        )
         if operation == "archive":
             assert category.archived_at is None
         if operation == "restore":
             assert category.archived_at is not None
         if operation == "members-replace":
-            assert await verify.scalar(
-                select(func.count())
-                .select_from(StoreMember)
-                .where(
-                    StoreMember.store_id == store_id,
-                    StoreMember.user_id == target_id,
+            assert (
+                await verify.scalar(
+                    select(func.count())
+                    .select_from(StoreMember)
+                    .where(
+                        StoreMember.store_id == store_id,
+                        StoreMember.user_id == target_id,
+                    )
                 )
-            ) == 1
+                == 1
+            )
 
 
 async def test_income_config_replace_rejects_deactivated_actor_after_lock_wait() -> None:
     await _reset_database()
-    actor_id, target_id, store_id, category_id = await _setup_admin_mutation(
-        "replace"
-    )
+    actor_id, target_id, store_id, category_id = await _setup_admin_mutation("replace")
     app = create_app()
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"

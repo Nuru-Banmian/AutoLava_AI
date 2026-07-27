@@ -17,9 +17,7 @@ from app.core.config import get_settings
 
 
 SQLITE_WRITE_LOCK = asyncio.Lock()
-_SQLITE_WRITE_ACTIVE: ContextVar[bool] = ContextVar(
-    "_SQLITE_WRITE_ACTIVE", default=False
-)
+_SQLITE_WRITE_ACTIVE: ContextVar[bool] = ContextVar("_SQLITE_WRITE_ACTIVE", default=False)
 
 
 async def end_read_transaction(session: AsyncSession) -> None:

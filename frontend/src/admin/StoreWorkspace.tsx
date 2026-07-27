@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-
-import { api, friendlyApiError } from "@/api/client";
-import type { AdminStore } from "@/api/types";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { IncomeItemsPanel } from "@/admin/IncomeItemsPanel";
 import { StoreDetailsCard } from "@/admin/StoreDetailsCard";
+import { api, friendlyApiError } from "@/api/client";
+import type { AdminStore } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { useUnsavedChanges } from "@/navigation/UnsavedChanges";
 
@@ -20,7 +19,10 @@ export function StoreWorkspace() {
   const detailsDirtyRef = useRef(false);
   const incomeDirtyRef = useRef(false);
   const { markDirty, requestTransition } = useUnsavedChanges();
-  const stores = useQuery({ queryKey: storesKey, queryFn: () => api<AdminStore[]>("/admin/stores") });
+  const stores = useQuery({
+    queryKey: storesKey,
+    queryFn: () => api<AdminStore[]>("/admin/stores"),
+  });
   const list = stores.data ?? [];
 
   useEffect(() => markDirty(detailsDirty || incomeDirty), [detailsDirty, incomeDirty, markDirty]);
@@ -76,86 +78,115 @@ export function StoreWorkspace() {
     void finishDeleted(storeId);
   }
 
-  const selectedStore = typeof selection === "number"
-    ? list.find((store) => store.id === selection) ?? null
-    : null;
+  const selectedStore =
+    typeof selection === "number" ? (list.find((store) => store.id === selection) ?? null) : null;
 
   let cards: React.ReactNode = null;
   if (selection === "new") {
-    cards = <StoreDetailsCard
-      key={selection}
-      mode="create"
-      onDeleted={() => undefined}
-      onDeleteFailed={() => undefined}
-      onDeleteRequested={() => undefined}
-      onDirtyChange={updateDetailsDirty}
-      onSaved={created}
-      store={null}
-    />;
+    cards = (
+      <StoreDetailsCard
+        key={selection}
+        mode="create"
+        onDeleted={() => undefined}
+        onDeleteFailed={() => undefined}
+        onDeleteRequested={() => undefined}
+        onDirtyChange={updateDetailsDirty}
+        onSaved={created}
+        store={null}
+      />
+    );
   } else if (selectedStore) {
     const capturedStoreId = selectedStore.id;
-    cards = <div className="space-y-4">
-      <IncomeItemsPanel key={`income-${selection}`} onDirtyChange={updateIncomeDirty} storeId={selectedStore.id} />
-      <StoreDetailsCard
-        key={`details-${selection}`}
-        mode="edit"
-        onDeleted={(storeId) => {
-          if (selectionRef.current === capturedStoreId) deleted(storeId);
-        }}
-        onDeleteRequested={(deleteStore) => {
-          if (selectionRef.current !== capturedStoreId) return;
-          requestTransition(() => {
-            if (selectionRef.current === capturedStoreId) deleteStore();
-          });
-        }}
-        onDeleteFailed={() => {
-          if (selectionRef.current === capturedStoreId && (detailsDirtyRef.current || incomeDirtyRef.current)) markDirty(true);
-        }}
-        onDirtyChange={updateDetailsDirty}
-        onSaved={() => {
-          if (selectionRef.current === capturedStoreId) {
-            updateDetailsDirty(false);
-            stores.refetch().catch(() => undefined);
-          }
-        }}
-        store={selectedStore}
-      />
-    </div>;
+    cards = (
+      <div className="space-y-4">
+        <IncomeItemsPanel
+          key={`income-${selection}`}
+          onDirtyChange={updateIncomeDirty}
+          storeId={selectedStore.id}
+        />
+        <StoreDetailsCard
+          key={`details-${selection}`}
+          mode="edit"
+          onDeleted={(storeId) => {
+            if (selectionRef.current === capturedStoreId) deleted(storeId);
+          }}
+          onDeleteRequested={(deleteStore) => {
+            if (selectionRef.current !== capturedStoreId) return;
+            requestTransition(() => {
+              if (selectionRef.current === capturedStoreId) deleteStore();
+            });
+          }}
+          onDeleteFailed={() => {
+            if (
+              selectionRef.current === capturedStoreId &&
+              (detailsDirtyRef.current || incomeDirtyRef.current)
+            )
+              markDirty(true);
+          }}
+          onDirtyChange={updateDetailsDirty}
+          onSaved={() => {
+            if (selectionRef.current === capturedStoreId) {
+              updateDetailsDirty(false);
+              stores.refetch().catch(() => undefined);
+            }
+          }}
+          store={selectedStore}
+        />
+      </div>
+    );
   }
 
-  return <div className="space-y-4">
-    {stores.error && <p role="alert" className="text-sm text-destructive">{friendlyApiError(stores.error, "门店加载失败")}</p>}
-    <div className="grid min-w-0 gap-4 md:grid-cols-[14rem_minmax(0,1fr)] md:grid-rows-[auto_1fr]">
-      <div
-        aria-label="门店列表操作"
-        className="flex min-w-0 items-center gap-2 md:col-start-1 md:row-start-1"
-        role="toolbar"
-      >
-        <span className="hidden min-w-0 flex-1 text-sm font-medium md:block">门店列表</span>
-        <select
-          aria-label="门店"
-          className="h-9 min-w-0 flex-1 rounded-md border bg-background px-2 md:hidden"
-          onChange={(event) => {
-            if (event.target.value) select(Number(event.target.value));
-          }}
-          value={typeof selection === "number" ? selection : ""}
+  return (
+    <div className="space-y-4">
+      {stores.error && (
+        <p role="alert" className="text-sm text-destructive">
+          {friendlyApiError(stores.error, "门店加载失败")}
+        </p>
+      )}
+      <div className="grid min-w-0 gap-4 md:grid-cols-[14rem_minmax(0,1fr)] md:grid-rows-[auto_1fr]">
+        <div
+          aria-label="门店列表操作"
+          className="flex min-w-0 items-center gap-2 md:col-start-1 md:row-start-1"
+          role="toolbar"
         >
-          <option hidden value="" />
-          {list.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
-        </select>
-        <Button type="button" onClick={() => select("new")}>新建门店</Button>
+          <span className="hidden min-w-0 flex-1 text-sm font-medium md:block">门店列表</span>
+          <select
+            aria-label="门店"
+            className="h-9 min-w-0 flex-1 rounded-md border bg-background px-2 md:hidden"
+            onChange={(event) => {
+              if (event.target.value) select(Number(event.target.value));
+            }}
+            value={typeof selection === "number" ? selection : ""}
+          >
+            <option hidden value="" />
+            {list.map((store) => (
+              <option key={store.id} value={store.id}>
+                {store.name}
+              </option>
+            ))}
+          </select>
+          <Button type="button" onClick={() => select("new")}>
+            新建门店
+          </Button>
+        </div>
+        <aside aria-label="门店列表" className="hidden md:col-start-1 md:row-start-2 md:block">
+          <ul className="divide-y rounded-lg border bg-card">
+            {list.map((store) => (
+              <li key={store.id}>
+                <button
+                  className="w-full p-3 text-left hover:bg-accent"
+                  onClick={() => select(store.id)}
+                  type="button"
+                >
+                  <span className="block font-medium">{store.name}</span>
+                  <span className="text-xs text-muted-foreground">{store.address}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </aside>
+        <main className="min-w-0 md:col-start-2 md:row-span-2 md:row-start-1">{cards}</main>
       </div>
-      <aside aria-label="门店列表" className="hidden md:col-start-1 md:row-start-2 md:block">
-        <ul className="divide-y rounded-lg border bg-card">
-          {list.map((store) => <li key={store.id}>
-            <button className="w-full p-3 text-left hover:bg-accent" onClick={() => select(store.id)} type="button">
-              <span className="block font-medium">{store.name}</span>
-              <span className="text-xs text-muted-foreground">{store.address}</span>
-            </button>
-          </li>)}
-        </ul>
-      </aside>
-      <main className="min-w-0 md:col-start-2 md:row-span-2 md:row-start-1">{cards}</main>
     </div>
-  </div>;
+  );
 }

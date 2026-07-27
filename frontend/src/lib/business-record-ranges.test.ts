@@ -1,13 +1,29 @@
 import { describe, expect, it } from "vitest";
-import { analysisRange, analysisSearchParams, customMonthRange, monthRange, monthSelectionIssue } from "@/lib/business-record-ranges";
+import {
+  analysisRange,
+  analysisSearchParams,
+  customMonthRange,
+  monthRange,
+  monthSelectionIssue,
+} from "@/lib/business-record-ranges";
 
 describe("business record ranges", () => {
   it("resolves selected and custom month boundaries", () => {
     expect(monthRange("2025-12")).toEqual({ start: "2025-12-01", end: "2025-12-31" });
-    expect(customMonthRange({ startMonth: "2026-05", endMonth: "2026-06" }, "2026-07-17")).toEqual({ start: "2026-05-01", end: "2026-06-30" });
-    expect(customMonthRange({ startMonth: "2026-05", endMonth: "2026-07" }, "2026-07-17")).toEqual({ start: "2026-05-01", end: "2026-07-17" });
-    expect(monthSelectionIssue({ startMonth: "2026-08", endMonth: "2026-08" }, "2026-07")).toBe("future");
-    expect(monthSelectionIssue({ startMonth: "2026-07", endMonth: "2026-06" }, "2026-07")).toBe("reversed");
+    expect(customMonthRange({ startMonth: "2026-05", endMonth: "2026-06" }, "2026-07-17")).toEqual({
+      start: "2026-05-01",
+      end: "2026-06-30",
+    });
+    expect(customMonthRange({ startMonth: "2026-05", endMonth: "2026-07" }, "2026-07-17")).toEqual({
+      start: "2026-05-01",
+      end: "2026-07-17",
+    });
+    expect(monthSelectionIssue({ startMonth: "2026-08", endMonth: "2026-08" }, "2026-07")).toBe(
+      "future",
+    );
+    expect(monthSelectionIssue({ startMonth: "2026-07", endMonth: "2026-06" }, "2026-07")).toBe(
+      "reversed",
+    );
   });
 
   it("compares month-to-date with the same available prior-month period", () => {
@@ -39,17 +55,25 @@ describe("business record ranges", () => {
   });
 
   it("switches custom aggregation after 62 inclusive days and omits comparison", () => {
-    expect(analysisRange("custom", "2026-07-17", { start: "2026-01-01", end: "2026-03-03" }).bucket).toBe("day");
-    expect(analysisRange("custom", "2026-07-17", { start: "2026-01-01", end: "2026-03-04" })).toMatchObject({
+    expect(
+      analysisRange("custom", "2026-07-17", { start: "2026-01-01", end: "2026-03-03" }).bucket,
+    ).toBe("day");
+    expect(
+      analysisRange("custom", "2026-07-17", { start: "2026-01-01", end: "2026-03-04" }),
+    ).toMatchObject({
       compareStart: null,
       compareEnd: null,
       bucket: "month",
     });
-    expect(() => analysisRange("custom", "2026-07-17", { start: "2026-07-18", end: "2026-07-17" })).toThrow(RangeError);
+    expect(() =>
+      analysisRange("custom", "2026-07-17", { start: "2026-07-18", end: "2026-07-17" }),
+    ).toThrow(RangeError);
   });
 
   it("serializes comparison only when present", () => {
     const params = analysisSearchParams(analysisRange("current-month", "2026-07-17"));
-    expect(params.toString()).toBe("start=2026-07-01&end=2026-07-17&bucket=day&compare_start=2026-06-01&compare_end=2026-06-17");
+    expect(params.toString()).toBe(
+      "start=2026-07-01&end=2026-07-17&bucket=day&compare_start=2026-06-01&compare_end=2026-06-17",
+    );
   });
 });

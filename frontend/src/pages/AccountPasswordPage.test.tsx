@@ -1,6 +1,6 @@
 import { QueryClient } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { http, HttpResponse } from "msw";
+import { HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
@@ -18,7 +18,9 @@ afterAll(() => server.close());
 
 function renderPasswordPage() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<Application queryClient={queryClient} router={createAppRouter(["/account/password"])} />);
+  return render(
+    <Application queryClient={queryClient} router={createAppRouter(["/account/password"])} />,
+  );
 }
 
 async function fillPasswords(current: string, password: string, confirmation: string) {
@@ -30,10 +32,12 @@ async function fillPasswords(current: string, password: string, confirmation: st
 describe("AccountPasswordPage", () => {
   it("shows a mobile-safe form and rejects a mismatched confirmation in Chinese", async () => {
     let requests = 0;
-    server.use(http.post("/api/auth/password", () => {
-      requests += 1;
-      return new HttpResponse(null, { status: 204 });
-    }));
+    server.use(
+      http.post("/api/auth/password", () => {
+        requests += 1;
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
     renderPasswordPage();
 
     expect(await screen.findByRole("heading", { level: 1, name: "修改密码" })).toBeInTheDocument();
@@ -48,10 +52,12 @@ describe("AccountPasswordPage", () => {
 
   it("changes the password and returns to More with a success status", async () => {
     let body: unknown;
-    server.use(http.post("/api/auth/password", async ({ request }) => {
-      body = await request.json();
-      return new HttpResponse(null, { status: 204 });
-    }));
+    server.use(
+      http.post("/api/auth/password", async ({ request }) => {
+        body = await request.json();
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
     renderPasswordPage();
 
     await fillPasswords("OldPassword1", "NewPassword2", "NewPassword2");
@@ -63,9 +69,11 @@ describe("AccountPasswordPage", () => {
   });
 
   it("shows a Chinese server error without echoing either password", async () => {
-    server.use(http.post("/api/auth/password", () => (
-      HttpResponse.json({ detail: "当前密码不正确" }, { status: 422 })
-    )));
+    server.use(
+      http.post("/api/auth/password", () =>
+        HttpResponse.json({ detail: "当前密码不正确" }, { status: 422 }),
+      ),
+    );
     renderPasswordPage();
 
     await fillPasswords("WrongPassword1", "NewPassword2", "NewPassword2");
@@ -79,10 +87,14 @@ describe("AccountPasswordPage", () => {
 
   it("disables submission while the password update is pending", async () => {
     let resolve!: () => void;
-    server.use(http.post("/api/auth/password", async () => {
-      await new Promise<void>((done) => { resolve = done; });
-      return new HttpResponse(null, { status: 204 });
-    }));
+    server.use(
+      http.post("/api/auth/password", async () => {
+        await new Promise<void>((done) => {
+          resolve = done;
+        });
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
     renderPasswordPage();
 
     await fillPasswords("OldPassword1", "NewPassword2", "NewPassword2");

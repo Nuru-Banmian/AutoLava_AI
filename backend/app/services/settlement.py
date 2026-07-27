@@ -394,9 +394,7 @@ class SettlementRecordService:
             action="settlement_record.confirm",
         )
 
-    async def revoke_confirmation(
-        self, record_id: int, *, revision: int
-    ) -> SettlementRecord:
+    async def revoke_confirmation(self, record_id: int, *, revision: int) -> SettlementRecord:
         return await self._transition(
             record_id,
             revision=revision,

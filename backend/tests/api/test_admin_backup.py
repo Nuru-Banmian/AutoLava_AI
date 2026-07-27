@@ -104,9 +104,7 @@ async def test_final_admin_downloads_a_verified_snapshot_without_touching_schedu
         r'attachment; filename="autolava-backup-\d{8}-\d{6}\.sqlite3"',
         disposition,
     )
-    assert response.headers["cache-control"] == (
-        "no-store, no-cache, must-revalidate, max-age=0"
-    )
+    assert response.headers["cache-control"] == ("no-store, no-cache, must-revalidate, max-age=0")
     assert response.headers["pragma"] == "no-cache"
     assert response.headers["expires"] == "0"
 
@@ -118,9 +116,11 @@ async def test_final_admin_downloads_a_verified_snapshot_without_touching_schedu
             7,
             "Roma Centro",
         )
-        assert snapshot.execute(
-            "SELECT id, username, password_hash FROM users"
-        ).fetchone() == (8, "configured-final-admin", "bcrypt-hash-marker")
+        assert snapshot.execute("SELECT id, username, password_hash FROM users").fetchone() == (
+            8,
+            "configured-final-admin",
+            "bcrypt-hash-marker",
+        )
         assert snapshot.execute(
             "SELECT id, store_id, date, daily_revenue FROM store_daily_records"
         ).fetchone() == (9, 7, "2026-07-23", 456)

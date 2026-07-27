@@ -1,15 +1,24 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import type { AccessibleStore, CategoryDescriptor, DatabaseResponse, LedgerStatus } from "@/api/types";
+import type {
+  AccessibleStore,
+  CategoryDescriptor,
+  DatabaseResponse,
+  LedgerStatus,
+} from "@/api/types";
 
-export const categoryCatalogKey = (storeId: number, start: string, end = start) => ["categoryCatalog", storeId, start, end] as const;
+export const categoryCatalogKey = (storeId: number, start: string, end = start) =>
+  ["categoryCatalog", storeId, start, end] as const;
 export const incomeConfigKey = (storeId: number) => ["income-config", storeId, "current"] as const;
-export const ledgerRecordKey = (storeId: number, date: string) => ["ledger", "record", storeId, date] as const;
-export const ledgerMonthKey = (storeId: number, month: string) => ["ledgerMonth", storeId, month] as const;
+export const ledgerRecordKey = (storeId: number, date: string) =>
+  ["ledger", "record", storeId, date] as const;
+export const ledgerMonthKey = (storeId: number, month: string) =>
+  ["ledgerMonth", storeId, month] as const;
 export const recentKey = (storeId: number) => ["ledger", "recent", storeId, 7] as const;
 export const dashboardKey = (storeId: number) => ["dashboard", storeId] as const;
 export const chartsKey = (storeId: number, query: string) => ["charts", storeId, query] as const;
-export const databaseKey = (storeId: number, query: string) => ["database", "records", storeId, query] as const;
+export const databaseKey = (storeId: number, query: string) =>
+  ["database", "records", storeId, query] as const;
 
 const DATABASE_PAGE_SIZE = 200;
 
@@ -25,9 +34,16 @@ async function loadRecordPages(
   let total = 0;
 
   do {
-    const query = new URLSearchParams({ start, end, page: String(page), page_size: String(DATABASE_PAGE_SIZE) });
+    const query = new URLSearchParams({
+      start,
+      end,
+      page: String(page),
+      page_size: String(DATABASE_PAGE_SIZE),
+    });
     if (status) query.set("status", status);
-    const response = await api<DatabaseResponse>(`/database/${storeId}/records?${query}`, { signal });
+    const response = await api<DatabaseResponse>(`/database/${storeId}/records?${query}`, {
+      signal,
+    });
     pages.push(response);
     total = response.total;
     page += 1;
@@ -38,8 +54,12 @@ async function loadRecordPages(
 
 function mergedCategories(pages: DatabaseResponse[]): CategoryDescriptor[] {
   const categories = new Map<number, CategoryDescriptor>();
-  pages.forEach((response) => response.categories.forEach((category) => categories.set(category.id, category)));
-  return [...categories.values()].sort((left, right) => left.sort_order - right.sort_order || left.id - right.id);
+  pages.forEach((response) =>
+    response.categories.forEach((category) => categories.set(category.id, category)),
+  );
+  return [...categories.values()].sort(
+    (left, right) => left.sort_order - right.sort_order || left.id - right.id,
+  );
 }
 
 export async function loadBusinessRecords(
@@ -59,7 +79,12 @@ export async function loadBusinessRecords(
   };
 }
 
-export async function loadCategoryCatalog(storeId: number, start: string, end: string, signal?: AbortSignal): Promise<DatabaseResponse> {
+export async function loadCategoryCatalog(
+  storeId: number,
+  start: string,
+  end: string,
+  signal?: AbortSignal,
+): Promise<DatabaseResponse> {
   const pages = await loadRecordPages(storeId, start, end, signal);
 
   return {
@@ -69,18 +94,30 @@ export async function loadCategoryCatalog(storeId: number, start: string, end: s
 }
 
 export function storeLocalToday(store: AccessibleStore, now = new Date()): string {
-  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: store.timezone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: store.timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
   const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return `${value.year}-${value.month}-${value.day}`;
 }
 
 export async function invalidateUserData(client: QueryClient, storeId: number) {
-  await client.invalidateQueries({ predicate: ({ queryKey }) => {
-    if (queryKey[0] === "ledger" || queryKey[0] === "database") return queryKey[2] === storeId;
-    if (queryKey[0] === "ledgerMonth") return queryKey[1] === storeId;
-    if (queryKey[0] === "charts" || queryKey[0] === "dashboard" || queryKey[0] === "categoryCatalog") return queryKey[1] === storeId;
-    return false;
-  } });
+  await client.invalidateQueries({
+    predicate: ({ queryKey }) => {
+      if (queryKey[0] === "ledger" || queryKey[0] === "database") return queryKey[2] === storeId;
+      if (queryKey[0] === "ledgerMonth") return queryKey[1] === storeId;
+      if (
+        queryKey[0] === "charts" ||
+        queryKey[0] === "dashboard" ||
+        queryKey[0] === "categoryCatalog"
+      )
+        return queryKey[1] === storeId;
+      return false;
+    },
+  });
 }
 
 export function parseWholeAmount(value: string): { value: number } | { error: string } {

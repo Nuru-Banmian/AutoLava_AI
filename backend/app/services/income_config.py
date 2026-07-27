@@ -69,9 +69,7 @@ class IncomeConfigService:
         if len(names) != len(set(names)):
             raise HTTPException(422, "Duplicate income category names are not allowed")
 
-    async def replace(
-        self, store_id: int, body: IncomeConfigPublishBody
-    ) -> IncomeConfigResponse:
+    async def replace(self, store_id: int, body: IncomeConfigPublishBody) -> IncomeConfigResponse:
         store = await self._require_store(store_id)
         self._validate_unique(body)
         requested_ids = {item.category_id for item in body.items if item.category_id is not None}

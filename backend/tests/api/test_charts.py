@@ -218,9 +218,7 @@ async def test_charts_enabled_store_exposes_settlement_summary_for_partial_month
     store.company_settlement_enabled = True
     await db_session.flush()
 
-    response = await auth_client.get(
-        f"/api/charts/{store.id}?start=2026-07-10&end=2026-07-20"
-    )
+    response = await auth_client.get(f"/api/charts/{store.id}?start=2026-07-10&end=2026-07-20")
 
     assert response.status_code == 200
     assert response.json()["income_summary"] == {
@@ -235,9 +233,7 @@ async def test_charts_defaults_bucket_and_comparison_for_existing_callers(
     auth_client, db_session, store_factory
 ) -> None:
     store = await _assigned_store(auth_client, db_session, store_factory)
-    response = await auth_client.get(
-        f"/api/charts/{store.id}?start=2026-07-01&end=2026-07-31"
-    )
+    response = await auth_client.get(f"/api/charts/{store.id}?start=2026-07-01&end=2026-07-31")
     assert response.status_code == 200
     assert response.json()["range"] == {
         "start": "2026-07-01",
@@ -307,9 +303,7 @@ async def test_charts_complete_calendar_month_includes_confirmed_settlement_hist
     auth_client, db_session, store_factory
 ) -> None:
     store = await _assigned_store(auth_client, db_session, store_factory)
-    category = IncomeCategory(
-        store_id=store.id, name="Cash", include_in_total=True, sort_order=1
-    )
+    category = IncomeCategory(store_id=store.id, name="Cash", include_in_total=True, sort_order=1)
     db_session.add(category)
     await db_session.flush()
     await _record(
@@ -320,12 +314,8 @@ async def test_charts_complete_calendar_month_includes_confirmed_settlement_hist
         revenue=125,
         wash_count=5,
     )
-    await _confirmed_settlement(
-        db_session, store, opening_month=date(2026, 6, 1), amount=300
-    )
-    await _confirmed_settlement(
-        db_session, store, opening_month=date(2026, 5, 1), amount=100
-    )
+    await _confirmed_settlement(db_session, store, opening_month=date(2026, 6, 1), amount=300)
+    await _confirmed_settlement(db_session, store, opening_month=date(2026, 5, 1), amount=100)
     assert store.company_settlement_enabled is False
 
     response = await auth_client.get(
@@ -377,12 +367,8 @@ async def test_charts_wash_kpis_follow_each_store_setting(
     )
     db_session.add_all([disabled_category, enabled_category])
     await db_session.flush()
-    await _record(
-        db_session, disabled_store, disabled_category, revenue=125, wash_count=5
-    )
-    await _record(
-        db_session, enabled_store, enabled_category, revenue=125, wash_count=5
-    )
+    await _record(db_session, disabled_store, disabled_category, revenue=125, wash_count=5)
+    await _record(db_session, enabled_store, enabled_category, revenue=125, wash_count=5)
 
     disabled_response = await auth_client.get(
         f"/api/charts/{disabled_store.id}?start=2026-07-01&end=2026-07-31"
@@ -411,9 +397,7 @@ async def test_charts_partial_month_includes_confirmed_settlement_for_overlappin
     auth_client, db_session, store_factory
 ) -> None:
     store = await _assigned_store(auth_client, db_session, store_factory)
-    category = IncomeCategory(
-        store_id=store.id, name="Cash", include_in_total=True, sort_order=1
-    )
+    category = IncomeCategory(store_id=store.id, name="Cash", include_in_total=True, sort_order=1)
     db_session.add(category)
     await db_session.flush()
     await _record(
@@ -423,9 +407,7 @@ async def test_charts_partial_month_includes_confirmed_settlement_for_overlappin
         record_date=date(2026, 6, 12),
         revenue=125,
     )
-    await _confirmed_settlement(
-        db_session, store, opening_month=date(2026, 6, 1), amount=300
-    )
+    await _confirmed_settlement(db_session, store, opening_month=date(2026, 6, 1), amount=300)
 
     response = await auth_client.get(
         f"/api/charts/{store.id}?start=2026-06-02&end=2026-06-30&bucket=month"
@@ -454,20 +436,12 @@ async def test_charts_complete_multi_month_range_sums_each_month_total(
     auth_client, db_session, store_factory
 ) -> None:
     store = await _assigned_store(auth_client, db_session, store_factory)
-    category = IncomeCategory(
-        store_id=store.id, name="Cash", include_in_total=True, sort_order=1
-    )
+    category = IncomeCategory(store_id=store.id, name="Cash", include_in_total=True, sort_order=1)
     db_session.add(category)
     await db_session.flush()
-    await _record(
-        db_session, store, category, record_date=date(2026, 6, 12), revenue=125
-    )
-    await _confirmed_settlement(
-        db_session, store, opening_month=date(2026, 6, 1), amount=300
-    )
-    await _confirmed_settlement(
-        db_session, store, opening_month=date(2026, 7, 1), amount=200
-    )
+    await _record(db_session, store, category, record_date=date(2026, 6, 12), revenue=125)
+    await _confirmed_settlement(db_session, store, opening_month=date(2026, 6, 1), amount=300)
+    await _confirmed_settlement(db_session, store, opening_month=date(2026, 7, 1), amount=200)
 
     response = await auth_client.get(
         f"/api/charts/{store.id}?start=2026-06-01&end=2026-07-31&bucket=month"
@@ -484,9 +458,7 @@ async def test_charts_uses_the_same_operating_days_for_current_and_comparison_ra
     auth_client, db_session, store_factory
 ) -> None:
     store = await _assigned_store(auth_client, db_session, store_factory)
-    category = IncomeCategory(
-        store_id=store.id, name="Cash", include_in_total=True, sort_order=1
-    )
+    category = IncomeCategory(store_id=store.id, name="Cash", include_in_total=True, sort_order=1)
     db_session.add(category)
     await db_session.flush()
     for record_date, revenue, is_open in [

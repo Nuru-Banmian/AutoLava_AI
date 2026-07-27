@@ -76,22 +76,12 @@ def test_compose_contains_exactly_api_and_web_with_persistent_sqlite_data() -> N
         ),
         "AUTOLAVA_MODEL_THINKING_PARAMETERS": "${AUTOLAVA_MODEL_THINKING_PARAMETERS:-{}}",
         "AUTOLAVA_MODEL_TIMEOUT_SECONDS": "${AUTOLAVA_MODEL_TIMEOUT_SECONDS:-30}",
-        "AUTOLAVA_MODEL_MAX_OUTPUT_TOKENS": (
-            "${AUTOLAVA_MODEL_MAX_OUTPUT_TOKENS:-2000}"
-        ),
-        "AUTOLAVA_MODEL_INPUT_COST_PER_MILLION": (
-            "${AUTOLAVA_MODEL_INPUT_COST_PER_MILLION:-0}"
-        ),
-        "AUTOLAVA_MODEL_OUTPUT_COST_PER_MILLION": (
-            "${AUTOLAVA_MODEL_OUTPUT_COST_PER_MILLION:-0}"
-        ),
+        "AUTOLAVA_MODEL_MAX_OUTPUT_TOKENS": ("${AUTOLAVA_MODEL_MAX_OUTPUT_TOKENS:-2000}"),
+        "AUTOLAVA_MODEL_INPUT_COST_PER_MILLION": ("${AUTOLAVA_MODEL_INPUT_COST_PER_MILLION:-0}"),
+        "AUTOLAVA_MODEL_OUTPUT_COST_PER_MILLION": ("${AUTOLAVA_MODEL_OUTPUT_COST_PER_MILLION:-0}"),
         "AUTOLAVA_MODEL_API_KEY": "${AUTOLAVA_MODEL_API_KEY:-}",
-        "AUTOLAVA_FALLBACK_MODEL_PROVIDER": (
-            "${AUTOLAVA_FALLBACK_MODEL_PROVIDER:-fallback}"
-        ),
-        "AUTOLAVA_FALLBACK_MODEL_BASE_URL": (
-            "${AUTOLAVA_FALLBACK_MODEL_BASE_URL:-}"
-        ),
+        "AUTOLAVA_FALLBACK_MODEL_PROVIDER": ("${AUTOLAVA_FALLBACK_MODEL_PROVIDER:-fallback}"),
+        "AUTOLAVA_FALLBACK_MODEL_BASE_URL": ("${AUTOLAVA_FALLBACK_MODEL_BASE_URL:-}"),
         "AUTOLAVA_FALLBACK_MODEL_ID": "${AUTOLAVA_FALLBACK_MODEL_ID:-}",
         "AUTOLAVA_FALLBACK_MODEL_STRUCTURED_OUTPUT_METHOD": (
             "${AUTOLAVA_FALLBACK_MODEL_STRUCTURED_OUTPUT_METHOD:-json_schema}"
@@ -105,18 +95,10 @@ def test_compose_contains_exactly_api_and_web_with_persistent_sqlite_data() -> N
         "AUTOLAVA_FALLBACK_MODEL_OUTPUT_COST_PER_MILLION": (
             "${AUTOLAVA_FALLBACK_MODEL_OUTPUT_COST_PER_MILLION:-0}"
         ),
-        "AUTOLAVA_FALLBACK_MODEL_API_KEY": (
-            "${AUTOLAVA_FALLBACK_MODEL_API_KEY:-}"
-        ),
-        "AUTOLAVA_AGENT_EVIDENCE_BATCH_LIMIT": (
-            "${AUTOLAVA_AGENT_EVIDENCE_BATCH_LIMIT:-1}"
-        ),
-        "AUTOLAVA_AGENT_RELEASE_REPORT_PATH": (
-            "${AUTOLAVA_AGENT_RELEASE_REPORT_PATH:-}"
-        ),
-        "AUTOLAVA_AGENT_RUNTIME_IMAGE_DIGEST": (
-            "${AUTOLAVA_AGENT_RUNTIME_IMAGE_DIGEST:-}"
-        ),
+        "AUTOLAVA_FALLBACK_MODEL_API_KEY": ("${AUTOLAVA_FALLBACK_MODEL_API_KEY:-}"),
+        "AUTOLAVA_AGENT_EVIDENCE_BATCH_LIMIT": ("${AUTOLAVA_AGENT_EVIDENCE_BATCH_LIMIT:-1}"),
+        "AUTOLAVA_AGENT_RELEASE_REPORT_PATH": ("${AUTOLAVA_AGENT_RELEASE_REPORT_PATH:-}"),
+        "AUTOLAVA_AGENT_RUNTIME_IMAGE_DIGEST": ("${AUTOLAVA_AGENT_RUNTIME_IMAGE_DIGEST:-}"),
     }
     assert api["volumes"] == ["autolava_data:/data"]
     assert "ports" not in api
@@ -252,12 +234,7 @@ def test_ci_runs_backend_and_frontend_checks_without_containers() -> None:
     }
     assert required <= jobs.keys()
 
-    all_commands = [
-        step["run"]
-        for job in jobs.values()
-        for step in job["steps"]
-        if "run" in step
-    ]
+    all_commands = [step["run"] for job in jobs.values() for step in job["steps"] if "run" in step]
     for job in jobs.values():
         assert "services" not in job
     assert any("uv sync --project backend --frozen" in command for command in all_commands)
@@ -270,7 +247,7 @@ def test_ci_runs_backend_and_frontend_checks_without_containers() -> None:
         "npm test",
         "npm run build",
         "playwright install --with-deps chromium",
-        "npm run test:e2e",
+        "playwright test",
     ):
         assert any(contract in command for command in all_commands)
 
@@ -367,10 +344,13 @@ def test_development_defaults_remain_available() -> None:
 
 
 def test_agent_evidence_batch_limit_is_configurable_within_the_fixed_graph() -> None:
-    assert Settings(
-        _env_file=None,
-        agent_evidence_batch_limit=2,
-    ).agent_evidence_batch_limit == 2
+    assert (
+        Settings(
+            _env_file=None,
+            agent_evidence_batch_limit=2,
+        ).agent_evidence_batch_limit
+        == 2
+    )
     with pytest.raises(ValidationError):
         Settings(_env_file=None, agent_evidence_batch_limit=3)
 

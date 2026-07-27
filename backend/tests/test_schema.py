@@ -58,9 +58,7 @@ def test_final_schema_columns_and_money_types() -> None:
     agent_settings = Base.metadata.tables["agent_settings"].c
     assert agent_settings.enabled.server_default is not None
     conversations = Base.metadata.tables["agent_conversations"]
-    assert {c.name for c in conversations.constraints} >= {
-        "uq_agent_conversations_user_store"
-    }
+    assert {c.name for c in conversations.constraints} >= {"uq_agent_conversations_user_store"}
     assert conversations.c.state.type.compile(dialect=sqlite.dialect()) == "JSON"
     messages = Base.metadata.tables["agent_messages"].c
     assert messages.action.type.compile(dialect=sqlite.dialect()) == "JSON"

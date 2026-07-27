@@ -41,22 +41,61 @@ export function AccountPasswordPage() {
     <section className="grid min-w-0 gap-4">
       <div>
         <h1 className="text-2xl font-semibold">修改密码</h1>
-        <p className="mt-1 text-sm text-muted-foreground">请输入当前密码，并设置至少 8 位的新密码。</p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          请输入当前密码，并设置至少 8 位的新密码。
+        </p>
       </div>
-      <form className="grid min-w-0 w-full max-w-lg gap-4 rounded-xl border border-blue-100 bg-background p-4 shadow-sm sm:p-6" onSubmit={submit}>
+      <form
+        className="grid min-w-0 w-full max-w-lg gap-4 rounded-xl border border-blue-100 bg-background p-4 shadow-sm sm:p-6"
+        onSubmit={submit}
+      >
         <div className="grid min-w-0 gap-2">
-          <label className="text-sm font-medium" htmlFor="current-password">当前密码</label>
-          <Input autoComplete="current-password" id="current-password" maxLength={128} minLength={8} name="current_password" required type="password" />
+          <label className="text-sm font-medium" htmlFor="current-password">
+            当前密码
+          </label>
+          <Input
+            autoComplete="current-password"
+            id="current-password"
+            maxLength={128}
+            minLength={8}
+            name="current_password"
+            required
+            type="password"
+          />
         </div>
         <div className="grid min-w-0 gap-2">
-          <label className="text-sm font-medium" htmlFor="new-password">新密码</label>
-          <Input autoComplete="new-password" id="new-password" maxLength={128} minLength={8} name="new_password" required type="password" />
+          <label className="text-sm font-medium" htmlFor="new-password">
+            新密码
+          </label>
+          <Input
+            autoComplete="new-password"
+            id="new-password"
+            maxLength={128}
+            minLength={8}
+            name="new_password"
+            required
+            type="password"
+          />
         </div>
         <div className="grid min-w-0 gap-2">
-          <label className="text-sm font-medium" htmlFor="password-confirmation">确认新密码</label>
-          <Input autoComplete="new-password" id="password-confirmation" maxLength={128} minLength={8} name="confirmation" required type="password" />
+          <label className="text-sm font-medium" htmlFor="password-confirmation">
+            确认新密码
+          </label>
+          <Input
+            autoComplete="new-password"
+            id="password-confirmation"
+            maxLength={128}
+            minLength={8}
+            name="confirmation"
+            required
+            type="password"
+          />
         </div>
-        {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
+        {error && (
+          <p className="text-sm text-destructive" role="alert">
+            {error}
+          </p>
+        )}
         <Button className="w-full sm:w-fit" disabled={isPending} type="submit">
           {isPending ? "正在更新…" : "更新密码"}
         </Button>

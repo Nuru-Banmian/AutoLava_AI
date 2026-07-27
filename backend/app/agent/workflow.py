@@ -24,9 +24,7 @@ from app.agent.runtime import RuntimeContext
 
 SAFE_FAILURE_MESSAGE = "模型服务暂时不可用，请稍后重试。"
 OPEN_BUSINESS_RECORDS_MESSAGE = "可查看所选月份的营业记录。"
-CAPABILITY_HELP_MESSAGE = (
-    "我可以说明能力范围，并基于当前门店的可验证证据回答经营问题。"
-)
+CAPABILITY_HELP_MESSAGE = "我可以说明能力范围，并基于当前门店的可验证证据回答经营问题。"
 PLAN_REPAIR_FEEDBACK = (
     "The previous TurnPlan had a format, enum, or structural error. "
     "Return one corrected TurnPlan matching the schema. "
@@ -166,8 +164,7 @@ class AgentTurnWorkflow:
             "fallback"
             if any(attempt.is_fallback for attempt in attempts)
             else "retried"
-            if len(attempts) > 1
-            and any(attempt.result == "failure" for attempt in attempts)
+            if len(attempts) > 1 and any(attempt.result == "failure" for attempt in attempts)
             else "none"
         )
         return WorkflowResult(
@@ -179,9 +176,7 @@ class AgentTurnWorkflow:
         if state["model_calls"] >= MAX_MODEL_CALLS:
             return {"plan": _safe_failure_plan(), "model_calls": state["model_calls"]}
         try:
-            plan = await self.model.plan_turn(
-                state["messages"], observer=state["attempts"].append
-            )
+            plan = await self.model.plan_turn(state["messages"], observer=state["attempts"].append)
             calls = state["model_calls"] + 1
         except RepairableModelPlanError:
             calls = state["model_calls"] + 1
@@ -220,13 +215,11 @@ class AgentTurnWorkflow:
         if plan.route == TurnRoute.DIRECT_ANSWER:
             if not _is_safe_direct_answer_question(state["messages"]):
                 return {"result": _safe_failure()}
-            return {
-                "result": TurnResult(route="answer", content=CAPABILITY_HELP_MESSAGE)
-            }
+            return {"result": TurnResult(route="answer", content=CAPABILITY_HELP_MESSAGE)}
         if plan.route == TurnRoute.ACTION and plan.action is not None:
-            current_month = datetime.now(
-                ZoneInfo(state["context"].store_timezone)
-            ).strftime("%Y-%m")
+            current_month = datetime.now(ZoneInfo(state["context"].store_timezone)).strftime(
+                "%Y-%m"
+            )
             if plan.action.end_month > current_month:
                 return {"result": _safe_failure()}
             return {
@@ -387,11 +380,7 @@ def _evidence_request_is_explicit(
     if not isinstance(request, SettlementDetailsRequest):
         return True
     question = next(
-        (
-            message.content.casefold()
-            for message in reversed(messages)
-            if message.role == "user"
-        ),
+        (message.content.casefold() for message in reversed(messages) if message.role == "user"),
         "",
     )
     explicit_terms = (
@@ -428,9 +417,7 @@ def _enforce_explicit_percentage_request(
         (message.content for message in reversed(messages) if message.role == "user"),
         "",
     )
-    percentage_is_negated = any(
-        term in user_message for term in NEGATED_PERCENTAGE_TERMS
-    )
+    percentage_is_negated = any(term in user_message for term in NEGATED_PERCENTAGE_TERMS)
     if not percentage_is_negated and any(
         term in user_message for term in EXPLICIT_PERCENTAGE_TERMS
     ):
@@ -448,9 +435,7 @@ def _enforce_explicit_percentage_request(
             "requests": [
                 request.model_copy(
                     update={
-                        "comparison": comparison.model_copy(
-                            update={"include_percentage": False}
-                        )
+                        "comparison": comparison.model_copy(update={"include_percentage": False})
                     }
                 )
             ]

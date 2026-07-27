@@ -1,5 +1,7 @@
 import json
 from pathlib import Path
+import subprocess
+import sys
 
 import yaml
 from app.core.security import hash_password
@@ -73,6 +75,8 @@ def test_ci_has_parallel_lanes_coverage_merge_and_stable_summary() -> None:
     assert "--fail-under=85" in rendered
     assert "AUTOLAVA_MODEL_ADAPTER: fake" in rendered
     assert "AUTOLAVA_MODEL_API_KEY" not in rendered
+    assert "frontend/test-results" not in rendered
+    assert "redact:e2e-diagnostics" in rendered
 
 
 def test_sensitive_local_browser_artifacts_are_ignored() -> None:
@@ -84,3 +88,26 @@ def test_sensitive_local_browser_artifacts_are_ignored() -> None:
 
 def test_production_password_hash_keeps_production_cost() -> None:
     assert hash_password("production-strength-password").split("$")[2] == "12"
+
+
+def test_ci_performance_requires_ten_runs_and_enforces_p95(tmp_path: Path) -> None:
+    runs = [
+        {
+            "conclusion": "success",
+            "createdAt": f"2026-07-{day:02d}T00:00:00Z",
+            "updatedAt": f"2026-07-{day:02d}T00:01:00Z",
+        }
+        for day in range(1, 11)
+    ]
+    source = tmp_path / "runs.json"
+    source.write_text(json.dumps(runs), encoding="utf-8")
+
+    completed = subprocess.run(
+        [sys.executable, ROOT / "scripts/ci_performance.py", source],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    assert json.loads(completed.stdout)["p95_seconds"] == 60

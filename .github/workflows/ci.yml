@@ -29,10 +29,7 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --project backend --frozen --extra dev
-      - run: >-
-          uv run --project backend ruff format --check
-          backend/app/core/security.py backend/tests/conftest.py
-          backend/tests/test_development_feedback.py
+      - run: uv run --project backend ruff format --check backend
       - run: uv run --project backend ruff check backend
       - run: >-
           uv run --project backend mypy backend/app/agent/contracts.py
@@ -138,13 +135,20 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: npm run test:e2e
-      - name: Upload redacted Playwright diagnostics
+      - name: Run end-to-end tests without retaining browser attachments
+        run: >-
+          npx playwright test --reporter=line,junit
+        env:
+          PLAYWRIGHT_JUNIT_OUTPUT_NAME: playwright-results.xml
+      - name: Reduce diagnostics to aggregate counts
+        if: ${{ failure() && !cancelled() }}
+        run: npm run redact:e2e-diagnostics
+      - name: Upload aggregate-only Playwright diagnostics
         if: ${{ failure() && !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
           name: playwright-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
-          path: frontend/test-results
+          path: frontend/redacted-diagnostics
           if-no-files-found: ignore
           retention-days: 7
 

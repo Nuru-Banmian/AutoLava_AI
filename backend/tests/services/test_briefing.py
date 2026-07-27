@@ -123,9 +123,7 @@ async def test_yesterday_states_are_deterministic(
         store_id=store.id, local_date=date(2026, 7, 15)
     )
     assert card.state == expected_state
-    assert card.revenue == (
-        150 if record_status in {"营业", "提前休息"} else None
-    )
+    assert card.revenue == (150 if record_status in {"营业", "提前休息"} else None)
     assert isinstance(card.generated_at, datetime)
 
 
@@ -159,9 +157,7 @@ async def test_sqlite_conflict_update_reuses_one_card(
     db_session: AsyncSession, store: Store
 ) -> None:
     service = BriefingService(db_session, StubWeatherService())
-    first = await service.regenerate(
-        store.id, ["today"], local_date=date(2026, 7, 13)
-    )
+    first = await service.regenerate(store.id, ["today"], local_date=date(2026, 7, 13))
     second = await service.regenerate(
         store.id,
         ["today"],
@@ -186,9 +182,7 @@ async def test_tomorrow_weather_values_remain_decimal_capable(
     local_date = date(2026, 7, 13)
     service = BriefingService(
         db_session,
-        StubWeatherService(
-            {date(2026, 7, 14): WeatherResult("雨", 61, 22.5, 16.25, 4.2)}
-        ),
+        StubWeatherService({date(2026, 7, 14): WeatherResult("雨", 61, 22.5, 16.25, 4.2)}),
     )
     card = await service.build_tomorrow(store=store, local_date=local_date)
     assert card.temperature_max == Decimal("22.5")
@@ -203,10 +197,7 @@ async def test_regenerate_does_not_commit_callers_transaction(
         store.id, ["yesterday"], local_date=date(2026, 7, 13)
     )
     await db_session.rollback()
-    assert (
-        await db_session.scalar(select(func.count()).select_from(DailyBriefing))
-        == 0
-    )
+    assert await db_session.scalar(select(func.count()).select_from(DailyBriefing)) == 0
 
 
 async def test_ledger_write_blocks_briefing_write_section(
@@ -240,9 +231,7 @@ async def test_ledger_write_blocks_briefing_write_section(
     monkeypatch.setattr(LedgerService, "_upsert_locked", hold_ledger)
     monkeypatch.setattr(LedgerService, "_find_record", canonical_record)
     monkeypatch.setattr(BriefingService, "regenerate", regenerate)
-    monkeypatch.setattr(
-        ledger_service_module, "require_fresh_store_access", fresh_access
-    )
+    monkeypatch.setattr(ledger_service_module, "require_fresh_store_access", fresh_access)
     monkeypatch.setattr(ledger_routes, "require_fresh_store_access", fresh_access)
     ledger_task = asyncio.create_task(
         LedgerService(
@@ -261,9 +250,7 @@ async def test_ledger_write_blocks_briefing_write_section(
     briefing_task = asyncio.create_task(
         _refresh_briefing_after_commit(
             SimpleNamespace(
-                app=SimpleNamespace(
-                    state=SimpleNamespace(weather_service=StubWeatherService())
-                )
+                app=SimpleNamespace(state=SimpleNamespace(weather_service=StubWeatherService()))
             ),
             db_session,
             actor_id=99,

@@ -232,9 +232,7 @@ async def test_recent_uses_store_local_window(
             f"/api/ledger/{assigned_store.id}/{target.isoformat()}", json=ledger_payload
         )
         assert response.status_code == 201
-    recent = await auth_client.get(
-        f"/api/ledger/{assigned_store.id}/recent", params={"days": 7}
-    )
+    recent = await auth_client.get(f"/api/ledger/{assigned_store.id}/recent", params={"days": 7})
     assert [item["date"] for item in recent.json()] == [
         today.isoformat(),
         (today - timedelta(days=2)).isoformat(),
