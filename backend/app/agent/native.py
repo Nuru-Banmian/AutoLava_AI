@@ -17,17 +17,27 @@ from app.agent.answer_grounding import NativeAnswerClaim, answer_is_grounded
 from app.agent.conversation import AgentRunResult, ConfirmedPeriod, ConversationState
 from app.agent.contracts import (
     CurrentStoreScope,
+    AverageRevenuePerCarResult,
+    CategoryAmountResult,
     DailyLedgerRevenueResult,
+    DailyLedgerExtremeResult,
     EVIDENCE_METRIC_LABELS,
     EvidenceBundle,
     EvidenceCoverage,
+    EvidenceCompleteness,
+    EvidenceFilters,
+    EvidenceGroup,
     EvidenceMetric,
     EvidencePeriodResult,
     EvidencePlan,
     ConfirmedSettlementIncomeResult,
+    GroupedMetricResult,
     ModelMessage,
     MonthlyTotalRevenueResult,
+    MonthlyDailyAverageIncomeResult,
+    OperatingDayAverageLedgerRevenueResult,
     OperatingDaysResult,
+    WashCountResult,
     TurnResult,
 )
 from app.agent.runtime import RuntimeContext
@@ -36,6 +46,13 @@ MONTHLY_TOTAL_REVENUE_TOOL = "monthly_total_revenue"
 DAILY_LEDGER_REVENUE_TOOL = "daily_ledger_revenue"
 CONFIRMED_SETTLEMENT_INCOME_TOOL = "confirmed_settlement_income"
 OPERATING_DAYS_TOOL = "operating_days"
+OPERATING_DAY_AVERAGE_LEDGER_REVENUE_TOOL = "operating_day_average_ledger_revenue"
+MONTHLY_DAILY_AVERAGE_INCOME_TOOL = "monthly_daily_average_income"
+WASH_COUNT_TOOL = "wash_count"
+AVERAGE_REVENUE_PER_CAR_TOOL = "average_revenue_per_car"
+INCOME_CATEGORY_AMOUNT_TOOL = "income_category_amount"
+OTHER_DATA_AMOUNT_TOOL = "other_data_amount"
+DAILY_LEDGER_REVENUE_EXTREME_TOOL = "daily_ledger_revenue_extreme"
 MAX_NATIVE_TOOL_ROUNDS = 4
 MAX_NATIVE_TOOL_CALLS = 8
 INVESTIGATION_LIMIT_MESSAGE = "调查已达到本轮资源上限；以下结论仅基于已返回的证据。"
@@ -69,6 +86,16 @@ class NativeToolCall(ClosedModel):
 class MonthlyTotalRevenueArguments(ClosedModel):
     year: int = Field(ge=2000, le=2200)
     month: int = Field(ge=1, le=12)
+
+
+class ComposableBusinessMetricArguments(MonthlyTotalRevenueArguments):
+    group_by: EvidenceGroup | None = None
+    filters: EvidenceFilters | None = None
+
+
+class DailyLedgerRevenueExtremeArguments(MonthlyTotalRevenueArguments):
+    extreme: Literal["highest", "lowest"]
+    filters: EvidenceFilters | None = None
 
 
 StoreFeatureFlag = Literal[
@@ -121,11 +148,15 @@ class NativeEvidenceEnvelope(ClosedModel):
     facts: dict[str, Any]
     scope: CurrentStoreScope
     period: EvidencePeriodResult
-    unit: Literal["EUR", "day", "unknown"]
+    group_by: EvidenceGroup | None = None
+    filters: EvidenceFilters | None = None
+    extreme: Literal["highest", "lowest"] | None = None
+    unit: Literal["EUR", "day", "car", "EUR/car", "EUR/operating_day", "unknown"]
     source: list[Literal["store_daily_records", "settlement_records"]]
     queried_at: datetime
     data_version: str = Field(min_length=1, max_length=100)
     coverage: EvidenceCoverage
+    completeness: EvidenceCompleteness | None = None
     limitations: list[str] = Field(default_factory=list, max_length=20)
     truncated: bool
     failure: NativeEvidenceFailure
@@ -203,16 +234,18 @@ class NativeToolScopeResolver(Protocol):
 @dataclass(frozen=True)
 class NativeToolSpec:
     metric: EvidenceMetric
-    result_type: type[BaseModel]
+    result_types: tuple[type[BaseModel], ...]
+    arguments_type: type[MonthlyTotalRevenueArguments]
     description: str
     sources: tuple[Literal["store_daily_records", "settlement_records"], ...]
-    unit: Literal["EUR", "day"]
+    unit: Literal["EUR", "day", "car", "EUR/car", "EUR/operating_day"]
 
 
 NATIVE_TOOLS = {
     MONTHLY_TOTAL_REVENUE_TOOL: NativeToolSpec(
         metric=EvidenceMetric.MONTHLY_TOTAL_REVENUE,
-        result_type=MonthlyTotalRevenueResult,
+        result_types=(MonthlyTotalRevenueResult,),
+        arguments_type=MonthlyTotalRevenueArguments,
         description=(
             "查询当前受信任门店指定自然月的月度总收入，包括每日台账营业额与已确认公司结算收入。"
         ),
@@ -221,24 +254,83 @@ NATIVE_TOOLS = {
     ),
     DAILY_LEDGER_REVENUE_TOOL: NativeToolSpec(
         metric=EvidenceMetric.DAILY_LEDGER_REVENUE,
-        result_type=DailyLedgerRevenueResult,
+        result_types=(DailyLedgerRevenueResult, GroupedMetricResult),
+        arguments_type=ComposableBusinessMetricArguments,
         description="查询当前受信任门店指定自然月的每日台账营业额合计。",
         sources=("store_daily_records",),
         unit="EUR",
     ),
     CONFIRMED_SETTLEMENT_INCOME_TOOL: NativeToolSpec(
         metric=EvidenceMetric.CONFIRMED_SETTLEMENT_INCOME,
-        result_type=ConfirmedSettlementIncomeResult,
+        result_types=(ConfirmedSettlementIncomeResult,),
+        arguments_type=MonthlyTotalRevenueArguments,
         description="查询当前受信任门店指定自然月的已确认公司结算收入。",
         sources=("settlement_records",),
         unit="EUR",
     ),
     OPERATING_DAYS_TOOL: NativeToolSpec(
         metric=EvidenceMetric.OPERATING_DAYS,
-        result_type=OperatingDaysResult,
+        result_types=(OperatingDaysResult, GroupedMetricResult),
+        arguments_type=ComposableBusinessMetricArguments,
         description="查询当前受信任门店指定自然月的经营日数量。",
         sources=("store_daily_records",),
         unit="day",
+    ),
+    OPERATING_DAY_AVERAGE_LEDGER_REVENUE_TOOL: NativeToolSpec(
+        metric=EvidenceMetric.OPERATING_DAY_AVERAGE_LEDGER_REVENUE,
+        result_types=(OperatingDayAverageLedgerRevenueResult, GroupedMetricResult),
+        arguments_type=ComposableBusinessMetricArguments,
+        description="查询经营日均台账营业额；分母只包含营业和提前休息的经营日。",
+        sources=("store_daily_records",),
+        unit="EUR/operating_day",
+    ),
+    MONTHLY_DAILY_AVERAGE_INCOME_TOOL: NativeToolSpec(
+        metric=EvidenceMetric.MONTHLY_DAILY_AVERAGE_INCOME,
+        result_types=(MonthlyDailyAverageIncomeResult,),
+        arguments_type=MonthlyTotalRevenueArguments,
+        description="查询指定自然月的月度日均收入，包含已确认公司结算收入。",
+        sources=("store_daily_records", "settlement_records"),
+        unit="EUR/operating_day",
+    ),
+    WASH_COUNT_TOOL: NativeToolSpec(
+        metric=EvidenceMetric.WASH_COUNT,
+        result_types=(WashCountResult,),
+        arguments_type=ComposableBusinessMetricArguments,
+        description="查询洗车数量及其经营日数据覆盖；缺失洗车数量不会按零计算。",
+        sources=("store_daily_records",),
+        unit="car",
+    ),
+    AVERAGE_REVENUE_PER_CAR_TOOL: NativeToolSpec(
+        metric=EvidenceMetric.AVERAGE_REVENUE_PER_CAR,
+        result_types=(AverageRevenuePerCarResult,),
+        arguments_type=ComposableBusinessMetricArguments,
+        description="查询平均每车收入及其一致的营业额、洗车数量和覆盖范围。",
+        sources=("store_daily_records",),
+        unit="EUR/car",
+    ),
+    INCOME_CATEGORY_AMOUNT_TOOL: NativeToolSpec(
+        metric=EvidenceMetric.INCOME_CATEGORY_AMOUNT,
+        result_types=(CategoryAmountResult, GroupedMetricResult),
+        arguments_type=ComposableBusinessMetricArguments,
+        description="查询动态收入分类金额，支持批准的分组和筛选。",
+        sources=("store_daily_records",),
+        unit="EUR",
+    ),
+    OTHER_DATA_AMOUNT_TOOL: NativeToolSpec(
+        metric=EvidenceMetric.OTHER_DATA_AMOUNT,
+        result_types=(CategoryAmountResult, GroupedMetricResult),
+        arguments_type=ComposableBusinessMetricArguments,
+        description="查询不计入总营业额的其他数据，支持批准的分组和筛选。",
+        sources=("store_daily_records",),
+        unit="EUR",
+    ),
+    DAILY_LEDGER_REVENUE_EXTREME_TOOL: NativeToolSpec(
+        metric=EvidenceMetric.DAILY_LEDGER_REVENUE,
+        result_types=(DailyLedgerExtremeResult,),
+        arguments_type=DailyLedgerRevenueExtremeArguments,
+        description="查询经营日每日台账营业额的最高或最低日期，支持批准的筛选。",
+        sources=("store_daily_records",),
+        unit="EUR",
     ),
 }
 
@@ -295,7 +387,7 @@ class NativeToolAgentService:
                 definition=NativeToolDefinition(
                     name=name,
                     description=spec.description,
-                    input_schema=MonthlyTotalRevenueArguments.model_json_schema(),
+                    input_schema=spec.arguments_type.model_json_schema(),
                 ),
                 # Historical evidence remains available when optional store
                 # data-entry features are disabled.
@@ -423,7 +515,7 @@ class NativeToolAgentService:
         }:
             raise NativeToolAccessDenied("native tool call is not authorized")
         try:
-            arguments = MonthlyTotalRevenueArguments.model_validate(call.arguments)
+            arguments = tool_spec.arguments_type.model_validate(call.arguments)
         except ValidationError as error:
             raise NativeToolAccessDenied("native tool call is not authorized") from error
         fresh_context = await self.scope_resolver.refresh(context)
@@ -434,7 +526,7 @@ class NativeToolAgentService:
             not in {tool.name for tool in _available_tools(fresh_context, self.tool_registry)}
         ):
             raise NativeToolAccessDenied("native tool call is not authorized")
-        if arguments != trusted_period:
+        if arguments.year != trusted_period.year or arguments.month != trusted_period.month:
             return (
                 _failed_tool_result(
                     call,
@@ -447,25 +539,25 @@ class NativeToolAgentService:
                 ),
                 None,
             )
+        request: dict[str, Any] = {
+            "kind": "business_metrics",
+            "metric": tool_spec.metric,
+            "period": {
+                "kind": "calendar_month",
+                "year": arguments.year,
+                "month": arguments.month,
+            },
+        }
+        for field in ("group_by", "filters", "extreme"):
+            value = getattr(arguments, field, None)
+            if value is not None:
+                request[field] = value
         try:
-            evidence = await self.evidence_collector.collect(
-                EvidencePlan.model_validate(
-                    {
-                        "requests": [
-                            {
-                                "kind": "business_metrics",
-                                "metric": tool_spec.metric,
-                                "period": {
-                                    "kind": "calendar_month",
-                                    "year": arguments.year,
-                                    "month": arguments.month,
-                                },
-                            }
-                        ]
-                    }
-                ),
-                fresh_context,
-            )
+            plan = EvidencePlan.model_validate({"requests": [request]})
+        except ValidationError as error:
+            raise NativeToolAccessDenied("native tool call is not authorized") from error
+        try:
+            evidence = await self.evidence_collector.collect(plan, fresh_context)
         except NativeToolAccessDenied:
             raise
         except Exception:
@@ -482,7 +574,10 @@ class NativeToolAgentService:
         if (
             not isinstance(evidence, EvidenceBundle)
             or evidence.metric != tool_spec.metric
-            or not isinstance(evidence.result, tool_spec.result_type)
+            or not isinstance(evidence.result, tool_spec.result_types)
+            or evidence.group_by != getattr(arguments, "group_by", None)
+            or evidence.filters != getattr(arguments, "filters", None)
+            or evidence.extreme != getattr(arguments, "extreme", None)
         ):
             return (
                 _failed_tool_result(
@@ -522,13 +617,21 @@ def _native_envelope(
     queried_at: datetime,
 ) -> NativeEvidenceEnvelope:
     facts = evidence.result.model_dump(mode="json")
-    version_payload = {
+    version_payload: dict[str, Any] = {
         "scope": evidence.current_store.model_dump(mode="json"),
         "period": evidence.period.model_dump(mode="json"),
         "calculation_version": evidence.calculation_version,
         "facts": facts,
         "coverage": evidence.coverage.model_dump(mode="json"),
     }
+    if evidence.group_by is not None:
+        version_payload["group_by"] = evidence.group_by
+    if evidence.filters is not None:
+        version_payload["filters"] = evidence.filters.model_dump(mode="json")
+    if evidence.extreme is not None:
+        version_payload["extreme"] = evidence.extreme
+    if evidence.completeness is not None:
+        version_payload["completeness"] = evidence.completeness.model_dump(mode="json")
     digest = hashlib.sha256(
         json.dumps(version_payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
@@ -541,11 +644,15 @@ def _native_envelope(
         facts=facts,
         scope=evidence.current_store,
         period=evidence.period,
+        group_by=evidence.group_by,
+        filters=evidence.filters,
+        extreme=evidence.extreme,
         unit=tool_spec.unit,
         source=list(tool_spec.sources),
         queried_at=queried_at,
         data_version=f"sha256:{digest}",
         coverage=evidence.coverage,
+        completeness=evidence.completeness,
         limitations=limitations[:20],
         truncated=evidence.truncated,
         failure=NativeEvidenceFailure(status="none"),
@@ -575,6 +682,9 @@ def _failed_tool_result(
             facts={},
             scope=CurrentStoreScope(id=context.store_id),
             period=EvidencePeriodResult(start=start, end=end),
+            group_by=None,
+            filters=None,
+            extreme=None,
             unit=tool_spec.unit if tool_spec is not None else "unknown",
             source=list(tool_spec.sources) if tool_spec is not None else [],
             queried_at=queried_at,
@@ -583,6 +693,7 @@ def _failed_tool_result(
                 calendar_dates=(end - start).days + 1,
                 recorded_dates=0,
             ),
+            completeness=None,
             limitations=["经营查询暂时失败；未返回任何经营事实"],
             truncated=False,
             failure=NativeEvidenceFailure(
