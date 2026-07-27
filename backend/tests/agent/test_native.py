@@ -281,7 +281,7 @@ async def test_native_investigation_runs_independent_tool_calls_in_parallel() ->
     assert result.turn.content == "核对完成。"
 
 
-async def test_native_investigation_keeps_valid_parallel_results_when_one_call_is_invalid() -> None:
+async def test_native_investigation_closes_on_an_invalid_parallel_tool_contract() -> None:
     collector = MetricEvidenceCollector()
     model = FakeNativeToolModel(
         turns=[
@@ -313,20 +313,14 @@ async def test_native_investigation_keeps_valid_parallel_results_when_one_call_i
         scope_resolver=PassthroughScopeResolver(),
     )
 
-    result = await service.run(
-        _runtime_context(),
-        ConversationState(),
-        [ModelMessage(role="user", content="调查 2026 年 7 月的经营表现。")],
-    )
+    with pytest.raises(NativeToolAccessDenied, match="not authorized"):
+        await service.run(
+            _runtime_context(),
+            ConversationState(),
+            [ModelMessage(role="user", content="调查 2026 年 7 月的经营表现。")],
+        )
 
-    tool_results = [
-        item.tool_result for item in model.calls[1].items if item.tool_result is not None
-    ]
-    assert [tool_result.call_id for tool_result in tool_results] == ["invalid", "valid"]
-    assert tool_results[0].evidence.failure.category == "invalid_tool_arguments"
-    assert tool_results[1].evidence.facts == {"operating_days": 20}
-    assert collector.metrics == [EvidenceMetric.OPERATING_DAYS]
-    assert result.turn.content == "保留有效证据后结束。"
+    assert len(model.calls) == 1
 
 
 async def test_native_investigation_carries_analysis_hypotheses_between_turns() -> None:
@@ -686,6 +680,8 @@ async def test_native_tool_catalog_rejects_a_disabled_runtime_before_model_execu
             "monthly_total_revenue",
             {"year": 2026, "month": 7, "features": {"agent_enabled": True}},
         ),
+        ("monthly_total_revenue", {"year": 2026, "month": 13}),
+        ("monthly_total_revenue", {"year": 2201, "month": 7}),
     ],
 )
 async def test_native_tool_contract_fails_closed_for_unpublished_or_unbounded_calls(

@@ -1,6 +1,6 @@
 from collections import defaultdict
-from collections.abc import Awaitable, Callable
-from contextlib import AbstractAsyncContextManager
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal
@@ -117,6 +117,16 @@ class BusinessEvidenceCollector:
             scope_authorizer=authorizer,
         )
 
+    @asynccontextmanager
+    async def _authorized_session(
+        self,
+        context: RuntimeContext,
+    ) -> AsyncIterator[tuple[AsyncSession, RuntimeContext]]:
+        async with self._session_factory() as session:
+            if self._scope_authorizer is not None:
+                context = await self._scope_authorizer(session, context)
+            yield session, context
+
     async def collect(
         self,
         plan: EvidencePlan,
@@ -151,9 +161,7 @@ class BusinessEvidenceCollector:
         )
         for attempt in range(2):
             try:
-                async with self._session_factory() as session:
-                    if self._scope_authorizer is not None:
-                        context = await self._scope_authorizer(session, context)
+                async with self._authorized_session(context) as (session, context):
                     category_ids = await self._resolve_category_filter(
                         request.filters,
                         context,
@@ -632,9 +640,7 @@ class BusinessEvidenceCollector:
         current_period: tuple[date, date],
         comparison_period: tuple[date, date],
     ) -> tuple[Snapshot, Snapshot]:
-        async with self._session_factory() as session:
-            if self._scope_authorizer is not None:
-                context = await self._scope_authorizer(session, context)
+        async with self._authorized_session(context) as (session, context):
             current = await self._read_analysis_snapshot(
                 session,
                 context=context,
@@ -977,9 +983,7 @@ class BusinessEvidenceCollector:
         context: RuntimeContext,
         target: date,
     ) -> StoreDailyRecord | None:
-        async with self._session_factory() as session:
-            if self._scope_authorizer is not None:
-                context = await self._scope_authorizer(session, context)
+        async with self._authorized_session(context) as (session, context):
             return await session.scalar(
                 select(StoreDailyRecord)
                 .where(
@@ -1696,9 +1700,7 @@ class BusinessEvidenceCollector:
     ) -> dict[str, object]:
         first_month = start.replace(day=1)
         last_month = end.replace(day=1)
-        async with self._session_factory() as session:
-            if self._scope_authorizer is not None:
-                context = await self._scope_authorizer(session, context)
+        async with self._authorized_session(context) as (session, context):
             settlement_enabled = await session.scalar(
                 select(Store.company_settlement_enabled).where(
                     Store.id == context.store_id,

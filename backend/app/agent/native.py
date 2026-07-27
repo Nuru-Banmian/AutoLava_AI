@@ -405,20 +405,7 @@ class NativeToolAgentService:
         try:
             arguments = MonthlyTotalRevenueArguments.model_validate(call.arguments)
         except ValidationError as error:
-            if any(item["type"] == "extra_forbidden" for item in error.errors()):
-                raise NativeToolAccessDenied("native tool call is not authorized") from error
-            return (
-                _failed_tool_result(
-                    call,
-                    context,
-                    trusted_period,
-                    self.now(),
-                    tool_spec=tool_spec,
-                    category="invalid_tool_arguments",
-                    message="经营工具参数无效",
-                ),
-                None,
-            )
+            raise NativeToolAccessDenied("native tool call is not authorized") from error
         fresh_context = await self.scope_resolver.refresh(context)
         if (
             fresh_context.user_id != context.user_id
