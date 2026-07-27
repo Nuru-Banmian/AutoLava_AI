@@ -1230,7 +1230,7 @@ async def test_native_investigation_carries_analysis_hypotheses_between_turns() 
         [ModelMessage(role="user", content="调查 2026 年 7 月收入为何偏低。")],
     )
 
-    hypothesis = model.calls[1].items[1].hypotheses[0]
+    hypothesis = next(item.hypotheses[0] for item in model.calls[1].items if item.hypotheses)
     assert hypothesis.statement == "收入偏低可能与经营日偏少相关"
     assert hypothesis.status == "testing"
 

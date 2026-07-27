@@ -226,7 +226,12 @@ async def test_agent_route_builds_trusted_runtime_context_for_current_store(
     assert len(agent_service.calls) == 1
     context, state, recent_messages = agent_service.calls[0]
     assert state.model_dump(mode="json") == {
+        "investigation_goal": "你能做什么？",
         "confirmed_period": None,
+        "confirmed_objects": [],
+        "evidence_references": [],
+        "analysis_hypotheses": [],
+        "pending_directions": [],
         "metrics": [],
         "filters": {},
         "comparison": None,
@@ -1559,7 +1564,12 @@ async def test_current_conversation_restores_full_messages_and_structured_state(
         ("assistant", "这是完整回答。"),
     ]
     assert payload["state"] == {
+        "investigation_goal": "保留完整问题，包括 €123 和全部细节。",
         "confirmed_period": None,
+        "confirmed_objects": [],
+        "evidence_references": [],
+        "analysis_hypotheses": [],
+        "pending_directions": [],
         "metrics": [],
         "filters": {},
         "comparison": None,
@@ -1663,6 +1673,9 @@ async def test_current_conversations_are_isolated_by_user_and_store(
         "first-Milano",
         "这是完整回答。",
     ]
+    assert second_roma["state"]["investigation_goal"] == "second-Roma"
+    assert first_roma["state"]["investigation_goal"] == "first-Roma"
+    assert first_milano["state"]["investigation_goal"] == "first-Milano"
     assert len({second_roma["id"], first_roma["id"], first_milano["id"]}) == 3
 
 
@@ -1720,7 +1733,12 @@ async def test_reset_requires_confirmation_and_permanently_deletes_current_conve
     await db_session.commit()
     await _login(client, "admin")
     expected_state = {
+        "investigation_goal": None,
         "confirmed_period": {"start": "2026-07-01", "end": "2026-07-26"},
+        "confirmed_objects": [],
+        "evidence_references": [],
+        "analysis_hypotheses": [],
+        "pending_directions": [],
         "metrics": ["月度总收入"],
         "filters": {"记录天气": ["晴"]},
         "comparison": {
@@ -1772,7 +1790,12 @@ async def test_reset_requires_confirmation_and_permanently_deletes_current_conve
         "id": None,
         "messages": [],
         "state": {
+            "investigation_goal": None,
             "confirmed_period": None,
+            "confirmed_objects": [],
+            "evidence_references": [],
+            "analysis_hypotheses": [],
+            "pending_directions": [],
             "metrics": [],
             "filters": {},
             "comparison": None,

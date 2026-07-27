@@ -106,6 +106,8 @@ async def run_agent_turn(
             content=body.question,
         )
         state = ConversationState.model_validate(conversation.state)
+        if state.investigation_goal is None:
+            state = state.model_copy(update={"investigation_goal": body.question})
         conversation_id = conversation.id
         recent_messages = await recent_model_messages(session, conversation_id=conversation.id)
 
