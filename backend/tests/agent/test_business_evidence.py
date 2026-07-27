@@ -263,6 +263,173 @@ async def test_collector_discards_the_batch_after_a_second_sqlite_failure(
     assert attempts == 2
 
 
+async def test_collector_retries_category_resolution_with_the_whole_batch(
+    db_session: AsyncSession,
+    store_factory,
+) -> None:
+    store = await store_factory(name="Category Retry", timezone="Europe/Rome")
+    db_session.add(
+        IncomeCategory(
+            store_id=store.id,
+            name="Carta",
+            include_in_total=True,
+            is_active=True,
+            sort_order=1,
+            archived_at=None,
+        )
+    )
+    await db_session.flush()
+    attempts = 0
+
+    class FailingSession:
+        async def execute(self, _statement):
+            raise OperationalError("SELECT", {}, Exception("database is locked"))
+
+    @asynccontextmanager
+    async def session_factory():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            yield FailingSession()
+        else:
+            yield db_session
+
+    plan = EvidencePlan.model_validate(
+        {
+            "requests": [
+                {
+                    "kind": "business_metrics",
+                    "metric": "daily_ledger_revenue",
+                    "filters": {"income_categories": ["Carta"]},
+                }
+            ]
+        }
+    )
+    bundle = await BusinessEvidenceCollector(
+        session_factory,
+        now=lambda _timezone: datetime(2026, 7, 26, 12, 0),
+    ).collect(plan, _context(store))
+
+    assert attempts == 2
+    assert bundle.result.daily_ledger_revenue == 0
+
+
+async def test_collector_retries_grouped_evidence_with_the_whole_batch(
+    db_session: AsyncSession,
+    store_factory,
+) -> None:
+    store = await store_factory(name="Grouping Retry", timezone="Europe/Rome")
+    attempts = 0
+
+    class FailingSession:
+        async def scalars(self, _statement):
+            raise OperationalError("SELECT", {}, Exception("database is busy"))
+
+    @asynccontextmanager
+    async def session_factory():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            yield FailingSession()
+        else:
+            yield db_session
+
+    plan = EvidencePlan.model_validate(
+        {
+            "requests": [
+                {
+                    "kind": "business_metrics",
+                    "metric": "daily_ledger_revenue",
+                    "group_by": "date",
+                }
+            ]
+        }
+    )
+    bundle = await BusinessEvidenceCollector(
+        session_factory,
+        now=lambda _timezone: datetime(2026, 7, 26, 12, 0),
+    ).collect(plan, _context(store))
+
+    assert attempts == 2
+    assert bundle.result.rows == []
+
+
+async def test_collector_retries_daily_extreme_with_the_whole_batch(
+    db_session: AsyncSession,
+    store_factory,
+) -> None:
+    store = await store_factory(name="Extreme Retry", timezone="Europe/Rome")
+    attempts = 0
+
+    class FailingSession:
+        async def scalars(self, _statement):
+            raise OperationalError("SELECT", {}, Exception("database is locked"))
+
+    @asynccontextmanager
+    async def session_factory():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            yield FailingSession()
+        else:
+            yield db_session
+
+    plan = EvidencePlan.model_validate(
+        {
+            "requests": [
+                {
+                    "kind": "business_metrics",
+                    "metric": "daily_ledger_revenue",
+                    "extreme": "highest",
+                }
+            ]
+        }
+    )
+    bundle = await BusinessEvidenceCollector(
+        session_factory,
+        now=lambda _timezone: datetime(2026, 7, 26, 12, 0),
+    ).collect(plan, _context(store))
+
+    assert attempts == 2
+    assert bundle.result.daily_ledger_revenue is None
+
+
+async def test_collector_discards_partial_evidence_after_second_late_failure(
+    db_session: AsyncSession,
+    store_factory,
+) -> None:
+    store = await store_factory(name="Late Failure", timezone="Europe/Rome")
+    attempts = 0
+
+    class PartiallyFailingSession:
+        def __init__(self) -> None:
+            self.statement_count = 0
+
+        async def execute(self, statement):
+            self.statement_count += 1
+            if self.statement_count == 2:
+                raise OperationalError(
+                    "SELECT",
+                    {},
+                    Exception("database is locked"),
+                )
+            return await db_session.execute(statement)
+
+    @asynccontextmanager
+    async def session_factory():
+        nonlocal attempts
+        attempts += 1
+        yield PartiallyFailingSession()
+
+    with pytest.raises(OperationalError):
+        await BusinessEvidenceCollector(
+            session_factory,
+            now=lambda _timezone: datetime(2026, 7, 26, 12, 0),
+        ).collect(_monthly_total_plan(), _context(store))
+
+    assert attempts == 2
+
+
 async def test_collector_keeps_one_sqlite_version_during_a_concurrent_commit(
     tmp_path,
 ) -> None:
@@ -362,6 +529,121 @@ async def test_collector_keeps_one_sqlite_version_during_a_concurrent_commit(
                     StoreDailyRecord.id == record_id
                 )
             ) == 20
+    finally:
+        await local_engine.dispose()
+
+
+async def test_collector_keeps_comparison_in_the_same_sqlite_version(
+    tmp_path,
+) -> None:
+    local_engine = create_sqlite_engine(tmp_path / "comparison-snapshot.sqlite3")
+    async with local_engine.begin() as connection:
+        await connection.exec_driver_sql("PRAGMA journal_mode=WAL")
+        await connection.run_sync(Base.metadata.create_all)
+
+    writer_factory = async_sessionmaker(local_engine, expire_on_commit=False)
+    async with writer_factory() as setup:
+        user = User(
+            username="comparison-snapshot-admin",
+            password_hash="test-only",
+            role="admin",
+            is_active=True,
+        )
+        store = Store(
+            name="Comparison Snapshot",
+            address="Comparison snapshot address",
+            latitude=Decimal("45.000000"),
+            longitude=Decimal("9.000000"),
+            timezone="Europe/Rome",
+            is_active=True,
+            wash_count_enabled=True,
+        )
+        setup.add_all([user, store])
+        await setup.flush()
+        current = StoreDailyRecord(
+            store_id=store.id,
+            date=date(2026, 7, 1),
+            daily_revenue=200,
+            income_mode="legacy_total",
+            wash_count=10,
+            is_open="营业",
+            weather="晴",
+            created_by=user.id,
+            updated_by=user.id,
+        )
+        comparison = StoreDailyRecord(
+            store_id=store.id,
+            date=date(2026, 6, 1),
+            daily_revenue=100,
+            income_mode="legacy_total",
+            wash_count=5,
+            is_open="营业",
+            weather="晴",
+            created_by=user.id,
+            updated_by=user.id,
+        )
+        setup.add_all([current, comparison])
+        await setup.commit()
+        comparison_id = comparison.id
+
+    statement_count = 0
+    concurrent_commit_finished = False
+
+    class CoordinatedComparisonSession(AsyncSession):
+        async def execute(self, statement, *args, **kwargs):
+            nonlocal statement_count, concurrent_commit_finished
+            result = await super().execute(statement, *args, **kwargs)
+            statement_count += 1
+            if statement_count == 3:
+                async with writer_factory() as writer:
+                    await writer.execute(
+                        update(StoreDailyRecord)
+                        .where(StoreDailyRecord.id == comparison_id)
+                        .values(daily_revenue=900)
+                    )
+                    await writer.commit()
+                concurrent_commit_finished = True
+            return result
+
+    @asynccontextmanager
+    async def session_factory():
+        async with CoordinatedComparisonSession(
+            local_engine,
+            expire_on_commit=False,
+        ) as session:
+            yield session
+
+    plan = EvidencePlan.model_validate(
+        {
+            "requests": [
+                    {
+                        "kind": "business_metrics",
+                        "metric": "monthly_total_revenue",
+                    "comparison": {
+                        "period": {"kind": "previous_month"},
+                        "include_percentage": True,
+                    },
+                }
+            ]
+        }
+    )
+    try:
+        bundle = await BusinessEvidenceCollector(
+            session_factory,
+            now=lambda _timezone: datetime(2026, 7, 26, 12, 0),
+        ).collect(plan, _context(store))
+
+        assert concurrent_commit_finished is True
+        assert bundle.result.monthly_total_revenue == 200
+        assert bundle.comparison is not None
+        assert bundle.comparison.result is not None
+        assert bundle.comparison.result.monthly_total_revenue == 100
+        async with writer_factory() as verification:
+            assert await verification.scalar(
+                select(StoreDailyRecord.daily_revenue).where(
+                    StoreDailyRecord.id == comparison_id
+                )
+            ) == 900
     finally:
         await local_engine.dispose()
 

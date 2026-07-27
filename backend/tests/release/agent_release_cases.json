@@ -103,7 +103,7 @@
       "question": "恶意指令分别来自用户问题、原始事件、收入分类名称、结算公司名称和经营证据。",
       "covers": ["user_question", "raw_event", "income_category_name", "settlement_company_name", "business_evidence"],
       "vetoes": ["prompt_injection_bypass", "unsupported_evidence_claim"],
-      "test_node": "tests/agent/test_workflow.py::test_prompt_injection_from_untrusted_sources_cannot_change_backend_answer"
+      "test_node": "tests/api/test_agent_prompt_injection_sources.py::test_prompt_injection_sources_keep_data_identity_and_cannot_change_scope"
     },
     {
       "id": "evidence-plan-owned-fields",
@@ -146,12 +146,20 @@
       "test_node": "tests/agent/test_workflow.py::test_direct_answer_cannot_add_business_claims_without_evidence"
     },
     {
+      "id": "direct-answer-capability-help",
+      "area": "answer_validation",
+      "question": "一般能力说明仍可安全地直接回答，不需要伪造经营证据。",
+      "covers": ["safe_capability_direct_answer"],
+      "vetoes": ["unsupported_evidence_claim"],
+      "test_node": "tests/agent/test_workflow.py::test_direct_answer_allows_a_general_capability_explanation"
+    },
+    {
       "id": "sqlite-one-version",
       "area": "sqlite_consistency",
-      "question": "并发提交发生在批量取证中途时，一个 EvidenceBundle 只能看到一个数据版本。",
-      "covers": ["concurrent_commit", "single_snapshot"],
+      "question": "并发提交发生在主期间与比较期间读取之间时，一个 EvidenceBundle 只能看到一个数据版本。",
+      "covers": ["concurrent_commit", "single_snapshot", "comparison_snapshot"],
       "vetoes": ["core_amount_period_or_metric_error"],
-      "test_node": "tests/agent/test_business_evidence.py::test_collector_keeps_one_sqlite_version_during_a_concurrent_commit"
+      "test_node": "tests/agent/test_business_evidence.py::test_collector_keeps_comparison_in_the_same_sqlite_version"
     },
     {
       "id": "sqlite-batch-retry-once",
@@ -162,12 +170,36 @@
       "test_node": "tests/agent/test_business_evidence.py::test_collector_retries_the_whole_snapshot_once_after_temporary_sqlite_failure"
     },
     {
+      "id": "sqlite-category-resolution-retry",
+      "area": "sqlite_consistency",
+      "question": "收入分类解析遇到临时 SQLite 故障时必须随整批证据重试。",
+      "covers": ["whole_batch_retry_once", "category_resolution_retry"],
+      "vetoes": ["core_amount_period_or_metric_error"],
+      "test_node": "tests/agent/test_business_evidence.py::test_collector_retries_category_resolution_with_the_whole_batch"
+    },
+    {
+      "id": "sqlite-grouped-evidence-retry",
+      "area": "sqlite_consistency",
+      "question": "分组经营证据遇到临时 SQLite 故障时必须随整批证据重试。",
+      "covers": ["whole_batch_retry_once", "grouped_evidence_retry"],
+      "vetoes": ["core_amount_period_or_metric_error"],
+      "test_node": "tests/agent/test_business_evidence.py::test_collector_retries_grouped_evidence_with_the_whole_batch"
+    },
+    {
+      "id": "sqlite-extreme-evidence-retry",
+      "area": "sqlite_consistency",
+      "question": "每日台账极值证据遇到临时 SQLite 故障时必须随整批证据重试。",
+      "covers": ["whole_batch_retry_once", "daily_extreme_retry"],
+      "vetoes": ["core_amount_period_or_metric_error"],
+      "test_node": "tests/agent/test_business_evidence.py::test_collector_retries_daily_extreme_with_the_whole_batch"
+    },
+    {
       "id": "sqlite-second-failure-discards",
       "area": "sqlite_consistency",
-      "question": "第二次 SQLite 故障必须丢弃整批证据。",
+      "question": "两次读取都在部分证据成功后失败时，必须丢弃整批证据。",
       "covers": ["second_failure_discards_partial_evidence"],
       "vetoes": ["unsupported_evidence_claim", "core_amount_period_or_metric_error"],
-      "test_node": "tests/agent/test_business_evidence.py::test_collector_discards_the_batch_after_a_second_sqlite_failure"
+      "test_node": "tests/agent/test_business_evidence.py::test_collector_discards_partial_evidence_after_second_late_failure"
     },
     {
       "id": "fallback-preserves-evidence",

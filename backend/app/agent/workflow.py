@@ -73,6 +73,21 @@ DIRECT_ANSWER_BUSINESS_CLAIM = re.compile(
     r"(?:营业记录|每日台账|页面))"
     r"|(?:导致|造成|归因于|原因是|主要来自)"
 )
+SAFE_DIRECT_ANSWER_QUESTION = re.compile(
+    r"^\s*(?:"
+    r"(?:请|麻烦)?(?:介绍|说明)(?:一下)?"
+    r"(?:你|agent|智能助手|助手)?(?:的)?(?:能力|功能|能力范围|功能范围)"
+    r"|(?:你|agent|智能助手|助手)?(?:能|可以|能够)"
+    r"(?:帮我)?(?:做|回答|处理|支持)(?:什么|哪些(?:事情|问题|功能)?)"
+    r"|(?:怎么|如何)(?:使用|用)(?:你|agent|智能助手|助手)"
+    r")\s*[?？。！!]*\s*$",
+    re.IGNORECASE,
+)
+SAFE_DIRECT_ANSWER_PREFIX = re.compile(
+    r"^\s*(?:(?:我|本(?:agent|智能助手|助手))\s*)?"
+    r"(?:可以|能|能够|支持|无法|不能)",
+    re.IGNORECASE,
+)
 
 
 class EvidenceCollector(Protocol):
@@ -208,10 +223,7 @@ class AgentTurnWorkflow:
             return {"result": TurnResult(route="clarify", content=plan.question or "")}
         if plan.route == TurnRoute.DIRECT_ANSWER:
             answer = plan.answer or ""
-            if (
-                NAVIGATION_TARGET.search(answer)
-                or DIRECT_ANSWER_BUSINESS_CLAIM.search(answer)
-            ):
+            if not _is_safe_direct_answer(state["messages"], answer):
                 return {"result": _safe_failure()}
             return {"result": TurnResult(route="answer", content=answer)}
         if plan.route == TurnRoute.ACTION and plan.action is not None:
@@ -357,6 +369,22 @@ def _safe_failure_plan() -> TurnPlan:
 
 def _safe_failure() -> TurnResult:
     return TurnResult(route="safe_failure", content=SAFE_FAILURE_MESSAGE)
+
+
+def _is_safe_direct_answer(
+    messages: Sequence[ModelMessage],
+    answer: str,
+) -> bool:
+    question = next(
+        (message.content for message in reversed(messages) if message.role == "user"),
+        "",
+    )
+    return bool(
+        SAFE_DIRECT_ANSWER_QUESTION.fullmatch(question)
+        and SAFE_DIRECT_ANSWER_PREFIX.match(answer)
+        and not NAVIGATION_TARGET.search(answer)
+        and not DIRECT_ANSWER_BUSINESS_CLAIM.search(answer)
+    )
 
 
 def _validated_readable_answer(answer: str, evidence: CollectedEvidence) -> str:

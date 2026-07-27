@@ -149,6 +149,10 @@ async def test_workflow_finishes_clarification_without_collecting_evidence() -> 
         "本月一共洗了 88 辆车。",
         "我已经为你打开营业记录页面。",
         "暴雨导致本月收入下降。",
+        "本月利润翻倍。",
+        "今天收入异常。",
+        "天气拖累了收入。",
+        "我已进入台账。",
     ),
 )
 async def test_direct_answer_cannot_add_business_claims_without_evidence(
@@ -169,6 +173,25 @@ async def test_direct_answer_cannot_add_business_claims_without_evidence(
 
     assert result.turn.route == "safe_failure"
     assert unsupported_answer not in result.turn.content
+    assert collector.calls == 0
+
+
+async def test_direct_answer_allows_a_general_capability_explanation() -> None:
+    answer = "我可以说明能力范围，并基于当前门店的可验证证据回答经营问题。"
+    collector = RecordingEvidenceCollector()
+
+    result = await AgentTurnWorkflow(
+        model=FakeModelAdapter(
+            plans=[{"route": "direct_answer", "answer": answer}]
+        ),
+        evidence_collector=collector,
+    ).run(
+        [ModelMessage(role="user", content="你能做什么？")],
+        CONTEXT,
+    )
+
+    assert result.turn.route == "answer"
+    assert result.turn.content == answer
     assert collector.calls == 0
 
 
@@ -488,7 +511,7 @@ async def test_transient_failure_retries_current_model_once(
     primary = FakeModelAdapter(
         plans=[
             ModelAdapterError("provider detail", category=category),
-            {"route": "direct_answer", "answer": "恢复后的回答"},
+            {"route": "direct_answer", "answer": "我可以继续说明能力范围。"},
         ],
         provider="primary",
     )
@@ -496,9 +519,9 @@ async def test_transient_failure_retries_current_model_once(
     result = await AgentTurnWorkflow(
         model=ResilientModelAdapter(primary),
         evidence_collector=RecordingEvidenceCollector(),
-    ).run([ModelMessage(role="user", content="问题")], CONTEXT)
+    ).run([ModelMessage(role="user", content="你能做什么？")], CONTEXT)
 
-    assert result.turn.content == "恢复后的回答"
+    assert result.turn.content == "我可以继续说明能力范围。"
     assert result.turn.recovery_status == "retried"
     assert primary.plan_calls == 2
 

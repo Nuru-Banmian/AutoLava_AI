@@ -1,6 +1,6 @@
 from collections import defaultdict
 from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal
@@ -121,13 +121,15 @@ class BusinessEvidenceCollector:
         start, end = self._resolve_period(request.period, context)
         if request.metric == EvidenceMetric.MONTHLY_DAILY_AVERAGE_INCOME:
             self._require_natural_month_period(start, end, context)
-        category_ids = await self._resolve_category_filter(request.filters, context)
         comparison_period = (
             self._resolve_period(request.comparison.period, context)
             if request.comparison is not None
             else None
         )
+        snapshot: Snapshot | None = None
         comparison_snapshot: Snapshot | None = None
+        grouped_snapshot: tuple[list[EvidenceGroupRow], int, bool] | None = None
+        extreme_snapshot: tuple[DailyLedgerExtremeResult, int] | None = None
         category_metric_group = (
             request.group_by == EvidenceGroup.INCOME_CATEGORY
             and request.metric
@@ -136,16 +138,62 @@ class BusinessEvidenceCollector:
                 EvidenceMetric.OTHER_DATA_AMOUNT,
             }
         )
-        if request.group_by is not None and not category_metric_group:
-            rows, recorded_dates, truncated = await self._read_grouped_snapshot(
-                context=context,
-                start=start,
-                end=end,
-                metric=request.metric,
-                group_by=request.group_by,
-                filters=request.filters,
-                category_ids=category_ids,
-            )
+        for attempt in range(2):
+            try:
+                async with self._session_factory() as session:
+                    category_ids = await self._resolve_category_filter(
+                        request.filters,
+                        context,
+                        session=session,
+                    )
+                    if request.group_by is not None and not category_metric_group:
+                        grouped_snapshot = await self._read_grouped_snapshot(
+                            context=context,
+                            start=start,
+                            end=end,
+                            metric=request.metric,
+                            group_by=request.group_by,
+                            filters=request.filters,
+                            category_ids=category_ids,
+                            session=session,
+                        )
+                    elif request.extreme is not None:
+                        extreme_snapshot = await self._read_daily_extreme(
+                            context=context,
+                            start=start,
+                            end=end,
+                            extreme=request.extreme,
+                            filters=request.filters,
+                            category_ids=category_ids,
+                            session=session,
+                        )
+                    else:
+                        snapshot = await self._read_snapshot(
+                            context=context,
+                            start=start,
+                            end=end,
+                            metric=request.metric,
+                            filters=request.filters,
+                            category_ids=category_ids,
+                            session=session,
+                        )
+                        if comparison_period is not None:
+                            comparison_snapshot = await self._read_snapshot(
+                                context=context,
+                                start=comparison_period[0],
+                                end=comparison_period[1],
+                                metric=request.metric,
+                                filters=None,
+                                category_ids=frozenset(),
+                                session=session,
+                            )
+                break
+            except OperationalError as error:
+                if attempt == 1 or not _is_temporary_sqlite_failure(error):
+                    raise
+
+        if grouped_snapshot is not None:
+            rows, recorded_dates, truncated = grouped_snapshot
             warnings = (
                 ["结果过多，仅返回前 400 个分组。"] if truncated else []
             )
@@ -174,15 +222,8 @@ class BusinessEvidenceCollector:
                 truncated=truncated,
                 summary=summary,
             )
-        if request.extreme is not None:
-            result, recorded_dates = await self._read_daily_extreme(
-                context=context,
-                start=start,
-                end=end,
-                extreme=request.extreme,
-                filters=request.filters,
-                category_ids=category_ids,
-            )
+        if extreme_snapshot is not None:
+            result, recorded_dates = extreme_snapshot
             summary = _extreme_summary(start=start, end=end, result=result)
             return EvidenceBundle(
                 status="ok",
@@ -202,29 +243,8 @@ class BusinessEvidenceCollector:
                 truncated=False,
                 summary=summary,
             )
-        for attempt in range(2):
-            try:
-                snapshot = await self._read_snapshot(
-                    context=context,
-                    start=start,
-                    end=end,
-                    metric=request.metric,
-                    filters=request.filters,
-                    category_ids=category_ids,
-                )
-                if comparison_period is not None:
-                    comparison_snapshot = await self._read_snapshot(
-                        context=context,
-                        start=comparison_period[0],
-                        end=comparison_period[1],
-                        metric=request.metric,
-                        filters=None,
-                        category_ids=frozenset(),
-                    )
-                break
-            except OperationalError as error:
-                if attempt == 1 or not _is_temporary_sqlite_failure(error):
-                    raise
+        if snapshot is None:
+            raise RuntimeError("business evidence batch completed without a snapshot")
 
         calendar_dates = (end - start).days + 1
         recorded_date_set = set(snapshot.recorded_date_values)
@@ -995,10 +1015,17 @@ class BusinessEvidenceCollector:
         self,
         filters: EvidenceFilters | None,
         context: RuntimeContext,
+        *,
+        session: AsyncSession | None = None,
     ) -> frozenset[int]:
         if filters is None or not filters.income_categories:
             return frozenset()
-        async with self._session_factory() as session:
+        session_scope = (
+            self._session_factory()
+            if session is None
+            else _borrow_session(session)
+        )
+        async with session_scope as session:
             configured = (
                 await session.execute(
                     select(IncomeCategory.id, IncomeCategory.name).where(
@@ -1062,8 +1089,14 @@ class BusinessEvidenceCollector:
         group_by: EvidenceGroup,
         filters: EvidenceFilters | None,
         category_ids: frozenset[int],
+        session: AsyncSession | None = None,
     ) -> tuple[list[EvidenceGroupRow], int, bool]:
-        async with self._session_factory() as session:
+        session_scope = (
+            self._session_factory()
+            if session is None
+            else _borrow_session(session)
+        )
+        async with session_scope as session:
             records = list(
                 (
                     await session.scalars(
@@ -1176,8 +1209,14 @@ class BusinessEvidenceCollector:
         extreme: Literal["highest", "lowest"],
         filters: EvidenceFilters | None,
         category_ids: frozenset[int],
+        session: AsyncSession | None = None,
     ) -> tuple[DailyLedgerExtremeResult, int]:
-        async with self._session_factory() as session:
+        session_scope = (
+            self._session_factory()
+            if session is None
+            else _borrow_session(session)
+        )
+        async with session_scope as session:
             records = list(
                 (
                     await session.scalars(
@@ -1222,8 +1261,14 @@ class BusinessEvidenceCollector:
         metric: EvidenceMetric,
         filters: EvidenceFilters | None = None,
         category_ids: frozenset[int] = frozenset(),
+        session: AsyncSession | None = None,
     ) -> Snapshot:
-        async with self._session_factory() as session:
+        session_scope = (
+            self._session_factory()
+            if session is None
+            else _borrow_session(session)
+        )
+        async with session_scope as session:
             daily_scope = (
                 StoreDailyRecord.store_id == context.store_id,
                 StoreDailyRecord.date >= start,
@@ -1913,6 +1958,11 @@ class BusinessEvidenceCollector:
                 "Monthly daily average income requires one natural month, "
                 "using today as the current-month endpoint"
             )
+
+
+@asynccontextmanager
+async def _borrow_session(session: AsyncSession):
+    yield session
 
 
 def _month_end(start: date) -> date:
