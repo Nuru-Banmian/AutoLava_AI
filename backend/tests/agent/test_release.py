@@ -185,6 +185,22 @@ def test_release_report_binds_structured_output_thinking_and_fallback_costs(
     assert status.blockers == ["runtime model profile does not match the evaluated profile"]
 
 
+def test_release_report_cannot_approve_the_fake_adapter(tmp_path) -> None:
+    report_path = tmp_path / "agent-release.json"
+    measured = production_settings(report_path)
+    report_path.write_text(json.dumps(approved_report(measured)), encoding="utf-8")
+
+    status = agent_release_status(
+        measured.model_copy(update={"model_adapter": "fake"})
+    )
+
+    assert status.approved is False
+    assert status.blockers == [
+        "production release requires openai_compatible adapter",
+        "runtime model profile does not match the evaluated profile",
+    ]
+
+
 def test_non_production_keeps_the_fake_adapter_development_seam_open() -> None:
     status = agent_release_status(Settings(_env_file=None))
 

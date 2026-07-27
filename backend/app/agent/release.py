@@ -4,6 +4,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from app.agent.factory import configured_openai_profiles
 from app.core.config import Settings
 
 
@@ -176,39 +177,20 @@ def _runtime_profile_matches(settings: Settings, profile: ReleaseProfile) -> boo
 
 
 def agent_adapter_config_sha256(settings: Settings) -> str:
-    payload = {
-        "primary": {
-            "provider": settings.model_provider,
-            "base_url": settings.model_base_url,
-            "model": settings.model_id,
-            "structured_output_method": settings.model_structured_output_method,
-            "thinking_parameters": settings.model_thinking_parameters,
-            "input_cost_per_million": settings.model_input_cost_per_million,
-            "output_cost_per_million": settings.model_output_cost_per_million,
-        },
-        "fallback": (
+    payload: dict[str, object] = {"adapter": settings.model_adapter}
+    if settings.model_adapter == "openai_compatible":
+        primary, fallback = configured_openai_profiles(settings)
+        payload.update(
             {
-                "provider": settings.fallback_model_provider,
-                "base_url": settings.fallback_model_base_url,
-                "model": settings.fallback_model_id,
-                "structured_output_method": (
-                    settings.fallback_model_structured_output_method
+                "primary": primary.model_dump(mode="json", exclude={"api_key"}),
+                "fallback": (
+                    fallback.model_dump(mode="json", exclude={"api_key"})
+                    if fallback is not None
+                    else None
                 ),
-                "thinking_parameters": settings.fallback_model_thinking_parameters,
-                "input_cost_per_million": (
-                    settings.fallback_model_input_cost_per_million
-                ),
-                "output_cost_per_million": (
-                    settings.fallback_model_output_cost_per_million
-                ),
+                "evidence_batch_limit": settings.agent_evidence_batch_limit,
             }
-            if settings.fallback_model_id
-            else None
-        ),
-        "timeout_seconds": settings.model_timeout_seconds,
-        "max_output_tokens": settings.model_max_output_tokens,
-        "evidence_batch_limit": settings.agent_evidence_batch_limit,
-    }
+        )
     encoded = json.dumps(
         payload,
         ensure_ascii=False,
@@ -240,6 +222,8 @@ def agent_release_status(settings: Settings) -> AgentReleaseStatus:
             approved=False, blockers=["release report is invalid"]
         )
     blockers = _report_blockers(report)
+    if settings.model_adapter != "openai_compatible":
+        blockers.append("production release requires openai_compatible adapter")
     if not _runtime_profile_matches(settings, report.profile):
         blockers.append("runtime model profile does not match the evaluated profile")
     return AgentReleaseStatus(approved=not blockers, blockers=blockers)
