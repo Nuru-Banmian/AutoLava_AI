@@ -6,10 +6,11 @@ import json
 import re
 from calendar import monthrange
 from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.agent.conversation import AgentRunResult, ConfirmedPeriod, ConversationState
 from app.agent.contracts import (
@@ -68,6 +69,17 @@ class NativeAnalysisHypothesis(ClosedModel):
     status: Literal["proposed", "testing", "supported", "refuted", "unresolved"]
     evidence_references: list[str] = Field(default_factory=list, max_length=20)
 
+    @model_validator(mode="after")
+    def require_supported_evidence(self) -> NativeAnalysisHypothesis:
+        if any(
+            re.fullmatch(r"ev_[0-9a-f]{24}", reference) is None
+            for reference in self.evidence_references
+        ):
+            raise ValueError("invalid evidence reference")
+        if self.status in {"supported", "refuted"} and not self.evidence_references:
+            raise ValueError("supported or refuted hypotheses require evidence")
+        return self
+
 
 class NativeEvidenceFailure(ClosedModel):
     status: Literal["none", "failed"]
@@ -80,7 +92,7 @@ class NativeEvidenceEnvelope(ClosedModel):
     facts: dict[str, Any]
     scope: CurrentStoreScope
     period: EvidencePeriodResult
-    unit: Literal["EUR", "day"]
+    unit: Literal["EUR", "day", "unknown"]
     source: list[Literal["store_daily_records", "settlement_records"]]
     queried_at: datetime
     data_version: str = Field(min_length=1, max_length=100)
@@ -152,37 +164,46 @@ class NativeEvidenceCollector(Protocol):
     ) -> object: ...
 
 
-NATIVE_TOOL_METRICS = {
-    MONTHLY_TOTAL_REVENUE_TOOL: EvidenceMetric.MONTHLY_TOTAL_REVENUE,
-    DAILY_LEDGER_REVENUE_TOOL: EvidenceMetric.DAILY_LEDGER_REVENUE,
-    CONFIRMED_SETTLEMENT_INCOME_TOOL: EvidenceMetric.CONFIRMED_SETTLEMENT_INCOME,
-    OPERATING_DAYS_TOOL: EvidenceMetric.OPERATING_DAYS,
-}
-NATIVE_TOOL_RESULT_TYPES = {
-    MONTHLY_TOTAL_REVENUE_TOOL: MonthlyTotalRevenueResult,
-    DAILY_LEDGER_REVENUE_TOOL: DailyLedgerRevenueResult,
-    CONFIRMED_SETTLEMENT_INCOME_TOOL: ConfirmedSettlementIncomeResult,
-    OPERATING_DAYS_TOOL: OperatingDaysResult,
-}
-NATIVE_TOOL_DESCRIPTIONS = {
-    MONTHLY_TOTAL_REVENUE_TOOL: (
-        "查询当前受信任门店指定自然月的月度总收入，包括每日台账营业额与已确认公司结算收入。"
+@dataclass(frozen=True)
+class NativeToolSpec:
+    metric: EvidenceMetric
+    result_type: type[BaseModel]
+    description: str
+    sources: tuple[Literal["store_daily_records", "settlement_records"], ...]
+    unit: Literal["EUR", "day"]
+
+
+NATIVE_TOOLS = {
+    MONTHLY_TOTAL_REVENUE_TOOL: NativeToolSpec(
+        metric=EvidenceMetric.MONTHLY_TOTAL_REVENUE,
+        result_type=MonthlyTotalRevenueResult,
+        description=(
+            "查询当前受信任门店指定自然月的月度总收入，包括每日台账营业额与已确认公司结算收入。"
+        ),
+        sources=("store_daily_records", "settlement_records"),
+        unit="EUR",
     ),
-    DAILY_LEDGER_REVENUE_TOOL: "查询当前受信任门店指定自然月的每日台账营业额合计。",
-    CONFIRMED_SETTLEMENT_INCOME_TOOL: "查询当前受信任门店指定自然月的已确认公司结算收入。",
-    OPERATING_DAYS_TOOL: "查询当前受信任门店指定自然月的经营日数量。",
-}
-NATIVE_TOOL_SOURCES = {
-    MONTHLY_TOTAL_REVENUE_TOOL: ["store_daily_records", "settlement_records"],
-    DAILY_LEDGER_REVENUE_TOOL: ["store_daily_records"],
-    CONFIRMED_SETTLEMENT_INCOME_TOOL: ["settlement_records"],
-    OPERATING_DAYS_TOOL: ["store_daily_records"],
-}
-NATIVE_TOOL_UNITS = {
-    MONTHLY_TOTAL_REVENUE_TOOL: "EUR",
-    DAILY_LEDGER_REVENUE_TOOL: "EUR",
-    CONFIRMED_SETTLEMENT_INCOME_TOOL: "EUR",
-    OPERATING_DAYS_TOOL: "day",
+    DAILY_LEDGER_REVENUE_TOOL: NativeToolSpec(
+        metric=EvidenceMetric.DAILY_LEDGER_REVENUE,
+        result_type=DailyLedgerRevenueResult,
+        description="查询当前受信任门店指定自然月的每日台账营业额合计。",
+        sources=("store_daily_records",),
+        unit="EUR",
+    ),
+    CONFIRMED_SETTLEMENT_INCOME_TOOL: NativeToolSpec(
+        metric=EvidenceMetric.CONFIRMED_SETTLEMENT_INCOME,
+        result_type=ConfirmedSettlementIncomeResult,
+        description="查询当前受信任门店指定自然月的已确认公司结算收入。",
+        sources=("settlement_records",),
+        unit="EUR",
+    ),
+    OPERATING_DAYS_TOOL: NativeToolSpec(
+        metric=EvidenceMetric.OPERATING_DAYS,
+        result_type=OperatingDaysResult,
+        description="查询当前受信任门店指定自然月的经营日数量。",
+        sources=("store_daily_records",),
+        unit="day",
+    ),
 }
 
 
@@ -234,10 +255,10 @@ class NativeToolAgentService:
         self.tools = [
             NativeToolDefinition(
                 name=name,
-                description=description,
+                description=spec.description,
                 input_schema=MonthlyTotalRevenueArguments.model_json_schema(),
             )
-            for name, description in NATIVE_TOOL_DESCRIPTIONS.items()
+            for name, spec in NATIVE_TOOLS.items()
         ]
 
     async def run(
@@ -259,6 +280,7 @@ class NativeToolAgentService:
         tool_call_count = 0
         for _ in range(MAX_NATIVE_TOOL_ROUNDS):
             turn = await self.model.next_turn(items, tools=self.tools)
+            _validate_hypothesis_references(turn.hypotheses, items)
             items.append(
                 NativeTranscriptItem(
                     message=turn.message,
@@ -305,10 +327,35 @@ class NativeToolAgentService:
         *,
         trusted_period: MonthlyTotalRevenueArguments,
     ) -> tuple[NativeToolResult, EvidenceBundle | None]:
-        metric = NATIVE_TOOL_METRICS.get(call.name)
-        if metric is None:
-            raise ValueError("unavailable native tool")
-        arguments = MonthlyTotalRevenueArguments.model_validate(call.arguments)
+        tool_spec = NATIVE_TOOLS.get(call.name)
+        if tool_spec is None:
+            return (
+                _failed_tool_result(
+                    call,
+                    context,
+                    trusted_period,
+                    self.now(),
+                    tool_spec=None,
+                    category="unavailable_native_tool",
+                    message="请求的经营工具不可用",
+                ),
+                None,
+            )
+        try:
+            arguments = MonthlyTotalRevenueArguments.model_validate(call.arguments)
+        except ValidationError:
+            return (
+                _failed_tool_result(
+                    call,
+                    context,
+                    trusted_period,
+                    self.now(),
+                    tool_spec=tool_spec,
+                    category="invalid_tool_arguments",
+                    message="经营工具参数无效",
+                ),
+                None,
+            )
         if arguments != trusted_period:
             return (
                 _failed_tool_result(
@@ -316,7 +363,7 @@ class NativeToolAgentService:
                     context,
                     trusted_period,
                     self.now(),
-                    tool_name=call.name,
+                    tool_spec=tool_spec,
                     category="period_scope_mismatch",
                     message="工具期间与用户确认的自然月不一致",
                 ),
@@ -329,7 +376,7 @@ class NativeToolAgentService:
                         "requests": [
                             {
                                 "kind": "business_metrics",
-                                "metric": metric,
+                                "metric": tool_spec.metric,
                                 "period": {
                                     "kind": "calendar_month",
                                     "year": arguments.year,
@@ -348,15 +395,14 @@ class NativeToolAgentService:
                     context,
                     arguments,
                     self.now(),
-                    tool_name=call.name,
+                    tool_spec=tool_spec,
                 ),
                 None,
             )
-        expected_result_type = NATIVE_TOOL_RESULT_TYPES[call.name]
         if (
             not isinstance(evidence, EvidenceBundle)
-            or evidence.metric != metric
-            or not isinstance(evidence.result, expected_result_type)
+            or evidence.metric != tool_spec.metric
+            or not isinstance(evidence.result, tool_spec.result_type)
         ):
             return (
                 _failed_tool_result(
@@ -364,7 +410,7 @@ class NativeToolAgentService:
                     context,
                     arguments,
                     self.now(),
-                    tool_name=call.name,
+                    tool_spec=tool_spec,
                 ),
                 None,
             )
@@ -398,13 +444,14 @@ def _native_envelope(
     limitations = list(evidence.warnings)
     if evidence.completeness is not None and evidence.completeness.unrecorded_dates:
         limitations.append(f"{len(evidence.completeness.unrecorded_dates)} 个日期没有每日台账记录")
+    tool_spec = NATIVE_TOOLS[evidence.metric.value]
     return NativeEvidenceEnvelope(
         reference=f"ev_{digest[:24]}",
         facts=facts,
         scope=evidence.current_store,
         period=evidence.period,
-        unit=NATIVE_TOOL_UNITS[evidence.metric.value],
-        source=NATIVE_TOOL_SOURCES[evidence.metric.value],
+        unit=tool_spec.unit,
+        source=list(tool_spec.sources),
         queried_at=queried_at,
         data_version=f"sha256:{digest}",
         coverage=evidence.coverage,
@@ -420,7 +467,7 @@ def _failed_tool_result(
     arguments: MonthlyTotalRevenueArguments,
     queried_at: datetime,
     *,
-    tool_name: str,
+    tool_spec: NativeToolSpec | None,
     category: str = "business_query_unavailable",
     message: str = "经营查询暂时不可用",
 ) -> NativeToolResult:
@@ -437,8 +484,8 @@ def _failed_tool_result(
             facts={},
             scope=CurrentStoreScope(id=context.store_id),
             period=EvidencePeriodResult(start=start, end=end),
-            unit=NATIVE_TOOL_UNITS[tool_name],
-            source=NATIVE_TOOL_SOURCES[tool_name],
+            unit=tool_spec.unit if tool_spec is not None else "unknown",
+            source=list(tool_spec.sources) if tool_spec is not None else [],
             queried_at=queried_at,
             data_version=f"unavailable:{digest}",
             coverage=EvidenceCoverage(
@@ -454,6 +501,18 @@ def _failed_tool_result(
             ),
         ),
     )
+
+
+def _validate_hypothesis_references(
+    hypotheses: Sequence[NativeAnalysisHypothesis],
+    items: Sequence[NativeTranscriptItem],
+) -> None:
+    available_references = {
+        item.tool_result.evidence.reference for item in items if item.tool_result is not None
+    }
+    for hypothesis in hypotheses:
+        if set(hypothesis.evidence_references) - available_references:
+            raise ValueError("unknown evidence reference")
 
 
 def _agent_result(

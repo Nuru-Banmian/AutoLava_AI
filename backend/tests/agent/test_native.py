@@ -227,6 +227,50 @@ async def test_native_investigation_runs_independent_tool_calls_in_parallel() ->
     assert result.turn.content == "核对完成。"
 
 
+async def test_native_investigation_keeps_valid_parallel_results_when_one_call_is_invalid() -> None:
+    collector = MetricEvidenceCollector()
+    model = FakeNativeToolModel(
+        turns=[
+            {
+                "message": {"role": "assistant", "content": "并行核对。"},
+                "tool_calls": [
+                    {
+                        "id": "invalid",
+                        "name": "daily_ledger_revenue",
+                        "arguments": {"year": 2026, "month": 13},
+                    },
+                    {
+                        "id": "valid",
+                        "name": "operating_days",
+                        "arguments": {"year": 2026, "month": 7},
+                    },
+                ],
+                "signal": "continue",
+            },
+            {
+                "message": {"role": "assistant", "content": "保留有效证据后结束。"},
+                "signal": "end",
+            },
+        ]
+    )
+    service = NativeToolAgentService(model=model, evidence_collector=collector)
+
+    result = await service.run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="调查 2026 年 7 月的经营表现。")],
+    )
+
+    tool_results = [
+        item.tool_result for item in model.calls[1].items if item.tool_result is not None
+    ]
+    assert [tool_result.call_id for tool_result in tool_results] == ["invalid", "valid"]
+    assert tool_results[0].evidence.failure.category == "invalid_tool_arguments"
+    assert tool_results[1].evidence.facts == {"operating_days": 20}
+    assert collector.metrics == [EvidenceMetric.OPERATING_DAYS]
+    assert result.turn.content == "保留有效证据后结束。"
+
+
 async def test_native_investigation_carries_analysis_hypotheses_between_turns() -> None:
     model = FakeNativeToolModel(
         turns=[
@@ -275,6 +319,35 @@ async def test_native_investigation_carries_analysis_hypotheses_between_turns() 
     hypothesis = model.calls[1].items[1].hypotheses[0]
     assert hypothesis.statement == "收入偏低可能与经营日偏少相关"
     assert hypothesis.status == "testing"
+
+
+async def test_native_investigation_rejects_hypothesis_claims_with_unknown_evidence() -> None:
+    model = FakeNativeToolModel(
+        turns=[
+            {
+                "message": {"role": "assistant", "content": "这个假设已经得到支持。"},
+                "hypotheses": [
+                    {
+                        "statement": "收入偏低与经营日偏少相关",
+                        "status": "supported",
+                        "evidence_references": ["ev_000000000000000000000000"],
+                    }
+                ],
+                "signal": "end",
+            }
+        ]
+    )
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=MetricEvidenceCollector(),
+    )
+
+    with pytest.raises(ValueError, match="unknown evidence reference"):
+        await service.run(
+            _runtime_context(),
+            ConversationState(),
+            [ModelMessage(role="user", content="调查 2026 年 7 月收入为何偏低。")],
+        )
 
 
 async def test_native_investigation_stops_safely_at_the_round_limit() -> None:
