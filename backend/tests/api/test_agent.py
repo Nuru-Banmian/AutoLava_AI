@@ -351,6 +351,7 @@ async def test_agent_http_turn_returns_direct_answers_and_ends_on_clarification(
         plans=[
             {"route": "direct_answer", "answer": "我可以回答一般问题。"},
             {"route": "clarify", "question": "你想了解哪个时间范围？"},
+            {"route": "direct_answer", "answer": "已了解。"},
         ]
     )
     client._transport.app.state.agent_service = AgentService(
@@ -369,6 +370,10 @@ async def test_agent_http_turn_returns_direct_answers_and_ends_on_clarification(
         f"/api/agent/stores/{store_id}/turn",
         json={"question": "帮我看看"},
     )
+    resolved = await client.post(
+        f"/api/agent/stores/{store_id}/turn",
+        json={"question": "暂时不用调查了"},
+    )
 
     assert direct.status_code == 200
     assert {key: direct.json()[key] for key in ("route", "content")} == {
@@ -386,7 +391,8 @@ async def test_agent_http_turn_returns_direct_answers_and_ends_on_clarification(
     assert clarification.json()["conversation"]["state"]["pending_directions"] == [
         "你想了解哪个时间范围？"
     ]
-    assert model.plan_calls == 2
+    assert resolved.json()["conversation"]["state"]["pending_directions"] == []
+    assert model.plan_calls == 3
     assert model.answer_calls == 0
 
 
@@ -962,6 +968,9 @@ async def test_core_business_metric_http_gold_paths_use_historical_snapshots_and
         "start": "2026-07-01",
         "end": "2026-07-26",
     }
+    if metric == "confirmed_settlement_income":
+        reference = response.json()["conversation"]["state"]["evidence_references"][0]
+        assert reference["source"] == ["settlement_records"]
     evidence = await db_session.scalar(select(AgentEvidence).order_by(AgentEvidence.id.desc()))
     assert evidence is not None
     resolved_expected = expected_result

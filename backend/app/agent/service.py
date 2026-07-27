@@ -142,9 +142,7 @@ class AgentService:
         pending_clarifications = [result.content] if result.route == "clarify" else []
         state_update: dict[str, object] = {
             "pending_clarifications": pending_clarifications,
-            "pending_directions": (
-                [result.content] if result.route == "clarify" else state.pending_directions
-            ),
+            "pending_directions": [result.content] if result.route == "clarify" else [],
         }
         if workflow_result.evidence is not None:
             evidence = workflow_result.evidence
@@ -279,10 +277,11 @@ def _legacy_evidence_sources(
     assert isinstance(evidence, EvidenceBundle)
     if evidence.metric in {
         EvidenceMetric.MONTHLY_TOTAL_REVENUE,
-        EvidenceMetric.CONFIRMED_SETTLEMENT_INCOME,
         EvidenceMetric.MONTHLY_DAILY_AVERAGE_INCOME,
     }:
         return ["store_daily_records", "settlement_records"]
+    if evidence.metric == EvidenceMetric.CONFIRMED_SETTLEMENT_INCOME:
+        return ["settlement_records"]
     return ["store_daily_records"]
 
 

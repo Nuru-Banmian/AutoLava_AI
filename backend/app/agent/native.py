@@ -798,6 +798,11 @@ def _hypothesis_reference_error(
             return "分析假设包含未知证据引用。请只引用本轮已返回的证据后继续或结束。"
         if hypothesis.status in {"supported", "refuted"} and references - successful_references:
             return "分析假设只有在成功证据支持时才能标记为支持或否定；请修正后继续或结束。"
+        if hypothesis.status in {"supported", "refuted"}:
+            return (
+                "后端目前只能验证经营事实，不能验证证据与分析假设之间的语义关系；"
+                "请把假设保持为待验证或无法确认。"
+            )
     return None
 
 

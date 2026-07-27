@@ -1,9 +1,7 @@
 from datetime import date, datetime, timezone
-from typing import Literal
+from typing import Annotated, Literal
 
-import re
-
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,8 +31,14 @@ class ConversationComparison(ClosedModel):
     label: str = Field(min_length=1, max_length=120)
 
 
+EvidenceReferenceId = Annotated[
+    str,
+    StringConstraints(pattern=r"^ev_[0-9a-f]{24}$"),
+]
+
+
 class ConversationEvidenceReference(ClosedModel):
-    reference: str = Field(pattern=r"^ev_[0-9a-f]{24}$")
+    reference: EvidenceReferenceId
     source: list[Literal["store_daily_records", "settlement_records"]] = Field(
         min_length=1,
         max_length=2,
@@ -48,15 +52,10 @@ class ConversationEvidenceReference(ClosedModel):
 class ConversationAnalysisHypothesis(ClosedModel):
     statement: str = Field(min_length=1, max_length=500)
     status: Literal["proposed", "testing", "supported", "refuted", "unresolved"]
-    evidence_references: list[str] = Field(default_factory=list, max_length=20)
+    evidence_references: list[EvidenceReferenceId] = Field(default_factory=list, max_length=20)
 
     @model_validator(mode="after")
     def require_supported_evidence(self) -> "ConversationAnalysisHypothesis":
-        if any(
-            re.fullmatch(r"ev_[0-9a-f]{24}", reference) is None
-            for reference in self.evidence_references
-        ):
-            raise ValueError("invalid evidence reference")
         if self.status in {"supported", "refuted"} and not self.evidence_references:
             raise ValueError("supported or refuted hypotheses require evidence")
         return self
