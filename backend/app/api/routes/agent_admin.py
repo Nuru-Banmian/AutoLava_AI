@@ -22,9 +22,13 @@ class AgentSettingsBody(BaseModel):
 
 
 async def agent_enabled(session: Session) -> bool:
-    settings = await session.get(AgentSettings, 1)
-    requested = settings.enabled if settings is not None else False
+    requested = await _agent_requested(session)
     return requested and agent_release_status(get_settings()).approved
+
+
+async def _agent_requested(session: Session) -> bool:
+    settings = await session.get(AgentSettings, 1)
+    return settings.enabled if settings is not None else False
 
 
 @router.get("")
@@ -33,7 +37,7 @@ async def get_agent_settings(
 ) -> dict[str, bool]:
     release = agent_release_status(get_settings())
     return {
-        "enabled": await agent_enabled(session),
+        "enabled": await _agent_requested(session) and release.approved,
         "release_approved": release.approved,
     }
 

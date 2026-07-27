@@ -22,24 +22,29 @@ class ReleaseProfile(ClosedModel):
     fallback_model: str | None = None
     timeout_seconds: float = Field(gt=0)
     max_output_tokens: int = Field(gt=0)
+    input_cost_per_million: float = Field(gt=0)
+    output_cost_per_million: float = Field(gt=0)
     evidence_batch_limit: int = Field(gt=0)
 
 
 class ReleaseMeasurements(ClosedModel):
-    idle_peak_memory_mb: float = Field(ge=0)
-    business_peak_memory_mb: float = Field(ge=0)
-    agent_peak_memory_mb: float = Field(ge=0)
-    request_p95_ms: float = Field(ge=0)
+    serial_sample_count: int = Field(ge=1)
+    idle_peak_memory_mb: float = Field(gt=0)
+    business_peak_memory_mb: float = Field(gt=0)
+    agent_peak_memory_mb: float = Field(gt=0)
+    request_p95_ms: float = Field(gt=0)
     model_stage_count_max: int = Field(ge=1)
-    input_tokens_max: int = Field(ge=0)
-    output_tokens_max: int = Field(ge=0)
-    estimated_cost_eur_max: float = Field(ge=0)
-    sqlite_snapshot_p95_ms: float = Field(ge=0)
+    input_tokens_max: int = Field(gt=0)
+    output_tokens_max: int = Field(gt=0)
+    estimated_cost_eur_max: float = Field(gt=0)
+    sqlite_snapshot_p95_ms: float = Field(gt=0)
     short_write_baseline_p95_ms: float = Field(gt=0)
-    short_write_with_agent_p95_ms: float = Field(ge=0)
+    short_write_with_agent_p95_ms: float = Field(gt=0)
+    language_quality_pass_rate: float = Field(ge=0, le=1)
 
 
 class ReleaseChecks(ClosedModel):
+    language_quality: bool
     structured_output: bool
     failure_semantics: bool
     model_calls_outside_sqlite_transactions: bool
@@ -49,7 +54,9 @@ class ReleaseChecks(ClosedModel):
 
 
 class ReleaseThresholds(ClosedModel):
+    minimum_serial_samples: int = Field(ge=1)
     minimum_free_memory_mb: float = Field(gt=0)
+    language_quality_pass_rate: float = Field(gt=0, le=1)
     request_p95_ms: float = Field(gt=0)
     estimated_cost_eur_max: float = Field(gt=0)
     sqlite_snapshot_p95_ms: float = Field(gt=0)
@@ -72,7 +79,9 @@ class AgentReleaseStatus(ClosedModel):
 
 
 APPROVED_THRESHOLDS = ReleaseThresholds(
+    minimum_serial_samples=20,
     minimum_free_memory_mb=256,
+    language_quality_pass_rate=1,
     request_p95_ms=15_000,
     estimated_cost_eur_max=0.05,
     sqlite_snapshot_p95_ms=500,
@@ -93,6 +102,8 @@ def _report_blockers(report: AgentReleaseReport) -> list[str]:
         blockers.append("release target is not the production 2 GB environment")
     if not report.target.single_container:
         blockers.append("release target splits the application container")
+    if measurements.serial_sample_count < thresholds.minimum_serial_samples:
+        blockers.append("release measurements need at least 20 serial samples")
     peak_memory = max(
         measurements.idle_peak_memory_mb,
         measurements.business_peak_memory_mb,
@@ -119,7 +130,13 @@ def _report_blockers(report: AgentReleaseReport) -> list[str]:
         blockers.append("Agent load slows normal short writes beyond the release threshold")
     if measurements.output_tokens_max > report.profile.max_output_tokens:
         blockers.append("measured output tokens exceed the configured limit")
+    if (
+        measurements.language_quality_pass_rate
+        < thresholds.language_quality_pass_rate
+    ):
+        blockers.append("language quality does not meet the release threshold")
     check_messages = (
+        ("language_quality", "language quality validation failed"),
         ("structured_output", "structured output validation failed"),
         ("failure_semantics", "provider failure semantics validation failed"),
         (
@@ -146,6 +163,8 @@ def _runtime_profile_matches(settings: Settings, profile: ReleaseProfile) -> boo
         "fallback_model": fallback_model,
         "timeout_seconds": settings.model_timeout_seconds,
         "max_output_tokens": settings.model_max_output_tokens,
+        "input_cost_per_million": settings.model_input_cost_per_million,
+        "output_cost_per_million": settings.model_output_cost_per_million,
         "evidence_batch_limit": settings.agent_evidence_batch_limit,
     }
 

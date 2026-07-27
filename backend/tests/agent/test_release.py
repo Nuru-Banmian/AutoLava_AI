@@ -18,9 +18,12 @@ def approved_report() -> dict[str, object]:
             "fallback_model": "backup-model",
             "timeout_seconds": 30,
             "max_output_tokens": 2000,
+            "input_cost_per_million": 1,
+            "output_cost_per_million": 2,
             "evidence_batch_limit": 1,
         },
         "measurements": {
+            "serial_sample_count": 20,
             "idle_peak_memory_mb": 420,
             "business_peak_memory_mb": 610,
             "agent_peak_memory_mb": 1320,
@@ -32,8 +35,10 @@ def approved_report() -> dict[str, object]:
             "sqlite_snapshot_p95_ms": 120,
             "short_write_baseline_p95_ms": 35,
             "short_write_with_agent_p95_ms": 70,
+            "language_quality_pass_rate": 1,
         },
         "checks": {
+            "language_quality": True,
             "structured_output": True,
             "failure_semantics": True,
             "model_calls_outside_sqlite_transactions": True,
@@ -42,7 +47,9 @@ def approved_report() -> dict[str, object]:
             "business_content_redacted": True,
         },
         "thresholds": {
+            "minimum_serial_samples": 20,
             "minimum_free_memory_mb": 256,
+            "language_quality_pass_rate": 1,
             "request_p95_ms": 15000,
             "estimated_cost_eur_max": 0.05,
             "sqlite_snapshot_p95_ms": 500,
@@ -63,6 +70,8 @@ def production_settings(report_path) -> Settings:
         model_base_url="https://provider.invalid/v1",
         model_id="candidate-model",
         model_api_key="test-only-key",
+        model_input_cost_per_million=1,
+        model_output_cost_per_million=2,
         fallback_model_provider="backup",
         fallback_model_base_url="https://backup.invalid/v1",
         fallback_model_id="backup-model",
@@ -116,6 +125,36 @@ def test_release_report_cannot_weaken_the_repository_thresholds(tmp_path) -> Non
 
     assert status.approved is False
     assert status.blockers == ["release thresholds do not match the approved policy"]
+
+
+def test_release_report_rejects_zero_measurements_instead_of_treating_them_as_passes(
+    tmp_path,
+) -> None:
+    report_path = tmp_path / "agent-release.json"
+    report = approved_report()
+    report["measurements"]["agent_peak_memory_mb"] = 0
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    status = agent_release_status(production_settings(report_path))
+
+    assert status.approved is False
+    assert status.blockers == ["release report is invalid"]
+
+
+def test_release_report_requires_serial_samples_and_language_quality(tmp_path) -> None:
+    report_path = tmp_path / "agent-release.json"
+    report = approved_report()
+    report["measurements"]["serial_sample_count"] = 19
+    report["measurements"]["language_quality_pass_rate"] = 0.95
+    report["checks"]["language_quality"] = False
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    status = agent_release_status(production_settings(report_path))
+
+    assert status.approved is False
+    assert "release measurements need at least 20 serial samples" in status.blockers
+    assert "language quality does not meet the release threshold" in status.blockers
+    assert "language quality validation failed" in status.blockers
 
 
 def test_non_production_keeps_the_fake_adapter_development_seam_open() -> None:
