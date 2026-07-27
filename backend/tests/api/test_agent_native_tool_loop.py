@@ -83,57 +83,84 @@ class PersistentInvestigationModel:
 
     async def next_turn(self, items, *, tools) -> NativeModelTurn:
         self.calls.append(NativeModelCall(items=list(items), tools=list(tools)))
+        include_context_updates = len(self.calls) <= 2
         if not any(item.tool_result is not None for item in items):
-            return NativeModelTurn.model_validate(
+            user_message = next(
+                item.message.content
+                for item in reversed(items)
+                if item.message is not None and item.message.role == "user"
+            )
+            tool_name = (
+                "daily_ledger_revenue"
+                if "每日台账营业额" in user_message
+                else "monthly_total_revenue"
+            )
+            payload = {
+                "message": {"role": "assistant", "content": "重新查询经营事实。"},
+                "tool_calls": [
+                    {
+                        "id": f"call-evidence-{len(self.calls)}",
+                        "name": tool_name,
+                        "arguments": {"year": 2026, "month": 7},
+                    }
+                ],
+                "signal": "continue",
+            }
+            if include_context_updates:
+                payload.update(
+                    {
+                        "hypotheses": [
+                            {
+                                "statement": "经营日变化可能影响月度总收入",
+                                "status": "testing",
+                            }
+                        ],
+                        "pending_directions": ["检查经营日变化"],
+                    }
+                )
+            return NativeModelTurn.model_validate(payload)
+        evidence = next(item.tool_result.evidence for item in items if item.tool_result)
+        if (
+            "daily_ledger_revenue" in evidence.facts
+            and "monthly_total_revenue" not in evidence.facts
+        ):
+            value = evidence.facts["daily_ledger_revenue"]
+            statement = f"2026 年 7 月每日台账营业额为 {value} 欧元"
+            metric = "daily_ledger_revenue"
+            unit = "EUR"
+        else:
+            value = evidence.facts["monthly_total_revenue"]
+            statement = f"2026 年 7 月月度总收入为 {value} 欧元"
+            metric = "monthly_total_revenue"
+            unit = "EUR"
+        payload = {
+            "message": {"role": "assistant", "content": f"{statement}。"},
+            "answer_claims": [
                 {
-                    "message": {"role": "assistant", "content": "重新查询月度总收入。"},
-                    "tool_calls": [
-                        {
-                            "id": f"call-revenue-{len(self.calls)}",
-                            "name": "monthly_total_revenue",
-                            "arguments": {"year": 2026, "month": 7},
-                        }
-                    ],
+                    "statement": statement,
+                    "status": "verified_fact",
+                    "metric": metric,
+                    "period": evidence.period.model_dump(mode="json"),
+                    "value": value,
+                    "unit": unit,
+                    "evidence_references": [evidence.reference],
+                }
+            ],
+            "signal": "end",
+        }
+        if include_context_updates:
+            payload.update(
+                {
                     "hypotheses": [
                         {
                             "statement": "经营日变化可能影响月度总收入",
-                            "status": "testing",
+                            "status": "unresolved",
                         }
                     ],
                     "pending_directions": ["检查经营日变化"],
-                    "signal": "continue",
                 }
             )
-        evidence = next(item.tool_result.evidence for item in items if item.tool_result)
-        amount = evidence.facts["monthly_total_revenue"]
-        return NativeModelTurn.model_validate(
-            {
-                "message": {
-                    "role": "assistant",
-                    "content": f"2026 年 7 月月度总收入为 {amount} 欧元。",
-                },
-                "hypotheses": [
-                    {
-                        "statement": "经营日变化可能影响月度总收入",
-                        "status": "supported",
-                        "evidence_references": [evidence.reference],
-                    }
-                ],
-                "pending_directions": ["检查经营日变化"],
-                "answer_claims": [
-                    {
-                        "statement": f"2026 年 7 月月度总收入为 {amount} 欧元",
-                        "status": "verified_fact",
-                        "metric": "monthly_total_revenue",
-                        "period": evidence.period.model_dump(mode="json"),
-                        "value": amount,
-                        "unit": "EUR",
-                        "evidence_references": [evidence.reference],
-                    }
-                ],
-                "signal": "end",
-            }
-        )
+        return NativeModelTurn.model_validate(payload)
 
 
 class GroundedSettlementModel:
@@ -511,8 +538,8 @@ async def test_current_investigation_restores_context_and_reacquires_changed_evi
     assert state["analysis_hypotheses"] == [
         {
             "statement": "经营日变化可能影响月度总收入",
-            "status": "supported",
-            "evidence_references": [state["evidence_references"][0]["reference"]],
+            "status": "unresolved",
+            "evidence_references": [],
         }
     ]
     assert state["pending_directions"] == ["检查经营日变化"]
@@ -535,12 +562,26 @@ async def test_current_investigation_restores_context_and_reacquires_changed_evi
     assert restored.status_code == 200
     assert restored.json()["state"]["investigation_goal"] == state["investigation_goal"]
     assert len(restored.json()["state"]["evidence_references"]) == 2
+    assert restored.json()["state"]["analysis_hypotheses"] == state["analysis_hypotheses"]
+    assert restored.json()["state"]["pending_directions"] == state["pending_directions"]
     assert len(model.calls) == 4
     follow_up_context = model.calls[2].items[0].message
     assert follow_up_context is not None
     assert "调查 2026 年 7 月月度总收入" in follow_up_context.content
     assert reference["reference"] in follow_up_context.content
     assert "240" not in follow_up_context.content
+
+    third = await client.post(
+        f"/api/agent/stores/{store.id}/turn",
+        json={"question": "每日台账营业额呢？"},
+    )
+
+    assert third.status_code == 200
+    assert third.json()["content"] == "2026 年 7 月每日台账营业额为 360 欧元。"
+    assert third.json()["conversation"]["state"]["confirmed_objects"] == [
+        "月度总收入",
+        "每日台账营业额",
+    ]
 
 
 @pytest.mark.parametrize(

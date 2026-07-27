@@ -138,21 +138,7 @@ class NativeToolRegistration:
         return all(getattr(context.features, feature) for feature in self.required_features)
 
 
-class NativeAnalysisHypothesis(ClosedModel):
-    statement: str = Field(min_length=1, max_length=500)
-    status: Literal["proposed", "testing", "supported", "refuted", "unresolved"]
-    evidence_references: list[str] = Field(default_factory=list, max_length=20)
-
-    @model_validator(mode="after")
-    def require_supported_evidence(self) -> NativeAnalysisHypothesis:
-        if any(
-            re.fullmatch(r"ev_[0-9a-f]{24}", reference) is None
-            for reference in self.evidence_references
-        ):
-            raise ValueError("invalid evidence reference")
-        if self.status in {"supported", "refuted"} and not self.evidence_references:
-            raise ValueError("supported or refuted hypotheses require evidence")
-        return self
+NativeAnalysisHypothesis: TypeAlias = ConversationAnalysisHypothesis
 
 
 class NativeEvidenceFailure(ClosedModel):
@@ -204,8 +190,8 @@ class NativeTranscriptItem(ClosedModel):
 class NativeModelTurn(ClosedModel):
     message: ModelMessage
     tool_calls: list[NativeToolCall] = Field(default_factory=list, max_length=4)
-    hypotheses: list[NativeAnalysisHypothesis] = Field(default_factory=list, max_length=8)
-    pending_directions: list[str] = Field(default_factory=list, max_length=8)
+    hypotheses: list[NativeAnalysisHypothesis] | None = Field(default=None, max_length=8)
+    pending_directions: list[str] | None = Field(default=None, max_length=8)
     answer_claims: list[NativeAnswerClaim] = Field(default_factory=list, max_length=20)
     signal: Literal["continue", "end"]
 
@@ -478,7 +464,7 @@ class NativeToolAgentService:
                         "native tools are not available for this runtime scope"
                     )
             turn = await self.model.next_turn(items, tools=tools)
-            hypothesis_error = _hypothesis_reference_error(turn.hypotheses, items)
+            hypothesis_error = _hypothesis_reference_error(turn.hypotheses or [], items)
             if hypothesis_error is not None:
                 items.append(
                     NativeTranscriptItem(
@@ -489,14 +475,13 @@ class NativeToolAgentService:
             items.append(
                 NativeTranscriptItem(
                     message=turn.message,
-                    hypotheses=turn.hypotheses,
+                    hypotheses=turn.hypotheses or [],
                 )
             )
-            hypotheses = [
-                ConversationAnalysisHypothesis.model_validate(hypothesis.model_dump(mode="json"))
-                for hypothesis in turn.hypotheses
-            ]
-            pending_directions = turn.pending_directions
+            if turn.hypotheses is not None:
+                hypotheses = list(turn.hypotheses)
+            if turn.pending_directions is not None:
+                pending_directions = turn.pending_directions
             if turn.signal == "end":
                 if not answer_is_grounded(
                     turn.message.content,
@@ -837,6 +822,7 @@ def _agent_result(
         )
     last_evidence = collected[-1]
     metric_labels = list(dict.fromkeys(_evidence_label(evidence) for evidence in collected))
+    confirmed_objects = list(dict.fromkeys([*state.confirmed_objects, *metric_labels]))
     return AgentRunResult(
         turn=TurnResult(route="answer", content=content),
         state=state.model_copy(
@@ -845,7 +831,7 @@ def _agent_result(
                     start=last_evidence.period.start,
                     end=last_evidence.period.end,
                 ),
-                "confirmed_objects": metric_labels,
+                "confirmed_objects": confirmed_objects,
                 "evidence_references": list(evidence_references),
                 "analysis_hypotheses": list(hypotheses),
                 "pending_directions": list(pending_directions),

@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 import pytest
 from httpx import AsyncClient
@@ -383,6 +383,9 @@ async def test_agent_http_turn_returns_direct_answers_and_ends_on_clarification(
     assert clarification.json()["conversation"]["state"]["pending_clarifications"] == [
         "你想了解哪个时间范围？"
     ]
+    assert clarification.json()["conversation"]["state"]["pending_directions"] == [
+        "你想了解哪个时间范围？"
+    ]
     assert model.plan_calls == 2
     assert model.answer_calls == 0
 
@@ -488,7 +491,8 @@ async def test_monthly_total_revenue_http_gold_path_persists_raw_evidence_safely
                 session_factory,
                 now=lambda _timezone: datetime(2026, 7, 26, 12, 0),
             ),
-        )
+        ),
+        now=lambda: datetime(2026, 7, 26, 10, 0, tzinfo=timezone.utc),
     )
     await _login(client, "admin")
 
@@ -508,6 +512,12 @@ async def test_monthly_total_revenue_http_gold_path_persists_raw_evidence_safely
         "end": "2026-07-26",
     }
     assert payload["conversation"]["state"]["metrics"] == ["月度总收入"]
+    assert payload["conversation"]["state"]["confirmed_objects"] == ["月度总收入"]
+    reference = payload["conversation"]["state"]["evidence_references"][0]
+    assert reference["source"] == ["store_daily_records", "settlement_records"]
+    assert reference["queried_at"] == "2026-07-26T10:00:00Z"
+    assert reference["data_version"].startswith("sha256:")
+    assert reference["use_as_current_fact"] is False
     evidence = await db_session.scalar(select(AgentEvidence))
     assert evidence is not None
     assert evidence.payload["result"] == {

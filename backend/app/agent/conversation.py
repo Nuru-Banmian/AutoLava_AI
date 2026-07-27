@@ -1,7 +1,9 @@
 from datetime import date, datetime, timezone
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+import re
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -47,6 +49,17 @@ class ConversationAnalysisHypothesis(ClosedModel):
     statement: str = Field(min_length=1, max_length=500)
     status: Literal["proposed", "testing", "supported", "refuted", "unresolved"]
     evidence_references: list[str] = Field(default_factory=list, max_length=20)
+
+    @model_validator(mode="after")
+    def require_supported_evidence(self) -> "ConversationAnalysisHypothesis":
+        if any(
+            re.fullmatch(r"ev_[0-9a-f]{24}", reference) is None
+            for reference in self.evidence_references
+        ):
+            raise ValueError("invalid evidence reference")
+        if self.status in {"supported", "refuted"} and not self.evidence_references:
+            raise ValueError("supported or refuted hypotheses require evidence")
+        return self
 
 
 class ConversationState(ClosedModel):
