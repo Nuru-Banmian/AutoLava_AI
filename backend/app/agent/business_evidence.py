@@ -1,5 +1,5 @@
 from collections import defaultdict
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -89,6 +89,34 @@ class Snapshot:
     wash_count_revenue: int
     category_total_mismatches: list[dict[str, object]]
     categories: list[dict[str, object]]
+
+
+@dataclass(frozen=True)
+class SettlementCompanySnapshot:
+    id: int
+    name: str
+    is_active: bool
+
+
+@dataclass(frozen=True)
+class SettlementRecordSnapshot:
+    company_name: str
+    opening_month: date
+    amount: int
+    status: Literal["pending", "confirmed"]
+
+
+def _settlement_company_snapshots(
+    companies: Sequence[SettlementCompany],
+) -> list[SettlementCompanySnapshot]:
+    return [
+        SettlementCompanySnapshot(
+            id=company.id,
+            name=company.name,
+            is_active=company.is_active,
+        )
+        for company in companies
+    ]
 
 
 class BusinessEvidenceCollector:
@@ -775,6 +803,10 @@ class BusinessEvidenceCollector:
                 status="refused",
                 current_store={"id": context.store_id},
                 period={"start": start, "end": end},
+                query_scope={
+                    "status": request.status,
+                    "company_name": request.company_name,
+                },
                 result=empty_result,
                 warnings=[message],
                 summary=message,
@@ -799,6 +831,10 @@ class BusinessEvidenceCollector:
                 status="refused",
                 current_store={"id": context.store_id},
                 period={"start": start, "end": end},
+                query_scope={
+                    "status": request.status,
+                    "company_name": request.company_name,
+                },
                 result=empty_result,
                 warnings=[message],
                 summary=message,
@@ -812,6 +848,10 @@ class BusinessEvidenceCollector:
                 status="ok",
                 current_store={"id": context.store_id},
                 period={"start": start, "end": end},
+                query_scope={
+                    "status": request.status,
+                    "company_name": request.company_name,
+                },
                 result=empty_result,
                 warnings=[message],
                 truncated=snapshot["companies_truncated"],
@@ -856,6 +896,10 @@ class BusinessEvidenceCollector:
             status="ok",
             current_store={"id": context.store_id},
             period={"start": start, "end": end},
+            query_scope={
+                "status": request.status,
+                "company_name": request.company_name,
+            },
             result={
                 "companies": companies,
                 "records": records,
@@ -1840,15 +1884,26 @@ class BusinessEvidenceCollector:
                     )
                 ).all()
             )
+            company_snapshots = _settlement_company_snapshots(companies)
+            selected_company_snapshots = _settlement_company_snapshots(selected_companies)
+            record_snapshots = [
+                SettlementRecordSnapshot(
+                    company_name=record.company_name,
+                    opening_month=record.opening_month,
+                    amount=record.amount,
+                    status=record.status,
+                )
+                for record in records[:MAX_SETTLEMENT_ROWS]
+            ]
         return {
             "settlement_enabled": True,
-            "companies": companies,
+            "companies": company_snapshots,
             "companies_truncated": companies_truncated,
-            "selected_companies": selected_companies,
+            "selected_companies": selected_company_snapshots,
             "company_match": company_match,
             "aggregate": aggregate,
             "company_totals": company_totals,
-            "records": records[:MAX_SETTLEMENT_ROWS],
+            "records": record_snapshots,
             "records_truncated": len(records) > MAX_SETTLEMENT_ROWS,
         }
 
