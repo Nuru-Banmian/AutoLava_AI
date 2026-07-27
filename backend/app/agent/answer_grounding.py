@@ -541,15 +541,16 @@ def _metric_value(metric: ClaimMetric) -> str:
 
 def _mentions_settlement_company(statement: str, company_name: str) -> bool:
     escaped_name = re.escape(company_name)
+    boundary_before = r"(?:^|(?<=[\s（(，,；;：:。]))"
     boundary_after = r"(?=\s*(?:公司|的|：|:|，|,|。|；|;))"
     return bool(
         f"「{company_name}」" in statement
         or re.search(
-            rf"(?<![0-9A-Za-z_]){escaped_name}{boundary_after}",
+            rf"{boundary_before}{escaped_name}{boundary_after}",
             statement,
         )
         or re.search(
-            rf"结算公司\s*{escaped_name}{boundary_after}",
+            rf"{boundary_before}结算公司\s*{escaped_name}{boundary_after}",
             statement,
         )
     )
