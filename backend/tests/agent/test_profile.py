@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 import pytest
 from pydantic import ValidationError
 
@@ -7,6 +9,7 @@ from app.agent.model import (
     OpenAICompatibleModelAdapter,
     ResilientModelAdapter,
 )
+from app.agent.service import create_agent_service
 from app.core.config import Settings
 
 
@@ -24,6 +27,8 @@ def test_openai_compatible_profile_is_entirely_configuration_driven() -> None:
         model_id="configured-model",
         model_api_key="test-only-key",
         model_structured_output_method="function_calling",
+        model_timeout_seconds=23,
+        model_max_output_tokens=1700,
     )
 
     adapter = create_model_adapter(settings)
@@ -33,9 +38,24 @@ def test_openai_compatible_profile_is_entirely_configuration_driven() -> None:
     assert str(adapter.primary.profile.base_url) == "https://provider.invalid/v1"
     assert adapter.primary.profile.model_id == "configured-model"
     assert adapter.primary.profile.structured_output_method == "function_calling"
+    assert adapter.primary.profile.timeout_seconds == 23
+    assert adapter.primary.profile.max_output_tokens == 1700
     assert "test-only-key" not in repr(adapter.primary.profile)
 
 
 def test_openai_compatible_profile_fails_closed_when_configuration_is_missing() -> None:
     with pytest.raises(ValidationError, match="model_base_url"):
         Settings(_env_file=None, model_adapter="openai_compatible")
+
+
+def test_agent_service_applies_the_configured_evidence_batch_limit() -> None:
+    @asynccontextmanager
+    async def unused_session_factory():
+        yield None
+
+    service = create_agent_service(
+        Settings(_env_file=None, agent_evidence_batch_limit=1),
+        unused_session_factory,
+    )
+
+    assert service.workflow.max_evidence_batches == 1

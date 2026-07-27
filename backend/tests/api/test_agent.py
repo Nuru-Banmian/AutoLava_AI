@@ -13,6 +13,7 @@ from app.agent.business_evidence import BusinessEvidenceCollector
 from app.agent.conversation import AgentRunResult, ConversationState
 from app.agent.contracts import ModelMessage, OpenBusinessRecordsAction, TurnResult
 from app.agent.model import FakeModelAdapter
+from app.agent.release import AgentReleaseStatus
 from app.agent.runtime import RuntimeContext
 from app.agent.service import AgentService
 from app.agent.workflow import AgentTurnWorkflow
@@ -112,7 +113,7 @@ async def test_only_final_administrator_can_persist_the_global_agent_switch(
     await _login(client, "admin")
     initial = await client.get("/api/admin/agent-settings")
     assert initial.status_code == 200
-    assert initial.json() == {"enabled": False}
+    assert initial.json() == {"enabled": False, "release_approved": True}
     forbidden = await client.patch(
         "/api/admin/agent-settings", json={"enabled": True}
     )
@@ -123,10 +124,87 @@ async def test_only_final_administrator_can_persist_the_global_agent_switch(
         "/api/admin/agent-settings", json={"enabled": True}
     )
     assert enabled.status_code == 200
-    assert enabled.json() == {"enabled": True}
+    assert enabled.json() == {"enabled": True, "release_approved": True}
     assert (await client.get("/api/admin/agent-settings")).json() == {
-        "enabled": True
+        "enabled": True,
+        "release_approved": True,
     }
+
+
+async def test_production_release_gate_keeps_agent_globally_disabled(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AUTOLAVA_BOOTSTRAP_USERNAME", "owner")
+    get_settings.cache_clear()
+    await user_factory(username="owner", password="secret", role="admin")
+    db_session.add(AgentSettings(id=1, enabled=True))
+    await db_session.commit()
+    await _login(client, "owner")
+
+    from app.api.routes import agent_admin
+
+    production = get_settings().model_copy(
+        update={
+            "environment": "production",
+            "agent_release_report_path": None,
+        }
+    )
+    monkeypatch.setattr(agent_admin, "get_settings", lambda: production)
+
+    current = await client.get("/api/admin/agent-settings")
+    rejected = await client.patch(
+        "/api/admin/agent-settings", json={"enabled": True}
+    )
+
+    assert current.json() == {"enabled": False, "release_approved": False}
+    assert rejected.status_code == 409
+    assert rejected.json() == {
+        "detail": "Agent 发布门禁尚未通过，保持全局关闭"
+    }
+
+
+async def test_production_release_requires_owner_enablement_for_the_approved_report(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AUTOLAVA_BOOTSTRAP_USERNAME", "owner")
+    get_settings.cache_clear()
+    await user_factory(username="owner", password="secret", role="admin")
+    db_session.add(AgentSettings(id=1, enabled=True))
+    await db_session.commit()
+    await _login(client, "owner")
+
+    from app.api.routes import agent_admin
+
+    approved_report_sha256 = "a" * 64
+    monkeypatch.setattr(
+        agent_admin,
+        "agent_release_status",
+        lambda _settings: AgentReleaseStatus(
+            approved=True,
+            blockers=[],
+            approved_report_sha256=approved_report_sha256,
+        ),
+    )
+    production = get_settings().model_copy(update={"environment": "production"})
+    monkeypatch.setattr(agent_admin, "get_settings", lambda: production)
+
+    stale = await client.get("/api/admin/agent-settings")
+    enabled = await client.patch(
+        "/api/admin/agent-settings",
+        json={"enabled": True},
+    )
+    stored = await db_session.get(AgentSettings, 1)
+
+    assert stale.json() == {"enabled": False, "release_approved": True}
+    assert enabled.json() == {"enabled": True, "release_approved": True}
+    assert stored is not None
+    assert stored.approved_report_sha256 == approved_report_sha256
 
 
 async def test_agent_route_builds_trusted_runtime_context_for_current_store(

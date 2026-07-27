@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT_ENV_FILE = Path(__file__).resolve().parents[3] / ".env"
@@ -32,6 +32,8 @@ class Settings(BaseSettings):
         "json_schema", "function_calling", "json_mode"
     ] = "json_schema"
     model_thinking_parameters: dict[str, str | int | bool] = Field(default_factory=dict)
+    model_timeout_seconds: float = Field(default=30, gt=0, le=120)
+    model_max_output_tokens: int = Field(default=2000, ge=100, le=10_000)
     model_input_cost_per_million: float | None = None
     model_output_cost_per_million: float | None = None
     fallback_model_provider: str = "fallback"
@@ -46,6 +48,16 @@ class Settings(BaseSettings):
     )
     fallback_model_input_cost_per_million: float | None = None
     fallback_model_output_cost_per_million: float | None = None
+    agent_evidence_batch_limit: int = Field(default=1, ge=1, le=2)
+    agent_release_report_path: Path | None = None
+    agent_runtime_image_digest: str = ""
+
+    @field_validator("agent_release_report_path", mode="before")
+    @classmethod
+    def empty_release_report_path_is_absent(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @model_validator(mode="after")
     def validate_production_settings(self) -> "Settings":

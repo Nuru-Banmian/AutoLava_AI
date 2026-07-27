@@ -131,7 +131,10 @@ export interface BriefingCard {
   generated_at: string | null;
   timestamp_status: "utc" | "legacy_unknown";
 }
-export interface AgentStatus { enabled: boolean }
+export interface AgentStatus {
+  enabled: boolean;
+  release_approved?: boolean;
+}
 export interface OpenBusinessRecordsAction {
   type: "open_business_records";
   start_month: string;

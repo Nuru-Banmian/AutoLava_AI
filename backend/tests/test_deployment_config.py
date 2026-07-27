@@ -75,6 +75,10 @@ def test_compose_contains_exactly_api_and_web_with_persistent_sqlite_data() -> N
             "${AUTOLAVA_MODEL_STRUCTURED_OUTPUT_METHOD:-json_schema}"
         ),
         "AUTOLAVA_MODEL_THINKING_PARAMETERS": "${AUTOLAVA_MODEL_THINKING_PARAMETERS:-{}}",
+        "AUTOLAVA_MODEL_TIMEOUT_SECONDS": "${AUTOLAVA_MODEL_TIMEOUT_SECONDS:-30}",
+        "AUTOLAVA_MODEL_MAX_OUTPUT_TOKENS": (
+            "${AUTOLAVA_MODEL_MAX_OUTPUT_TOKENS:-2000}"
+        ),
         "AUTOLAVA_MODEL_INPUT_COST_PER_MILLION": (
             "${AUTOLAVA_MODEL_INPUT_COST_PER_MILLION:-0}"
         ),
@@ -103,6 +107,15 @@ def test_compose_contains_exactly_api_and_web_with_persistent_sqlite_data() -> N
         ),
         "AUTOLAVA_FALLBACK_MODEL_API_KEY": (
             "${AUTOLAVA_FALLBACK_MODEL_API_KEY:-}"
+        ),
+        "AUTOLAVA_AGENT_EVIDENCE_BATCH_LIMIT": (
+            "${AUTOLAVA_AGENT_EVIDENCE_BATCH_LIMIT:-1}"
+        ),
+        "AUTOLAVA_AGENT_RELEASE_REPORT_PATH": (
+            "${AUTOLAVA_AGENT_RELEASE_REPORT_PATH:-}"
+        ),
+        "AUTOLAVA_AGENT_RUNTIME_IMAGE_DIGEST": (
+            "${AUTOLAVA_AGENT_RUNTIME_IMAGE_DIGEST:-}"
         ),
     }
     assert api["volumes"] == ["autolava_data:/data"]
@@ -283,7 +296,12 @@ def test_environment_example_and_readme_document_sqlite_release_operations() -> 
         "AUTOLAVA_MODEL_BASE_URL",
         "AUTOLAVA_MODEL_ID",
         "AUTOLAVA_MODEL_STRUCTURED_OUTPUT_METHOD",
+        "AUTOLAVA_MODEL_TIMEOUT_SECONDS",
+        "AUTOLAVA_MODEL_MAX_OUTPUT_TOKENS",
         "AUTOLAVA_MODEL_API_KEY",
+        "AUTOLAVA_AGENT_EVIDENCE_BATCH_LIMIT",
+        "AUTOLAVA_AGENT_RELEASE_REPORT_PATH",
+        "AUTOLAVA_AGENT_RUNTIME_IMAGE_DIGEST",
     ):
         assert f"{key}=" in environment
     assert "AUTOLAVA_MODEL_API_KEY=\n" in environment
@@ -338,6 +356,16 @@ def test_production_settings_reject_in_memory_database() -> None:
 def test_development_defaults_remain_available() -> None:
     settings = Settings(_env_file=None)
     assert settings.environment == "development"
+    assert settings.agent_release_report_path is None
+
+
+def test_agent_evidence_batch_limit_is_configurable_within_the_fixed_graph() -> None:
+    assert Settings(
+        _env_file=None,
+        agent_evidence_batch_limit=2,
+    ).agent_evidence_batch_limit == 2
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, agent_evidence_batch_limit=3)
 
 
 def test_nginx_enforces_a_bounded_login_rate_limit() -> None:

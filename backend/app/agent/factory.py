@@ -8,34 +8,48 @@ from app.agent.model import (
 from app.core.config import Settings
 
 
-def create_model_adapter(settings: Settings) -> ModelAdapter:
-    if settings.model_adapter == "fake":
-        return FakeModelAdapter()
-    profile = OpenAICompatibleProfile(
+def configured_openai_profiles(
+    settings: Settings,
+) -> tuple[OpenAICompatibleProfile, OpenAICompatibleProfile | None]:
+    primary = OpenAICompatibleProfile(
         provider=settings.model_provider,
         base_url=settings.model_base_url,
         model_id=settings.model_id,
         api_key=settings.model_api_key,
         structured_output_method=settings.model_structured_output_method,
         thinking_parameters=settings.model_thinking_parameters,
+        timeout_seconds=settings.model_timeout_seconds,
+        max_output_tokens=settings.model_max_output_tokens,
         input_cost_per_million=settings.model_input_cost_per_million,
         output_cost_per_million=settings.model_output_cost_per_million,
     )
     fallback = None
     if settings.fallback_model_base_url.strip():
-        fallback = OpenAICompatibleModelAdapter(
-            OpenAICompatibleProfile(
-                provider=settings.fallback_model_provider,
-                base_url=settings.fallback_model_base_url,
-                model_id=settings.fallback_model_id,
-                api_key=settings.fallback_model_api_key,
-                structured_output_method=settings.fallback_model_structured_output_method,
-                thinking_parameters=settings.fallback_model_thinking_parameters,
-                input_cost_per_million=settings.fallback_model_input_cost_per_million,
-                output_cost_per_million=settings.fallback_model_output_cost_per_million,
-            )
+        fallback = OpenAICompatibleProfile(
+            provider=settings.fallback_model_provider,
+            base_url=settings.fallback_model_base_url,
+            model_id=settings.fallback_model_id,
+            api_key=settings.fallback_model_api_key,
+            structured_output_method=settings.fallback_model_structured_output_method,
+            thinking_parameters=settings.fallback_model_thinking_parameters,
+            timeout_seconds=settings.model_timeout_seconds,
+            max_output_tokens=settings.model_max_output_tokens,
+            input_cost_per_million=settings.fallback_model_input_cost_per_million,
+            output_cost_per_million=settings.fallback_model_output_cost_per_million,
         )
+    return primary, fallback
+
+
+def create_model_adapter(settings: Settings) -> ModelAdapter:
+    if settings.model_adapter == "fake":
+        return FakeModelAdapter()
+    primary_profile, fallback_profile = configured_openai_profiles(settings)
+    fallback = (
+        OpenAICompatibleModelAdapter(fallback_profile)
+        if fallback_profile is not None
+        else None
+    )
     return ResilientModelAdapter(
-        OpenAICompatibleModelAdapter(profile),
+        OpenAICompatibleModelAdapter(primary_profile),
         fallback=fallback,
     )

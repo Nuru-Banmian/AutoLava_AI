@@ -186,6 +186,7 @@ def create_agent_service(
         AgentTurnWorkflow(
             model=create_model_adapter(settings),
             evidence_collector=BusinessEvidenceCollector(session_factory),
+            max_evidence_batches=settings.agent_evidence_batch_limit,
         )
     )
 

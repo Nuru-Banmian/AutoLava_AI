@@ -359,6 +359,42 @@ async def test_workflow_allows_one_targeted_supplement_only_when_amount_is_unexp
     assert "补充证据：" in result.turn.content
 
 
+async def test_workflow_enforces_the_configured_evidence_batch_limit() -> None:
+    model = FakeModelAdapter(
+        plans=[
+            {
+                "route": "evidence",
+                "evidence_plan": {
+                    "requests": [{"kind": "revenue_analysis"}],
+                },
+                "supplemental_evidence_plan": {
+                    "requests": [
+                        {
+                            "kind": "business_metrics",
+                            "metric": "income_category_amount",
+                        }
+                    ],
+                },
+            }
+        ],
+        answers=["ignored in favor of backend summary"],
+    )
+    collector = SupplementalEvidenceCollector()
+
+    result = await AgentTurnWorkflow(
+        model=model,
+        evidence_collector=collector,
+        max_evidence_batches=1,
+    ).run(
+        [ModelMessage(role="user", content="为什么本月收入变化？")],
+        CONTEXT,
+    )
+
+    assert collector.calls == 1
+    assert isinstance(result.evidence, RevenueAnalysisEvidenceBundle)
+    assert result.evidence.supplemental_evidence is None
+
+
 async def test_workflow_converts_model_failure_to_a_sanitized_safe_failure() -> None:
     model = FakeModelAdapter(plans=[ModelAdapterError("api-key=real-secret")])
 

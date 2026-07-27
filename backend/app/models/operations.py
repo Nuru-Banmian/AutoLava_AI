@@ -62,6 +62,7 @@ class AgentSettings(Base):
     enabled: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="0"
     )
+    approved_report_sha256: Mapped[str | None] = mapped_column(String(64))
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), onupdate=func.now()
     )

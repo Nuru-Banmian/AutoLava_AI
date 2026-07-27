@@ -117,6 +117,8 @@ class OpenAICompatibleProfile(BaseModel):
         "json_schema"
     )
     thinking_parameters: dict[str, str | int | bool] = Field(default_factory=dict)
+    timeout_seconds: float = Field(default=30, gt=0, le=120)
+    max_output_tokens: int = Field(default=2000, ge=100, le=10_000)
     input_cost_per_million: float | None = Field(default=None, ge=0)
     output_cost_per_million: float | None = Field(default=None, ge=0)
 
@@ -136,6 +138,8 @@ class OpenAICompatibleModelAdapter:
             model=profile.model_id,
             api_key=profile.api_key,
             max_retries=0,
+            timeout=profile.timeout_seconds,
+            max_tokens=profile.max_output_tokens,
             model_kwargs=profile.thinking_parameters,
         )
         self._planner = self._client.with_structured_output(
