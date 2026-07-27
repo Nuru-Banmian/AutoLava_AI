@@ -21,6 +21,7 @@ from app.agent.native import (
     NativeModelTurn,
     NativeToolAgentService,
     NativeToolCall,
+    NativeTranscriptItem,
 )
 from app.agent.runtime import RuntimeContext, RuntimeFeatureFlags
 
@@ -321,7 +322,7 @@ async def test_native_investigation_carries_analysis_hypotheses_between_turns() 
     assert hypothesis.status == "testing"
 
 
-async def test_native_investigation_rejects_hypothesis_claims_with_unknown_evidence() -> None:
+async def test_native_investigation_returns_unknown_hypothesis_evidence_for_correction() -> None:
     model = FakeNativeToolModel(
         turns=[
             {
@@ -334,7 +335,18 @@ async def test_native_investigation_rejects_hypothesis_claims_with_unknown_evide
                     }
                 ],
                 "signal": "end",
-            }
+            },
+            {
+                "message": {"role": "assistant", "content": "该假设目前仍无法确认。"},
+                "hypotheses": [
+                    {
+                        "statement": "收入偏低与经营日偏少相关",
+                        "status": "unresolved",
+                        "evidence_references": [],
+                    }
+                ],
+                "signal": "end",
+            },
         ]
     )
     service = NativeToolAgentService(
@@ -342,12 +354,81 @@ async def test_native_investigation_rejects_hypothesis_claims_with_unknown_evide
         evidence_collector=MetricEvidenceCollector(),
     )
 
-    with pytest.raises(ValueError, match="unknown evidence reference"):
-        await service.run(
-            _runtime_context(),
-            ConversationState(),
-            [ModelMessage(role="user", content="调查 2026 年 7 月收入为何偏低。")],
+    result = await service.run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="调查 2026 年 7 月收入为何偏低。")],
+    )
+
+    correction = model.calls[1].items[-1].message
+    assert correction is not None
+    assert correction.role == "system"
+    assert "未知证据引用" in correction.content
+    assert result.turn.content == "该假设目前仍无法确认。"
+
+
+class FailedEvidenceHypothesisModel:
+    def __init__(self) -> None:
+        self.calls: list[list[NativeTranscriptItem]] = []
+
+    async def next_turn(self, items, *, tools):
+        del tools
+        self.calls.append(list(items))
+        if len(self.calls) == 1:
+            return NativeModelTurn(
+                message={"role": "assistant", "content": "先查询。"},
+                tool_calls=[
+                    NativeToolCall(
+                        id="failed",
+                        name="monthly_total_revenue",
+                        arguments={"year": 2026, "month": 7},
+                    )
+                ],
+                signal="continue",
+            )
+        if len(self.calls) == 2:
+            failed_result = next(item.tool_result for item in items if item.tool_result is not None)
+            return NativeModelTurn(
+                message={"role": "assistant", "content": "失败结果支持该假设。"},
+                hypotheses=[
+                    {
+                        "statement": "收入偏低与经营日偏少相关",
+                        "status": "supported",
+                        "evidence_references": [failed_result.evidence.reference],
+                    }
+                ],
+                signal="end",
+            )
+        return NativeModelTurn(
+            message={"role": "assistant", "content": "查询失败，假设仍无法确认。"},
+            hypotheses=[
+                {
+                    "statement": "收入偏低与经营日偏少相关",
+                    "status": "unresolved",
+                    "evidence_references": [],
+                }
+            ],
+            signal="end",
         )
+
+
+async def test_native_investigation_does_not_let_failed_evidence_support_a_hypothesis() -> None:
+    model = FailedEvidenceHypothesisModel()
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=FailingEvidenceCollector(),
+    )
+
+    result = await service.run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="调查 2026 年 7 月收入为何偏低。")],
+    )
+
+    correction = model.calls[2][-1].message
+    assert correction is not None
+    assert "成功证据" in correction.content
+    assert result.turn.content == "查询失败，假设仍无法确认。"
 
 
 async def test_native_investigation_stops_safely_at_the_round_limit() -> None:

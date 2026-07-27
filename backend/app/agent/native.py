@@ -280,7 +280,14 @@ class NativeToolAgentService:
         tool_call_count = 0
         for _ in range(MAX_NATIVE_TOOL_ROUNDS):
             turn = await self.model.next_turn(items, tools=self.tools)
-            _validate_hypothesis_references(turn.hypotheses, items)
+            hypothesis_error = _hypothesis_reference_error(turn.hypotheses, items)
+            if hypothesis_error is not None:
+                items.append(
+                    NativeTranscriptItem(
+                        message=ModelMessage(role="system", content=hypothesis_error)
+                    )
+                )
+                continue
             items.append(
                 NativeTranscriptItem(
                     message=turn.message,
@@ -503,16 +510,25 @@ def _failed_tool_result(
     )
 
 
-def _validate_hypothesis_references(
+def _hypothesis_reference_error(
     hypotheses: Sequence[NativeAnalysisHypothesis],
     items: Sequence[NativeTranscriptItem],
-) -> None:
-    available_references = {
+) -> str | None:
+    known_references = {
         item.tool_result.evidence.reference for item in items if item.tool_result is not None
     }
+    successful_references = {
+        item.tool_result.evidence.reference
+        for item in items
+        if item.tool_result is not None and item.tool_result.evidence.failure.status == "none"
+    }
     for hypothesis in hypotheses:
-        if set(hypothesis.evidence_references) - available_references:
-            raise ValueError("unknown evidence reference")
+        references = set(hypothesis.evidence_references)
+        if references - known_references:
+            return "分析假设包含未知证据引用。请只引用本轮已返回的证据后继续或结束。"
+        if hypothesis.status in {"supported", "refuted"} and references - successful_references:
+            return "分析假设只有在成功证据支持时才能标记为支持或否定；请修正后继续或结束。"
+    return None
 
 
 def _agent_result(
