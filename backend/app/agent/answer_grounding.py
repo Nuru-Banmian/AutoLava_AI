@@ -5,7 +5,7 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 import re
-from typing import Literal
+from typing import Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -66,8 +66,29 @@ class SettlementClaimMetric(StrEnum):
     PENDING_AMOUNT = "pending_settlement_amount"
 
 
-ClaimMetric = EvidenceMetric | SettlementClaimMetric
-GroundedEvidence = EvidenceBundle | SettlementDetailsEvidenceBundle
+class EvidenceCalculationClaimMetric(StrEnum):
+    EVIDENCE_CALCULATION = "evidence_calculation"
+
+
+ClaimMetric = EvidenceMetric | SettlementClaimMetric | EvidenceCalculationClaimMetric
+
+
+@runtime_checkable
+class EvidenceCalculationGrounding(Protocol):
+    @property
+    def period(self) -> EvidencePeriodResult: ...
+
+    @property
+    def exact_result(self) -> Decimal | None: ...
+
+    @property
+    def unit(self) -> str | None: ...
+
+    @property
+    def cannot_calculate_reason(self) -> str | None: ...
+
+
+GroundedEvidence = EvidenceBundle | SettlementDetailsEvidenceBundle | EvidenceCalculationGrounding
 _METRIC_FIELDS = {
     "月度总收入": "monthly_total_revenue",
     "总收入": "monthly_total_revenue",
@@ -78,6 +99,8 @@ _METRIC_FIELDS = {
     "待到账公司结算金额": "pending_settlement_amount",
     "待到账金额": "pending_settlement_amount",
     "经营日": "operating_days",
+    "证据计算结果": "evidence_calculation",
+    "计算结果": "evidence_calculation",
 }
 
 
@@ -229,6 +252,14 @@ def _claim_value_is_supported(
     claim: NativeAnswerClaim,
     bundle: GroundedEvidence,
 ) -> bool:
+    if isinstance(bundle, EvidenceCalculationGrounding):
+        return bool(
+            claim.metric == EvidenceCalculationClaimMetric.EVIDENCE_CALCULATION
+            and bundle.cannot_calculate_reason is None
+            and bundle.exact_result is not None
+            and claim.value == bundle.exact_result
+            and claim.unit == bundle.unit
+        )
     if isinstance(bundle, SettlementDetailsEvidenceBundle):
         if claim.unit != "EUR" or claim.metric is None:
             return False
@@ -458,6 +489,10 @@ def _dates_are_supported(answer: str, evidence: Sequence[GroundedEvidence]) -> b
 def _quantities_are_supported(answer: str, evidence: Sequence[GroundedEvidence]) -> bool:
     facts_by_unit: dict[str, set[Decimal]] = {}
     for bundle in evidence:
+        if isinstance(bundle, EvidenceCalculationGrounding):
+            if bundle.unit is not None and bundle.exact_result is not None:
+                facts_by_unit.setdefault(bundle.unit, set()).add(bundle.exact_result)
+            continue
         facts_by_unit.setdefault(bundle.unit, set()).update(_numeric_values(bundle.result))
 
     for clause in _clauses(answer):
@@ -485,6 +520,10 @@ def _quantities_are_supported(answer: str, evidence: Sequence[GroundedEvidence])
             return False
     supported_percentages: set[Decimal] = set()
     for bundle in evidence:
+        if isinstance(bundle, EvidenceCalculationGrounding):
+            if bundle.unit == "percent" and bundle.exact_result is not None:
+                supported_percentages.add(abs(bundle.exact_result))
+            continue
         comparison = getattr(bundle, "comparison", None)
         if (
             comparison is not None
@@ -519,6 +558,13 @@ def _values_for_field(
 ) -> set[Decimal]:
     values: set[Decimal] = set()
     for bundle in evidence:
+        if isinstance(bundle, EvidenceCalculationGrounding):
+            if (
+                field == EvidenceCalculationClaimMetric.EVIDENCE_CALCULATION
+                and bundle.exact_result is not None
+            ):
+                values.add(bundle.exact_result)
+            continue
         result = bundle.result.model_dump(mode="python")
         if isinstance(bundle, SettlementDetailsEvidenceBundle):
             if field == SettlementClaimMetric.PENDING_AMOUNT:
