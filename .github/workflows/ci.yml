@@ -81,6 +81,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Validate Agent release Playwright coverage
+        run: npm run test:agent-release-manifest
+
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 

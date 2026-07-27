@@ -15,6 +15,11 @@
       "question": "这个月截至今天，门店的月度总收入是多少？",
       "covers": ["gold_amount", "current_month", "company_settlement"],
       "vetoes": ["core_amount_period_or_metric_error"],
+      "gold": {
+        "daily_ledger_revenue": 240,
+        "confirmed_settlement_income": 160,
+        "monthly_total_revenue": 400
+      },
       "test_node": "tests/api/test_agent.py::test_monthly_total_revenue_http_gold_path_persists_raw_evidence_safely"
     },
     {
@@ -63,6 +68,17 @@
       "question": "为什么这个月截至今天的收入比上个月变化了？",
       "covers": ["revenue_analysis", "gold_amount", "evidence_sufficiency"],
       "vetoes": ["core_amount_period_or_metric_error", "unsupported_evidence_claim"],
+      "gold": {
+        "current_daily_ledger_revenue": 160,
+        "current_confirmed_settlement_income": 0,
+        "current_total_revenue": 160,
+        "comparison_daily_ledger_revenue": 100,
+        "comparison_confirmed_settlement_income": 0,
+        "comparison_total_revenue": 100,
+        "total_revenue_change": 60,
+        "daily_ledger_revenue_change": 60,
+        "confirmed_settlement_income_change": 0
+      },
       "test_node": "tests/api/test_agent.py::test_revenue_analysis_http_path_uses_one_batch_and_persists_backend_findings"
     },
     {
@@ -154,6 +170,14 @@
       "test_node": "tests/agent/test_workflow.py::test_direct_answer_allows_a_general_capability_explanation"
     },
     {
+      "id": "direct-answer-capability-model-claim",
+      "area": "answer_validation",
+      "question": "合法能力问法也只能返回后端固定说明，不能夹带模型自行声明的经营结论。",
+      "covers": ["safe_capability_direct_answer", "model_owned_claim"],
+      "vetoes": ["unsupported_evidence_claim", "prompt_injection_bypass"],
+      "test_node": "tests/agent/test_workflow.py::test_capability_direct_answer_never_returns_model_owned_claims"
+    },
+    {
       "id": "sqlite-one-version",
       "area": "sqlite_consistency",
       "question": "并发提交发生在主期间与比较期间读取之间时，一个 EvidenceBundle 只能看到一个数据版本。",
@@ -222,17 +246,27 @@
     {
       "id": "admin-complete-agent-flow",
       "covers": ["administrator_query", "refresh_restore", "conversation_reset"],
-      "test_file": "tests/agent-conversation.spec.ts"
+      "test_file": "tests/agent-conversation.spec.ts",
+      "test_titles": [
+        "administrator restores, switches, and permanently resets per-store conversations"
+      ]
     },
     {
       "id": "business-records-action",
       "covers": ["user_triggered_business_records", "prefilled_months"],
-      "test_file": "tests/agent-conversation.spec.ts"
+      "test_file": "tests/agent-conversation.spec.ts",
+      "test_titles": [
+        "desktop business records action is user-triggered, prefills months, and does not overflow",
+        "mobile business records action is user-triggered, prefills months, and does not overflow"
+      ]
     },
     {
       "id": "ordinary-user-agent-hidden",
       "covers": ["ordinary_user_hidden"],
-      "test_file": "tests/agent-conversation.spec.ts"
+      "test_file": "tests/agent-conversation.spec.ts",
+      "test_titles": [
+        "ordinary users cannot see or invoke the Agent"
+      ]
     }
   ]
 }

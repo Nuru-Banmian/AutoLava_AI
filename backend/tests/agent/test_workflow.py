@@ -195,6 +195,32 @@ async def test_direct_answer_allows_a_general_capability_explanation() -> None:
     assert collector.calls == 0
 
 
+async def test_capability_direct_answer_never_returns_model_owned_claims() -> None:
+    collector = RecordingEvidenceCollector()
+
+    result = await AgentTurnWorkflow(
+        model=FakeModelAdapter(
+            plans=[
+                {
+                    "route": "direct_answer",
+                    "answer": "我可以告诉你本月利润翻倍。",
+                }
+            ]
+        ),
+        evidence_collector=collector,
+    ).run(
+        [ModelMessage(role="user", content="你能做什么？")],
+        CONTEXT,
+    )
+
+    assert result.turn.route == "answer"
+    assert result.turn.content == (
+        "我可以说明能力范围，并基于当前门店的可验证证据回答经营问题。"
+    )
+    assert "利润翻倍" not in result.turn.content
+    assert collector.calls == 0
+
+
 async def test_workflow_returns_only_a_backend_validated_business_records_action() -> None:
     model = FakeModelAdapter(
         plans=[
@@ -521,7 +547,9 @@ async def test_transient_failure_retries_current_model_once(
         evidence_collector=RecordingEvidenceCollector(),
     ).run([ModelMessage(role="user", content="你能做什么？")], CONTEXT)
 
-    assert result.turn.content == "我可以继续说明能力范围。"
+    assert result.turn.content == (
+        "我可以说明能力范围，并基于当前门店的可验证证据回答经营问题。"
+    )
     assert result.turn.recovery_status == "retried"
     assert primary.plan_calls == 2
 

@@ -64,6 +64,36 @@ REQUIRED_FRONTEND_COVERAGE = {
     "conversation_reset",
     "ordinary_user_hidden",
 }
+EXPECTED_FRONTEND_TEST_TITLES = {
+    "admin-complete-agent-flow": [
+        "administrator restores, switches, and permanently resets per-store conversations"
+    ],
+    "business-records-action": [
+        "desktop business records action is user-triggered, prefills months, and does not overflow",
+        "mobile business records action is user-triggered, prefills months, and does not overflow",
+    ],
+    "ordinary-user-agent-hidden": [
+        "ordinary users cannot see or invoke the Agent"
+    ],
+}
+EXPECTED_GOLD_AMOUNTS = {
+    "monthly-total-gold": {
+        "daily_ledger_revenue": 240,
+        "confirmed_settlement_income": 160,
+        "monthly_total_revenue": 400,
+    },
+    "revenue-analysis": {
+        "current_daily_ledger_revenue": 160,
+        "current_confirmed_settlement_income": 0,
+        "current_total_revenue": 160,
+        "comparison_daily_ledger_revenue": 100,
+        "comparison_confirmed_settlement_income": 0,
+        "comparison_total_revenue": 100,
+        "total_revenue_change": 60,
+        "daily_ledger_revenue_change": 60,
+        "confirmed_settlement_income_change": 0,
+    },
+}
 
 
 def _manifest() -> dict:
@@ -128,6 +158,17 @@ def test_release_evaluation_manifest_is_complete_and_points_to_real_tests() -> N
             flags=re.MULTILINE,
         ), case["id"]
 
+    gold_cases = {
+        case["id"]: case["gold"]
+        for case in backend_cases
+        if "gold_amount" in case["covers"]
+    }
+    assert gold_cases == EXPECTED_GOLD_AMOUNTS
+    assert all(
+        gold and all(type(value) in {int, float} for value in gold.values())
+        for gold in gold_cases.values()
+    )
+
     frontend_coverage = {
         item
         for case in frontend_cases
@@ -136,6 +177,9 @@ def test_release_evaluation_manifest_is_complete_and_points_to_real_tests() -> N
     assert frontend_coverage == REQUIRED_FRONTEND_COVERAGE
     for case in frontend_cases:
         assert (REPOSITORY_ROOT / "frontend" / case["test_file"]).is_file()
+    assert {
+        case["id"]: case["test_titles"] for case in frontend_cases
+    } == EXPECTED_FRONTEND_TEST_TITLES
 
 
 def test_ci_runs_the_fake_only_agent_release_veto_gate() -> None:
@@ -153,3 +197,16 @@ def test_ci_runs_the_fake_only_agent_release_veto_gate() -> None:
         "pytest -m agent_release_gate --strict-markers" in command
         for command in commands
     )
+
+    frontend = workflow["jobs"]["frontend"]
+    frontend_commands = [
+        step["run"] for step in frontend["steps"] if "run" in step
+    ]
+    package = json.loads(
+        (REPOSITORY_ROOT / "frontend" / "package.json").read_text(encoding="utf-8")
+    )
+    assert (
+        package["scripts"]["test:agent-release-manifest"]
+        == "node scripts/validate-agent-release-manifest.mjs"
+    )
+    assert "npm run test:agent-release-manifest" in frontend_commands
