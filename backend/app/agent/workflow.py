@@ -9,8 +9,10 @@ from langgraph.graph import END, START, StateGraph
 from app.agent.business_evidence import EvidenceClarificationError
 from app.agent.contracts import (
     CollectedEvidence,
+    EvidenceBundle,
     EvidencePlan,
     ModelMessage,
+    RevenueAnalysisEvidenceBundle,
     SettlementDetailsRequest,
     TurnPlan,
     TurnResult,
@@ -28,7 +30,7 @@ PLAN_REPAIR_FEEDBACK = (
     "Do not add identity, store scope, timezone, SQL, schema, URL, or role fields."
 )
 MAX_MODEL_CALLS = 3
-MAX_EVIDENCE_CALLS = 1
+MAX_EVIDENCE_CALLS = 2
 SETTLEMENT_DETAILS_REQUIRE_EXPLICIT_MESSAGE = (
     "请明确询问结算公司、开票记录、待到账、已确认金额或某个公司的结算金额。"
 )
@@ -95,6 +97,7 @@ class AgentTurnWorkflow:
         graph.add_node("plan", self._plan)
         graph.add_node("finish_plan", self._finish_plan)
         graph.add_node("collect_evidence", self._collect_evidence)
+        graph.add_node("collect_supplemental_evidence", self._collect_supplemental_evidence)
         graph.add_node("answer", self._answer)
         graph.add_edge(START, "plan")
         graph.add_conditional_edges(
@@ -105,8 +108,13 @@ class AgentTurnWorkflow:
         graph.add_conditional_edges(
             "collect_evidence",
             self._route_collected_evidence,
-            {"answer": "answer", "finish": "finish_plan"},
+            {
+                "supplement": "collect_supplemental_evidence",
+                "answer": "answer",
+                "finish": "finish_plan",
+            },
         )
+        graph.add_edge("collect_supplemental_evidence", "answer")
         graph.add_edge("finish_plan", END)
         graph.add_edge("answer", END)
         self._graph = graph.compile()
@@ -258,7 +266,56 @@ class AgentTurnWorkflow:
 
     @staticmethod
     def _route_collected_evidence(state: TurnState) -> str:
-        return "answer" if state["evidence"] is not None and state["result"] is None else "finish"
+        evidence = state["evidence"]
+        plan = state["plan"]
+        if evidence is None or state["result"] is not None:
+            return "finish"
+        if (
+            isinstance(evidence, RevenueAnalysisEvidenceBundle)
+            and evidence.findings.unexplained_amount != 0
+            and plan is not None
+            and plan.supplemental_evidence_plan is not None
+            and state["evidence_calls"] < MAX_EVIDENCE_CALLS
+        ):
+            return "supplement"
+        return "answer"
+
+    async def _collect_supplemental_evidence(self, state: TurnState) -> dict:
+        plan = state["plan"]
+        primary = state["evidence"]
+        if (
+            plan is None
+            or plan.supplemental_evidence_plan is None
+            or not isinstance(primary, RevenueAnalysisEvidenceBundle)
+            or primary.findings.unexplained_amount == 0
+            or state["evidence_calls"] >= MAX_EVIDENCE_CALLS
+        ):
+            return {}
+        try:
+            supplemental_plan = _enforce_explicit_percentage_request(
+                plan.supplemental_evidence_plan,
+                state["messages"],
+            )
+            supplemental = await self.evidence_collector.collect(
+                supplemental_plan,
+                state["context"],
+            )
+            if not isinstance(supplemental, EvidenceBundle):
+                raise ValueError("supplemental evidence must be a business metric")
+        except Exception:
+            return {"evidence_calls": state["evidence_calls"] + 1}
+        return {
+            "evidence": primary.model_copy(
+                update={
+                    "supplemental_evidence": supplemental,
+                    "summary": (
+                        f"{primary.summary}补充证据：{supplemental.summary}"
+                        "该补充证据仅用于缩小尚未解释范围，不构成因果结论。"
+                    ),
+                }
+            ),
+            "evidence_calls": state["evidence_calls"] + 1,
+        }
 
     async def _answer(self, state: TurnState) -> dict:
         if state["model_calls"] >= MAX_MODEL_CALLS or state["evidence"] is None:
@@ -334,7 +391,11 @@ def _enforce_explicit_percentage_request(
 ) -> EvidencePlan:
     request = plan.requests[0]
     comparison = getattr(request, "comparison", None)
-    if comparison is None or not comparison.include_percentage:
+    includes_percentage = bool(
+        getattr(request, "include_percentage", False)
+        or (comparison is not None and comparison.include_percentage)
+    )
+    if not includes_percentage:
         return plan
     user_message = next(
         (message.content for message in reversed(messages) if message.role == "user"),
@@ -347,6 +408,14 @@ def _enforce_explicit_percentage_request(
         term in user_message for term in EXPLICIT_PERCENTAGE_TERMS
     ):
         return plan
+    if hasattr(request, "include_percentage"):
+        return plan.model_copy(
+            update={
+                "requests": [
+                    request.model_copy(update={"include_percentage": False}),
+                ]
+            }
+        )
     return plan.model_copy(
         update={
             "requests": [
