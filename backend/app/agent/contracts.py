@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date as CalendarDate, datetime
 from decimal import Decimal
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -520,6 +520,122 @@ class CurrentStoreScope(ClosedModel):
     id: int = Field(gt=0)
 
 
+class ExternalGeographicScope(ClosedModel):
+    kind: Literal["coordinates", "country"]
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    timezone: str | None = Field(default=None, min_length=1, max_length=64)
+    country_code: Literal["IT"]
+
+    @model_validator(mode="after")
+    def require_scope_shape(self) -> "ExternalGeographicScope":
+        coordinates = (self.latitude, self.longitude)
+        if self.kind == "coordinates" and (
+            any(value is None for value in coordinates) or self.timezone is None
+        ):
+            raise ValueError("coordinate scope requires coordinates and timezone")
+        if self.kind == "country" and any(value is not None for value in coordinates):
+            raise ValueError("country scope cannot contain coordinates")
+        return self
+
+
+class ExternalEvidenceCoverage(EvidenceCoverage):
+    missing_dates: list[CalendarDate] = Field(default_factory=list, max_length=366)
+
+
+class ExternalEvidenceFreshness(ClosedModel):
+    status: Literal["fresh", "stale", "unavailable"]
+    as_of: datetime | None = None
+    max_age_seconds: int = Field(ge=1)
+    cache_status: Literal["miss", "fresh", "refreshed", "stale_fallback"]
+    refresh_failure: (
+        Literal[
+            "timeout",
+            "rate_limited",
+            "service_unavailable",
+            "invalid_response",
+        ]
+        | None
+    ) = None
+
+    @model_validator(mode="after")
+    def require_freshness_shape(self) -> "ExternalEvidenceFreshness":
+        if self.status == "fresh" and (
+            self.as_of is None
+            or self.cache_status == "stale_fallback"
+            or self.refresh_failure is not None
+        ):
+            raise ValueError("fresh evidence requires a current source snapshot")
+        if self.status == "stale" and (
+            self.as_of is None
+            or self.cache_status != "stale_fallback"
+            or self.refresh_failure is None
+        ):
+            raise ValueError("stale evidence requires a failed refresh")
+        if self.status == "unavailable" and (
+            self.as_of is not None or self.cache_status != "miss" or self.refresh_failure is None
+        ):
+            raise ValueError("unavailable evidence requires an explicit provider failure")
+        return self
+
+
+class ExternalEvidenceFailure(ClosedModel):
+    status: Literal["none", "failed"]
+    category: (
+        Literal[
+            "timeout",
+            "rate_limited",
+            "service_unavailable",
+            "invalid_response",
+        ]
+        | None
+    ) = None
+    message: str | None = Field(default=None, min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def require_failure_shape(self) -> "ExternalEvidenceFailure":
+        details = (self.category, self.message)
+        if self.status == "none" and any(value is not None for value in details):
+            raise ValueError("successful external evidence cannot contain failure details")
+        if self.status == "failed" and any(value is None for value in details):
+            raise ValueError("failed external evidence requires category and message")
+        return self
+
+
+class ExternalEvidenceBundle(ClosedModel):
+    status: Literal["ok", "failed"]
+    current_store: CurrentStoreScope
+    period: EvidencePeriodResult
+    evidence_type: Literal["historical_weather", "public_holidays"]
+    external_evidence: Literal[True] = True
+    unit: Literal["external_fact"] = "external_fact"
+    source: Literal["open_meteo_historical", "nager_date_public_holidays"]
+    queried_at: datetime
+    geographic_scope: ExternalGeographicScope
+    coverage: ExternalEvidenceCoverage
+    freshness: ExternalEvidenceFreshness
+    failure: ExternalEvidenceFailure
+    result: dict[str, Any]
+    warnings: list[str] = Field(default_factory=list, max_length=20)
+    truncated: bool = False
+    summary: str = Field(min_length=1, max_length=20_000)
+
+    @model_validator(mode="after")
+    def require_external_evidence_shape(self) -> "ExternalEvidenceBundle":
+        if self.status == "ok" and (
+            self.failure.status != "none" or self.freshness.status == "unavailable"
+        ):
+            raise ValueError("available external evidence cannot contain a terminal failure")
+        if self.status == "failed" and (
+            self.failure.status != "failed"
+            or self.freshness.status != "unavailable"
+            or self.result
+            or self.coverage.recorded_dates
+        ):
+            raise ValueError("failed external evidence cannot contain facts")
+        return self
+
+
 class EvidenceBundle(ClosedModel):
     status: Literal["ok", "not_recorded"]
     current_store: CurrentStoreScope
@@ -746,7 +862,12 @@ class SettlementDetailsEvidenceBundle(ClosedModel):
     summary: str = Field(min_length=1, max_length=20_000)
 
 
-CollectedEvidence = EvidenceBundle | SettlementDetailsEvidenceBundle | RevenueAnalysisEvidenceBundle
+CollectedEvidence = (
+    EvidenceBundle
+    | SettlementDetailsEvidenceBundle
+    | RevenueAnalysisEvidenceBundle
+    | ExternalEvidenceBundle
+)
 
 
 class TurnResult(ClosedModel):

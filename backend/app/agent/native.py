@@ -30,6 +30,9 @@ from app.agent.contracts import (
     EvidenceMetric,
     EvidencePeriodResult,
     EvidencePlan,
+    ExternalEvidenceBundle,
+    ExternalEvidenceFreshness,
+    ExternalGeographicScope,
     ConfirmedSettlementIncomeResult,
     GroupedMetricResult,
     ModelMessage,
@@ -46,7 +49,8 @@ from app.agent.contracts import (
 )
 from app.agent.runtime import RuntimeContext
 
-NativeCollectedEvidence = EvidenceBundle | SettlementDetailsEvidenceBundle
+NativeCollectedEvidence = EvidenceBundle | SettlementDetailsEvidenceBundle | ExternalEvidenceBundle
+NativeBusinessEvidence = EvidenceBundle | SettlementDetailsEvidenceBundle
 
 MONTHLY_TOTAL_REVENUE_TOOL = "monthly_total_revenue"
 DAILY_LEDGER_REVENUE_TOOL = "daily_ledger_revenue"
@@ -60,6 +64,8 @@ AVERAGE_REVENUE_PER_CAR_TOOL = "average_revenue_per_car"
 INCOME_CATEGORY_AMOUNT_TOOL = "income_category_amount"
 OTHER_DATA_AMOUNT_TOOL = "other_data_amount"
 DAILY_LEDGER_REVENUE_EXTREME_TOOL = "daily_ledger_revenue_extreme"
+HISTORICAL_WEATHER_TOOL = "historical_weather"
+PUBLIC_HOLIDAYS_TOOL = "public_holidays"
 MAX_NATIVE_TOOL_ROUNDS = 4
 MAX_NATIVE_TOOL_CALLS = 8
 INVESTIGATION_LIMIT_MESSAGE = "调查已达到本轮资源上限；以下结论仅基于已返回的证据。"
@@ -121,6 +127,7 @@ StoreFeatureFlag = Literal[
 class NativeToolRegistration:
     definition: NativeToolDefinition
     required_features: frozenset[StoreFeatureFlag]
+    required_geography: Literal["coordinates", "country"] | None = None
 
     def is_available(self, context: RuntimeContext) -> bool:
         if context.role not in {"admin", "final_admin"} or not context.features.agent_enabled:
@@ -129,7 +136,17 @@ class NativeToolRegistration:
             ZoneInfo(context.store_timezone)
         except ZoneInfoNotFoundError:
             return False
-        return all(getattr(context.features, feature) for feature in self.required_features)
+        if not all(getattr(context.features, feature) for feature in self.required_features):
+            return False
+        if self.required_geography == "coordinates":
+            return (
+                context.store_latitude is not None
+                and context.store_longitude is not None
+                and context.store_country_code is not None
+            )
+        if self.required_geography == "country":
+            return context.store_country_code is not None
+        return True
 
 
 class NativeAnalysisHypothesis(ClosedModel):
@@ -164,8 +181,32 @@ class NativeEvidenceEnvelope(ClosedModel):
     filters: EvidenceFilters | None = None
     extreme: Literal["highest", "lowest"] | None = None
     settlement_query_scope: SettlementDetailsQueryScope | None = None
-    unit: Literal["EUR", "day", "car", "EUR/car", "EUR/operating_day", "unknown"]
-    source: list[Literal["store_daily_records", "settlement_records"]]
+    unit: Literal[
+        "EUR",
+        "day",
+        "car",
+        "EUR/car",
+        "EUR/operating_day",
+        "external_fact",
+        "unknown",
+    ]
+    source: list[
+        Literal[
+            "store_daily_records",
+            "settlement_records",
+            "open_meteo_historical",
+            "nager_date_public_holidays",
+        ]
+    ]
+    external_evidence: bool = Field(default=False, exclude_if=lambda value: not value)
+    geographic_scope: ExternalGeographicScope | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    freshness: ExternalEvidenceFreshness | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     queried_at: datetime
     data_version: str = Field(min_length=1, max_length=100)
     coverage: EvidenceCoverage
@@ -240,6 +281,17 @@ class NativeEvidenceCollector(Protocol):
     ) -> object: ...
 
 
+class NativeExternalEvidenceCollector(Protocol):
+    async def collect(
+        self,
+        evidence_type: str,
+        context: RuntimeContext,
+        *,
+        start: date,
+        end: date,
+    ) -> ExternalEvidenceBundle: ...
+
+
 class NativeToolScopeResolver(Protocol):
     async def refresh(self, context: RuntimeContext) -> RuntimeContext: ...
 
@@ -250,9 +302,27 @@ class NativeToolSpec:
     result_types: tuple[type[BaseModel], ...]
     arguments_type: type[MonthlyTotalRevenueArguments]
     description: str
-    sources: tuple[Literal["store_daily_records", "settlement_records"], ...]
-    unit: Literal["EUR", "day", "car", "EUR/car", "EUR/operating_day"]
+    sources: tuple[
+        Literal[
+            "store_daily_records",
+            "settlement_records",
+            "open_meteo_historical",
+            "nager_date_public_holidays",
+        ],
+        ...,
+    ]
+    unit: Literal[
+        "EUR",
+        "day",
+        "car",
+        "EUR/car",
+        "EUR/operating_day",
+        "external_fact",
+    ]
     required_features: frozenset[StoreFeatureFlag] = frozenset()
+    collection: Literal["business_metrics", "settlement_details", "external"] = "business_metrics"
+    external_evidence_type: Literal["historical_weather", "public_holidays"] | None = None
+    required_geography: Literal["coordinates", "country"] | None = None
 
 
 NATIVE_TOOLS = {
@@ -293,6 +363,7 @@ NATIVE_TOOLS = {
         sources=("settlement_records",),
         unit="EUR",
         required_features=frozenset({"company_settlement_enabled"}),
+        collection="settlement_details",
     ),
     OPERATING_DAYS_TOOL: NativeToolSpec(
         metric=EvidenceMetric.OPERATING_DAYS,
@@ -358,6 +429,32 @@ NATIVE_TOOLS = {
         sources=("store_daily_records",),
         unit="EUR",
     ),
+    HISTORICAL_WEATHER_TOOL: NativeToolSpec(
+        metric=None,
+        result_types=(ExternalEvidenceBundle,),
+        arguments_type=MonthlyTotalRevenueArguments,
+        description=(
+            "查询当前受信任门店坐标在指定自然月的历史天气外部经营证据；坐标和时区由后端注入。"
+        ),
+        sources=("open_meteo_historical",),
+        unit="external_fact",
+        collection="external",
+        external_evidence_type="historical_weather",
+        required_geography="coordinates",
+    ),
+    PUBLIC_HOLIDAYS_TOOL: NativeToolSpec(
+        metric=None,
+        result_types=(ExternalEvidenceBundle,),
+        arguments_type=MonthlyTotalRevenueArguments,
+        description=(
+            "查询当前受信任门店所在批准国家在指定自然月的公共假期外部经营证据；国家范围由后端注入。"
+        ),
+        sources=("nager_date_public_holidays",),
+        unit="external_fact",
+        collection="external",
+        external_evidence_type="public_holidays",
+        required_geography="country",
+    ),
 }
 
 
@@ -401,11 +498,13 @@ class NativeToolAgentService:
         *,
         model: NativeToolModel,
         evidence_collector: NativeEvidenceCollector,
+        external_evidence_collector: NativeExternalEvidenceCollector | None = None,
         scope_resolver: NativeToolScopeResolver,
         now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ) -> None:
         self.model = model
         self.evidence_collector = evidence_collector
+        self.external_evidence_collector = external_evidence_collector
         self.scope_resolver = scope_resolver
         self.now = now
         self.tool_registry = tuple(
@@ -416,6 +515,7 @@ class NativeToolAgentService:
                     input_schema=spec.arguments_type.model_json_schema(),
                 ),
                 required_features=spec.required_features,
+                required_geography=spec.required_geography,
             )
             for name, spec in NATIVE_TOOLS.items()
         )
@@ -563,8 +663,46 @@ class NativeToolAgentService:
                 ),
                 None,
             )
+        start = date(arguments.year, arguments.month, 1)
+        end = date(
+            arguments.year,
+            arguments.month,
+            monthrange(arguments.year, arguments.month)[1],
+        )
+        if tool_spec.collection == "external":
+            if self.external_evidence_collector is None or tool_spec.external_evidence_type is None:
+                return (
+                    _failed_tool_result(
+                        call,
+                        fresh_context,
+                        arguments,
+                        self.now(),
+                        tool_spec=tool_spec,
+                        category="external_provider_unavailable",
+                        message="外部证据供应方暂时不可用",
+                    ),
+                    None,
+                )
+            external_evidence = await self.external_evidence_collector.collect(
+                tool_spec.external_evidence_type,
+                fresh_context,
+                start=start,
+                end=end,
+            )
+            envelope = _native_external_envelope(
+                external_evidence,
+                queried_at=self.now(),
+            )
+            return (
+                NativeToolResult(
+                    call_id=call.id,
+                    name=call.name,
+                    evidence=envelope,
+                ),
+                external_evidence if external_evidence.status == "ok" else None,
+            )
         request: dict[str, Any] = {
-            "kind": "settlement_details" if tool_spec.metric is None else "business_metrics",
+            "kind": tool_spec.collection,
             "period": {
                 "kind": "calendar_month",
                 "year": arguments.year,
@@ -582,7 +720,7 @@ class NativeToolAgentService:
         except ValidationError as error:
             raise NativeToolAccessDenied("native tool call is not authorized") from error
         try:
-            evidence = await self.evidence_collector.collect(plan, fresh_context)
+            collected_evidence = await self.evidence_collector.collect(plan, fresh_context)
         except NativeToolAccessDenied:
             raise
         except Exception:
@@ -597,7 +735,7 @@ class NativeToolAgentService:
                 None,
             )
         if not _evidence_matches_tool(
-            evidence,
+            collected_evidence,
             tool_spec,
             arguments,
             store_id=fresh_context.store_id,
@@ -612,15 +750,22 @@ class NativeToolAgentService:
                 ),
                 None,
             )
-        assert isinstance(evidence, (EvidenceBundle, SettlementDetailsEvidenceBundle))
-        envelope = _native_envelope(evidence, tool_spec=tool_spec, queried_at=self.now())
+        assert isinstance(
+            collected_evidence,
+            (EvidenceBundle, SettlementDetailsEvidenceBundle),
+        )
+        envelope = _native_envelope(
+            collected_evidence,
+            tool_spec=tool_spec,
+            queried_at=self.now(),
+        )
         return (
             NativeToolResult(
                 call_id=call.id,
                 name=call.name,
                 evidence=envelope,
             ),
-            evidence,
+            collected_evidence,
         )
 
 
@@ -636,7 +781,7 @@ def _available_tools(
 
 
 def _native_envelope(
-    evidence: NativeCollectedEvidence,
+    evidence: NativeBusinessEvidence,
     *,
     tool_spec: NativeToolSpec,
     queried_at: datetime,
@@ -705,6 +850,47 @@ def _native_envelope(
         limitations=limitations[:20],
         truncated=evidence.truncated,
         failure=NativeEvidenceFailure(status="none"),
+    )
+
+
+def _native_external_envelope(
+    evidence: ExternalEvidenceBundle,
+    *,
+    queried_at: datetime,
+) -> NativeEvidenceEnvelope:
+    facts = evidence.result
+    version_payload = {
+        "source": evidence.source,
+        "period": evidence.period.model_dump(mode="json"),
+        "geographic_scope": evidence.geographic_scope.model_dump(mode="json"),
+        "freshness_as_of": (
+            evidence.freshness.as_of.isoformat() if evidence.freshness.as_of is not None else None
+        ),
+        "facts": facts,
+    }
+    digest = hashlib.sha256(
+        json.dumps(version_payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return NativeEvidenceEnvelope(
+        reference=f"ev_{digest[:24]}",
+        facts=facts,
+        scope=evidence.current_store,
+        period=evidence.period,
+        unit="external_fact",
+        source=[evidence.source],
+        external_evidence=True,
+        geographic_scope=evidence.geographic_scope,
+        freshness=evidence.freshness,
+        queried_at=queried_at,
+        data_version=f"sha256:{digest}",
+        coverage=evidence.coverage,
+        limitations=evidence.warnings,
+        truncated=evidence.truncated,
+        failure=NativeEvidenceFailure(
+            status="none" if evidence.failure.status == "none" else "failed",
+            category=evidence.failure.category,
+            message=evidence.failure.message,
+        ),
     )
 
 
@@ -860,6 +1046,12 @@ def _evidence_matches_tool(
 
 
 def _evidence_label(evidence: NativeCollectedEvidence) -> str:
+    if isinstance(evidence, ExternalEvidenceBundle):
+        return (
+            "历史天气外部经营证据"
+            if evidence.evidence_type == "historical_weather"
+            else "公共假期外部经营证据"
+        )
     if isinstance(evidence, SettlementDetailsEvidenceBundle):
         return SETTLEMENT_DETAILS_LABEL
     return EVIDENCE_METRIC_LABELS[evidence.metric]

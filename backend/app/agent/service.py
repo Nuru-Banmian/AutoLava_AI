@@ -15,6 +15,7 @@ from app.agent.conversation import (
 )
 from app.agent.contracts import (
     EVIDENCE_METRIC_LABELS,
+    ExternalEvidenceBundle,
     SETTLEMENT_DETAILS_LABEL,
     ModelMessage,
     RevenueAnalysisEvidenceBundle,
@@ -22,8 +23,17 @@ from app.agent.contracts import (
     TurnResult,
 )
 from app.agent.factory import create_model_adapter
+from app.agent.external_evidence import (
+    ExternalEvidenceService,
+    NagerPublicHolidayProvider,
+    OpenMeteoHistoricalWeatherProvider,
+)
 from app.agent.model import ModelAttempt
-from app.agent.native import NativeToolAgentService, NativeToolModel
+from app.agent.native import (
+    NativeExternalEvidenceCollector,
+    NativeToolAgentService,
+    NativeToolModel,
+)
 from app.agent.runtime import RuntimeContext
 from app.agent.tool_access import DatabaseNativeToolScopeResolver
 from app.agent.workflow import AgentTurnWorkflow
@@ -136,6 +146,12 @@ class AgentService:
                 metric_label = SETTLEMENT_DETAILS_LABEL
             elif isinstance(evidence, RevenueAnalysisEvidenceBundle):
                 metric_label = "经营分析"
+            elif isinstance(evidence, ExternalEvidenceBundle):
+                metric_label = (
+                    "历史天气外部经营证据"
+                    if evidence.evidence_type == "historical_weather"
+                    else "公共假期外部经营证据"
+                )
             else:
                 metric_label = EVIDENCE_METRIC_LABELS[evidence.metric]
             comparison_period = (
@@ -185,6 +201,7 @@ def create_agent_service(
     native_model: NativeToolModel | None = None,
     native_now: Callable[[], datetime] | None = None,
     native_evidence_collector: BusinessEvidenceCollector | None = None,
+    external_evidence_collector: NativeExternalEvidenceCollector | None = None,
 ) -> AgentService | NativeToolAgentService:
     if native_model is not None:
         native_options = {"now": native_now} if native_now is not None else {}
@@ -195,9 +212,14 @@ def create_agent_service(
         evidence_collector = (
             native_evidence_collector or BusinessEvidenceCollector(session_factory)
         ).with_scope_authorizer(scope_resolver.refresh_in_session)
+        external_collector = external_evidence_collector or ExternalEvidenceService(
+            weather_provider=OpenMeteoHistoricalWeatherProvider(),
+            holiday_provider=NagerPublicHolidayProvider(),
+        )
         return NativeToolAgentService(
             model=native_model,
             evidence_collector=evidence_collector,
+            external_evidence_collector=external_collector,
             scope_resolver=scope_resolver,
             **native_options,
         )

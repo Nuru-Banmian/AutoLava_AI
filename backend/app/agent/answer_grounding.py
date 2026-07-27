@@ -13,6 +13,7 @@ from app.agent.contracts import (
     EvidenceBundle,
     EvidenceMetric,
     EvidencePeriodResult,
+    ExternalEvidenceBundle,
     SettlementDetailsEvidenceBundle,
 )
 from app.services.weather import WEATHER_LABELS
@@ -66,8 +67,13 @@ class SettlementClaimMetric(StrEnum):
     PENDING_AMOUNT = "pending_settlement_amount"
 
 
-ClaimMetric = EvidenceMetric | SettlementClaimMetric
-GroundedEvidence = EvidenceBundle | SettlementDetailsEvidenceBundle
+class ExternalClaimMetric(StrEnum):
+    HISTORICAL_WEATHER = "historical_weather"
+    PUBLIC_HOLIDAYS = "public_holidays"
+
+
+ClaimMetric = EvidenceMetric | SettlementClaimMetric | ExternalClaimMetric
+GroundedEvidence = EvidenceBundle | SettlementDetailsEvidenceBundle | ExternalEvidenceBundle
 _METRIC_FIELDS = {
     "月度总收入": "monthly_total_revenue",
     "总收入": "monthly_total_revenue",
@@ -78,6 +84,9 @@ _METRIC_FIELDS = {
     "待到账公司结算金额": "pending_settlement_amount",
     "待到账金额": "pending_settlement_amount",
     "经营日": "operating_days",
+    "历史天气": "historical_weather",
+    "公共假期": "public_holidays",
+    "假期": "public_holidays",
 }
 
 
@@ -92,7 +101,19 @@ class NativeAnswerClaim(BaseModel):
     metric: ClaimMetric | None = None
     period: EvidencePeriodResult | None = None
     value: Decimal | None = None
-    unit: Literal["EUR", "day", "car", "EUR/car", "EUR/operating_day", "percent"] | None = None
+    unit: (
+        Literal[
+            "EUR",
+            "day",
+            "car",
+            "EUR/car",
+            "EUR/operating_day",
+            "percent",
+            "external_fact",
+        ]
+        | None
+    ) = None
+    external_fact: str | None = Field(default=None, min_length=1, max_length=200)
     relationship: Literal["none", "correlation", "causation"] = "none"
     settlement_scope: Literal["all_companies", "company"] | None = None
     company_name: str | None = Field(default=None, min_length=1, max_length=120)
@@ -104,14 +125,29 @@ class NativeAnswerClaim(BaseModel):
             for reference in self.evidence_references
         ):
             raise ValueError("invalid evidence reference")
-        if self.status == "verified_fact" and (
-            not self.evidence_references
-            or self.metric is None
-            or self.period is None
-            or self.value is None
-            or self.unit is None
-        ):
-            raise ValueError("verified facts require evidence, metric, period, value, and unit")
+        if self.status == "verified_fact":
+            if (
+                not self.evidence_references
+                or self.metric is None
+                or self.period is None
+                or self.unit is None
+            ):
+                raise ValueError("verified facts require evidence, metric, period, and unit")
+            if isinstance(self.metric, ExternalClaimMetric):
+                if (
+                    self.unit != "external_fact"
+                    or self.external_fact is None
+                    or self.value is not None
+                ):
+                    raise ValueError(
+                        "verified external facts require external_fact and external_fact unit"
+                    )
+            elif (
+                self.value is None or self.unit == "external_fact" or self.external_fact is not None
+            ):
+                raise ValueError(
+                    "verified business facts require a numeric value and business unit"
+                )
         if self.settlement_scope == "company" and (
             self.company_name is None
             or not _mentions_settlement_company(self.statement, self.company_name)
@@ -207,7 +243,9 @@ def _claims_are_grounded(
             return False
         if _UNSUPPORTED_FACT_COMPARISON.search(claim.statement):
             return False
-        if _contains_phenomenon(claim.statement):
+        if _contains_phenomenon(claim.statement) and not isinstance(
+            claim.metric, ExternalClaimMetric
+        ):
             return False
         referenced = [
             evidence_by_reference.get(reference) for reference in claim.evidence_references
@@ -229,6 +267,15 @@ def _claim_value_is_supported(
     claim: NativeAnswerClaim,
     bundle: GroundedEvidence,
 ) -> bool:
+    if isinstance(bundle, ExternalEvidenceBundle):
+        if (
+            not isinstance(claim.metric, ExternalClaimMetric)
+            or claim.unit != "external_fact"
+            or claim.external_fact is None
+            or claim.metric.value != bundle.evidence_type
+        ):
+            return False
+        return claim.external_fact in _external_fact_values(bundle)
     if isinstance(bundle, SettlementDetailsEvidenceBundle):
         if claim.unit != "EUR" or claim.metric is None:
             return False
@@ -258,7 +305,7 @@ def _claim_value_is_supported(
 
 
 def _claim_literals_match_metadata(claim: NativeAnswerClaim) -> bool:
-    if claim.metric is None or claim.period is None or claim.value is None or claim.unit is None:
+    if claim.metric is None or claim.period is None or claim.unit is None:
         return False
     for pattern in (_ISO_DATE, _CHINESE_DATE):
         for match in pattern.finditer(claim.statement):
@@ -278,6 +325,18 @@ def _claim_literals_match_metadata(claim: NativeAnswerClaim) -> bool:
             continue
         if int(match.group(1)) != claim.period.start.month:
             return False
+    if isinstance(claim.metric, ExternalClaimMetric):
+        return bool(
+            claim.unit == "external_fact"
+            and claim.external_fact is not None
+            and claim.external_fact in claim.statement
+            and any(
+                field == claim.metric.value and term in claim.statement
+                for term, field in _METRIC_FIELDS.items()
+            )
+        )
+    if claim.value is None:
+        return False
     money_values = [_decimal(match.group(1)) for match in _MONEY.finditer(claim.statement)]
     percentage_values = [
         _decimal(match.group(1)) for match in _PERCENTAGE.finditer(claim.statement)
@@ -519,7 +578,11 @@ def _values_for_field(
 ) -> set[Decimal]:
     values: set[Decimal] = set()
     for bundle in evidence:
-        result = bundle.result.model_dump(mode="python")
+        result = (
+            bundle.result.model_dump(mode="python")
+            if hasattr(bundle.result, "model_dump")
+            else bundle.result
+        )
         if isinstance(bundle, SettlementDetailsEvidenceBundle):
             if field == SettlementClaimMetric.PENDING_AMOUNT:
                 values.update(_settlement_amounts(result, status="pending"))
@@ -528,6 +591,25 @@ def _values_for_field(
                 values.update(_settlement_amounts(result, status="confirmed"))
                 continue
         values.update(_field_values(result, field))
+    return values
+
+
+def _external_fact_values(bundle: ExternalEvidenceBundle) -> set[str]:
+    values: set[str] = set()
+    key = "days" if bundle.evidence_type == "historical_weather" else "holidays"
+    rows = bundle.result.get(key)
+    if not isinstance(rows, list):
+        return values
+    allowed_fields = (
+        ("weather",) if bundle.evidence_type == "historical_weather" else ("local_name", "name")
+    )
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        for field in allowed_fields:
+            value = row.get(field)
+            if isinstance(value, str):
+                values.add(value)
     return values
 
 
