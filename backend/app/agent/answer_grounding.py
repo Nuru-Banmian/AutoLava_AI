@@ -29,6 +29,16 @@ _MONEY = re.compile(
     re.IGNORECASE,
 )
 _DAY_COUNT = re.compile(r"(?<![\d.])(-?\d+(?:[.,]\d+)?)\s*(?:个)?(?:经营)?日(?!期)")
+_CAR_COUNT = re.compile(r"(?<![\d.])(-?\d+(?:[.,]\d+)?)\s*(?:辆|车次)")
+_EUR_PER_CAR = re.compile(
+    r"(?<![\d.])(-?\d+(?:[.,]\d+)?)\s*(?:欧元\s*(?:/|每)\s*(?:车|辆)|EUR/car)",
+    re.IGNORECASE,
+)
+_EUR_PER_OPERATING_DAY = re.compile(
+    r"(?<![\d.])(-?\d+(?:[.,]\d+)?)\s*(?:欧元\s*(?:/|每)\s*经营日|EUR/operating_day)",
+    re.IGNORECASE,
+)
+_RATIO = re.compile(r"(?<![\d.])(-?\d+(?:[.,]\d+)?)\s*倍")
 _PERCENTAGE = re.compile(r"(?<![\d.])(-?\d+(?:[.,]\d+)?)\s*(?:%|％|百分比)")
 _CROSS_SCOPE = re.compile(r"另一个门店|其他门店|其它门店|全部门店|所有门店")
 _UNSUPPORTED_METRIC = re.compile(r"利润|毛利|净利|客单价")
@@ -115,7 +125,18 @@ class NativeAnswerClaim(BaseModel):
     metric: ClaimMetric | None = None
     period: EvidencePeriodResult | None = None
     value: Decimal | None = None
-    unit: Literal["EUR", "day", "car", "EUR/car", "EUR/operating_day", "percent"] | None = None
+    unit: (
+        Literal[
+            "EUR",
+            "day",
+            "car",
+            "EUR/car",
+            "EUR/operating_day",
+            "ratio",
+            "percent",
+        ]
+        | None
+    ) = None
     relationship: Literal["none", "correlation", "causation"] = "none"
     settlement_scope: Literal["all_companies", "company"] | None = None
     company_name: str | None = Field(default=None, min_length=1, max_length=120)
@@ -314,13 +335,19 @@ def _claim_literals_match_metadata(claim: NativeAnswerClaim) -> bool:
         _decimal(match.group(1)) for match in _PERCENTAGE.finditer(claim.statement)
     ]
     day_values = [_decimal(match.group(1)) for match in _DAY_COUNT.finditer(claim.statement)]
+    car_values = [_decimal(match.group(1)) for match in _CAR_COUNT.finditer(claim.statement)]
+    per_car_values = [_decimal(match.group(1)) for match in _EUR_PER_CAR.finditer(claim.statement)]
+    per_operating_day_values = [
+        _decimal(match.group(1)) for match in _EUR_PER_OPERATING_DAY.finditer(claim.statement)
+    ]
+    ratio_values = [_decimal(match.group(1)) for match in _RATIO.finditer(claim.statement)]
     metric_is_visible = any(
         field == _metric_value(claim.metric) and term in claim.statement
         for term, field in _METRIC_FIELDS.items()
     )
     if not metric_is_visible:
         return False
-    if claim.unit in {"EUR", "day"} and not _has_exact_value_relation(claim):
+    if claim.unit != "percent" and not _has_exact_value_relation(claim):
         return False
     if claim.unit == "percent" and not _has_percentage_change_relation(claim):
         return False
@@ -345,11 +372,31 @@ def _claim_literals_match_metadata(claim: NativeAnswerClaim) -> bool:
         or percentage_values
     ):
         return False
+    values_by_unit = {
+        "car": car_values,
+        "EUR/car": per_car_values,
+        "EUR/operating_day": per_operating_day_values,
+        "ratio": ratio_values,
+    }
+    visible_values = values_by_unit.get(claim.unit or "")
+    if visible_values is not None and (
+        not visible_values or any(value != claim.value for value in visible_values)
+    ):
+        return False
     return True
 
 
 def _has_exact_value_relation(claim: NativeAnswerClaim) -> bool:
-    value_pattern = _MONEY if claim.unit == "EUR" else _DAY_COUNT
+    value_pattern = {
+        "EUR": _MONEY,
+        "day": _DAY_COUNT,
+        "car": _CAR_COUNT,
+        "EUR/car": _EUR_PER_CAR,
+        "EUR/operating_day": _EUR_PER_OPERATING_DAY,
+        "ratio": _RATIO,
+    }.get(claim.unit or "")
+    if value_pattern is None:
+        return False
     return _has_metric_value_relation(claim, value_pattern, _EXACT_VALUE_CONNECTOR)
 
 
@@ -415,6 +462,10 @@ def _key_literals_are_claimed(
             _CHINESE_MONTH_WITHOUT_YEAR,
             _MONEY,
             _DAY_COUNT,
+            _CAR_COUNT,
+            _EUR_PER_CAR,
+            _EUR_PER_OPERATING_DAY,
+            _RATIO,
             _PERCENTAGE,
         )
         for match in pattern.finditer(answer)
@@ -445,6 +496,10 @@ def _contains_business_fact(answer: str) -> bool:
     return bool(
         _MONEY.search(answer)
         or _DAY_COUNT.search(answer)
+        or _CAR_COUNT.search(answer)
+        or _EUR_PER_CAR.search(answer)
+        or _EUR_PER_OPERATING_DAY.search(answer)
+        or _RATIO.search(answer)
         or _PERCENTAGE.search(answer)
         or _UNSUPPORTED_METRIC.search(answer)
         or _CROSS_SCOPE.search(answer)
@@ -496,7 +551,14 @@ def _quantities_are_supported(answer: str, evidence: Sequence[GroundedEvidence])
         facts_by_unit.setdefault(bundle.unit, set()).update(_numeric_values(bundle.result))
 
     for clause in _clauses(answer):
+        derived_unit_spans = [
+            match.span()
+            for pattern in (_EUR_PER_CAR, _EUR_PER_OPERATING_DAY)
+            for match in pattern.finditer(clause)
+        ]
         for match in _MONEY.finditer(clause):
+            if any(_overlaps(match.span(), span) for span in derived_unit_spans):
+                continue
             value = _decimal(match.group(1))
             currency = match.group(2).casefold()
             if value is None or currency not in {"欧元", "eur", "€"}:
@@ -509,6 +571,16 @@ def _quantities_are_supported(answer: str, evidence: Sequence[GroundedEvidence])
             )
             if value not in supported_values:
                 return False
+        for pattern, unit in (
+            (_CAR_COUNT, "car"),
+            (_EUR_PER_CAR, "EUR/car"),
+            (_EUR_PER_OPERATING_DAY, "EUR/operating_day"),
+            (_RATIO, "ratio"),
+        ):
+            for match in pattern.finditer(clause):
+                value = _decimal(match.group(1))
+                if value is None or value not in facts_by_unit.get(unit, set()):
+                    return False
     calendar_date_spans = [
         match.span() for pattern in (_ISO_DATE, _CHINESE_DATE) for match in pattern.finditer(answer)
     ]

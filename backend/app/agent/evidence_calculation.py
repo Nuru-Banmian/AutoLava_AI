@@ -3,9 +3,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Annotated, Any, Literal, Protocol, cast
+from typing import Annotated, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import Field, StringConstraints, model_validator
+
+from app.agent.contracts import ClosedModel
 
 
 EvidenceReference = Annotated[
@@ -32,13 +34,15 @@ CannotCalculateReason = Literal[
 MAX_REFERENCE_AGE = timedelta(minutes=15)
 
 
-class ClosedModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-
 class EvidenceCalculationRequest(ClosedModel):
-    operation: Literal["sum", "difference", "ratio", "percentage_change"]
-    evidence_references: list[EvidenceReference] = Field(min_length=2, max_length=8)
+    operation: Literal["sum", "difference", "ratio", "percentage_change"] = Field(
+        description=("固定运算。percentage_change 按第一个引用为基准、第二个引用为当前值计算。")
+    )
+    evidence_references: list[EvidenceReference] = Field(
+        min_length=2,
+        max_length=8,
+        description="仅可使用本轮工具已经返回的证据引用；除 sum 外必须正好两个。",
+    )
 
     @model_validator(mode="after")
     def require_distinct_references(self) -> EvidenceCalculationRequest:
@@ -57,45 +61,19 @@ class EvidenceCalculationResult(ClosedModel):
     cannot_calculate_reason: CannotCalculateReason | None
 
 
-class EvidenceValueEnvelope(Protocol):
-    @property
-    def facts(self) -> dict[str, Any]: ...
-
-    @property
-    def unit(self) -> str: ...
-
-    @property
-    def scope(self) -> Any: ...
-
-    @property
-    def queried_at(self) -> datetime: ...
-
-    @property
-    def failure(self) -> Any: ...
-
-
-_PRIMARY_FACT_BY_TOOL = {
-    "monthly_total_revenue": "monthly_total_revenue",
-    "daily_ledger_revenue": "daily_ledger_revenue",
-    "confirmed_settlement_income": "confirmed_settlement_income",
-    "operating_days": "operating_days",
-    "operating_day_average_ledger_revenue": "operating_day_average_ledger_revenue",
-    "monthly_daily_average_income": "monthly_daily_average_income",
-    "wash_count": "wash_count",
-    "average_revenue_per_car": "average_revenue_per_car",
-    "income_category_amount": "amount",
-    "other_data_amount": "amount",
-    "daily_ledger_revenue_extreme": "daily_ledger_revenue",
-}
-_INPUT_UNITS: frozenset[str] = frozenset({"EUR", "day", "car", "EUR/car", "EUR/operating_day"})
+class EvidenceCalculationInput(ClosedModel):
+    reference: EvidenceReference
+    primary_value: Decimal | None
+    unit: Literal["EUR", "day", "car", "EUR/car", "EUR/operating_day"] | None
+    store_id: int = Field(gt=0)
+    queried_at: datetime
+    data_version: str = Field(min_length=1, max_length=100)
+    available: bool
 
 
 def calculate_evidence(
     request: EvidenceCalculationRequest,
-    available_evidence: Mapping[
-        EvidenceReference,
-        tuple[str, EvidenceValueEnvelope],
-    ],
+    available_evidence: Mapping[EvidenceReference, EvidenceCalculationInput],
     *,
     current_store_id: int,
     now: datetime,
@@ -106,25 +84,15 @@ def calculate_evidence(
         available = available_evidence.get(reference)
         if available is None:
             return _failure(request, "reference_not_current")
-        tool_name, envelope = available
-        if envelope.scope.id != current_store_id:
+        if available.store_id != current_store_id:
             return _failure(request, "unauthorized_reference")
-        age = now - envelope.queried_at
+        age = now - available.queried_at
         if age < timedelta(0) or age > MAX_REFERENCE_AGE:
             return _failure(request, "stale_reference")
-        if envelope.failure.status != "none":
+        if not available.available or available.primary_value is None or available.unit is None:
             return _failure(request, "input_unavailable")
-        fact_name = _PRIMARY_FACT_BY_TOOL.get(tool_name)
-        value = envelope.facts.get(fact_name) if fact_name is not None else None
-        if (
-            value is None
-            or isinstance(value, bool)
-            or not isinstance(value, (int, float, Decimal))
-            or envelope.unit not in _INPUT_UNITS
-        ):
-            return _failure(request, "input_unavailable")
-        operands.append(Decimal(str(value)))
-        units.append(envelope.unit)
+        operands.append(available.primary_value)
+        units.append(available.unit)
     if any(unit != units[0] for unit in units[1:]):
         return _failure(request, "incompatible_units")
     references = request.evidence_references

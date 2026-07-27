@@ -448,6 +448,57 @@ async def test_native_calculation_uses_returned_evidence_without_another_busines
 
 
 @pytest.mark.parametrize(
+    ("unit", "answer"),
+    [
+        ("car", "证据计算结果为 12 辆。"),
+        ("EUR/car", "证据计算结果为 12 欧元/车。"),
+        ("EUR/operating_day", "证据计算结果为 12 欧元/经营日。"),
+        ("ratio", "证据计算结果为 12 倍。"),
+    ],
+)
+def test_calculation_grounding_checks_visible_values_for_every_derived_unit(
+    unit: str,
+    answer: str,
+) -> None:
+    reference = "ev_333333333333333333333333"
+    evidence = NativeCalculationEnvelope(
+        reference=reference,
+        formula="ev_111111111111111111111111 / ev_222222222222222222222222",
+        input_evidence_references=[
+            "ev_111111111111111111111111",
+            "ev_222222222222222222222222",
+        ],
+        input_data_versions=["sha256:first", "sha256:second"],
+        exact_result=Decimal("12"),
+        unit=unit,
+        cannot_calculate_reason=None,
+        scope=CurrentStoreScope(id=2),
+        period=EvidencePeriodResult(start=date(2026, 7, 1), end=date(2026, 7, 31)),
+        calculated_at=datetime(2026, 7, 28, 10, tzinfo=timezone.utc),
+        data_version="sha256:calculation",
+        failure={"status": "none"},
+    )
+    claim = NativeAnswerClaim(
+        statement=answer.rstrip("。"),
+        status="verified_fact",
+        metric="evidence_calculation",
+        period=evidence.period,
+        value=12,
+        unit=unit,
+        evidence_references=[reference],
+    )
+
+    assert answer_is_grounded(answer, [evidence], [claim], {reference: evidence})
+    wrong_answer = answer.replace("12", "999")
+    assert not answer_is_grounded(
+        wrong_answer,
+        [evidence],
+        [claim.model_copy(update={"statement": wrong_answer.rstrip("。")})],
+        {reference: evidence},
+    )
+
+
+@pytest.mark.parametrize(
     ("daily_revenue", "expected_follow_up"),
     [(600, "operating_days"), (1_600, "confirmed_settlement_income")],
 )

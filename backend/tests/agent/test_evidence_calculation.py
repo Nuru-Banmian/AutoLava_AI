@@ -1,21 +1,14 @@
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Literal
 
 import pytest
 from pydantic import ValidationError
 
 from app.agent.evidence_calculation import (
+    EvidenceCalculationInput,
     EvidenceCalculationRequest,
     calculate_evidence,
-)
-from app.agent.native import (
-    NativeEvidenceEnvelope,
-    NativeEvidenceFailure,
-)
-from app.agent.contracts import (
-    CurrentStoreScope,
-    EvidenceCoverage,
-    EvidencePeriodResult,
 )
 
 
@@ -26,33 +19,26 @@ def _evidence(
     reference: str,
     value: int | None,
     *,
-    unit: str = "EUR",
+    unit: Literal["EUR", "day", "car", "EUR/car", "EUR/operating_day"] = "EUR",
     store_id: int = 2,
     queried_at: datetime = datetime(2026, 7, 28, 10, tzinfo=timezone.utc),
     failed: bool = False,
-) -> NativeEvidenceEnvelope:
-    return NativeEvidenceEnvelope(
+) -> EvidenceCalculationInput:
+    return EvidenceCalculationInput(
         reference=reference,
-        facts={} if value is None else {"monthly_total_revenue": value},
-        scope=CurrentStoreScope(id=store_id),
-        period=EvidencePeriodResult(start=date(2026, 7, 1), end=date(2026, 7, 31)),
+        primary_value=value,
         unit=unit,
-        source=["store_daily_records"],
+        store_id=store_id,
         queried_at=queried_at,
         data_version=f"sha256:{reference}",
-        coverage=EvidenceCoverage(calendar_dates=31, recorded_dates=31),
-        truncated=False,
-        failure=NativeEvidenceFailure(
-            status="failed" if failed else "none",
-            category="business_query_unavailable" if failed else None,
-            message="经营查询暂时不可用" if failed else None,
-        ),
+        available=not failed and value is not None,
     )
 
 
 def test_calculation_uses_only_declared_current_evidence_references() -> None:
     first = _evidence("ev_111111111111111111111111", 140)
     second = _evidence("ev_222222222222222222222222", 100)
+    undeclared = _evidence("ev_333333333333333333333333", 999_999)
 
     result = calculate_evidence(
         EvidenceCalculationRequest(
@@ -60,8 +46,9 @@ def test_calculation_uses_only_declared_current_evidence_references() -> None:
             evidence_references=[first.reference, second.reference],
         ),
         {
-            first.reference: ("monthly_total_revenue", first),
-            second.reference: ("monthly_total_revenue", second),
+            first.reference: first,
+            second.reference: second,
+            undeclared.reference: undeclared,
         },
         current_store_id=2,
         now=NOW,
@@ -105,8 +92,8 @@ def test_supported_calculations_are_exact_and_auditable(
             evidence_references=[first.reference, second.reference],
         ),
         {
-            first.reference: ("monthly_total_revenue", first),
-            second.reference: ("monthly_total_revenue", second),
+            first.reference: first,
+            second.reference: second,
         },
         current_store_id=2,
         now=NOW,
@@ -224,12 +211,10 @@ def test_supported_calculations_are_exact_and_auditable(
 )
 def test_calculation_failures_are_closed_and_explain_why(
     request_payload: dict[str, object],
-    available: dict[str, NativeEvidenceEnvelope],
+    available: dict[str, EvidenceCalculationInput],
     reason: str,
 ) -> None:
-    by_reference = {
-        evidence.reference: ("monthly_total_revenue", evidence) for evidence in available.values()
-    }
+    by_reference = {evidence.reference: evidence for evidence in available.values()}
 
     result = calculate_evidence(
         EvidenceCalculationRequest.model_validate(request_payload),

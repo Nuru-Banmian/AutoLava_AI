@@ -19,6 +19,7 @@ from app.agent.conversation import AgentRunResult, ConfirmedPeriod, Conversation
 from app.agent.evidence_calculation import (
     CalculationUnit,
     CannotCalculateReason,
+    EvidenceCalculationInput,
     EvidenceCalculationRequest,
     EvidenceCalculationResult,
     calculate_evidence,
@@ -295,6 +296,7 @@ class NativeToolSpec:
     description: str
     sources: tuple[Literal["store_daily_records", "settlement_records"], ...]
     unit: Literal["EUR", "day", "car", "EUR/car", "EUR/operating_day"]
+    calculation_field: str | None
     required_features: frozenset[StoreFeatureFlag] = frozenset()
 
 
@@ -308,6 +310,7 @@ NATIVE_TOOLS = {
         ),
         sources=("store_daily_records", "settlement_records"),
         unit="EUR",
+        calculation_field="monthly_total_revenue",
     ),
     DAILY_LEDGER_REVENUE_TOOL: NativeToolSpec(
         metric=EvidenceMetric.DAILY_LEDGER_REVENUE,
@@ -316,6 +319,7 @@ NATIVE_TOOLS = {
         description="查询当前受信任门店指定自然月的每日台账营业额合计。",
         sources=("store_daily_records",),
         unit="EUR",
+        calculation_field="daily_ledger_revenue",
     ),
     CONFIRMED_SETTLEMENT_INCOME_TOOL: NativeToolSpec(
         metric=EvidenceMetric.CONFIRMED_SETTLEMENT_INCOME,
@@ -324,6 +328,7 @@ NATIVE_TOOLS = {
         description="查询当前受信任门店指定自然月的已确认公司结算收入。",
         sources=("settlement_records",),
         unit="EUR",
+        calculation_field="confirmed_settlement_income",
     ),
     SETTLEMENT_DETAILS_TOOL: NativeToolSpec(
         metric=None,
@@ -335,6 +340,7 @@ NATIVE_TOOLS = {
         ),
         sources=("settlement_records",),
         unit="EUR",
+        calculation_field=None,
         required_features=frozenset({"company_settlement_enabled"}),
     ),
     OPERATING_DAYS_TOOL: NativeToolSpec(
@@ -344,6 +350,7 @@ NATIVE_TOOLS = {
         description="查询当前受信任门店指定自然月的经营日数量。",
         sources=("store_daily_records",),
         unit="day",
+        calculation_field="operating_days",
     ),
     OPERATING_DAY_AVERAGE_LEDGER_REVENUE_TOOL: NativeToolSpec(
         metric=EvidenceMetric.OPERATING_DAY_AVERAGE_LEDGER_REVENUE,
@@ -352,6 +359,7 @@ NATIVE_TOOLS = {
         description="查询经营日均台账营业额；分母只包含营业和提前休息的经营日。",
         sources=("store_daily_records",),
         unit="EUR/operating_day",
+        calculation_field="operating_day_average_ledger_revenue",
     ),
     MONTHLY_DAILY_AVERAGE_INCOME_TOOL: NativeToolSpec(
         metric=EvidenceMetric.MONTHLY_DAILY_AVERAGE_INCOME,
@@ -360,6 +368,7 @@ NATIVE_TOOLS = {
         description="查询指定自然月的月度日均收入，包含已确认公司结算收入。",
         sources=("store_daily_records", "settlement_records"),
         unit="EUR/operating_day",
+        calculation_field="monthly_daily_average_income",
     ),
     WASH_COUNT_TOOL: NativeToolSpec(
         metric=EvidenceMetric.WASH_COUNT,
@@ -368,6 +377,7 @@ NATIVE_TOOLS = {
         description="查询洗车数量及其经营日数据覆盖；缺失洗车数量不会按零计算。",
         sources=("store_daily_records",),
         unit="car",
+        calculation_field="wash_count",
     ),
     AVERAGE_REVENUE_PER_CAR_TOOL: NativeToolSpec(
         metric=EvidenceMetric.AVERAGE_REVENUE_PER_CAR,
@@ -376,6 +386,7 @@ NATIVE_TOOLS = {
         description="查询平均每车收入及其一致的营业额、洗车数量和覆盖范围。",
         sources=("store_daily_records",),
         unit="EUR/car",
+        calculation_field="average_revenue_per_car",
     ),
     INCOME_CATEGORY_AMOUNT_TOOL: NativeToolSpec(
         metric=EvidenceMetric.INCOME_CATEGORY_AMOUNT,
@@ -384,6 +395,7 @@ NATIVE_TOOLS = {
         description="查询动态收入分类金额，支持批准的分组和筛选。",
         sources=("store_daily_records",),
         unit="EUR",
+        calculation_field="amount",
     ),
     OTHER_DATA_AMOUNT_TOOL: NativeToolSpec(
         metric=EvidenceMetric.OTHER_DATA_AMOUNT,
@@ -392,6 +404,7 @@ NATIVE_TOOLS = {
         description="查询不计入总营业额的其他数据，支持批准的分组和筛选。",
         sources=("store_daily_records",),
         unit="EUR",
+        calculation_field="amount",
     ),
     DAILY_LEDGER_REVENUE_EXTREME_TOOL: NativeToolSpec(
         metric=EvidenceMetric.DAILY_LEDGER_REVENUE,
@@ -400,6 +413,7 @@ NATIVE_TOOLS = {
         description="查询经营日每日台账营业额的最高或最低日期，支持批准的筛选。",
         sources=("store_daily_records",),
         unit="EUR",
+        calculation_field="daily_ledger_revenue",
     ),
 }
 
@@ -504,7 +518,7 @@ class NativeToolAgentService:
         collected: list[NativeCollectedEvidence] = []
         calculations: list[NativeCalculationEnvelope] = []
         evidence_by_reference: dict[str, GroundedEvidence] = {}
-        calculation_inputs: dict[str, tuple[str, NativeEvidenceEnvelope]] = {}
+        calculation_inputs: dict[str, EvidenceCalculationInput] = {}
         tool_call_count = 0
         for round_number in range(MAX_NATIVE_TOOL_ROUNDS):
             if round_number:
@@ -583,13 +597,29 @@ class NativeToolAgentService:
                 ):
                     calculations.append(tool_result.evidence)
                     evidence_by_reference[tool_result.evidence.reference] = tool_result.evidence
-                if (
-                    isinstance(tool_result.evidence, NativeEvidenceEnvelope)
-                    and tool_result.evidence.failure.status == "none"
-                ):
-                    calculation_inputs[tool_result.evidence.reference] = (
-                        tool_result.name,
-                        tool_result.evidence,
+                if isinstance(tool_result.evidence, NativeEvidenceEnvelope):
+                    tool_spec = NATIVE_TOOLS.get(tool_result.name)
+                    fact_name = tool_spec.calculation_field if tool_spec is not None else None
+                    raw_value = (
+                        tool_result.evidence.facts.get(fact_name) if fact_name is not None else None
+                    )
+                    primary_value = (
+                        Decimal(str(raw_value))
+                        if isinstance(raw_value, (int, float, Decimal))
+                        and not isinstance(raw_value, bool)
+                        else None
+                    )
+                    calculation_inputs[tool_result.evidence.reference] = EvidenceCalculationInput(
+                        reference=tool_result.evidence.reference,
+                        primary_value=primary_value,
+                        unit=tool_spec.unit if tool_spec is not None else None,
+                        store_id=tool_result.evidence.scope.id,
+                        queried_at=tool_result.evidence.queried_at,
+                        data_version=tool_result.evidence.data_version,
+                        available=(
+                            tool_result.evidence.failure.status == "none"
+                            and primary_value is not None
+                        ),
                     )
                 items.append(NativeTranscriptItem(tool_result=tool_result))
         return _agent_result(
@@ -604,7 +634,7 @@ class NativeToolAgentService:
         context: RuntimeContext,
         *,
         trusted_period: MonthlyTotalRevenueArguments,
-        calculation_inputs: dict[str, tuple[str, NativeEvidenceEnvelope]],
+        calculation_inputs: dict[str, EvidenceCalculationInput],
     ) -> tuple[NativeToolResult, NativeCollectedEvidence | None]:
         if call.name == EVIDENCE_CALCULATION_TOOL:
             try:
@@ -830,11 +860,11 @@ def _calculation_envelope(
     request: EvidenceCalculationRequest,
     context: RuntimeContext,
     period: EvidencePeriodResult,
-    available_evidence: dict[str, tuple[str, NativeEvidenceEnvelope]],
+    available_evidence: dict[str, EvidenceCalculationInput],
     calculated_at: datetime,
 ) -> NativeCalculationEnvelope:
     input_data_versions = [
-        available_evidence[reference][1].data_version
+        available_evidence[reference].data_version
         for reference in request.evidence_references
         if reference in available_evidence
     ]
