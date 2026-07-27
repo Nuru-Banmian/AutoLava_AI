@@ -8,6 +8,38 @@ import httpx
 from app.models.identity import Store
 
 
+WEATHER_LABELS = {
+    0: "晴",
+    1: "少云",
+    2: "多云",
+    3: "阴",
+    45: "雾",
+    48: "冻雾",
+    51: "小毛毛雨",
+    53: "毛毛雨",
+    55: "大毛毛雨",
+    56: "小冻毛毛雨",
+    57: "冻毛毛雨",
+    61: "小雨",
+    63: "中雨",
+    65: "大雨",
+    66: "小冻雨",
+    67: "冻雨",
+    71: "小雪",
+    73: "中雪",
+    75: "大雪",
+    77: "雪粒",
+    80: "小阵雨",
+    81: "阵雨",
+    82: "大阵雨",
+    85: "小阵雪",
+    86: "大阵雪",
+    95: "雷雨",
+    96: "雷雨伴小冰雹",
+    99: "雷雨伴大冰雹",
+}
+
+
 class WeatherLocation(Protocol):
     id: int
     latitude: Any
@@ -42,36 +74,7 @@ class WeatherResult:
 
 
 def weather_label(code: int) -> str | None:
-    return {
-        0: "晴",
-        1: "少云",
-        2: "多云",
-        3: "阴",
-        45: "雾",
-        48: "冻雾",
-        51: "小毛毛雨",
-        53: "毛毛雨",
-        55: "大毛毛雨",
-        56: "小冻毛毛雨",
-        57: "冻毛毛雨",
-        61: "小雨",
-        63: "中雨",
-        65: "大雨",
-        66: "小冻雨",
-        67: "冻雨",
-        71: "小雪",
-        73: "中雪",
-        75: "大雪",
-        77: "雪粒",
-        80: "小阵雨",
-        81: "阵雨",
-        82: "大阵雨",
-        85: "小阵雪",
-        86: "大阵雪",
-        95: "雷雨",
-        96: "雷雨伴小冰雹",
-        99: "雷雨伴大冰雹",
-    }.get(code)
+    return WEATHER_LABELS.get(code)
 
 
 class WeatherProvider(Protocol):
@@ -129,7 +132,7 @@ class OpenMeteoProvider:
                 timeout=8,
             )
             response.raise_for_status()
-            candidates = []
+            candidates: list[dict[str, str | float]] = []
             for item in response.json().get("results", []):
                 candidates.append(
                     {
