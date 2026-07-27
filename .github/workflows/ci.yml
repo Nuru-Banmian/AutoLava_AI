@@ -28,18 +28,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      - run: uv sync --project backend --frozen --extra dev
-      - run: uv run --project backend ruff format --check backend
-      - run: uv run --project backend ruff check backend
-      - run: >-
-          uv run --project backend mypy backend/app/agent/contracts.py
-          backend/app/agent/conversation.py backend/app/agent/runtime.py
-          backend/app/agent/service.py
-          backend/app/api/routes/agent.py backend/app/api/routes/agent_admin.py
-      - run: uv run --project backend alembic upgrade head
-        working-directory: backend
-        env:
-          AUTOLAVA_DATABASE_PATH: /tmp/autolava-ci.sqlite3
+      - run: npm run verify:ci:backend-static
 
   backend-agent:
     name: Agent backend tests
@@ -50,21 +39,8 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      - run: uv sync --project backend --frozen --extra dev
-      - name: Run Agent tests
-        working-directory: backend
-        run: >-
-          uv run pytest --strict-markers --strict-config -n 2 --dist loadscope
-          --cov=app --cov-report= --cov-config=pyproject.toml
-          --cov-context=test
-          -m "not agent_release_gate"
-          tests/agent tests/api/test_agent*.py
-      - name: Run Agent safety release veto gate once
-        working-directory: backend
-        run: >-
-          uv run pytest --strict-markers --strict-config
-          --cov=app --cov-report= --cov-config=pyproject.toml --cov-append
-          -m agent_release_gate
+      - name: Run Agent tests and the release veto gate once
+        run: npm run verify:ci:backend-agent
       - run: mv backend/.coverage backend/.coverage.agent
       - uses: actions/upload-artifact@v7
         with:
@@ -82,15 +58,8 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      - run: uv sync --project backend --frozen --extra dev
       - name: Run non-Agent tests without release veto duplication
-        working-directory: backend
-        run: >-
-          uv run pytest --strict-markers --strict-config -n 2 --dist loadscope
-          --ignore=tests/agent --ignore=tests/release
-          --ignore-glob=tests/api/test_agent*.py
-          -m "not agent_release_gate"
-          --cov=app --cov-report= --cov-config=pyproject.toml
+        run: npm run verify:ci:backend-non-agent
       - run: mv backend/.coverage backend/.coverage.non-agent
       - uses: actions/upload-artifact@v7
         with:
@@ -113,11 +82,8 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: npm ci
-      - run: npm run check:ci
-      - run: npm test
-      - run: npm run build
-      - run: npm run test:agent-release-manifest
+      - run: npm run verify:ci:frontend-unit
+        working-directory: .
 
   frontend-e2e:
     name: Frontend end-to-end
@@ -133,11 +99,10 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: npm ci
       - run: npx playwright install --with-deps chromium
       - name: Run end-to-end tests without retaining browser attachments
-        run: >-
-          npx playwright test --reporter=line,junit
+        run: npm run verify:ci:frontend-e2e
+        working-directory: .
         env:
           PLAYWRIGHT_JUNIT_OUTPUT_NAME: playwright-results.xml
       - name: Reduce diagnostics to aggregate counts

@@ -176,7 +176,9 @@ def test_ci_runs_the_fake_only_agent_release_veto_gate() -> None:
 
     assert workflow["env"]["AUTOLAVA_MODEL_ADAPTER"] == "fake"
     assert not any("MODEL_API_KEY" in key for key in workflow["env"])
-    assert sum("-m agent_release_gate" in command for command in commands) == 1
+    verifier = (REPOSITORY_ROOT / "scripts" / "verify.py").read_text(encoding="utf-8")
+    assert commands.count("npm run verify:ci:backend-agent") == 1
+    assert '"agent_release_gate"' in verifier
 
     frontend_commands = [
         step["run"]
@@ -192,4 +194,5 @@ def test_ci_runs_the_fake_only_agent_release_veto_gate() -> None:
         package["scripts"]["test:agent-release-manifest"]
         == "node scripts/validate-agent-release-manifest.mjs"
     )
-    assert "npm run test:agent-release-manifest" in frontend_commands
+    assert "npm run verify:ci:frontend-unit" in frontend_commands
+    assert '"test:agent-release-manifest"' in verifier

@@ -235,21 +235,26 @@ def test_ci_runs_backend_and_frontend_checks_without_containers() -> None:
     assert required <= jobs.keys()
 
     all_commands = [step["run"] for job in jobs.values() for step in job["steps"] if "run" in step]
+    verifier = read("scripts/verify.py")
     for job in jobs.values():
         assert "services" not in job
-    assert any("uv sync --project backend --frozen" in command for command in all_commands)
-    assert any("alembic upgrade head" in command for command in all_commands)
-    assert any("ruff check backend" in command for command in all_commands)
-    assert any("--cov=app" in command for command in all_commands)
-
-    for contract in (
-        "npm ci",
-        "npm test",
-        "npm run build",
-        "playwright install --with-deps chromium",
-        "playwright test",
+    for entrypoint in (
+        "verify:ci:backend-static",
+        "verify:ci:backend-agent",
+        "verify:ci:backend-non-agent",
+        "verify:ci:frontend-unit",
+        "verify:ci:frontend-e2e",
     ):
-        assert any(contract in command for command in all_commands)
+        assert any(entrypoint in command for command in all_commands)
+    assert "alembic" in verifier
+    assert "ruff" in verifier
+    assert "--cov=app" in verifier
+
+    assert 'run("npm", "ci"' in verifier
+    assert 'run("npm", "test"' in verifier
+    assert '"build"' in verifier
+    assert '"playwright", "test"' in verifier
+    assert any("playwright install --with-deps chromium" in command for command in all_commands)
 
 
 def test_ci_does_not_execute_container_release_or_runtime_checks() -> None:

@@ -120,6 +120,7 @@ def full(env: dict[str, str]) -> None:
     run("npm", "run", "check:ci", cwd=FRONTEND, env=env)
     run("npm", "test", cwd=FRONTEND, env=env)
     run("npm", "run", "build", cwd=FRONTEND, env=env)
+    run("npm", "run", "test:agent-release-manifest", cwd=FRONTEND, env=env)
     run("npm", "run", "test:e2e", cwd=FRONTEND, env=env)
 
 
@@ -146,11 +147,100 @@ def release(env: dict[str, str]) -> None:
     )
 
 
+def ci_backend_static(env: dict[str, str]) -> None:
+    quick(env)
+
+
+def ci_backend_agent(env: dict[str, str]) -> None:
+    sync_backend()
+    backend(
+        "pytest",
+        "--strict-markers",
+        "--strict-config",
+        "-n",
+        "2",
+        "--dist",
+        "loadscope",
+        "--cov=app",
+        "--cov-report=",
+        "--cov-context=test",
+        "-m",
+        "not agent_release_gate",
+        "tests/agent",
+        "tests/api/test_agent.py",
+        "tests/api/test_agent_grouping.py",
+        "tests/api/test_agent_observability.py",
+        "tests/api/test_agent_periods.py",
+        "tests/api/test_agent_prompt_injection_sources.py",
+        "tests/api/test_agent_wash_count_evidence.py",
+        env=env,
+    )
+    backend(
+        "pytest",
+        "--strict-markers",
+        "--strict-config",
+        "--cov=app",
+        "--cov-report=",
+        "--cov-append",
+        "-m",
+        "agent_release_gate",
+        env=env,
+    )
+
+
+def ci_backend_non_agent(env: dict[str, str]) -> None:
+    sync_backend()
+    backend(
+        "pytest",
+        "--strict-markers",
+        "--strict-config",
+        "-n",
+        "2",
+        "--dist",
+        "loadscope",
+        "--ignore=tests/agent",
+        "--ignore=tests/release",
+        "--ignore-glob=tests/api/test_agent*.py",
+        "-m",
+        "not agent_release_gate",
+        "--cov=app",
+        "--cov-report=",
+        env=env,
+    )
+
+
+def ci_frontend_unit(env: dict[str, str]) -> None:
+    sync_frontend()
+    run("npm", "run", "check:ci", cwd=FRONTEND, env=env)
+    run("npm", "test", cwd=FRONTEND, env=env)
+    run("npm", "run", "build", cwd=FRONTEND, env=env)
+    run("npm", "run", "test:agent-release-manifest", cwd=FRONTEND, env=env)
+
+
+def ci_frontend_e2e(env: dict[str, str]) -> None:
+    sync_frontend()
+    run("npx", "playwright", "test", "--reporter=line,junit", cwd=FRONTEND, env=env)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run an AutoLava verification level.")
-    parser.add_argument("level", choices=("quick", "agent", "full", "release"))
+    parser.add_argument(
+        "level",
+        choices=(
+            "quick",
+            "agent",
+            "full",
+            "release",
+            "ci-backend-static",
+            "ci-backend-agent",
+            "ci-backend-non-agent",
+            "ci-frontend-unit",
+            "ci-frontend-e2e",
+        ),
+    )
     args = parser.parse_args()
-    globals()[args.level](deterministic_environment())
+    function_name = args.level.replace("-", "_")
+    globals()[function_name](deterministic_environment())
 
 
 if __name__ == "__main__":

@@ -70,7 +70,8 @@ def test_ci_has_parallel_lanes_coverage_merge_and_stable_summary() -> None:
     assert jobs["ci-summary"]["if"] == "${{ always() }}"
 
     rendered = read(".github/workflows/ci.yml")
-    assert rendered.count("-m agent_release_gate") == 1
+    verifier = read("scripts/verify.py")
+    assert verifier.count('"agent_release_gate"') >= 1
     assert "coverage combine" in rendered
     assert "--fail-under=85" in rendered
     assert "AUTOLAVA_MODEL_ADAPTER: fake" in rendered
