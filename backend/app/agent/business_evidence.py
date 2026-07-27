@@ -34,6 +34,7 @@ from app.agent.contracts import (
     EvidencePeriodResult,
     EvidencePlan,
     GroupedMetricResult,
+    MAX_DAILY_LEDGER_DETAIL_ROWS,
     RevenueAnalysisEvidenceBundle,
     RevenueAnalysisRequest,
     SettlementDetailsEvidenceBundle,
@@ -54,7 +55,6 @@ Now = Callable[[ZoneInfo], datetime]
 ScopeAuthorizer = Callable[[AsyncSession, RuntimeContext], Awaitable[RuntimeContext]]
 MAX_SETTLEMENT_ROWS = 50
 MAX_GROUP_ROWS = 400
-MAX_DAILY_LEDGER_DETAIL_ROWS = 10
 MAJOR_DRIVER_THRESHOLD = Decimal("0.6")
 WEEKDAY_DATABASE_VALUES = {
     "星期一": "1",

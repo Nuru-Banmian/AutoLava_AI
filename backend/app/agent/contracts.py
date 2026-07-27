@@ -71,6 +71,8 @@ DAILY_LEDGER_LABEL = "每日台账"
 MINIMUM_EVIDENCE_DATE = CalendarDate(2000, 1, 1)
 MAXIMUM_EVIDENCE_DATE = CalendarDate(2200, 12, 31)
 MAXIMUM_CUSTOM_RANGE_DAYS = 400
+MAX_DAILY_LEDGER_DRILLDOWN_DATES = 31
+MAX_DAILY_LEDGER_DETAIL_ROWS = 10
 
 
 class CurrentMonthPeriod(ClosedModel):
@@ -278,7 +280,10 @@ class DailyLedgerRequest(ClosedModel):
 
 class DailyLedgerDrilldownRequest(ClosedModel):
     kind: Literal["daily_ledger_drilldown"] = "daily_ledger_drilldown"
-    dates: list[CalendarDate] = Field(min_length=1, max_length=31)
+    dates: list[CalendarDate] = Field(
+        min_length=1,
+        max_length=MAX_DAILY_LEDGER_DRILLDOWN_DATES,
+    )
 
     @field_validator("dates")
     @classmethod
@@ -480,9 +485,15 @@ class DailyLedgerResult(ClosedModel):
 
 class DailyLedgerDrilldownResult(ClosedModel):
     detail_status: Literal["details", "summary_only"]
-    records: list[DailyLedgerResult] = Field(default_factory=list, max_length=10)
-    unrecorded_dates: list[CalendarDate] = Field(default_factory=list, max_length=31)
-    matched_records: int = Field(ge=0, le=31)
+    records: list[DailyLedgerResult] = Field(
+        default_factory=list,
+        max_length=MAX_DAILY_LEDGER_DETAIL_ROWS,
+    )
+    unrecorded_dates: list[CalendarDate] = Field(
+        default_factory=list,
+        max_length=MAX_DAILY_LEDGER_DRILLDOWN_DATES,
+    )
+    matched_records: int = Field(ge=0, le=MAX_DAILY_LEDGER_DRILLDOWN_DATES)
     suggested_action: OpenBusinessRecordsAction | None = None
 
     @model_validator(mode="after")
@@ -565,7 +576,7 @@ class EvidenceBundle(ClosedModel):
     extreme: Literal["highest", "lowest"] | None = None
     selected_dates: list[CalendarDate] | None = Field(
         default=None,
-        max_length=31,
+        max_length=MAX_DAILY_LEDGER_DRILLDOWN_DATES,
         exclude_if=lambda value: value is None,
     )
     unit: Literal[

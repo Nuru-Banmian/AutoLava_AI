@@ -33,6 +33,7 @@ from app.agent.contracts import (
     EvidencePlan,
     ConfirmedSettlementIncomeResult,
     GroupedMetricResult,
+    MAX_DAILY_LEDGER_DRILLDOWN_DATES,
     ModelMessage,
     MonthlyTotalRevenueResult,
     MonthlyDailyAverageIncomeResult,
@@ -108,7 +109,10 @@ class DailyLedgerRevenueExtremeArguments(MonthlyTotalRevenueArguments):
 
 
 class DailyLedgerDetailsArguments(MonthlyTotalRevenueArguments):
-    dates: list[date] = Field(min_length=1, max_length=31)
+    dates: list[date] = Field(
+        min_length=1,
+        max_length=MAX_DAILY_LEDGER_DRILLDOWN_DATES,
+    )
 
     @model_validator(mode="after")
     def require_unique_dates_in_month(self) -> "DailyLedgerDetailsArguments":
@@ -275,6 +279,12 @@ class NativeToolSpec:
     description: str
     sources: tuple[Literal["store_daily_records", "settlement_records"], ...]
     unit: Literal["EUR", "day", "car", "EUR/car", "EUR/operating_day", "mixed"]
+    request_kind: Literal[
+        "business_metrics",
+        "settlement_details",
+        "daily_ledger_drilldown",
+    ] = "business_metrics"
+    include_period: bool = True
     required_features: frozenset[StoreFeatureFlag] = frozenset()
 
 
@@ -315,6 +325,7 @@ NATIVE_TOOLS = {
         ),
         sources=("settlement_records",),
         unit="EUR",
+        request_kind="settlement_details",
         required_features=frozenset({"company_settlement_enabled"}),
     ),
     OPERATING_DAYS_TOOL: NativeToolSpec(
@@ -391,6 +402,8 @@ NATIVE_TOOLS = {
         ),
         sources=("store_daily_records",),
         unit="mixed",
+        request_kind="daily_ledger_drilldown",
+        include_period=False,
     ),
 }
 
@@ -597,23 +610,14 @@ class NativeToolAgentService:
                 ),
                 None,
             )
-        request_kind = (
-            "settlement_details"
-            if tool_spec.metric is None
-            else (
-                "daily_ledger_drilldown"
-                if call.name == DAILY_LEDGER_DETAILS_TOOL
-                else "business_metrics"
-            )
-        )
-        request: dict[str, Any] = {"kind": request_kind}
-        if call.name != DAILY_LEDGER_DETAILS_TOOL:
+        request: dict[str, Any] = {"kind": tool_spec.request_kind}
+        if tool_spec.include_period:
             request["period"] = {
                 "kind": "calendar_month",
                 "year": arguments.year,
                 "month": arguments.month,
             }
-        if tool_spec.metric is not None and call.name != DAILY_LEDGER_DETAILS_TOOL:
+        if tool_spec.request_kind == "business_metrics" and tool_spec.metric is not None:
             request["metric"] = tool_spec.metric
         for field in ("group_by", "filters", "extreme", "status", "company_name", "dates"):
             value = getattr(arguments, field, None)
