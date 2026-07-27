@@ -1,10 +1,10 @@
 import json
 
-from app.agent.release import agent_release_status
+from app.agent.release import agent_adapter_config_sha256, agent_release_status
 from app.core.config import Settings
 
 
-def approved_report() -> dict[str, object]:
+def approved_report(settings: Settings) -> dict[str, object]:
     return {
         "schema_version": 1,
         "target": {
@@ -21,6 +21,7 @@ def approved_report() -> dict[str, object]:
             "input_cost_per_million": 1,
             "output_cost_per_million": 2,
             "evidence_batch_limit": 1,
+            "adapter_config_sha256": agent_adapter_config_sha256(settings),
         },
         "measurements": {
             "serial_sample_count": 20,
@@ -76,6 +77,8 @@ def production_settings(report_path) -> Settings:
         fallback_model_base_url="https://backup.invalid/v1",
         fallback_model_id="backup-model",
         fallback_model_api_key="test-only-backup-key",
+        fallback_model_input_cost_per_million=3,
+        fallback_model_output_cost_per_million=4,
         agent_release_report_path=str(report_path),
     )
 
@@ -88,7 +91,7 @@ def test_production_agent_release_requires_a_complete_matching_pass_report(tmp_p
     assert missing.approved is False
     assert missing.blockers == ["release report is missing"]
 
-    report = approved_report()
+    report = approved_report(settings)
     report["checks"]["structured_output"] = False
     report_path.write_text(json.dumps(report), encoding="utf-8")
     failed = agent_release_status(settings)
@@ -104,8 +107,11 @@ def test_production_agent_release_requires_a_complete_matching_pass_report(tmp_p
 
 def test_release_report_cannot_approve_a_different_runtime_profile(tmp_path) -> None:
     report_path = tmp_path / "agent-release.json"
-    report_path.write_text(json.dumps(approved_report()), encoding="utf-8")
-    settings = production_settings(report_path).model_copy(
+    measured_settings = production_settings(report_path)
+    report_path.write_text(
+        json.dumps(approved_report(measured_settings)), encoding="utf-8"
+    )
+    settings = measured_settings.model_copy(
         update={"model_id": "unmeasured-model"}
     )
 
@@ -117,11 +123,12 @@ def test_release_report_cannot_approve_a_different_runtime_profile(tmp_path) -> 
 
 def test_release_report_cannot_weaken_the_repository_thresholds(tmp_path) -> None:
     report_path = tmp_path / "agent-release.json"
-    report = approved_report()
+    settings = production_settings(report_path)
+    report = approved_report(settings)
     report["thresholds"]["minimum_free_memory_mb"] = 1
     report_path.write_text(json.dumps(report), encoding="utf-8")
 
-    status = agent_release_status(production_settings(report_path))
+    status = agent_release_status(settings)
 
     assert status.approved is False
     assert status.blockers == ["release thresholds do not match the approved policy"]
@@ -131,11 +138,12 @@ def test_release_report_rejects_zero_measurements_instead_of_treating_them_as_pa
     tmp_path,
 ) -> None:
     report_path = tmp_path / "agent-release.json"
-    report = approved_report()
+    settings = production_settings(report_path)
+    report = approved_report(settings)
     report["measurements"]["agent_peak_memory_mb"] = 0
     report_path.write_text(json.dumps(report), encoding="utf-8")
 
-    status = agent_release_status(production_settings(report_path))
+    status = agent_release_status(settings)
 
     assert status.approved is False
     assert status.blockers == ["release report is invalid"]
@@ -143,18 +151,38 @@ def test_release_report_rejects_zero_measurements_instead_of_treating_them_as_pa
 
 def test_release_report_requires_serial_samples_and_language_quality(tmp_path) -> None:
     report_path = tmp_path / "agent-release.json"
-    report = approved_report()
+    settings = production_settings(report_path)
+    report = approved_report(settings)
     report["measurements"]["serial_sample_count"] = 19
     report["measurements"]["language_quality_pass_rate"] = 0.95
     report["checks"]["language_quality"] = False
     report_path.write_text(json.dumps(report), encoding="utf-8")
 
-    status = agent_release_status(production_settings(report_path))
+    status = agent_release_status(settings)
 
     assert status.approved is False
     assert "release measurements need at least 20 serial samples" in status.blockers
     assert "language quality does not meet the release threshold" in status.blockers
     assert "language quality validation failed" in status.blockers
+
+
+def test_release_report_binds_structured_output_thinking_and_fallback_costs(
+    tmp_path,
+) -> None:
+    report_path = tmp_path / "agent-release.json"
+    measured = production_settings(report_path)
+    report_path.write_text(json.dumps(approved_report(measured)), encoding="utf-8")
+    changed = measured.model_copy(
+        update={
+            "model_thinking_parameters": {"reasoning_effort": "high"},
+            "fallback_model_output_cost_per_million": 99,
+        }
+    )
+
+    status = agent_release_status(changed)
+
+    assert status.approved is False
+    assert status.blockers == ["runtime model profile does not match the evaluated profile"]
 
 
 def test_non_production_keeps_the_fake_adapter_development_seam_open() -> None:

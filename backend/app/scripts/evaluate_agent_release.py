@@ -1,7 +1,11 @@
 import argparse
 import json
 
-from app.agent.release import AgentReleaseReport, agent_release_status
+from app.agent.release import (
+    AgentReleaseReport,
+    agent_adapter_config_sha256,
+    agent_release_status,
+)
 from app.core.config import get_settings
 
 
@@ -18,6 +22,11 @@ def main() -> int:
         action="store_true",
         help="Print the redacted report JSON Schema without loading runtime settings.",
     )
+    parser.add_argument(
+        "--fingerprint",
+        action="store_true",
+        help="Print the non-secret runtime Adapter configuration fingerprint.",
+    )
     arguments = parser.parse_args()
     if arguments.schema:
         print(
@@ -29,6 +38,9 @@ def main() -> int:
         )
         return 0
     settings = get_settings()
+    if arguments.fingerprint:
+        print(agent_adapter_config_sha256(settings))
+        return 0
     if arguments.report is not None:
         settings = settings.model_copy(
             update={"agent_release_report_path": arguments.report}

@@ -36,17 +36,19 @@
 5. 在同一轮日常流程中测量完整 Agent 请求、SQLite 只读快照和普通短写事务。
    先测短写基线，再测 Agent 负载下短写；模型网络阶段必须观察到没有活动的 SQLite
    transaction 或进程写锁。
-6. 用下列命令导出不含 Secret 或经营内容字段的 JSON Schema，把聚合值写入对应
-   字段，然后在目标容器中执行判定：
+6. 用下列命令导出不含 Secret 或经营内容字段的 JSON Schema，并生成当前主备端点、
+   结构化输出方式、thinking 参数、价格、超时、Token 和批量配置的 SHA-256 指纹。
+   把聚合值和指纹写入对应字段，然后在目标容器中执行判定：
 
    ```sh
    python -m app.scripts.evaluate_agent_release --schema > /tmp/agent-release.schema.json
+   python -m app.scripts.evaluate_agent_release --fingerprint
    python -m app.scripts.evaluate_agent_release --report /data/agent-release-report.json
    ```
 
 7. 命令退出码为 `0` 且输出 `approved: true` 后，才把
    `AUTOLAVA_AGENT_RELEASE_REPORT_PATH` 设置为该报告路径并重启。报告中的供应商、
-   模型、超时、Token 和批量上限必须与运行配置逐项一致。
+   模型、主备 Adapter 完整非密钥配置、超时、Token 和批量上限必须与运行配置一致。
 
 ## 发布阈值
 

@@ -1,3 +1,4 @@
+from hashlib import sha256
 import json
 from pathlib import Path
 
@@ -25,6 +26,7 @@ class ReleaseProfile(ClosedModel):
     input_cost_per_million: float = Field(gt=0)
     output_cost_per_million: float = Field(gt=0)
     evidence_batch_limit: int = Field(gt=0)
+    adapter_config_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class ReleaseMeasurements(ClosedModel):
@@ -103,7 +105,10 @@ def _report_blockers(report: AgentReleaseReport) -> list[str]:
     if not report.target.single_container:
         blockers.append("release target splits the application container")
     if measurements.serial_sample_count < thresholds.minimum_serial_samples:
-        blockers.append("release measurements need at least 20 serial samples")
+        blockers.append(
+            "release measurements need at least "
+            f"{thresholds.minimum_serial_samples} serial samples"
+        )
     peak_memory = max(
         measurements.idle_peak_memory_mb,
         measurements.business_peak_memory_mb,
@@ -166,7 +171,51 @@ def _runtime_profile_matches(settings: Settings, profile: ReleaseProfile) -> boo
         "input_cost_per_million": settings.model_input_cost_per_million,
         "output_cost_per_million": settings.model_output_cost_per_million,
         "evidence_batch_limit": settings.agent_evidence_batch_limit,
+        "adapter_config_sha256": agent_adapter_config_sha256(settings),
     }
+
+
+def agent_adapter_config_sha256(settings: Settings) -> str:
+    payload = {
+        "primary": {
+            "provider": settings.model_provider,
+            "base_url": settings.model_base_url,
+            "model": settings.model_id,
+            "structured_output_method": settings.model_structured_output_method,
+            "thinking_parameters": settings.model_thinking_parameters,
+            "input_cost_per_million": settings.model_input_cost_per_million,
+            "output_cost_per_million": settings.model_output_cost_per_million,
+        },
+        "fallback": (
+            {
+                "provider": settings.fallback_model_provider,
+                "base_url": settings.fallback_model_base_url,
+                "model": settings.fallback_model_id,
+                "structured_output_method": (
+                    settings.fallback_model_structured_output_method
+                ),
+                "thinking_parameters": settings.fallback_model_thinking_parameters,
+                "input_cost_per_million": (
+                    settings.fallback_model_input_cost_per_million
+                ),
+                "output_cost_per_million": (
+                    settings.fallback_model_output_cost_per_million
+                ),
+            }
+            if settings.fallback_model_id
+            else None
+        ),
+        "timeout_seconds": settings.model_timeout_seconds,
+        "max_output_tokens": settings.model_max_output_tokens,
+        "evidence_batch_limit": settings.agent_evidence_batch_limit,
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return sha256(encoded).hexdigest()
 
 
 def agent_release_status(settings: Settings) -> AgentReleaseStatus:
