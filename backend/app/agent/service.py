@@ -2,6 +2,7 @@ import json
 import re
 from contextlib import AbstractAsyncContextManager
 from collections.abc import Callable
+from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,6 +23,7 @@ from app.agent.contracts import (
 )
 from app.agent.factory import create_model_adapter
 from app.agent.model import ModelAttempt
+from app.agent.native import NativeToolAgentService, NativeToolModel
 from app.agent.runtime import RuntimeContext
 from app.agent.workflow import AgentTurnWorkflow
 from app.core.config import Settings
@@ -177,7 +179,20 @@ class AgentService:
 def create_agent_service(
     settings: Settings,
     session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]],
-) -> AgentService:
+    *,
+    native_model: NativeToolModel | None = None,
+    native_now: Callable[[], datetime] | None = None,
+    native_evidence_collector: BusinessEvidenceCollector | None = None,
+) -> AgentService | NativeToolAgentService:
+    if native_model is not None:
+        native_options = {"now": native_now} if native_now is not None else {}
+        return NativeToolAgentService(
+            model=native_model,
+            evidence_collector=(
+                native_evidence_collector or BusinessEvidenceCollector(session_factory)
+            ),
+            **native_options,
+        )
     return AgentService(
         AgentTurnWorkflow(
             model=create_model_adapter(settings),

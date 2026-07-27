@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+from calendar import monthrange
 from collections.abc import Callable, Iterable, Sequence
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.agent.business_evidence import BusinessEvidenceCollector
 from app.agent.conversation import AgentRunResult, ConfirmedPeriod, ConversationState
 from app.agent.contracts import (
     CurrentStoreScope,
@@ -40,6 +40,11 @@ class NativeToolCall(ClosedModel):
     id: str = Field(min_length=1, max_length=100)
     name: str = Field(min_length=1, max_length=100)
     arguments: dict[str, Any]
+
+
+class MonthlyTotalRevenueArguments(ClosedModel):
+    year: int = Field(ge=2000, le=2200)
+    month: int = Field(ge=1, le=12)
 
 
 class NativeEvidenceFailure(ClosedModel):
@@ -110,11 +115,25 @@ class NativeToolModel(Protocol):
     ) -> NativeModelTurn: ...
 
 
+class NativeEvidenceCollector(Protocol):
+    async def collect(
+        self,
+        plan: EvidencePlan,
+        context: RuntimeContext,
+    ) -> object: ...
+
+
 class FakeNativeToolModel:
     """Scriptable native-tool model used by high-level acceptance tests."""
 
-    def __init__(self, *, turns: Iterable[NativeModelTurn | dict[str, Any]]) -> None:
+    def __init__(
+        self,
+        *,
+        turns: Iterable[NativeModelTurn | dict[str, Any]],
+        before_turn: Callable[[], None] | None = None,
+    ) -> None:
         self._turns = list(turns)
+        self._before_turn = before_turn
         self.calls: list[NativeModelCall] = []
 
     async def next_turn(
@@ -123,6 +142,8 @@ class FakeNativeToolModel:
         *,
         tools: Sequence[NativeToolDefinition],
     ) -> NativeModelTurn:
+        if self._before_turn is not None:
+            self._before_turn()
         self.calls.append(NativeModelCall(items=list(items), tools=list(tools)))
         if not self._turns:
             raise RuntimeError("no scripted native model turn remains")
@@ -141,7 +162,7 @@ class NativeToolAgentService:
         self,
         *,
         model: NativeToolModel,
-        evidence_collector: BusinessEvidenceCollector,
+        evidence_collector: NativeEvidenceCollector,
         now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ) -> None:
         self.model = model
@@ -154,15 +175,7 @@ class NativeToolAgentService:
                     "查询当前受信任门店指定自然月的月度总收入，"
                     "包括每日台账营业额与已确认公司结算收入。"
                 ),
-                input_schema={
-                    "type": "object",
-                    "properties": {
-                        "year": {"type": "integer", "minimum": 2000, "maximum": 2200},
-                        "month": {"type": "integer", "minimum": 1, "maximum": 12},
-                    },
-                    "required": ["year", "month"],
-                    "additionalProperties": False,
-                },
+                input_schema=MonthlyTotalRevenueArguments.model_json_schema(),
             )
         ]
 
@@ -197,7 +210,9 @@ class NativeToolAgentService:
                 )
             if len(turn.tool_calls) != 1:
                 raise ValueError("the monthly revenue slice accepts one tool call per round")
-            tool_result, collected = await self._execute(turn.tool_calls[0], context)
+            tool_result, new_evidence = await self._execute(turn.tool_calls[0], context)
+            if new_evidence is not None:
+                collected = new_evidence
             items.append(NativeTranscriptItem(tool_result=tool_result))
         raise RuntimeError("native tool loop exceeded its round limit")
 
@@ -205,44 +220,35 @@ class NativeToolAgentService:
         self,
         call: NativeToolCall,
         context: RuntimeContext,
-    ) -> tuple[NativeToolResult, EvidenceBundle]:
+    ) -> tuple[NativeToolResult, EvidenceBundle | None]:
         if call.name != MONTHLY_TOTAL_REVENUE_TOOL:
             raise ValueError("unavailable native tool")
-        if set(call.arguments) != {"year", "month"}:
-            raise ValueError("monthly revenue accepts only year and month")
-        year = call.arguments["year"]
-        month = call.arguments["month"]
-        if (
-            isinstance(year, bool)
-            or not isinstance(year, int)
-            or not 2000 <= year <= 2200
-            or isinstance(month, bool)
-            or not isinstance(month, int)
-            or not 1 <= month <= 12
-        ):
-            raise ValueError("invalid monthly revenue period")
-        evidence = await self.evidence_collector.collect(
-            EvidencePlan.model_validate(
-                {
-                    "requests": [
-                        {
-                            "kind": "business_metrics",
-                            "metric": MONTHLY_TOTAL_REVENUE_TOOL,
-                            "period": {
-                                "kind": "calendar_month",
-                                "year": year,
-                                "month": month,
-                            },
-                        }
-                    ]
-                }
-            ),
-            context,
-        )
+        arguments = MonthlyTotalRevenueArguments.model_validate(call.arguments)
+        try:
+            evidence = await self.evidence_collector.collect(
+                EvidencePlan.model_validate(
+                    {
+                        "requests": [
+                            {
+                                "kind": "business_metrics",
+                                "metric": MONTHLY_TOTAL_REVENUE_TOOL,
+                                "period": {
+                                    "kind": "calendar_month",
+                                    "year": arguments.year,
+                                    "month": arguments.month,
+                                },
+                            }
+                        ]
+                    }
+                ),
+                context,
+            )
+        except Exception:
+            return _failed_tool_result(call, context, arguments, self.now()), None
         if not isinstance(evidence, EvidenceBundle) or not isinstance(
             evidence.result, MonthlyTotalRevenueResult
         ):
-            raise RuntimeError("monthly revenue tool returned incompatible evidence")
+            return _failed_tool_result(call, context, arguments, self.now()), None
         envelope = _native_envelope(evidence, queried_at=self.now())
         return (
             NativeToolResult(
@@ -283,7 +289,45 @@ def _native_envelope(
         queried_at=queried_at,
         data_version=f"sha256:{digest}",
         coverage=evidence.coverage,
-        limitations=limitations,
+        limitations=limitations[:20],
         truncated=evidence.truncated,
         failure=NativeEvidenceFailure(status="none"),
+    )
+
+
+def _failed_tool_result(
+    call: NativeToolCall,
+    context: RuntimeContext,
+    arguments: MonthlyTotalRevenueArguments,
+    queried_at: datetime,
+) -> NativeToolResult:
+    start = date(arguments.year, arguments.month, 1)
+    end = date(arguments.year, arguments.month, monthrange(arguments.year, arguments.month)[1])
+    digest = hashlib.sha256(
+        f"{context.store_id}:{start.isoformat()}:{end.isoformat()}:failed".encode()
+    ).hexdigest()
+    return NativeToolResult(
+        call_id=call.id,
+        name=call.name,
+        evidence=NativeEvidenceEnvelope(
+            reference=f"ev_{digest[:24]}",
+            facts={},
+            scope=CurrentStoreScope(id=context.store_id),
+            period=EvidencePeriodResult(start=start, end=end),
+            unit="EUR",
+            source=["store_daily_records", "settlement_records"],
+            queried_at=queried_at,
+            data_version=f"unavailable:{digest}",
+            coverage=EvidenceCoverage(
+                calendar_dates=(end - start).days + 1,
+                recorded_dates=0,
+            ),
+            limitations=["经营查询暂时失败；未返回任何经营事实"],
+            truncated=False,
+            failure=NativeEvidenceFailure(
+                status="failed",
+                category="business_query_unavailable",
+                message="经营查询暂时不可用",
+            ),
+        ),
     )

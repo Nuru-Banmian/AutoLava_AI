@@ -7,8 +7,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.business_evidence import BusinessEvidenceCollector
-from app.agent.native import FakeNativeToolModel, NativeToolAgentService
-from app.core.config import get_settings
+from app.agent.native import FakeNativeToolModel
+from app.agent.service import create_agent_service
+from app.core.config import Settings, get_settings
+from app.core.database import end_read_transaction
 from app.models.agent import AgentEvidence
 from app.models.ledger import StoreDailyRecord
 from app.models.operations import AgentSettings
@@ -84,9 +86,21 @@ async def test_native_monthly_total_revenue_tool_closes_the_http_loop_for_admini
     )
     await db_session.commit()
 
+    active_evidence_transactions = 0
+
     @asynccontextmanager
     async def session_factory():
-        yield db_session
+        nonlocal active_evidence_transactions
+        active_evidence_transactions += 1
+        try:
+            yield db_session
+        finally:
+            await end_read_transaction(db_session)
+            active_evidence_transactions -= 1
+
+    def assert_model_runs_without_sqlite_transaction() -> None:
+        assert active_evidence_transactions == 0
+        assert not db_session.in_transaction()
 
     expected_answer = "2026 年 7 月月度总收入为 400 欧元。"
     model = FakeNativeToolModel(
@@ -106,15 +120,18 @@ async def test_native_monthly_total_revenue_tool_closes_the_http_loop_for_admini
                 "message": {"role": "assistant", "content": expected_answer},
                 "signal": "end",
             },
-        ]
+        ],
+        before_turn=assert_model_runs_without_sqlite_transaction,
     )
-    client._transport.app.state.agent_service = NativeToolAgentService(
-        model=model,
-        evidence_collector=BusinessEvidenceCollector(
+    client._transport.app.state.agent_service = create_agent_service(
+        Settings(_env_file=None),
+        session_factory,
+        native_model=model,
+        native_evidence_collector=BusinessEvidenceCollector(
             session_factory,
             now=lambda _timezone: datetime(2026, 7, 26, 12, 0),
         ),
-        now=lambda: datetime(2026, 7, 26, 10, 0, tzinfo=timezone.utc),
+        native_now=lambda: datetime(2026, 7, 26, 10, 0, tzinfo=timezone.utc),
     )
     await _login(client, username)
 
