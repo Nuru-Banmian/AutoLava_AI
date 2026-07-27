@@ -9,17 +9,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.business_evidence import BusinessEvidenceCollector
 from app.agent.conversation import ConversationState
 from app.agent.contracts import (
+    AverageRevenuePerCarResult,
+    CategoryAmountResult,
     ConfirmedSettlementIncomeResult,
     CurrentStoreScope,
     DailyLedgerRevenueResult,
     EvidenceBundle,
     EvidenceComparisonResult,
+    EvidenceCompleteness,
     EvidenceCoverage,
+    EvidenceGroupRow,
     EvidenceMetric,
     EvidencePeriodResult,
+    GroupedMetricResult,
     ModelMessage,
+    MonthlyDailyAverageIncomeResult,
     MonthlyTotalRevenueResult,
+    OperatingDayAverageLedgerRevenueResult,
     OperatingDaysResult,
+    WashCountResult,
 )
 from app.agent.answer_grounding import NativeAnswerClaim, answer_is_grounded
 from app.agent.native import (
@@ -110,18 +118,61 @@ def _evidence(metric: EvidenceMetric, value: int) -> EvidenceBundle:
             confirmed_settlement_income=value
         ),
         EvidenceMetric.OPERATING_DAYS: OperatingDaysResult(operating_days=value),
+        EvidenceMetric.OPERATING_DAY_AVERAGE_LEDGER_REVENUE: (
+            OperatingDayAverageLedgerRevenueResult(
+                daily_ledger_revenue=value,
+                operating_days=2,
+                operating_day_average_ledger_revenue=value // 2,
+            )
+        ),
+        EvidenceMetric.MONTHLY_DAILY_AVERAGE_INCOME: MonthlyDailyAverageIncomeResult(
+            daily_ledger_revenue=value,
+            confirmed_settlement_income=0,
+            monthly_total_revenue=value,
+            operating_days=2,
+            monthly_daily_average_income=value // 2,
+        ),
+        EvidenceMetric.WASH_COUNT: WashCountResult(available=True, wash_count=value),
+        EvidenceMetric.AVERAGE_REVENUE_PER_CAR: AverageRevenuePerCarResult(
+            available=True,
+            daily_ledger_revenue=value,
+            wash_count=2,
+            average_revenue_per_car=value // 2,
+        ),
+        EvidenceMetric.INCOME_CATEGORY_AMOUNT: CategoryAmountResult(
+            amount=value,
+            categories=[],
+        ),
+        EvidenceMetric.OTHER_DATA_AMOUNT: CategoryAmountResult(
+            amount=value,
+            categories=[],
+        ),
     }
     version_by_metric = {
         EvidenceMetric.MONTHLY_TOTAL_REVENUE: "monthly_total_revenue.v1",
         EvidenceMetric.DAILY_LEDGER_REVENUE: "daily_ledger_revenue.v1",
         EvidenceMetric.CONFIRMED_SETTLEMENT_INCOME: "confirmed_settlement_income.v1",
         EvidenceMetric.OPERATING_DAYS: "operating_days.v1",
+        EvidenceMetric.OPERATING_DAY_AVERAGE_LEDGER_REVENUE: (
+            "operating_day_average_ledger_revenue.v1"
+        ),
+        EvidenceMetric.MONTHLY_DAILY_AVERAGE_INCOME: "monthly_daily_average_income.v1",
+        EvidenceMetric.WASH_COUNT: "wash_count.v1",
+        EvidenceMetric.AVERAGE_REVENUE_PER_CAR: "average_revenue_per_car.v1",
+        EvidenceMetric.INCOME_CATEGORY_AMOUNT: "income_category_amount.v1",
+        EvidenceMetric.OTHER_DATA_AMOUNT: "other_data_amount.v1",
     }
     unit_by_metric = {
         EvidenceMetric.MONTHLY_TOTAL_REVENUE: "EUR",
         EvidenceMetric.DAILY_LEDGER_REVENUE: "EUR",
         EvidenceMetric.CONFIRMED_SETTLEMENT_INCOME: "EUR",
         EvidenceMetric.OPERATING_DAYS: "day",
+        EvidenceMetric.OPERATING_DAY_AVERAGE_LEDGER_REVENUE: "EUR/operating_day",
+        EvidenceMetric.MONTHLY_DAILY_AVERAGE_INCOME: "EUR/operating_day",
+        EvidenceMetric.WASH_COUNT: "car",
+        EvidenceMetric.AVERAGE_REVENUE_PER_CAR: "EUR/car",
+        EvidenceMetric.INCOME_CATEGORY_AMOUNT: "EUR",
+        EvidenceMetric.OTHER_DATA_AMOUNT: "EUR",
     }
     return EvidenceBundle(
         status="ok",
@@ -132,6 +183,20 @@ def _evidence(metric: EvidenceMetric, value: int) -> EvidenceBundle:
         calculation_version=version_by_metric[metric],
         result=result_by_metric[metric],
         coverage=EvidenceCoverage(calendar_dates=31, recorded_dates=31),
+        completeness=(
+            EvidenceCompleteness(
+                status="limited",
+                unrecorded_dates=[date(2026, 7, 3)],
+                wash_count_enabled=True,
+                operating_days=2,
+                wash_count_recorded_operating_days=1,
+                wash_count_missing_dates=[date(2026, 7, 2)],
+                wash_count_coverage_percent=50,
+                wash_count_sufficient=False,
+            )
+            if metric == EvidenceMetric.WASH_COUNT
+            else None
+        ),
         summary=f"{metric.value}={value}",
     )
 
@@ -152,6 +217,44 @@ class MetricEvidenceCollector:
             EvidenceMetric.MONTHLY_TOTAL_REVENUE: self.daily_revenue + 40,
         }
         return _evidence(metric, values[metric])
+
+
+class SemanticToolEvidenceCollector:
+    def __init__(self) -> None:
+        self.requests = []
+
+    async def collect(self, plan, context):
+        del context
+        request = plan.requests[0]
+        self.requests.append(request)
+        return _evidence(request.metric, 12)
+
+
+class GroupedSemanticToolEvidenceCollector:
+    async def collect(self, plan, context):
+        request = plan.requests[0]
+        return EvidenceBundle(
+            status="ok",
+            current_store=CurrentStoreScope(id=context.store_id),
+            period=EvidencePeriodResult(start=date(2026, 7, 1), end=date(2026, 7, 31)),
+            metric=request.metric,
+            group_by=request.group_by,
+            filters=request.filters,
+            unit="EUR",
+            calculation_version="grouped_business_metric.v1",
+            result=GroupedMetricResult(
+                group_by=request.group_by,
+                rows=[EvidenceGroupRow(key="group", label="分组", value=12)],
+            ),
+            coverage=EvidenceCoverage(calendar_dates=31, recorded_dates=2),
+            summary="分组金额 12 欧元。",
+        )
+
+
+class MismatchedGroupedSemanticToolEvidenceCollector(GroupedSemanticToolEvidenceCollector):
+    async def collect(self, plan, context):
+        evidence = await super().collect(plan, context)
+        return evidence.model_copy(update={"filters": None})
 
 
 class EvidenceAdaptiveModel:
@@ -1558,7 +1661,313 @@ async def test_monthly_revenue_policy_stays_available_when_optional_store_featur
         "daily_ledger_revenue",
         "confirmed_settlement_income",
         "operating_days",
+        "operating_day_average_ledger_revenue",
+        "monthly_daily_average_income",
+        "wash_count",
+        "average_revenue_per_car",
+        "income_category_amount",
+        "other_data_amount",
+        "daily_ledger_revenue_extreme",
     ]
+
+
+async def test_semantic_wash_count_tool_returns_missing_dates_without_treating_them_as_zero() -> (
+    None
+):
+    model = FakeNativeToolModel(
+        turns=[
+            {
+                "message": {"role": "assistant", "content": "查询洗车数量。"},
+                "tool_calls": [
+                    {
+                        "id": "wash-count",
+                        "name": "wash_count",
+                        "arguments": {"year": 2026, "month": 7},
+                    }
+                ],
+                "signal": "continue",
+            },
+            {
+                "message": {"role": "assistant", "content": "调查完成。"},
+                "signal": "end",
+            },
+        ]
+    )
+    collector = SemanticToolEvidenceCollector()
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=collector,
+        scope_resolver=PassthroughScopeResolver(),
+    )
+
+    await service.run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="2026 年 7 月洗车数量是多少？")],
+    )
+
+    request = collector.requests[0]
+    assert request.metric == EvidenceMetric.WASH_COUNT
+    tool_result = model.calls[1].items[-1].tool_result
+    assert tool_result is not None
+    assert tool_result.evidence.facts == {"available": True, "wash_count": 12}
+    assert tool_result.evidence.coverage.model_dump() == {
+        "calendar_dates": 31,
+        "recorded_dates": 31,
+    }
+    assert tool_result.evidence.completeness is not None
+    assert tool_result.evidence.completeness.unrecorded_dates == [date(2026, 7, 3)]
+    assert tool_result.evidence.completeness.wash_count_missing_dates == [date(2026, 7, 2)]
+    assert tool_result.evidence.completeness.wash_count_coverage_percent == 50
+    assert tool_result.evidence.truncated is False
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "expected_unit"),
+    [
+        ("operating_day_average_ledger_revenue", "EUR/operating_day"),
+        ("monthly_daily_average_income", "EUR/operating_day"),
+        ("wash_count", "car"),
+        ("average_revenue_per_car", "EUR/car"),
+        ("income_category_amount", "EUR"),
+        ("other_data_amount", "EUR"),
+    ],
+)
+async def test_semantic_metric_tools_keep_the_authoritative_result_unit(
+    tool_name: str,
+    expected_unit: str,
+) -> None:
+    model = FakeNativeToolModel(
+        turns=[
+            {
+                "message": {"role": "assistant", "content": "查询。"},
+                "tool_calls": [
+                    {
+                        "id": "metric-query",
+                        "name": tool_name,
+                        "arguments": {"year": 2026, "month": 7},
+                    }
+                ],
+                "signal": "continue",
+            },
+            {
+                "message": {"role": "assistant", "content": "调查完成。"},
+                "signal": "end",
+            },
+        ]
+    )
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=SemanticToolEvidenceCollector(),
+        scope_resolver=PassthroughScopeResolver(),
+    )
+
+    await service.run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="调查 2026 年 7 月。")],
+    )
+
+    tool_result = model.calls[1].items[-1].tool_result
+    assert tool_result is not None
+    assert tool_result.evidence.unit == expected_unit
+
+
+async def test_grouped_tool_evidence_preserves_query_scope_and_versions_filters_separately() -> (
+    None
+):
+    model = FakeNativeToolModel(
+        turns=[
+            {
+                "message": {"role": "assistant", "content": "比较筛选结果。"},
+                "tool_calls": [
+                    {
+                        "id": "open-days",
+                        "name": "income_category_amount",
+                        "arguments": {
+                            "year": 2026,
+                            "month": 7,
+                            "group_by": "income_category",
+                            "filters": {"operating_statuses": ["营业"]},
+                        },
+                    },
+                    {
+                        "id": "early-close-days",
+                        "name": "income_category_amount",
+                        "arguments": {
+                            "year": 2026,
+                            "month": 7,
+                            "group_by": "income_category",
+                            "filters": {"operating_statuses": ["提前休息"]},
+                        },
+                    },
+                ],
+                "signal": "continue",
+            },
+            {
+                "message": {"role": "assistant", "content": "调查完成。"},
+                "signal": "end",
+            },
+        ]
+    )
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=GroupedSemanticToolEvidenceCollector(),
+        scope_resolver=PassthroughScopeResolver(),
+    )
+
+    await service.run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="调查 2026 年 7 月。")],
+    )
+
+    results = [item.tool_result for item in model.calls[1].items if item.tool_result is not None]
+    assert [result.evidence.group_by for result in results] == [
+        "income_category",
+        "income_category",
+    ]
+    assert [
+        result.evidence.filters.model_dump(mode="json", exclude_defaults=True)
+        for result in results
+        if result.evidence.filters is not None
+    ] == [
+        {"operating_statuses": ["营业"]},
+        {"operating_statuses": ["提前休息"]},
+    ]
+    assert results[0].evidence.reference != results[1].evidence.reference
+
+
+async def test_semantic_tool_rejects_evidence_from_a_different_filter_scope() -> None:
+    model = FakeNativeToolModel(
+        turns=[
+            {
+                "message": {"role": "assistant", "content": "查询。"},
+                "tool_calls": [
+                    {
+                        "id": "filtered-query",
+                        "name": "income_category_amount",
+                        "arguments": {
+                            "year": 2026,
+                            "month": 7,
+                            "group_by": "income_category",
+                            "filters": {"operating_statuses": ["营业"]},
+                        },
+                    }
+                ],
+                "signal": "continue",
+            },
+            {
+                "message": {"role": "assistant", "content": "目前无法确认。"},
+                "signal": "end",
+            },
+        ]
+    )
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=MismatchedGroupedSemanticToolEvidenceCollector(),
+        scope_resolver=PassthroughScopeResolver(),
+    )
+
+    result = await service.run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="调查 2026 年 7 月。")],
+    )
+
+    tool_result = model.calls[1].items[-1].tool_result
+    assert tool_result is not None
+    assert tool_result.evidence.failure.status == "failed"
+    assert tool_result.evidence.facts == {}
+    assert result.evidence is None
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "arguments", "metric", "group_by", "extreme"),
+    [
+        (
+            "income_category_amount",
+            {
+                "year": 2026,
+                "month": 7,
+                "group_by": "income_category",
+                "filters": {"operating_statuses": ["营业", "提前休息"]},
+            },
+            EvidenceMetric.INCOME_CATEGORY_AMOUNT,
+            "income_category",
+            None,
+        ),
+        (
+            "other_data_amount",
+            {
+                "year": 2026,
+                "month": 7,
+                "group_by": "recorded_weather",
+                "filters": {"recorded_weather": ["晴"]},
+            },
+            EvidenceMetric.OTHER_DATA_AMOUNT,
+            "recorded_weather",
+            None,
+        ),
+        (
+            "daily_ledger_revenue_extreme",
+            {
+                "year": 2026,
+                "month": 7,
+                "extreme": "highest",
+                "filters": {"weekdays": ["星期六", "星期日"]},
+            },
+            EvidenceMetric.DAILY_LEDGER_REVENUE,
+            None,
+            "highest",
+        ),
+    ],
+)
+async def test_semantic_tools_map_only_approved_grouping_filters_and_extremes(
+    tool_name: str,
+    arguments: dict[str, object],
+    metric: EvidenceMetric,
+    group_by: str | None,
+    extreme: str | None,
+) -> None:
+    model = FakeNativeToolModel(
+        turns=[
+            {
+                "message": {"role": "assistant", "content": "查询。"},
+                "tool_calls": [
+                    {
+                        "id": "semantic-query",
+                        "name": tool_name,
+                        "arguments": arguments,
+                    }
+                ],
+                "signal": "continue",
+            },
+            {
+                "message": {"role": "assistant", "content": "目前无法继续。"},
+                "signal": "end",
+            },
+        ]
+    )
+    collector = RecordingEvidenceCollector()
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=collector,
+        scope_resolver=PassthroughScopeResolver(),
+    )
+
+    await service.run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="调查 2026 年 7 月。")],
+    )
+
+    request = collector.calls[0][0].requests[0]
+    assert request.metric == metric
+    assert request.group_by == group_by
+    assert request.extreme == extreme
+    assert request.filters is not None
+    assert request.filters.model_dump(mode="json", exclude_defaults=True) == arguments["filters"]
 
 
 async def test_native_business_query_reauthorizes_inside_its_sqlite_snapshot(
