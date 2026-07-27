@@ -219,6 +219,15 @@ def ci_frontend_unit(env: dict[str, str]) -> None:
 
 def ci_frontend_e2e(env: dict[str, str]) -> None:
     sync_frontend()
+    run(
+        "npx",
+        "playwright",
+        "install",
+        "--with-deps",
+        "chromium",
+        cwd=FRONTEND,
+        env=env,
+    )
     run("npx", "playwright", "test", "--reporter=line,junit", cwd=FRONTEND, env=env)
 
 

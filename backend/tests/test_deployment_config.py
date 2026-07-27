@@ -253,8 +253,8 @@ def test_ci_runs_backend_and_frontend_checks_without_containers() -> None:
     assert 'run("npm", "ci"' in verifier
     assert 'run("npm", "test"' in verifier
     assert '"build"' in verifier
+    assert '"playwright",\n        "install"' in verifier
     assert '"playwright", "test"' in verifier
-    assert any("playwright install --with-deps chromium" in command for command in all_commands)
 
 
 def test_ci_does_not_execute_container_release_or_runtime_checks() -> None:

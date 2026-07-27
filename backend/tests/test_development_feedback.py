@@ -87,6 +87,14 @@ def test_sensitive_local_browser_artifacts_are_ignored() -> None:
     assert "output/" in ignored
 
 
+def test_ci_e2e_installs_locked_playwright_before_its_browser() -> None:
+    verifier = read("scripts/verify.py")
+    function = verifier[verifier.index("def ci_frontend_e2e") : verifier.index("\ndef main")]
+
+    assert function.index("sync_frontend()") < function.index('"install"')
+    assert function.index('"install"') < function.index('"playwright", "test"')
+
+
 def test_production_password_hash_keeps_production_cost() -> None:
     assert hash_password("production-strength-password").split("$")[2] == "12"
 
