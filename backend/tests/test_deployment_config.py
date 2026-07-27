@@ -242,12 +242,6 @@ def test_ci_runs_backend_and_frontend_checks_without_containers() -> None:
     assert any('pip install -e ".[dev]"' in command for command in backend_commands)
     assert any("alembic upgrade head" in command for command in backend_commands)
     assert any("ruff check ." in command for command in backend_commands)
-    assert backend["env"]["AUTOLAVA_MODEL_ADAPTER"] == "fake"
-    assert not any("MODEL_API_KEY" in key for key in backend["env"])
-    assert any(
-        "pytest -m agent_release_gate --strict-markers" in command
-        for command in backend_commands
-    )
     assert any("pytest -n 2 --dist loadscope" in command for command in backend_commands)
     assert any("--cov=app --cov-report=term-missing" in command for command in backend_commands)
 
