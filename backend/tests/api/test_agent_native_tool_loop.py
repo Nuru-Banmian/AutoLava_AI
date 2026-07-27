@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 
@@ -7,11 +8,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.business_evidence import BusinessEvidenceCollector
-from app.agent.native import FakeNativeToolModel
+from app.agent.native import (
+    FakeNativeToolModel,
+    NativeModelTurn,
+    NativeToolDefinition,
+    NativeTranscriptItem,
+)
 from app.agent.service import create_agent_service
 from app.core.config import Settings, get_settings
 from app.core.database import end_read_transaction
 from app.models.agent import AgentEvidence
+from app.models.identity import Store, User
 from app.models.ledger import StoreDailyRecord
 from app.models.operations import AgentSettings
 from app.models.settlement import SettlementCompany, SettlementRecord
@@ -166,3 +173,86 @@ async def test_native_monthly_total_revenue_tool_closes_the_http_loop_for_admini
     stored = await db_session.scalar(select(AgentEvidence))
     assert stored is not None
     assert stored.payload["result"]["monthly_total_revenue"] == 400
+
+
+@pytest.mark.parametrize(
+    "revocation",
+    ["inactive_user", "ordinary_role", "inactive_store", "agent_disabled"],
+)
+async def test_native_tool_execution_rechecks_live_scope_before_business_query(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+    revocation: str,
+) -> None:
+    user = await user_factory(username="admin", password="secret", role="admin")
+    store = await store_factory(name="Roma")
+    user_id = user.id
+    store_id = store.id
+    db_session.add(AgentSettings(id=1, enabled=True))
+    await db_session.commit()
+
+    class RevokingModel:
+        calls = 0
+
+        async def next_turn(
+            self,
+            items: Sequence[NativeTranscriptItem],
+            *,
+            tools: Sequence[NativeToolDefinition],
+        ) -> NativeModelTurn:
+            del items
+            self.calls += 1
+            assert [tool.name for tool in tools] == ["monthly_total_revenue"]
+            if revocation in {"inactive_user", "ordinary_role"}:
+                fresh_user = await db_session.get(User, user_id)
+                assert fresh_user is not None
+                if revocation == "inactive_user":
+                    fresh_user.is_active = False
+                else:
+                    fresh_user.role = "user"
+            elif revocation == "inactive_store":
+                fresh_store = await db_session.get(Store, store_id)
+                assert fresh_store is not None
+                fresh_store.is_active = False
+            else:
+                agent_settings = await db_session.get(AgentSettings, 1)
+                assert agent_settings is not None
+                agent_settings.enabled = False
+            await db_session.commit()
+            return NativeModelTurn.model_validate(
+                {
+                    "message": {"role": "assistant", "content": "查询。"},
+                    "tool_calls": [
+                        {
+                            "id": "revoked-call",
+                            "name": "monthly_total_revenue",
+                            "arguments": {"year": 2026, "month": 7},
+                        }
+                    ],
+                    "signal": "continue",
+                }
+            )
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    model = RevokingModel()
+    client._transport.app.state.agent_service = create_agent_service(
+        Settings(_env_file=None),
+        session_factory,
+        native_model=model,
+        native_evidence_collector=BusinessEvidenceCollector(session_factory),
+    )
+    await _login(client, "admin")
+
+    response = await client.post(
+        f"/api/agent/stores/{store_id}/turn",
+        json={"question": "2026 年 7 月的月度总收入是多少？"},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Agent 工具授权已失效"}
+    assert model.calls == 1

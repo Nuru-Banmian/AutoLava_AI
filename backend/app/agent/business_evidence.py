@@ -1,5 +1,5 @@
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -49,6 +49,7 @@ from app.models.settlement import SettlementCompany, SettlementRecord
 
 SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 Now = Callable[[ZoneInfo], datetime]
+ScopeAuthorizer = Callable[[AsyncSession, RuntimeContext], Awaitable[RuntimeContext]]
 MAX_SETTLEMENT_ROWS = 50
 MAX_GROUP_ROWS = 400
 MAJOR_DRIVER_THRESHOLD = Decimal("0.6")
@@ -99,12 +100,22 @@ class BusinessEvidenceCollector:
         *,
         now: Now | None = None,
         major_driver_threshold: Decimal = MAJOR_DRIVER_THRESHOLD,
+        scope_authorizer: ScopeAuthorizer | None = None,
     ) -> None:
         if not Decimal(0) <= major_driver_threshold <= Decimal(1):
             raise ValueError("major driver threshold must be between zero and one")
         self._session_factory = session_factory
         self._now = now or (lambda timezone: datetime.now(timezone))
         self._major_driver_threshold = major_driver_threshold
+        self._scope_authorizer = scope_authorizer
+
+    def with_scope_authorizer(self, authorizer: ScopeAuthorizer) -> "BusinessEvidenceCollector":
+        return BusinessEvidenceCollector(
+            self._session_factory,
+            now=self._now,
+            major_driver_threshold=self._major_driver_threshold,
+            scope_authorizer=authorizer,
+        )
 
     async def collect(
         self,
@@ -141,6 +152,8 @@ class BusinessEvidenceCollector:
         for attempt in range(2):
             try:
                 async with self._session_factory() as session:
+                    if self._scope_authorizer is not None:
+                        context = await self._scope_authorizer(session, context)
                     category_ids = await self._resolve_category_filter(
                         request.filters,
                         context,
@@ -620,6 +633,8 @@ class BusinessEvidenceCollector:
         comparison_period: tuple[date, date],
     ) -> tuple[Snapshot, Snapshot]:
         async with self._session_factory() as session:
+            if self._scope_authorizer is not None:
+                context = await self._scope_authorizer(session, context)
             current = await self._read_analysis_snapshot(
                 session,
                 context=context,
@@ -963,6 +978,8 @@ class BusinessEvidenceCollector:
         target: date,
     ) -> StoreDailyRecord | None:
         async with self._session_factory() as session:
+            if self._scope_authorizer is not None:
+                context = await self._scope_authorizer(session, context)
             return await session.scalar(
                 select(StoreDailyRecord)
                 .where(
@@ -1680,6 +1697,8 @@ class BusinessEvidenceCollector:
         first_month = start.replace(day=1)
         last_month = end.replace(day=1)
         async with self._session_factory() as session:
+            if self._scope_authorizer is not None:
+                context = await self._scope_authorizer(session, context)
             settlement_enabled = await session.scalar(
                 select(Store.company_settlement_enabled).where(
                     Store.id == context.store_id,
