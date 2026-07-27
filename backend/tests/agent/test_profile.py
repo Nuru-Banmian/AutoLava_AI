@@ -27,6 +27,7 @@ def test_openai_compatible_profile_is_entirely_configuration_driven() -> None:
         model_id="configured-model",
         model_api_key="test-only-key",
         model_structured_output_method="function_calling",
+        model_thinking_parameters={"thinking": {"type": "disabled"}},
         model_timeout_seconds=23,
         model_max_output_tokens=1700,
     )
@@ -38,6 +39,12 @@ def test_openai_compatible_profile_is_entirely_configuration_driven() -> None:
     assert str(adapter.primary.profile.base_url) == "https://provider.invalid/v1"
     assert adapter.primary.profile.model_id == "configured-model"
     assert adapter.primary.profile.structured_output_method == "function_calling"
+    assert adapter.primary.profile.thinking_parameters == {
+        "thinking": {"type": "disabled"}
+    }
+    assert adapter.primary._client.extra_body == {
+        "thinking": {"type": "disabled"}
+    }
     assert adapter.primary.profile.timeout_seconds == 23
     assert adapter.primary.profile.max_output_tokens == 1700
     assert "test-only-key" not in repr(adapter.primary.profile)
@@ -46,6 +53,14 @@ def test_openai_compatible_profile_is_entirely_configuration_driven() -> None:
 def test_openai_compatible_profile_fails_closed_when_configuration_is_missing() -> None:
     with pytest.raises(ValidationError, match="model_base_url"):
         Settings(_env_file=None, model_adapter="openai_compatible")
+
+
+def test_model_thinking_parameters_reject_non_json_values() -> None:
+    with pytest.raises(ValidationError, match="model_thinking_parameters"):
+        Settings(
+            _env_file=None,
+            model_thinking_parameters={"thinking": {"type": object()}},
+        )
 
 
 def test_agent_service_applies_the_configured_evidence_batch_limit() -> None:
