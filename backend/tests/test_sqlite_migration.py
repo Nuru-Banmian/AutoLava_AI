@@ -61,7 +61,7 @@ def test_blank_sqlite_file_migrates_to_final_schema(tmp_path: Path) -> None:
         }
         assert agent_columns["enabled"][4].strip("'") == "0"
         assert agent_columns["enabled"][3] == 1
-        assert agent_columns["release_approval_id"][3] == 0
+        assert agent_columns["approved_report_sha256"][3] == 0
         conversation_indexes = {
             name
             for _, name, is_unique, *_ in connection.execute(

@@ -1,4 +1,5 @@
 import json
+from hashlib import sha256
 
 from app.agent.release import (
     ReleaseSample,
@@ -8,8 +9,93 @@ from app.agent.release import (
 )
 from app.core.config import Settings
 
+IMAGE_DIGEST = f"sha256:{'1' * 64}"
+
+
+def write_release_artifacts(report_path) -> dict[str, str]:
+    samples = b"".join(
+        (
+            json.dumps(
+                {
+                    "sample_index": index,
+                    "idle_peak_memory_mb": 420,
+                    "business_peak_memory_mb": 610,
+                    "agent_peak_memory_mb": 1320,
+                    "request_ms": 9000,
+                    "model_stage_count": 2,
+                    "input_tokens": 4500,
+                    "output_tokens": 900,
+                    "estimated_cost_eur": 0.02,
+                    "sqlite_snapshot_ms": 120,
+                    "short_write_baseline_ms": 35,
+                    "short_write_with_agent_ms": 70,
+                    "language_quality_passed": True,
+                },
+                separators=(",", ":"),
+            ).encode("utf-8")
+            + b"\n"
+        )
+        for index in range(1, 21)
+    )
+    adapter_cases = json.dumps(
+        {
+            "cases": [
+                {"case": name, "passed": True}
+                for name in (
+                    "structured_output",
+                    "timeout",
+                    "rate_limit",
+                    "server_error",
+                    "authentication",
+                    "balance",
+                    "invalid_output",
+                    "safety_release_gate",
+                    "secrets_redacted",
+                    "business_content_redacted",
+                )
+            ]
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
+    transaction_trace = b"".join(
+        (
+            json.dumps(
+                {
+                    "sample_index": index,
+                    "observed_model_calls": 2,
+                    "observed_short_write_overlaps": 1,
+                    "model_calls_outside_sqlite_transactions": True,
+                },
+                separators=(",", ":"),
+            ).encode("utf-8")
+            + b"\n"
+        )
+        for index in range(1, 21)
+    )
+    artifacts = {
+        "samples.jsonl": samples,
+        "adapter-cases.json": adapter_cases,
+        "transaction-trace.jsonl": transaction_trace,
+    }
+    for filename, content in artifacts.items():
+        (report_path.parent / filename).write_bytes(content)
+    return {
+        filename: sha256(content).hexdigest()
+        for filename, content in artifacts.items()
+    }
+
 
 def approved_report(settings: Settings) -> dict[str, object]:
+    report_path = settings.agent_release_report_path
+    assert report_path is not None
+    artifact_hashes = {
+        filename: sha256((report_path.parent / filename).read_bytes()).hexdigest()
+        for filename in (
+            "samples.jsonl",
+            "adapter-cases.json",
+            "transaction-trace.jsonl",
+        )
+    }
     return {
         "schema_version": 1,
         "target": {
@@ -31,10 +117,12 @@ def approved_report(settings: Settings) -> dict[str, object]:
         "evidence": {
             "collected_at": "2026-07-27T12:00:00Z",
             "collector_version": "agent-release-v1",
-            "container_image_digest": f"sha256:{'1' * 64}",
-            "measurement_artifact_sha256": "2" * 64,
-            "adapter_cases_artifact_sha256": "3" * 64,
-            "transaction_trace_artifact_sha256": "4" * 64,
+            "container_image_digest": IMAGE_DIGEST,
+            "measurement_artifact_sha256": artifact_hashes["samples.jsonl"],
+            "adapter_cases_artifact_sha256": artifact_hashes["adapter-cases.json"],
+            "transaction_trace_artifact_sha256": artifact_hashes[
+                "transaction-trace.jsonl"
+            ],
         },
         "measurements": {
             "serial_sample_count": 20,
@@ -74,6 +162,7 @@ def approved_report(settings: Settings) -> dict[str, object]:
 
 
 def production_settings(report_path) -> Settings:
+    write_release_artifacts(report_path)
     return Settings(
         _env_file=None,
         environment="production",
@@ -93,6 +182,7 @@ def production_settings(report_path) -> Settings:
         fallback_model_input_cost_per_million=3,
         fallback_model_output_cost_per_million=4,
         agent_release_report_path=str(report_path),
+        agent_runtime_image_digest=IMAGE_DIGEST,
     )
 
 
@@ -173,6 +263,27 @@ def test_release_report_requires_auditable_evidence_artifacts(tmp_path) -> None:
 
     assert status.approved is False
     assert status.blockers == ["release report is invalid"]
+
+
+def test_release_report_verifies_artifact_hashes_and_runtime_image(tmp_path) -> None:
+    report_path = tmp_path / "agent-release.json"
+    settings = production_settings(report_path)
+    report_path.write_text(json.dumps(approved_report(settings)), encoding="utf-8")
+    (tmp_path / "samples.jsonl").write_text("{}\n", encoding="utf-8")
+
+    changed_artifact = agent_release_status(settings)
+    wrong_image = agent_release_status(
+        settings.model_copy(
+            update={"agent_runtime_image_digest": f"sha256:{'9' * 64}"}
+        )
+    )
+
+    assert changed_artifact.approved is False
+    assert changed_artifact.blockers == [
+        "release evidence artifact hash does not match: samples.jsonl"
+    ]
+    assert wrong_image.approved is False
+    assert "runtime image does not match the evaluated image" in wrong_image.blockers
 
 
 def test_release_sample_summary_uses_nearest_rank_p95_and_preserves_maxima() -> None:

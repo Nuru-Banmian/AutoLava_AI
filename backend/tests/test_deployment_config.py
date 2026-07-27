@@ -114,6 +114,9 @@ def test_compose_contains_exactly_api_and_web_with_persistent_sqlite_data() -> N
         "AUTOLAVA_AGENT_RELEASE_REPORT_PATH": (
             "${AUTOLAVA_AGENT_RELEASE_REPORT_PATH:-}"
         ),
+        "AUTOLAVA_AGENT_RUNTIME_IMAGE_DIGEST": (
+            "${AUTOLAVA_AGENT_RUNTIME_IMAGE_DIGEST:-}"
+        ),
     }
     assert api["volumes"] == ["autolava_data:/data"]
     assert "ports" not in api
@@ -298,6 +301,7 @@ def test_environment_example_and_readme_document_sqlite_release_operations() -> 
         "AUTOLAVA_MODEL_API_KEY",
         "AUTOLAVA_AGENT_EVIDENCE_BATCH_LIMIT",
         "AUTOLAVA_AGENT_RELEASE_REPORT_PATH",
+        "AUTOLAVA_AGENT_RUNTIME_IMAGE_DIGEST",
     ):
         assert f"{key}=" in environment
     assert "AUTOLAVA_MODEL_API_KEY=\n" in environment

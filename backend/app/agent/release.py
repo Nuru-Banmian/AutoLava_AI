@@ -2,6 +2,7 @@ from datetime import datetime
 from hashlib import sha256
 import json
 from math import ceil
+from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -91,6 +92,36 @@ class ReleaseSample(ClosedModel):
     language_quality_passed: bool
 
 
+AdapterCaseName = Literal[
+    "structured_output",
+    "timeout",
+    "rate_limit",
+    "server_error",
+    "authentication",
+    "balance",
+    "invalid_output",
+    "safety_release_gate",
+    "secrets_redacted",
+    "business_content_redacted",
+]
+
+
+class AdapterCaseResult(ClosedModel):
+    case: AdapterCaseName
+    passed: bool
+
+
+class AdapterCasesArtifact(ClosedModel):
+    cases: list[AdapterCaseResult] = Field(min_length=10, max_length=10)
+
+
+class TransactionTraceSample(ClosedModel):
+    sample_index: int = Field(ge=1)
+    observed_model_calls: int = Field(ge=1)
+    observed_short_write_overlaps: int = Field(ge=1)
+    model_calls_outside_sqlite_transactions: bool
+
+
 class ReleaseChecks(ClosedModel):
     language_quality: bool
     structured_output: bool
@@ -125,7 +156,7 @@ class AgentReleaseReport(ClosedModel):
 class AgentReleaseStatus(ClosedModel):
     approved: bool
     blockers: list[str]
-    approval_id: str | None = None
+    approved_report_sha256: str | None = None
 
 
 APPROVED_THRESHOLDS = ReleaseThresholds(
@@ -138,6 +169,17 @@ APPROVED_THRESHOLDS = ReleaseThresholds(
     short_write_with_agent_p95_ms=200,
     short_write_slowdown_max=3,
 )
+MEASUREMENT_ARTIFACT = "samples.jsonl"
+ADAPTER_CASES_ARTIFACT = "adapter-cases.json"
+TRANSACTION_TRACE_ARTIFACT = "transaction-trace.jsonl"
+FAILURE_CASES = {
+    "timeout",
+    "rate_limit",
+    "server_error",
+    "authentication",
+    "balance",
+    "invalid_output",
+}
 
 
 def summarize_release_samples(samples: list[ReleaseSample]) -> ReleaseMeasurements:
@@ -246,6 +288,92 @@ def _report_blockers(report: AgentReleaseReport) -> list[str]:
     return blockers
 
 
+def _release_artifact_blockers(
+    report: AgentReleaseReport,
+    report_path: Path,
+) -> list[str]:
+    artifact_specs = (
+        (
+            MEASUREMENT_ARTIFACT,
+            report.evidence.measurement_artifact_sha256,
+        ),
+        (
+            ADAPTER_CASES_ARTIFACT,
+            report.evidence.adapter_cases_artifact_sha256,
+        ),
+        (
+            TRANSACTION_TRACE_ARTIFACT,
+            report.evidence.transaction_trace_artifact_sha256,
+        ),
+    )
+    raw_artifacts: dict[str, bytes] = {}
+    blockers: list[str] = []
+    for filename, expected_sha256 in artifact_specs:
+        try:
+            raw = (report_path.parent / filename).read_bytes()
+        except OSError:
+            blockers.append(f"release evidence artifact is missing: {filename}")
+            continue
+        if sha256(raw).hexdigest() != expected_sha256:
+            blockers.append(f"release evidence artifact hash does not match: {filename}")
+            continue
+        raw_artifacts[filename] = raw
+    if blockers:
+        return blockers
+
+    try:
+        samples = [
+            ReleaseSample.model_validate_json(line)
+            for line in raw_artifacts[MEASUREMENT_ARTIFACT].splitlines()
+            if line.strip()
+        ]
+        measured = summarize_release_samples(samples)
+        adapter_artifact = AdapterCasesArtifact.model_validate_json(
+            raw_artifacts[ADAPTER_CASES_ARTIFACT]
+        )
+        transaction_samples = [
+            TransactionTraceSample.model_validate_json(line)
+            for line in raw_artifacts[TRANSACTION_TRACE_ARTIFACT].splitlines()
+            if line.strip()
+        ]
+    except (UnicodeError, json.JSONDecodeError, ValidationError, ValueError):
+        return ["release evidence artifact is invalid"]
+
+    if measured != report.measurements:
+        blockers.append("release measurements do not match the sample artifact")
+    case_results = {item.case: item.passed for item in adapter_artifact.cases}
+    if len(case_results) != len(adapter_artifact.cases):
+        blockers.append("release Adapter cases contain duplicates")
+        return blockers
+    expected_cases = set(AdapterCaseName.__args__)
+    if set(case_results) != expected_cases:
+        blockers.append("release Adapter cases are incomplete")
+        return blockers
+    expected_indexes = list(range(1, len(transaction_samples) + 1))
+    if (
+        not transaction_samples
+        or [item.sample_index for item in transaction_samples] != expected_indexes
+        or len(transaction_samples) != len(samples)
+    ):
+        blockers.append("release transaction traces do not match the sample sequence")
+        return blockers
+    derived_checks = ReleaseChecks(
+        language_quality=all(sample.language_quality_passed for sample in samples),
+        structured_output=case_results["structured_output"],
+        failure_semantics=all(case_results[name] for name in FAILURE_CASES),
+        model_calls_outside_sqlite_transactions=all(
+            sample.model_calls_outside_sqlite_transactions
+            for sample in transaction_samples
+        ),
+        safety_release_gate=case_results["safety_release_gate"],
+        secrets_redacted=case_results["secrets_redacted"],
+        business_content_redacted=case_results["business_content_redacted"],
+    )
+    if derived_checks != report.checks:
+        blockers.append("release checks do not match the evidence artifacts")
+    return blockers
+
+
 def _runtime_profile_matches(settings: Settings, profile: ReleaseProfile) -> bool:
     try:
         runtime_profile = ReleaseProfile.from_settings(settings)
@@ -299,11 +427,14 @@ def agent_release_status(settings: Settings) -> AgentReleaseStatus:
             approved=False, blockers=["release report is invalid"]
         )
     blockers = _report_blockers(report)
+    blockers.extend(_release_artifact_blockers(report, path))
     if settings.model_adapter != "openai_compatible":
         blockers.append("production release requires openai_compatible adapter")
     if not _runtime_profile_matches(settings, report.profile):
         blockers.append("runtime model profile does not match the evaluated profile")
-    approval_id = None
+    if settings.agent_runtime_image_digest != report.evidence.container_image_digest:
+        blockers.append("runtime image does not match the evaluated image")
+    approved_report_sha256 = None
     if not blockers:
         canonical_report = json.dumps(
             report.model_dump(mode="json"),
@@ -311,9 +442,9 @@ def agent_release_status(settings: Settings) -> AgentReleaseStatus:
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
-        approval_id = sha256(canonical_report).hexdigest()
+        approved_report_sha256 = sha256(canonical_report).hexdigest()
     return AgentReleaseStatus(
         approved=not blockers,
         blockers=blockers,
-        approval_id=approval_id,
+        approved_report_sha256=approved_report_sha256,
     )

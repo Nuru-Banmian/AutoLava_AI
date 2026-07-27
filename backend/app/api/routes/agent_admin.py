@@ -42,8 +42,8 @@ def _is_enabled_for_release(
     if runtime.environment.lower() != "production":
         return True
     return (
-        release.approval_id is not None
-        and stored.release_approval_id == release.approval_id
+        release.approved_report_sha256 is not None
+        and stored.approved_report_sha256 == release.approved_report_sha256
     )
 
 
@@ -74,8 +74,8 @@ async def patch_agent_settings(
         if body.enabled and not release.approved:
             raise HTTPException(409, "Agent 发布门禁尚未通过，保持全局关闭")
         stored = await _stored_agent_settings(session)
-        approval_id = (
-            release.approval_id
+        approved_report_sha256 = (
+            release.approved_report_sha256
             if body.enabled and runtime.environment.lower() == "production"
             else None
         )
@@ -83,10 +83,10 @@ async def patch_agent_settings(
             stored = AgentSettings(
                 id=1,
                 enabled=body.enabled,
-                release_approval_id=approval_id,
+                approved_report_sha256=approved_report_sha256,
             )
             session.add(stored)
         else:
             stored.enabled = body.enabled
-            stored.release_approval_id = approval_id
+            stored.approved_report_sha256 = approved_report_sha256
     return {"enabled": body.enabled, "release_approved": release.approved}

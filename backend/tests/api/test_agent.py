@@ -181,14 +181,14 @@ async def test_production_release_requires_owner_enablement_for_the_approved_rep
 
     from app.api.routes import agent_admin
 
-    approval_id = "a" * 64
+    approved_report_sha256 = "a" * 64
     monkeypatch.setattr(
         agent_admin,
         "agent_release_status",
         lambda _settings: AgentReleaseStatus(
             approved=True,
             blockers=[],
-            approval_id=approval_id,
+            approved_report_sha256=approved_report_sha256,
         ),
     )
     production = get_settings().model_copy(update={"environment": "production"})
@@ -204,7 +204,7 @@ async def test_production_release_requires_owner_enablement_for_the_approved_rep
     assert stale.json() == {"enabled": False, "release_approved": True}
     assert enabled.json() == {"enabled": True, "release_approved": True}
     assert stored is not None
-    assert stored.release_approval_id == approval_id
+    assert stored.approved_report_sha256 == approved_report_sha256
 
 
 async def test_agent_route_builds_trusted_runtime_context_for_current_store(

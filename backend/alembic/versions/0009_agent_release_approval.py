@@ -16,10 +16,10 @@ depends_on = None
 def upgrade() -> None:
     with op.batch_alter_table("agent_settings") as batch_op:
         batch_op.add_column(
-            sa.Column("release_approval_id", sa.String(length=64), nullable=True)
+            sa.Column("approved_report_sha256", sa.String(length=64), nullable=True)
         )
 
 
 def downgrade() -> None:
     with op.batch_alter_table("agent_settings") as batch_op:
-        batch_op.drop_column("release_approval_id")
+        batch_op.drop_column("approved_report_sha256")

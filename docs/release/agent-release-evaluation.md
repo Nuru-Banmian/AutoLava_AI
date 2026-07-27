@@ -35,8 +35,10 @@
      > /data/release-evidence/agent-release-sample.schema.json
    ```
 
-4. 先预热，再串行执行 20 个样本。每轮分别用 `docker stats --no-stream` 采集空闲、
-   普通业务和 Agent 阶段内存；用单调时钟记录完整请求、SQLite 快照和短写耗时；从
+4. 先预热，再串行执行 20 个样本。每个空闲、普通业务和 Agent 阶段开始前启动连续
+   `docker stats --format '{{json .}}' <container>` 采集，阶段结束后停止采集器；按
+   `MemUsage` 每秒样本取该阶段最大值，不能用 `--no-stream` 单点值冒充峰值。用单调
+   时钟记录完整请求、SQLite 快照和短写耗时；从
    Agent run statistics 记录模型阶段次数、输入/输出 Token 与估算费用。先在无 Agent
    时测一个短写基线，再启动一个 Agent 请求，并只在其取证阶段重叠一个同样的短写。
    每轮写入一行脱敏 `samples.jsonl`，字段必须通过上一步 Schema；不得记录问题、
@@ -49,7 +51,9 @@
    对固定中文评估问法逐项检查语言是否自然、结论是否清楚、限制说明是否完整、是否
    泄露技术 JSON；20 个样本必须全部通过，语言质量通过率为 100%。
 
-6. 由仓库脚本按固定的 nearest-rank 方法计算 p95，并对三份原始脱敏证据生成摘要：
+6. 将 `samples.jsonl`、`adapter-cases.json` 和 `transaction-trace.jsonl` 与最终报告
+   放在同一目录。由仓库脚本按固定的 nearest-rank 方法计算 p95，并对三份原始脱敏
+   证据生成摘要：
 
    ```sh
    python -m app.scripts.evaluate_agent_release \
@@ -59,8 +63,9 @@
    sha256sum /data/release-evidence/transaction-trace.jsonl
    ```
 
-   报告必须保存候选镜像摘要、采集时间、collector 版本和上述三个 SHA-256。任何原始
-   证据缺失、散列不匹配或样本序号不连续，都不得签发报告。
+   报告必须保存候选镜像摘要、采集时间、collector 版本和上述三个 SHA-256。运行时
+   门禁会重新读取三份文件、核对散列、重算 measurements、从 Adapter cases 和事务
+   轨迹重建 checks，并拒绝缺失文件、重复/缺失用例、样本序号不连续或任何不一致。
 
 7. 用下列命令导出不含 Secret 或经营内容字段的报告 JSON Schema，并生成当前主备端点、
    结构化输出方式、thinking 参数、价格、超时、Token 和批量配置的 SHA-256 指纹。
@@ -72,9 +77,11 @@
    python -m app.scripts.evaluate_agent_release --report /data/agent-release-report.json
    ```
 
-8. 命令退出码为 `0` 且输出 `approved: true` 后，才把
-   `AUTOLAVA_AGENT_RELEASE_REPORT_PATH` 设置为该报告路径并重启。报告中的供应商、
+8. 部署候选镜像时，把步骤 3 的不可变 `sha256:...` 摘要注入
+   `AUTOLAVA_AGENT_RUNTIME_IMAGE_DIGEST`。命令退出码为 `0` 且输出 `approved: true`
+   后，才把 `AUTOLAVA_AGENT_RELEASE_REPORT_PATH` 设置为该报告路径并重启。报告中的供应商、
    模型、主备 Adapter 完整非密钥配置、超时、Token 和批量上限必须与运行配置一致。
+   运行镜像摘要也必须与报告一致；发布新镜像必须重新评估，不能复用旧报告。
    重启后 Agent 仍保持关闭；最终管理员必须在管理中心对这个已批准报告重新执行一次
    “启用”。报告内容或运行配置变化会使该启用绑定失效，必须重新评估并再次显式启用。
 

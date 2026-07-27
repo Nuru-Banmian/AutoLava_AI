@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     fallback_model_output_cost_per_million: float | None = None
     agent_evidence_batch_limit: int = Field(default=1, ge=1, le=2)
     agent_release_report_path: Path | None = None
+    agent_runtime_image_digest: str = ""
 
     @field_validator("agent_release_report_path", mode="before")
     @classmethod
