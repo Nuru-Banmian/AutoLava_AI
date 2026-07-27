@@ -112,6 +112,12 @@ release notes so later Agent or automation design uses measured remaining memory
 
 ## Verification
 
+The stable local verification interface is documented in
+[`docs/development/verification.md`](docs/development/verification.md). From the repository root,
+run `npm run verify:quick`, `npm run verify:agent`, `npm run verify:full`, or
+`npm run verify:release`; these commands synchronize the committed lockfiles and use only the
+deterministic Fake model.
+
 Backend checks use a disposable SQLite file:
 
 ```powershell

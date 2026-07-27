@@ -13,84 +13,133 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  AUTOLAVA_MODEL_ADAPTER: fake
+  AUTOLAVA_JWT_SECRET: ci-only-jwt-secret-with-at-least-32-bytes
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
 jobs:
-  backend:
-    name: backend
+  backend-static:
+    name: Backend static checks
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    env:
-      AUTOLAVA_DATABASE_PATH: /tmp/autolava-ci.sqlite3
-      AUTOLAVA_JWT_SECRET: ci-only-jwt-secret-with-at-least-32-bytes
-      AUTOLAVA_MODEL_ADAPTER: fake
-      PIP_DISABLE_PIP_VERSION_CHECK: "1"
-    defaults:
-      run:
-        working-directory: backend
+    timeout-minutes: 5
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: backend/pyproject.toml
+          enable-cache: true
+      - run: uv sync --project backend --frozen --extra dev
+      - run: >-
+          uv run --project backend ruff format --check
+          backend/app/core/security.py backend/tests/conftest.py
+          backend/tests/test_development_feedback.py
+      - run: uv run --project backend ruff check backend
+      - run: >-
+          uv run --project backend mypy backend/app/agent/contracts.py
+          backend/app/agent/conversation.py backend/app/agent/runtime.py
+          backend/app/agent/service.py
+          backend/app/api/routes/agent.py backend/app/api/routes/agent_admin.py
+      - run: uv run --project backend alembic upgrade head
+        working-directory: backend
+        env:
+          AUTOLAVA_DATABASE_PATH: /tmp/autolava-ci.sqlite3
 
-      - name: Install dependencies
-        run: python -m pip install -e ".[dev]"
-
-      - name: Validate database migrations
-        run: python -m alembic upgrade head
-
-      - name: Lint
-        run: python -m ruff check .
-
-      - name: Run Agent safety release veto gate
-        run: python -m pytest -m agent_release_gate --strict-markers
-
-      - name: Test
-        run: python -m pytest -n 2 --dist loadscope --cov=app --cov-report=term-missing
-
-  frontend:
-    name: frontend
+  backend-agent:
+    name: Agent backend tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      CI: "true"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv sync --project backend --frozen --extra dev
+      - name: Run Agent tests
+        working-directory: backend
+        run: >-
+          uv run pytest --strict-markers --strict-config -n 2 --dist loadscope
+          --cov=app --cov-report= --cov-config=pyproject.toml
+          --cov-context=test
+          -m "not agent_release_gate"
+          tests/agent tests/api/test_agent*.py
+      - name: Run Agent safety release veto gate once
+        working-directory: backend
+        run: >-
+          uv run pytest --strict-markers --strict-config
+          --cov=app --cov-report= --cov-config=pyproject.toml --cov-append
+          -m agent_release_gate
+      - run: mv backend/.coverage backend/.coverage.agent
+      - uses: actions/upload-artifact@v7
+        with:
+          name: backend-coverage-agent
+          path: backend/.coverage.agent
+          include-hidden-files: true
+          retention-days: 1
+
+  backend-non-agent:
+    name: Non-Agent backend tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv sync --project backend --frozen --extra dev
+      - name: Run non-Agent tests without release veto duplication
+        working-directory: backend
+        run: >-
+          uv run pytest --strict-markers --strict-config -n 2 --dist loadscope
+          --ignore=tests/agent --ignore=tests/release
+          --ignore-glob=tests/api/test_agent*.py
+          -m "not agent_release_gate"
+          --cov=app --cov-report= --cov-config=pyproject.toml
+      - run: mv backend/.coverage backend/.coverage.non-agent
+      - uses: actions/upload-artifact@v7
+        with:
+          name: backend-coverage-non-agent
+          path: backend/.coverage.non-agent
+          include-hidden-files: true
+          retention-days: 1
+
+  frontend-unit-build:
+    name: Frontend unit and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: frontend
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run check:ci
+      - run: npm test
+      - run: npm run build
+      - run: npm run test:agent-release-manifest
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run unit tests
-        run: npm test
-
-      - name: Build
-        run: npm run build
-
-      - name: Validate Agent release Playwright coverage
-        run: npm run test:agent-release-manifest
-
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
-
-      - name: Run end-to-end tests
-        run: npm run test:e2e
-
-      - name: Upload Playwright diagnostics
+  frontend-e2e:
+    name: Frontend end-to-end
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - name: Upload redacted Playwright diagnostics
         if: ${{ failure() && !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
@@ -98,3 +147,44 @@ jobs:
           path: frontend/test-results
           if-no-files-found: ignore
           retention-days: 7
+
+  ci-summary:
+    name: CI summary
+    if: ${{ always() }}
+    needs:
+      - backend-static
+      - backend-agent
+      - backend-non-agent
+      - frontend-unit-build
+      - frontend-e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --project backend --frozen --extra dev
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: backend-coverage-*
+          path: backend
+          merge-multiple: true
+      - name: Merge coverage and enforce the overall floor
+        working-directory: backend
+        run: |
+          uv run coverage combine
+          uv run coverage report --fail-under=85
+      - name: Require every deterministic lane
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        shell: python
+        run: |
+          import json
+          import os
+          import sys
+
+          results = {
+              name: lane["result"]
+              for name, lane in json.loads(os.environ["NEEDS_JSON"]).items()
+          }
+          print(json.dumps(results, sort_keys=True))
+          sys.exit(0 if all(result == "success" for result in results.values()) else 1)

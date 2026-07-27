@@ -242,21 +242,28 @@ def test_ci_runs_backend_and_frontend_checks_without_containers() -> None:
     ci_text = read(".github/workflows/ci.yml")
     workflow = yaml.safe_load(ci_text)
     jobs = workflow["jobs"]
-    assert set(jobs) == {"backend", "frontend"}
+    required = {
+        "backend-static",
+        "backend-agent",
+        "backend-non-agent",
+        "frontend-unit-build",
+        "frontend-e2e",
+        "ci-summary",
+    }
+    assert required <= jobs.keys()
 
-    backend = jobs["backend"]
-    frontend = jobs["frontend"]
-    backend_commands = [step["run"] for step in backend["steps"] if "run" in step]
-    frontend_commands = [step["run"] for step in frontend["steps"] if "run" in step]
-
-    assert "services" not in backend
-    assert "services" not in frontend
-    assert backend["env"]["AUTOLAVA_DATABASE_PATH"] == "/tmp/autolava-ci.sqlite3"
-    assert any('pip install -e ".[dev]"' in command for command in backend_commands)
-    assert any("alembic upgrade head" in command for command in backend_commands)
-    assert any("ruff check ." in command for command in backend_commands)
-    assert any("pytest -n 2 --dist loadscope" in command for command in backend_commands)
-    assert any("--cov=app --cov-report=term-missing" in command for command in backend_commands)
+    all_commands = [
+        step["run"]
+        for job in jobs.values()
+        for step in job["steps"]
+        if "run" in step
+    ]
+    for job in jobs.values():
+        assert "services" not in job
+    assert any("uv sync --project backend --frozen" in command for command in all_commands)
+    assert any("alembic upgrade head" in command for command in all_commands)
+    assert any("ruff check backend" in command for command in all_commands)
+    assert any("--cov=app" in command for command in all_commands)
 
     for contract in (
         "npm ci",
@@ -265,7 +272,7 @@ def test_ci_runs_backend_and_frontend_checks_without_containers() -> None:
         "playwright install --with-deps chromium",
         "npm run test:e2e",
     ):
-        assert any(contract in command for command in frontend_commands)
+        assert any(contract in command for command in all_commands)
 
 
 def test_ci_does_not_execute_container_release_or_runtime_checks() -> None:

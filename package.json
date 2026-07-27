@@ -1,0 +1,10 @@
+{
+  "name": "autolava-development",
+  "private": true,
+  "scripts": {
+    "verify:quick": "python scripts/verify.py quick",
+    "verify:agent": "python scripts/verify.py agent",
+    "verify:full": "python scripts/verify.py full",
+    "verify:release": "python scripts/verify.py release"
+  }
+}

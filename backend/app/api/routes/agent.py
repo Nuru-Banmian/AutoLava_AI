@@ -126,19 +126,19 @@ async def run_agent_turn(
             store_id=authorized_store_id,
             capability="analytics.view",
         )
-        conversation = await get_conversation_by_id(
+        current_conversation = await get_conversation_by_id(
             session,
             conversation_id=conversation_id,
             user_id=user_id,
             store_id=authorized_store_id,
         )
-        if conversation is None:
+        if current_conversation is None:
             raise HTTPException(409, "当前对话已被重置")
-        conversation.state = run_result.state.model_dump(mode="json")
+        current_conversation.state = run_result.state.model_dump(mode="json")
         if run_result.evidence is not None:
             session.add(
                 AgentEvidence(
-                    conversation_id=conversation.id,
+                    conversation_id=current_conversation.id,
                     payload=run_result.evidence.model_dump(mode="json"),
                 )
             )

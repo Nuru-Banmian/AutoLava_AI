@@ -26,12 +26,13 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "pytest",
-  "pytest-asyncio",
-  "pytest-cov",
-  "pytest-xdist",
-  "pyyaml",
-  "respx",
+  "mypy==1.19.1",
+  "pytest==9.0.2",
+  "pytest-asyncio==1.3.0",
+  "pytest-cov==7.0.0",
+  "pytest-xdist==3.8.0",
+  "pyyaml==6.0.3",
+  "respx==0.22.0",
   "ruff==0.15.22",
 ]
 
@@ -41,11 +42,31 @@ asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
 markers = [
+  "agent: tests for the Agent HTTP seam and its domain capabilities",
   "agent_release_gate: high-risk Agent evaluation cases that veto a release",
+  "slow: deterministic tests that are intentionally excluded from quick feedback",
 ]
+addopts = ["--strict-markers", "--strict-config"]
 
 [tool.ruff]
 line-length = 100
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = [
+  "app.agent.business_evidence",
+  "app.agent.model",
+  "app.agent.release",
+  "app.agent.workflow",
+]
+ignore_errors = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]

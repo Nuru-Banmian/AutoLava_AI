@@ -188,19 +188,23 @@ def test_ci_runs_the_fake_only_agent_release_veto_gate() -> None:
             encoding="utf-8"
         )
     )
-    backend = workflow["jobs"]["backend"]
-    commands = [step["run"] for step in backend["steps"] if "run" in step]
+    commands = [
+        step["run"]
+        for job in workflow["jobs"].values()
+        for step in job["steps"]
+        if "run" in step
+    ]
 
-    assert backend["env"]["AUTOLAVA_MODEL_ADAPTER"] == "fake"
-    assert not any("MODEL_API_KEY" in key for key in backend["env"])
-    assert any(
-        "pytest -m agent_release_gate --strict-markers" in command
-        for command in commands
-    )
+    assert workflow["env"]["AUTOLAVA_MODEL_ADAPTER"] == "fake"
+    assert not any("MODEL_API_KEY" in key for key in workflow["env"])
+    assert sum("-m agent_release_gate" in command for command in commands) == 1
 
-    frontend = workflow["jobs"]["frontend"]
     frontend_commands = [
-        step["run"] for step in frontend["steps"] if "run" in step
+        step["run"]
+        for name, job in workflow["jobs"].items()
+        if name.startswith("frontend-")
+        for step in job["steps"]
+        if "run" in step
     ]
     package = json.loads(
         (REPOSITORY_ROOT / "frontend" / "package.json").read_text(encoding="utf-8")

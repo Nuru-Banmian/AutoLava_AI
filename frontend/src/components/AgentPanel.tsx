@@ -1,14 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, type FormEvent } from "react";
+import { type FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-import { api, ApiError } from "@/api/client";
-import type {
-  AgentConversation,
-  AgentStatus,
-  AgentTurnResult,
-} from "@/api/types";
-import { Button } from "@/components/ui/button";
+import { ApiError, api } from "@/api/client";
+import type { AgentConversation, AgentStatus, AgentTurnResult } from "@/api/types";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -20,6 +15,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
 import { validatedBusinessRecordsAction } from "@/navigation/agent-actions";
 
 const emptyConversation: AgentConversation = {
@@ -36,8 +32,7 @@ const emptyConversation: AgentConversation = {
   updated_at: null,
 };
 
-const conversationKey = (storeId: number) =>
-  ["agent", "conversation", storeId] as const;
+const conversationKey = (storeId: number) => ["agent", "conversation", storeId] as const;
 
 function currentMonthInTimezone(timezone: string): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -49,13 +44,7 @@ function currentMonthInTimezone(timezone: string): string {
   return `${value.year}-${value.month}`;
 }
 
-export function AgentPanel({
-  storeId,
-  timezone = "UTC",
-}: {
-  storeId: number;
-  timezone?: string;
-}) {
+export function AgentPanel({ storeId, timezone = "UTC" }: { storeId: number; timezone?: string }) {
   const client = useQueryClient();
   const navigate = useNavigate();
   const [question, setQuestion] = useState("");
@@ -74,18 +63,14 @@ export function AgentPanel({
   const currentConversation = useQuery({
     queryKey: conversationKey(storeId),
     enabled: status.data?.enabled === true,
-    queryFn: () =>
-      api<AgentConversation>(`/agent/stores/${storeId}/conversation`),
+    queryFn: () => api<AgentConversation>(`/agent/stores/${storeId}/conversation`),
   });
   const turn = useMutation({
     mutationFn: async (input: { storeId: number; question: string }) => {
-      const result = await api<AgentTurnResult>(
-        `/agent/stores/${input.storeId}/turn`,
-        {
-          method: "POST",
-          body: JSON.stringify({ question: input.question }),
-        },
-      );
+      const result = await api<AgentTurnResult>(`/agent/stores/${input.storeId}/turn`, {
+        method: "POST",
+        body: JSON.stringify({ question: input.question }),
+      });
       setStage({ storeId: input.storeId, value: "organizing" });
       await new Promise((resolve) => window.setTimeout(resolve, 150));
       return { result, storeId: input.storeId };
@@ -96,10 +81,7 @@ export function AgentPanel({
       setQuestion("");
     },
     onSuccess: ({ result, storeId: requestedStoreId }) => {
-      client.setQueryData(
-        conversationKey(requestedStoreId),
-        result.conversation,
-      );
+      client.setQueryData(conversationKey(requestedStoreId), result.conversation);
       setPendingQuestion(null);
       setStage(null);
     },
@@ -163,7 +145,9 @@ export function AgentPanel({
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
-          <h2 className="font-medium" id="agent-panel-title">门店 Agent</h2>
+          <h2 className="font-medium" id="agent-panel-title">
+            门店 Agent
+          </h2>
           <p className="text-sm text-muted-foreground">
             针对当前门店提问；需要经营证据的查询将在后续切片开放。
           </p>
@@ -206,18 +190,18 @@ export function AgentPanel({
                 className="min-w-0 break-words rounded-lg bg-muted/50 p-3 text-sm"
                 key={message.id}
               >
-                <span className="font-medium">
-                  {message.role === "user" ? "你" : "Agent"}：
-                </span>
+                <span className="font-medium">{message.role === "user" ? "你" : "Agent"}：</span>
                 {message.content}
                 {message.role === "assistant" && action && (
                   <div className="mt-3">
                     <Button
                       type="button"
                       variant="outline"
-                      onClick={() => navigate("/database", {
-                        state: { agentBusinessRecordsAction: action },
-                      })}
+                      onClick={() =>
+                        navigate("/database", {
+                          state: { agentBusinessRecordsAction: action },
+                        })
+                      }
                     >
                       查看营业记录
                     </Button>

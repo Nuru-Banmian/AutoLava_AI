@@ -17,9 +17,15 @@ def _long_password_digest(password: str) -> bytes:
 def hash_password(password: str) -> str:
     encoded = password.encode()
     if len(encoded) > 72:
-        hashed = bcrypt.hashpw(_long_password_digest(password), bcrypt.gensalt()).decode()
+        hashed = bcrypt.hashpw(
+            _long_password_digest(password),
+            bcrypt.gensalt(rounds=PRODUCTION_BCRYPT_ROUNDS),
+        ).decode()
         return f"{_LONG_PASSWORD_PREFIX}{hashed}"
-    return bcrypt.hashpw(encoded, bcrypt.gensalt()).decode()
+    return bcrypt.hashpw(
+        encoded,
+        bcrypt.gensalt(rounds=PRODUCTION_BCRYPT_ROUNDS),
+    ).decode()
 
 
 def verify_password(password: str, password_hash: str) -> bool:
@@ -53,3 +59,6 @@ def decode_access_token(token: str) -> int:
         return int(payload["sub"])
     except (KeyError, TypeError, ValueError) as exc:
         raise jwt.InvalidTokenError("Invalid subject claim") from exc
+
+
+PRODUCTION_BCRYPT_ROUNDS = 12

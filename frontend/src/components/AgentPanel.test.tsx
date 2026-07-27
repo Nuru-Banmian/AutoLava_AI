@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { http, HttpResponse } from "msw";
+import { HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
@@ -32,7 +32,11 @@ function renderPanel(storeId = 7) {
 
 function LocationProbe() {
   const location = useLocation();
-  return <div aria-label="当前位置">{location.pathname}|{JSON.stringify(location.state)}</div>;
+  return (
+    <section aria-label="当前位置">
+      {location.pathname}|{JSON.stringify(location.state)}
+    </section>
+  );
 }
 
 const emptyState = {
@@ -49,11 +53,14 @@ function conversation(
     id: number;
     role: "user" | "assistant";
     content: string;
-    action?: {
-      type: "open_business_records";
-      start_month: string;
-      end_month: string;
-    } | Record<string, unknown> | null;
+    action?:
+      | {
+          type: "open_business_records";
+          start_month: string;
+          end_month: string;
+        }
+      | Record<string, unknown>
+      | null;
   }> = [],
 ) {
   return {
@@ -69,15 +76,11 @@ function conversation(
 }
 
 it("shows no conversation entry while the global Agent switch is off", async () => {
-  server.use(
-    http.get("/api/agent/status", () => HttpResponse.json({ enabled: false })),
-  );
+  server.use(http.get("/api/agent/status", () => HttpResponse.json({ enabled: false })));
   renderPanel();
 
   expect(await screen.findByText("Agent 当前未启用")).toBeInTheDocument();
-  expect(
-    screen.queryByRole("textbox", { name: "向 Agent 提问" }),
-  ).not.toBeInTheDocument();
+  expect(screen.queryByRole("textbox", { name: "向 Agent 提问" })).not.toBeInTheDocument();
 });
 
 it("shows progress before revealing one complete direct answer", async () => {
@@ -87,9 +90,7 @@ it("shows progress before revealing one complete direct answer", async () => {
   });
   server.use(
     http.get("/api/agent/status", () => HttpResponse.json({ enabled: true })),
-    http.get("/api/agent/stores/7/conversation", () =>
-      HttpResponse.json(conversation(null)),
-    ),
+    http.get("/api/agent/stores/7/conversation", () => HttpResponse.json(conversation(null))),
     http.post("/api/agent/stores/7/turn", async () => {
       await pending;
       return HttpResponse.json({
@@ -104,10 +105,9 @@ it("shows progress before revealing one complete direct answer", async () => {
   );
   renderPanel();
 
-  fireEvent.change(
-    await screen.findByRole("textbox", { name: "向 Agent 提问" }),
-    { target: { value: "你能做什么？" } },
-  );
+  fireEvent.change(await screen.findByRole("textbox", { name: "向 Agent 提问" }), {
+    target: { value: "你能做什么？" },
+  });
   fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
 
   expect(screen.getByRole("status")).toHaveTextContent("正在理解问题");
@@ -115,18 +115,14 @@ it("shows progress before revealing one complete direct answer", async () => {
   release();
   expect(await screen.findByText("正在整理回答…")).toBeInTheDocument();
   expect(screen.queryByText(/完整回答/)).not.toBeInTheDocument();
-  expect(
-    await screen.findByText("这是一次性出现的完整回答。"),
-  ).toBeInTheDocument();
+  expect(await screen.findByText("这是一次性出现的完整回答。")).toBeInTheDocument();
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
 });
 
 it("renders a clarification as the completed turn and stays within its card", async () => {
   server.use(
     http.get("/api/agent/status", () => HttpResponse.json({ enabled: true })),
-    http.get("/api/agent/stores/7/conversation", () =>
-      HttpResponse.json(conversation(null)),
-    ),
+    http.get("/api/agent/stores/7/conversation", () => HttpResponse.json(conversation(null))),
     http.post("/api/agent/stores/7/turn", () =>
       HttpResponse.json({
         route: "clarify",
@@ -140,15 +136,12 @@ it("renders a clarification as the completed turn and stays within its card", as
   );
   renderPanel();
 
-  fireEvent.change(
-    await screen.findByRole("textbox", { name: "向 Agent 提问" }),
-    { target: { value: "帮我看看" } },
-  );
+  fireEvent.change(await screen.findByRole("textbox", { name: "向 Agent 提问" }), {
+    target: { value: "帮我看看" },
+  });
   fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
 
-  expect(
-    await screen.findByText("你想了解哪个时间范围？"),
-  ).toBeInTheDocument();
+  expect(await screen.findByText("你想了解哪个时间范围？")).toBeInTheDocument();
   expect(screen.getByRole("region", { name: "门店 Agent" })).toHaveClass(
     "min-w-0",
     "overflow-hidden",
@@ -257,9 +250,7 @@ it("requires irreversible confirmation before resetting the conversation", async
 
   await screen.findByText("即将删除的问题");
   fireEvent.click(screen.getByRole("button", { name: "重置对话" }));
-  expect(screen.getByRole("alertdialog")).toHaveTextContent(
-    "此操作不可恢复",
-  );
+  expect(screen.getByRole("alertdialog")).toHaveTextContent("此操作不可恢复");
   expect(resets).toBe(0);
   fireEvent.click(screen.getByRole("button", { name: "确认永久重置" }));
 
@@ -275,9 +266,7 @@ it("keeps an in-flight turn in its originating store cache after switching", asy
   });
   server.use(
     http.get("/api/agent/status", () => HttpResponse.json({ enabled: true })),
-    http.get("/api/agent/stores/7/conversation", () =>
-      HttpResponse.json(conversation(null)),
-    ),
+    http.get("/api/agent/stores/7/conversation", () => HttpResponse.json(conversation(null))),
     http.get("/api/agent/stores/8/conversation", () =>
       HttpResponse.json(
         conversation(8, [
@@ -299,10 +288,9 @@ it("keeps an in-flight turn in its originating store cache after switching", asy
     }),
   );
   const { client, rerender } = renderPanel(7);
-  fireEvent.change(
-    await screen.findByRole("textbox", { name: "向 Agent 提问" }),
-    { target: { value: "七号门店的问题" } },
-  );
+  fireEvent.change(await screen.findByRole("textbox", { name: "向 Agent 提问" }), {
+    target: { value: "七号门店的问题" },
+  });
   fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
 
   rerender(
@@ -318,11 +306,9 @@ it("keeps an in-flight turn in its originating store cache after switching", asy
   release();
   await waitFor(() =>
     expect(
-      client.getQueryData<ReturnType<typeof conversation>>([
-        "agent",
-        "conversation",
-        7,
-      ])?.messages.at(-1)?.content,
+      client
+        .getQueryData<ReturnType<typeof conversation>>(["agent", "conversation", 7])
+        ?.messages.at(-1)?.content,
     ).toBe("七号门店的回答"),
   );
   expect(screen.getByText("八号门店的回答")).toBeInTheDocument();
