@@ -24,6 +24,9 @@ from app.agent.runtime import RuntimeContext
 
 SAFE_FAILURE_MESSAGE = "模型服务暂时不可用，请稍后重试。"
 OPEN_BUSINESS_RECORDS_MESSAGE = "可查看所选月份的营业记录。"
+CAPABILITY_HELP_MESSAGE = (
+    "我可以说明能力范围，并基于当前门店的可验证证据回答经营问题。"
+)
 PLAN_REPAIR_FEEDBACK = (
     "The previous TurnPlan had a format, enum, or structural error. "
     "Return one corrected TurnPlan matching the schema. "
@@ -62,8 +65,14 @@ NEGATED_PERCENTAGE_TERMS = (
     "仅给金额",
     "仅看金额",
 )
-NAVIGATION_TARGET = re.compile(
-    r"(?:https?://|www\.|/api/|/database(?:[/?#\s]|$))",
+SAFE_DIRECT_ANSWER_QUESTION = re.compile(
+    r"^\s*(?:"
+    r"(?:请|麻烦)?(?:介绍|说明)(?:一下)?"
+    r"(?:你|agent|智能助手|助手)?(?:的)?(?:能力|功能|能力范围|功能范围)"
+    r"|(?:你|agent|智能助手|助手)?(?:能|可以|能够)"
+    r"(?:帮我)?(?:做|回答|处理|支持)(?:什么|哪些(?:事情|问题|功能)?)"
+    r"|(?:怎么|如何)(?:使用|用)(?:你|agent|智能助手|助手)"
+    r")\s*[?？。！!]*\s*$",
     re.IGNORECASE,
 )
 
@@ -200,9 +209,11 @@ class AgentTurnWorkflow:
         if plan.route == TurnRoute.CLARIFY:
             return {"result": TurnResult(route="clarify", content=plan.question or "")}
         if plan.route == TurnRoute.DIRECT_ANSWER:
-            if NAVIGATION_TARGET.search(plan.answer or ""):
+            if not _is_safe_direct_answer_question(state["messages"]):
                 return {"result": _safe_failure()}
-            return {"result": TurnResult(route="answer", content=plan.answer or "")}
+            return {
+                "result": TurnResult(route="answer", content=CAPABILITY_HELP_MESSAGE)
+            }
         if plan.route == TurnRoute.ACTION and plan.action is not None:
             current_month = datetime.now(
                 ZoneInfo(state["context"].store_timezone)
@@ -346,6 +357,14 @@ def _safe_failure_plan() -> TurnPlan:
 
 def _safe_failure() -> TurnResult:
     return TurnResult(route="safe_failure", content=SAFE_FAILURE_MESSAGE)
+
+
+def _is_safe_direct_answer_question(messages: Sequence[ModelMessage]) -> bool:
+    question = next(
+        (message.content for message in reversed(messages) if message.role == "user"),
+        "",
+    )
+    return bool(SAFE_DIRECT_ANSWER_QUESTION.fullmatch(question))
 
 
 def _validated_readable_answer(answer: str, evidence: CollectedEvidence) -> str:

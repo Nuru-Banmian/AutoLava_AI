@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from decimal import Decimal
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -28,6 +29,21 @@ import app.models.settlement  # noqa: F401
 
 UserFactory = Callable[..., Awaitable[User]]
 StoreFactory = Callable[..., Awaitable[Store]]
+AGENT_RELEASE_MANIFEST = (
+    Path(__file__).parent / "release" / "agent_release_cases.json"
+)
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    manifest = json.loads(AGENT_RELEASE_MANIFEST.read_text(encoding="utf-8"))
+    release_nodes = {
+        case["test_node"].replace("\\", "/")
+        for case in manifest["backend_cases"]
+    }
+    for item in items:
+        base_node = item.nodeid.replace("\\", "/").split("[", maxsplit=1)[0]
+        if base_node in release_nodes or base_node.startswith("tests/release/"):
+            item.add_marker(pytest.mark.agent_release_gate)
 
 
 class NoNetworkWeather:

@@ -6,7 +6,12 @@ from pathlib import Path
 
 from sqlalchemy import event
 from sqlalchemy.engine import URL
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from app.core.config import get_settings
 
@@ -44,21 +49,32 @@ def sqlite_url(path: Path) -> URL:
     return URL.create("sqlite+aiosqlite", database=str(path.resolve()))
 
 
+def create_sqlite_engine(path: Path) -> AsyncEngine:
+    """Create SQLite connections where SELECT starts a real read transaction."""
+    sqlite_engine = create_async_engine(sqlite_url(path))
+
+    @event.listens_for(sqlite_engine.sync_engine, "connect")
+    def configure_sqlite(dbapi_connection, _connection_record) -> None:
+        dbapi_connection.isolation_level = None
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.execute("PRAGMA busy_timeout=10000")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+        finally:
+            cursor.close()
+
+    @event.listens_for(sqlite_engine.sync_engine, "begin")
+    def begin_sqlite_transaction(connection) -> None:
+        connection.exec_driver_sql("BEGIN")
+
+    return sqlite_engine
+
+
 settings = get_settings()
 settings.database_path.parent.mkdir(parents=True, exist_ok=True)
-engine = create_async_engine(sqlite_url(settings.database_path))
-
-
-@event.listens_for(engine.sync_engine, "connect")
-def configure_sqlite(dbapi_connection, _connection_record) -> None:
-    cursor = dbapi_connection.cursor()
-    try:
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.execute("PRAGMA busy_timeout=10000")
-        cursor.execute("PRAGMA synchronous=NORMAL")
-    finally:
-        cursor.close()
+engine = create_sqlite_engine(settings.database_path)
 
 
 async_session_factory = async_sessionmaker(engine, expire_on_commit=False)

@@ -119,6 +119,13 @@ async def run_agent_turn(
     result = run_result.turn
 
     async with sqlite_short_write(session):
+        user = await _require_agent_administrator(session, user_id)
+        await require_fresh_store_access(
+            session,
+            user_id=user.id,
+            store_id=authorized_store_id,
+            capability="analytics.view",
+        )
         conversation = await get_conversation_by_id(
             session,
             conversation_id=conversation_id,

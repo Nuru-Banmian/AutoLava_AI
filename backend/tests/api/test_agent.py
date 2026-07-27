@@ -308,7 +308,7 @@ async def test_agent_http_turn_returns_direct_answers_and_ends_on_clarification(
     assert {key: direct.json()[key] for key in ("route", "content")} == {
 
         "route": "answer",
-        "content": "我可以回答一般问题。",
+        "content": "我可以说明能力范围，并基于当前门店的可验证证据回答经营问题。",
     }
     assert clarification.status_code == 200
     assert {
@@ -564,7 +564,38 @@ async def test_revenue_analysis_http_path_uses_one_batch_and_persists_backend_fi
     assert payload["conversation"]["state"]["comparison"]["label"] == "完整上月"
     evidence_rows = list(await db_session.scalars(select(AgentEvidence)))
     assert len(evidence_rows) == 1
-    assert evidence_rows[0].payload["calculation_version"] == "revenue_analysis.v1"
+    persisted_evidence = evidence_rows[0].payload
+    assert persisted_evidence["calculation_version"] == "revenue_analysis.v1"
+    result = persisted_evidence["result"]
+    assert {
+        "current_daily_ledger_revenue": result["current"]["daily_ledger_revenue"],
+        "current_confirmed_settlement_income": result["current"][
+            "confirmed_settlement_income"
+        ],
+        "current_total_revenue": result["current"]["total_revenue"],
+        "comparison_daily_ledger_revenue": result["comparison"][
+            "daily_ledger_revenue"
+        ],
+        "comparison_confirmed_settlement_income": result["comparison"][
+            "confirmed_settlement_income"
+        ],
+        "comparison_total_revenue": result["comparison"]["total_revenue"],
+        "total_revenue_change": result["total_revenue_change"],
+        "daily_ledger_revenue_change": result["daily_ledger_revenue_change"],
+        "confirmed_settlement_income_change": result[
+            "confirmed_settlement_income_change"
+        ],
+    } == {
+        "current_daily_ledger_revenue": 160,
+        "current_confirmed_settlement_income": 0,
+        "current_total_revenue": 160,
+        "comparison_daily_ledger_revenue": 100,
+        "comparison_confirmed_settlement_income": 0,
+        "comparison_total_revenue": 100,
+        "total_revenue_change": 60,
+        "daily_ledger_revenue_change": 60,
+        "confirmed_settlement_income_change": 0,
+    }
     assert model.plan_calls == 1
     assert model.answer_calls == 1
 
@@ -1805,3 +1836,51 @@ async def test_in_flight_turn_cannot_recreate_a_conversation_after_reset(
     assert (
         await client.get(f"/api/agent/stores/{store_id}/conversation")
     ).json()["messages"] == []
+
+
+async def test_in_flight_turn_revalidates_authorization_before_returning_answer(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+) -> None:
+    admin = await user_factory(username="admin", password="secret", role="admin")
+    store = await store_factory(name="Roma")
+    admin_id, store_id = admin.id, store.id
+    db_session.add(AgentSettings(id=1, enabled=True))
+    await db_session.commit()
+
+    class RevokeDuringRun:
+        async def run(
+            self,
+            context: RuntimeContext,
+            state: ConversationState,
+            recent_messages: list[ModelMessage],
+        ) -> AgentRunResult:
+            del context, recent_messages
+            current_admin = await db_session.get(User, admin_id)
+            assert current_admin is not None
+            current_admin.role = "user"
+            await db_session.commit()
+            return AgentRunResult(
+                turn=TurnResult(route="answer", content="撤权后不应返回"),
+                state=state,
+            )
+
+    client._transport.app.state.agent_service = RevokeDuringRun()
+    await _login(client, "admin")
+
+    response = await client.post(
+        f"/api/agent/stores/{store_id}/turn",
+        json={"question": "请求进行时撤销权限"},
+    )
+
+    assert response.status_code == 403
+    messages = list(
+        await db_session.scalars(
+            select(AgentMessage).order_by(AgentMessage.id)
+        )
+    )
+    assert [(message.role, message.content) for message in messages] == [
+        ("user", "请求进行时撤销权限")
+    ]

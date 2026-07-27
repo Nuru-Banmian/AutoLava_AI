@@ -121,13 +121,15 @@ class BusinessEvidenceCollector:
         start, end = self._resolve_period(request.period, context)
         if request.metric == EvidenceMetric.MONTHLY_DAILY_AVERAGE_INCOME:
             self._require_natural_month_period(start, end, context)
-        category_ids = await self._resolve_category_filter(request.filters, context)
         comparison_period = (
             self._resolve_period(request.comparison.period, context)
             if request.comparison is not None
             else None
         )
+        snapshot: Snapshot | None = None
         comparison_snapshot: Snapshot | None = None
+        grouped_snapshot: tuple[list[EvidenceGroupRow], int, bool] | None = None
+        extreme_snapshot: tuple[DailyLedgerExtremeResult, int] | None = None
         category_metric_group = (
             request.group_by == EvidenceGroup.INCOME_CATEGORY
             and request.metric
@@ -136,16 +138,62 @@ class BusinessEvidenceCollector:
                 EvidenceMetric.OTHER_DATA_AMOUNT,
             }
         )
-        if request.group_by is not None and not category_metric_group:
-            rows, recorded_dates, truncated = await self._read_grouped_snapshot(
-                context=context,
-                start=start,
-                end=end,
-                metric=request.metric,
-                group_by=request.group_by,
-                filters=request.filters,
-                category_ids=category_ids,
-            )
+        for attempt in range(2):
+            try:
+                async with self._session_factory() as session:
+                    category_ids = await self._resolve_category_filter(
+                        request.filters,
+                        context,
+                        session=session,
+                    )
+                    if request.group_by is not None and not category_metric_group:
+                        grouped_snapshot = await self._read_grouped_snapshot(
+                            context=context,
+                            start=start,
+                            end=end,
+                            metric=request.metric,
+                            group_by=request.group_by,
+                            filters=request.filters,
+                            category_ids=category_ids,
+                            session=session,
+                        )
+                    elif request.extreme is not None:
+                        extreme_snapshot = await self._read_daily_extreme(
+                            context=context,
+                            start=start,
+                            end=end,
+                            extreme=request.extreme,
+                            filters=request.filters,
+                            category_ids=category_ids,
+                            session=session,
+                        )
+                    else:
+                        snapshot = await self._read_snapshot(
+                            context=context,
+                            start=start,
+                            end=end,
+                            metric=request.metric,
+                            filters=request.filters,
+                            category_ids=category_ids,
+                            session=session,
+                        )
+                        if comparison_period is not None:
+                            comparison_snapshot = await self._read_snapshot(
+                                context=context,
+                                start=comparison_period[0],
+                                end=comparison_period[1],
+                                metric=request.metric,
+                                filters=None,
+                                category_ids=frozenset(),
+                                session=session,
+                            )
+                break
+            except OperationalError as error:
+                if attempt == 1 or not _is_temporary_sqlite_failure(error):
+                    raise
+
+        if grouped_snapshot is not None:
+            rows, recorded_dates, truncated = grouped_snapshot
             warnings = (
                 ["结果过多，仅返回前 400 个分组。"] if truncated else []
             )
@@ -174,15 +222,8 @@ class BusinessEvidenceCollector:
                 truncated=truncated,
                 summary=summary,
             )
-        if request.extreme is not None:
-            result, recorded_dates = await self._read_daily_extreme(
-                context=context,
-                start=start,
-                end=end,
-                extreme=request.extreme,
-                filters=request.filters,
-                category_ids=category_ids,
-            )
+        if extreme_snapshot is not None:
+            result, recorded_dates = extreme_snapshot
             summary = _extreme_summary(start=start, end=end, result=result)
             return EvidenceBundle(
                 status="ok",
@@ -202,29 +243,8 @@ class BusinessEvidenceCollector:
                 truncated=False,
                 summary=summary,
             )
-        for attempt in range(2):
-            try:
-                snapshot = await self._read_snapshot(
-                    context=context,
-                    start=start,
-                    end=end,
-                    metric=request.metric,
-                    filters=request.filters,
-                    category_ids=category_ids,
-                )
-                if comparison_period is not None:
-                    comparison_snapshot = await self._read_snapshot(
-                        context=context,
-                        start=comparison_period[0],
-                        end=comparison_period[1],
-                        metric=request.metric,
-                        filters=None,
-                        category_ids=frozenset(),
-                    )
-                break
-            except OperationalError as error:
-                if attempt == 1 or not _is_temporary_sqlite_failure(error):
-                    raise
+        if snapshot is None:
+            raise RuntimeError("business evidence batch completed without a snapshot")
 
         calendar_dates = (end - start).days + 1
         recorded_date_set = set(snapshot.recorded_date_values)
@@ -995,28 +1015,29 @@ class BusinessEvidenceCollector:
         self,
         filters: EvidenceFilters | None,
         context: RuntimeContext,
+        *,
+        session: AsyncSession,
     ) -> frozenset[int]:
         if filters is None or not filters.income_categories:
             return frozenset()
-        async with self._session_factory() as session:
-            configured = (
-                await session.execute(
-                    select(IncomeCategory.id, IncomeCategory.name).where(
-                        IncomeCategory.store_id == context.store_id
-                    )
+        configured = (
+            await session.execute(
+                select(IncomeCategory.id, IncomeCategory.name).where(
+                    IncomeCategory.store_id == context.store_id
                 )
-            ).all()
-            historical = (
-                await session.execute(
-                    select(DailyIncomeItem.category_id, DailyIncomeItem.category_name)
-                    .join(
-                        StoreDailyRecord,
-                        StoreDailyRecord.id == DailyIncomeItem.record_id,
-                    )
-                    .where(StoreDailyRecord.store_id == context.store_id)
-                    .distinct()
+            )
+        ).all()
+        historical = (
+            await session.execute(
+                select(DailyIncomeItem.category_id, DailyIncomeItem.category_name)
+                .join(
+                    StoreDailyRecord,
+                    StoreDailyRecord.id == DailyIncomeItem.record_id,
                 )
-            ).all()
+                .where(StoreDailyRecord.store_id == context.store_id)
+                .distinct()
+            )
+        ).all()
 
         candidates: list[tuple[int, str]] = []
         seen_candidates: set[tuple[int, str]] = set()
@@ -1062,25 +1083,25 @@ class BusinessEvidenceCollector:
         group_by: EvidenceGroup,
         filters: EvidenceFilters | None,
         category_ids: frozenset[int],
+        session: AsyncSession,
     ) -> tuple[list[EvidenceGroupRow], int, bool]:
-        async with self._session_factory() as session:
-            records = list(
-                (
-                    await session.scalars(
-                        select(StoreDailyRecord)
-                        .where(
-                            StoreDailyRecord.store_id == context.store_id,
-                            StoreDailyRecord.date >= start,
-                            StoreDailyRecord.date <= end,
-                            *_daily_filter_conditions(filters, category_ids),
-                        )
-                        .options(selectinload(StoreDailyRecord.items))
-                        .order_by(StoreDailyRecord.date)
+        records = list(
+            (
+                await session.scalars(
+                    select(StoreDailyRecord)
+                    .where(
+                        StoreDailyRecord.store_id == context.store_id,
+                        StoreDailyRecord.date >= start,
+                        StoreDailyRecord.date <= end,
+                        *_daily_filter_conditions(filters, category_ids),
                     )
+                    .options(selectinload(StoreDailyRecord.items))
+                    .order_by(StoreDailyRecord.date)
                 )
-                .unique()
-                .all()
             )
+            .unique()
+            .all()
+        )
 
         aggregates: dict[str, dict[str, object]] = {}
         if group_by == EvidenceGroup.INCOME_CATEGORY:
@@ -1176,23 +1197,23 @@ class BusinessEvidenceCollector:
         extreme: Literal["highest", "lowest"],
         filters: EvidenceFilters | None,
         category_ids: frozenset[int],
+        session: AsyncSession,
     ) -> tuple[DailyLedgerExtremeResult, int]:
-        async with self._session_factory() as session:
-            records = list(
-                (
-                    await session.scalars(
-                        select(StoreDailyRecord)
-                        .where(
-                            StoreDailyRecord.store_id == context.store_id,
-                            StoreDailyRecord.date >= start,
-                            StoreDailyRecord.date <= end,
-                            StoreDailyRecord.is_open.in_(("营业", "提前休息")),
-                            *_daily_filter_conditions(filters, category_ids),
-                        )
-                        .order_by(StoreDailyRecord.date)
+        records = list(
+            (
+                await session.scalars(
+                    select(StoreDailyRecord)
+                    .where(
+                        StoreDailyRecord.store_id == context.store_id,
+                        StoreDailyRecord.date >= start,
+                        StoreDailyRecord.date <= end,
+                        StoreDailyRecord.is_open.in_(("营业", "提前休息")),
+                        *_daily_filter_conditions(filters, category_ids),
                     )
-                ).all()
-            )
+                    .order_by(StoreDailyRecord.date)
+                )
+            ).all()
+        )
         if not records:
             return (
                 DailyLedgerExtremeResult(
@@ -1222,177 +1243,177 @@ class BusinessEvidenceCollector:
         metric: EvidenceMetric,
         filters: EvidenceFilters | None = None,
         category_ids: frozenset[int] = frozenset(),
+        session: AsyncSession,
     ) -> Snapshot:
-        async with self._session_factory() as session:
-            daily_scope = (
-                StoreDailyRecord.store_id == context.store_id,
-                StoreDailyRecord.date >= start,
-                StoreDailyRecord.date <= end,
-                *_daily_filter_conditions(filters, category_ids),
-            )
-            operating_scope = (
-                *daily_scope,
-                StoreDailyRecord.is_open.in_(("营业", "提前休息")),
-            )
-            daily_revenue = (
-                select(func.coalesce(func.sum(StoreDailyRecord.daily_revenue), 0))
-                .where(*daily_scope)
-                .scalar_subquery()
-            )
-            operating_revenue = (
-                select(func.coalesce(func.sum(StoreDailyRecord.daily_revenue), 0))
-                .where(*operating_scope)
-                .scalar_subquery()
-            )
-            operating_days = (
-                select(func.count(distinct(StoreDailyRecord.date)))
-                .where(*operating_scope)
-                .scalar_subquery()
-            )
-            recorded_dates = (
-                select(func.count(distinct(StoreDailyRecord.date)))
-                .where(*daily_scope)
-                .scalar_subquery()
-            )
-            if metric in {
-                EvidenceMetric.MONTHLY_TOTAL_REVENUE,
-                EvidenceMetric.CONFIRMED_SETTLEMENT_INCOME,
-                EvidenceMetric.MONTHLY_DAILY_AVERAGE_INCOME,
-            }:
-                first_overlapping_month = start.replace(day=1)
-                last_overlapping_month = end.replace(day=1)
-                confirmed_settlement = (
-                    select(func.coalesce(func.sum(SettlementRecord.amount), 0))
-                    .where(
-                        SettlementRecord.store_id == context.store_id,
-                        SettlementRecord.status == "confirmed",
-                        SettlementRecord.opening_month >= first_overlapping_month,
-                        SettlementRecord.opening_month <= last_overlapping_month,
-                    )
-                    .scalar_subquery()
+        daily_scope = (
+            StoreDailyRecord.store_id == context.store_id,
+            StoreDailyRecord.date >= start,
+            StoreDailyRecord.date <= end,
+            *_daily_filter_conditions(filters, category_ids),
+        )
+        operating_scope = (
+            *daily_scope,
+            StoreDailyRecord.is_open.in_(("营业", "提前休息")),
+        )
+        daily_revenue = (
+            select(func.coalesce(func.sum(StoreDailyRecord.daily_revenue), 0))
+            .where(*daily_scope)
+            .scalar_subquery()
+        )
+        operating_revenue = (
+            select(func.coalesce(func.sum(StoreDailyRecord.daily_revenue), 0))
+            .where(*operating_scope)
+            .scalar_subquery()
+        )
+        operating_days = (
+            select(func.count(distinct(StoreDailyRecord.date)))
+            .where(*operating_scope)
+            .scalar_subquery()
+        )
+        recorded_dates = (
+            select(func.count(distinct(StoreDailyRecord.date)))
+            .where(*daily_scope)
+            .scalar_subquery()
+        )
+        if metric in {
+            EvidenceMetric.MONTHLY_TOTAL_REVENUE,
+            EvidenceMetric.CONFIRMED_SETTLEMENT_INCOME,
+            EvidenceMetric.MONTHLY_DAILY_AVERAGE_INCOME,
+        }:
+            first_overlapping_month = start.replace(day=1)
+            last_overlapping_month = end.replace(day=1)
+            confirmed_settlement = (
+                select(func.coalesce(func.sum(SettlementRecord.amount), 0))
+                .where(
+                    SettlementRecord.store_id == context.store_id,
+                    SettlementRecord.status == "confirmed",
+                    SettlementRecord.opening_month >= first_overlapping_month,
+                    SettlementRecord.opening_month <= last_overlapping_month,
                 )
-            else:
-                confirmed_settlement = literal(0)
-            row = (
-                await session.execute(
-                    select(
-                        daily_revenue.label("daily_revenue"),
-                        operating_revenue.label("operating_revenue"),
-                        operating_days.label("operating_days"),
-                        confirmed_settlement.label("confirmed_settlement"),
-                        recorded_dates.label("recorded_dates"),
-                    )
+                .scalar_subquery()
+            )
+        else:
+            confirmed_settlement = literal(0)
+        row = (
+            await session.execute(
+                select(
+                    daily_revenue.label("daily_revenue"),
+                    operating_revenue.label("operating_revenue"),
+                    operating_days.label("operating_days"),
+                    confirmed_settlement.label("confirmed_settlement"),
+                    recorded_dates.label("recorded_dates"),
                 )
-            ).one()
+            )
+        ).one()
 
-            record_rows = (
-                await session.execute(
-                    select(
-                        StoreDailyRecord.id,
-                        StoreDailyRecord.date,
-                        StoreDailyRecord.daily_revenue,
-                        StoreDailyRecord.income_mode,
-                        StoreDailyRecord.wash_count,
-                        StoreDailyRecord.is_open,
-                        StoreDailyRecord.weather,
-                    )
-                    .where(*daily_scope)
-                    .order_by(StoreDailyRecord.date)
+        record_rows = (
+            await session.execute(
+                select(
+                    StoreDailyRecord.id,
+                    StoreDailyRecord.date,
+                    StoreDailyRecord.daily_revenue,
+                    StoreDailyRecord.income_mode,
+                    StoreDailyRecord.wash_count,
+                    StoreDailyRecord.is_open,
+                    StoreDailyRecord.weather,
                 )
-            ).all()
-            included_item_rows = (
+                .where(*daily_scope)
+                .order_by(StoreDailyRecord.date)
+            )
+        ).all()
+        included_item_rows = (
+            await session.execute(
+                select(
+                    DailyIncomeItem.record_id,
+                    func.coalesce(func.sum(DailyIncomeItem.amount), 0).label("amount"),
+                )
+                .join(
+                    StoreDailyRecord,
+                    StoreDailyRecord.id == DailyIncomeItem.record_id,
+                )
+                .where(*daily_scope, DailyIncomeItem.include_in_total.is_(True))
+                .group_by(DailyIncomeItem.record_id)
+            )
+        ).all()
+        included_amounts = {
+            int(item.record_id): int(item.amount) for item in included_item_rows
+        }
+        operating_records = [
+            record for record in record_rows if record.is_open in {"营业", "提前休息"}
+        ]
+        wash_count_records = [
+            record for record in operating_records if record.wash_count is not None
+        ]
+        missing_weather_dates = [
+            record.date
+            for record in record_rows
+            if record.weather is None or not record.weather.strip()
+        ]
+        wash_count_missing_dates = [
+            record.date for record in operating_records if record.wash_count is None
+        ]
+        category_total_mismatches = [
+            {
+                "date": record.date,
+                "daily_ledger_revenue": int(record.daily_revenue),
+                "included_category_amount": included_amounts.get(int(record.id), 0),
+            }
+            for record in record_rows
+            if record.income_mode == "composed"
+            and included_amounts.get(int(record.id), 0) != int(record.daily_revenue)
+        ]
+
+        categories: list[dict[str, object]] = []
+        if metric in {
+            EvidenceMetric.INCOME_CATEGORY_AMOUNT,
+            EvidenceMetric.OTHER_DATA_AMOUNT,
+        }:
+            include_in_total = metric == EvidenceMetric.INCOME_CATEGORY_AMOUNT
+            category_rows = (
                 await session.execute(
                     select(
-                        DailyIncomeItem.record_id,
+                        DailyIncomeItem.category_id,
+                        DailyIncomeItem.category_name,
+                        DailyIncomeItem.include_in_total,
+                        DailyIncomeItem.sort_order,
                         func.coalesce(func.sum(DailyIncomeItem.amount), 0).label("amount"),
                     )
                     .join(
                         StoreDailyRecord,
                         StoreDailyRecord.id == DailyIncomeItem.record_id,
                     )
-                    .where(*daily_scope, DailyIncomeItem.include_in_total.is_(True))
-                    .group_by(DailyIncomeItem.record_id)
+                    .where(
+                        *daily_scope,
+                        DailyIncomeItem.include_in_total.is_(include_in_total),
+                        *(
+                            (DailyIncomeItem.category_id.in_(category_ids),)
+                            if category_ids
+                            else ()
+                        ),
+                    )
+                    .group_by(
+                        DailyIncomeItem.category_id,
+                        DailyIncomeItem.category_name,
+                        DailyIncomeItem.include_in_total,
+                        DailyIncomeItem.sort_order,
+                    )
+                    .order_by(
+                        DailyIncomeItem.sort_order,
+                        DailyIncomeItem.category_id,
+                        DailyIncomeItem.category_name,
+                    )
                 )
             ).all()
-            included_amounts = {
-                int(item.record_id): int(item.amount) for item in included_item_rows
-            }
-            operating_records = [
-                record for record in record_rows if record.is_open in {"营业", "提前休息"}
-            ]
-            wash_count_records = [
-                record for record in operating_records if record.wash_count is not None
-            ]
-            missing_weather_dates = [
-                record.date
-                for record in record_rows
-                if record.weather is None or not record.weather.strip()
-            ]
-            wash_count_missing_dates = [
-                record.date for record in operating_records if record.wash_count is None
-            ]
-            category_total_mismatches = [
+            categories = [
                 {
-                    "date": record.date,
-                    "daily_ledger_revenue": int(record.daily_revenue),
-                    "included_category_amount": included_amounts.get(int(record.id), 0),
+                    "category_id": int(category.category_id),
+                    "category_name": category.category_name,
+                    "include_in_total": bool(category.include_in_total),
+                    "sort_order": int(category.sort_order),
+                    "amount": int(category.amount),
                 }
-                for record in record_rows
-                if record.income_mode == "composed"
-                and included_amounts.get(int(record.id), 0) != int(record.daily_revenue)
+                for category in category_rows
             ]
-
-            categories: list[dict[str, object]] = []
-            if metric in {
-                EvidenceMetric.INCOME_CATEGORY_AMOUNT,
-                EvidenceMetric.OTHER_DATA_AMOUNT,
-            }:
-                include_in_total = metric == EvidenceMetric.INCOME_CATEGORY_AMOUNT
-                category_rows = (
-                    await session.execute(
-                        select(
-                            DailyIncomeItem.category_id,
-                            DailyIncomeItem.category_name,
-                            DailyIncomeItem.include_in_total,
-                            DailyIncomeItem.sort_order,
-                            func.coalesce(func.sum(DailyIncomeItem.amount), 0).label("amount"),
-                        )
-                        .join(
-                            StoreDailyRecord,
-                            StoreDailyRecord.id == DailyIncomeItem.record_id,
-                        )
-                        .where(
-                            *daily_scope,
-                            DailyIncomeItem.include_in_total.is_(include_in_total),
-                            *(
-                                (DailyIncomeItem.category_id.in_(category_ids),)
-                                if category_ids
-                                else ()
-                            ),
-                        )
-                        .group_by(
-                            DailyIncomeItem.category_id,
-                            DailyIncomeItem.category_name,
-                            DailyIncomeItem.include_in_total,
-                            DailyIncomeItem.sort_order,
-                        )
-                        .order_by(
-                            DailyIncomeItem.sort_order,
-                            DailyIncomeItem.category_id,
-                            DailyIncomeItem.category_name,
-                        )
-                    )
-                ).all()
-                categories = [
-                    {
-                        "category_id": int(category.category_id),
-                        "category_name": category.category_name,
-                        "include_in_total": bool(category.include_in_total),
-                        "sort_order": int(category.sort_order),
-                        "amount": int(category.amount),
-                    }
-                    for category in category_rows
-                ]
 
         return Snapshot(
             daily_revenue=int(row.daily_revenue),
