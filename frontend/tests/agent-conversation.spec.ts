@@ -20,7 +20,10 @@ const emptyState = {
   pending_clarifications: [],
 };
 
-async function mockAgentApi(page: Page) {
+async function mockAgentApi(
+  page: Page,
+  role: "admin" | "user" = "admin",
+) {
   let nextMessageId = 10;
   const messages = new Map<number, Message[]>([
     [1, [
@@ -67,7 +70,7 @@ async function mockAgentApi(page: Page) {
       });
 
     if (path === "/api/auth/me") {
-      return json({ id: 1, username: "admin", role: "admin", is_owner: false });
+      return json({ id: 1, username: role, role, is_owner: false });
     }
     if (path === "/api/stores/accessible") {
       return json([
@@ -158,6 +161,14 @@ async function mockAgentApi(page: Page) {
     return json({ detail: `unmocked ${request.method()} ${path}` }, 500);
   });
 }
+
+test("ordinary users cannot see or invoke the Agent", async ({ page }) => {
+  await mockAgentApi(page, "user");
+  await page.goto("/");
+
+  await expect(page.getByRole("region", { name: "门店 Agent" })).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "向 Agent 提问" })).toHaveCount(0);
+});
 
 test("administrator restores, switches, and permanently resets per-store conversations", async ({
   page,

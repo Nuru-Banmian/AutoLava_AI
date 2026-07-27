@@ -66,6 +66,13 @@ NAVIGATION_TARGET = re.compile(
     r"(?:https?://|www\.|/api/|/database(?:[/?#\s]|$))",
     re.IGNORECASE,
 )
+DIRECT_ANSWER_BUSINESS_CLAIM = re.compile(
+    r"(?:\d+(?:[.,]\d+)?\s*(?:欧元|元|辆车|辆|个经营日|天|%|％))"
+    r"|(?:\d{4}[-年]\d{1,2}(?:[-月]\d{1,2}日?)?)"
+    r"|(?:(?:已经|已|将|为你)?(?:打开|跳转|前往|访问).{0,20}"
+    r"(?:营业记录|每日台账|页面))"
+    r"|(?:导致|造成|归因于|原因是|主要来自)"
+)
 
 
 class EvidenceCollector(Protocol):
@@ -200,9 +207,13 @@ class AgentTurnWorkflow:
         if plan.route == TurnRoute.CLARIFY:
             return {"result": TurnResult(route="clarify", content=plan.question or "")}
         if plan.route == TurnRoute.DIRECT_ANSWER:
-            if NAVIGATION_TARGET.search(plan.answer or ""):
+            answer = plan.answer or ""
+            if (
+                NAVIGATION_TARGET.search(answer)
+                or DIRECT_ANSWER_BUSINESS_CLAIM.search(answer)
+            ):
                 return {"result": _safe_failure()}
-            return {"result": TurnResult(route="answer", content=plan.answer or "")}
+            return {"result": TurnResult(route="answer", content=answer)}
         if plan.route == TurnRoute.ACTION and plan.action is not None:
             current_month = datetime.now(
                 ZoneInfo(state["context"].store_timezone)

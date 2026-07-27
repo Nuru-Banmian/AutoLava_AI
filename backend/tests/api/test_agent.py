@@ -1805,3 +1805,51 @@ async def test_in_flight_turn_cannot_recreate_a_conversation_after_reset(
     assert (
         await client.get(f"/api/agent/stores/{store_id}/conversation")
     ).json()["messages"] == []
+
+
+async def test_in_flight_turn_revalidates_authorization_before_returning_answer(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+) -> None:
+    admin = await user_factory(username="admin", password="secret", role="admin")
+    store = await store_factory(name="Roma")
+    admin_id, store_id = admin.id, store.id
+    db_session.add(AgentSettings(id=1, enabled=True))
+    await db_session.commit()
+
+    class RevokeDuringRun:
+        async def run(
+            self,
+            context: RuntimeContext,
+            state: ConversationState,
+            recent_messages: list[ModelMessage],
+        ) -> AgentRunResult:
+            del context, recent_messages
+            current_admin = await db_session.get(User, admin_id)
+            assert current_admin is not None
+            current_admin.role = "user"
+            await db_session.commit()
+            return AgentRunResult(
+                turn=TurnResult(route="answer", content="撤权后不应返回"),
+                state=state,
+            )
+
+    client._transport.app.state.agent_service = RevokeDuringRun()
+    await _login(client, "admin")
+
+    response = await client.post(
+        f"/api/agent/stores/{store_id}/turn",
+        json={"question": "请求进行时撤销权限"},
+    )
+
+    assert response.status_code == 403
+    messages = list(
+        await db_session.scalars(
+            select(AgentMessage).order_by(AgentMessage.id)
+        )
+    )
+    assert [(message.role, message.content) for message in messages] == [
+        ("user", "请求进行时撤销权限")
+    ]

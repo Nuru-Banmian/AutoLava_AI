@@ -46,6 +46,9 @@ jobs:
       - name: Lint
         run: python -m ruff check .
 
+      - name: Run Agent safety release veto gate
+        run: python -m pytest -m agent_release_gate --strict-markers
+
       - name: Test
         run: python -m pytest -n 2 --dist loadscope --cov=app --cov-report=term-missing
 

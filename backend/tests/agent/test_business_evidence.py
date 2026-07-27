@@ -1,14 +1,18 @@
 from contextlib import asynccontextmanager
 from datetime import date, datetime
+from decimal import Decimal
 
 import pytest
+from sqlalchemy import select, update
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agent.business_evidence import BusinessEvidenceCollector
 from app.agent.contracts import EvidencePlan
 from app.agent.runtime import RuntimeContext, RuntimeFeatureFlags
-from app.models.identity import Store
+from app.core.database import create_sqlite_engine
+from app.models.base import Base
+from app.models.identity import Store, User
 from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
 from app.models.settlement import SettlementCompany, SettlementRecord
 
@@ -257,6 +261,109 @@ async def test_collector_discards_the_batch_after_a_second_sqlite_failure(
         )
 
     assert attempts == 2
+
+
+async def test_collector_keeps_one_sqlite_version_during_a_concurrent_commit(
+    tmp_path,
+) -> None:
+    local_engine = create_sqlite_engine(tmp_path / "snapshot.sqlite3")
+    async with local_engine.begin() as connection:
+        await connection.exec_driver_sql("PRAGMA journal_mode=WAL")
+        await connection.run_sync(Base.metadata.create_all)
+
+    writer_factory = async_sessionmaker(local_engine, expire_on_commit=False)
+    async with writer_factory() as setup:
+        user = User(
+            username="snapshot-admin",
+            password_hash="test-only",
+            role="admin",
+            is_active=True,
+        )
+        store = Store(
+            name="Snapshot",
+            address="Snapshot address",
+            latitude=Decimal("45.000000"),
+            longitude=Decimal("9.000000"),
+            timezone="Europe/Rome",
+            is_active=True,
+            wash_count_enabled=True,
+        )
+        setup.add_all([user, store])
+        await setup.flush()
+        record = StoreDailyRecord(
+            store_id=store.id,
+            date=date(2026, 7, 1),
+            daily_revenue=100,
+            income_mode="legacy_total",
+            wash_count=10,
+            is_open="营业",
+            weather="晴",
+            created_by=user.id,
+            updated_by=user.id,
+        )
+        setup.add(record)
+        await setup.commit()
+        record_id = record.id
+
+    concurrent_commit_finished = False
+
+    class CoordinatedSnapshotSession(AsyncSession):
+        async def execute(self, statement, *args, **kwargs):
+            nonlocal concurrent_commit_finished
+            result = await super().execute(statement, *args, **kwargs)
+            if not concurrent_commit_finished:
+                async with writer_factory() as writer:
+                    await writer.execute(
+                        update(StoreDailyRecord)
+                        .where(StoreDailyRecord.id == record_id)
+                        .values(wash_count=20)
+                    )
+                    await writer.commit()
+                concurrent_commit_finished = True
+            return result
+
+    @asynccontextmanager
+    async def session_factory():
+        async with CoordinatedSnapshotSession(
+            local_engine,
+            expire_on_commit=False,
+        ) as session:
+            yield session
+
+    plan = EvidencePlan.model_validate(
+        {
+            "requests": [
+                {
+                    "kind": "business_metrics",
+                    "metric": "average_revenue_per_car",
+                }
+            ]
+        }
+    )
+    try:
+        bundle = await BusinessEvidenceCollector(
+            session_factory,
+            now=lambda _timezone: datetime(2026, 7, 26, 12, 0),
+        ).collect(
+            plan,
+            _context(store),
+        )
+
+        assert concurrent_commit_finished is True
+        assert bundle.result.model_dump(mode="json") == {
+            "available": True,
+            "daily_ledger_revenue": 100,
+            "wash_count": 10,
+            "average_revenue_per_car": 10,
+        }
+        async with writer_factory() as verification:
+            assert await verification.scalar(
+                select(StoreDailyRecord.wash_count).where(
+                    StoreDailyRecord.id == record_id
+                )
+            ) == 20
+    finally:
+        await local_engine.dispose()
 
 
 async def test_collector_returns_safe_complete_daily_ledger_and_untrusted_raw_event(
