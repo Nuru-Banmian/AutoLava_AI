@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT_ENV_FILE = Path(__file__).resolve().parents[3] / ".env"
@@ -48,8 +48,15 @@ class Settings(BaseSettings):
     )
     fallback_model_input_cost_per_million: float | None = None
     fallback_model_output_cost_per_million: float | None = None
-    agent_evidence_batch_limit: Literal[1] = 1
-    agent_release_report_path: str = ""
+    agent_evidence_batch_limit: int = Field(default=1, ge=1, le=2)
+    agent_release_report_path: Path | None = None
+
+    @field_validator("agent_release_report_path", mode="before")
+    @classmethod
+    def empty_release_report_path_is_absent(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @model_validator(mode="after")
     def validate_production_settings(self) -> "Settings":

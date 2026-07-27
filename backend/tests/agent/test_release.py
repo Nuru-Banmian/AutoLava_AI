@@ -1,6 +1,11 @@
 import json
 
-from app.agent.release import agent_adapter_config_sha256, agent_release_status
+from app.agent.release import (
+    ReleaseSample,
+    agent_adapter_config_sha256,
+    agent_release_status,
+    summarize_release_samples,
+)
 from app.core.config import Settings
 
 
@@ -22,6 +27,14 @@ def approved_report(settings: Settings) -> dict[str, object]:
             "output_cost_per_million": 2,
             "evidence_batch_limit": 1,
             "adapter_config_sha256": agent_adapter_config_sha256(settings),
+        },
+        "evidence": {
+            "collected_at": "2026-07-27T12:00:00Z",
+            "collector_version": "agent-release-v1",
+            "container_image_digest": f"sha256:{'1' * 64}",
+            "measurement_artifact_sha256": "2" * 64,
+            "adapter_cases_artifact_sha256": "3" * 64,
+            "transaction_trace_artifact_sha256": "4" * 64,
         },
         "measurements": {
             "serial_sample_count": 20,
@@ -148,6 +161,47 @@ def test_release_report_rejects_zero_measurements_instead_of_treating_them_as_pa
     assert status.approved is False
     assert status.blockers == ["release report is invalid"]
 
+
+def test_release_report_requires_auditable_evidence_artifacts(tmp_path) -> None:
+    report_path = tmp_path / "agent-release.json"
+    settings = production_settings(report_path)
+    report = approved_report(settings)
+    del report["evidence"]
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    status = agent_release_status(settings)
+
+    assert status.approved is False
+    assert status.blockers == ["release report is invalid"]
+
+
+def test_release_sample_summary_uses_nearest_rank_p95_and_preserves_maxima() -> None:
+    samples = [
+        ReleaseSample(
+            sample_index=index,
+            idle_peak_memory_mb=400 + index,
+            business_peak_memory_mb=500 + index,
+            agent_peak_memory_mb=1000 + index,
+            request_ms=1000 + index,
+            model_stage_count=index % 2 + 1,
+            input_tokens=200 + index,
+            output_tokens=100 + index,
+            estimated_cost_eur=index / 1000,
+            sqlite_snapshot_ms=20 + index,
+            short_write_baseline_ms=10 + index,
+            short_write_with_agent_ms=30 + index,
+            language_quality_passed=index != 20,
+        )
+        for index in range(1, 21)
+    ]
+
+    measurements = summarize_release_samples(samples)
+
+    assert measurements.serial_sample_count == 20
+    assert measurements.request_p95_ms == 1019
+    assert measurements.model_stage_count_max == 2
+    assert measurements.input_tokens_max == 220
+    assert measurements.language_quality_pass_rate == 0.95
 
 def test_release_report_requires_serial_samples_and_language_quality(tmp_path) -> None:
     report_path = tmp_path / "agent-release.json"

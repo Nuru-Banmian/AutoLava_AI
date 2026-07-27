@@ -352,6 +352,16 @@ def test_production_settings_reject_in_memory_database() -> None:
 def test_development_defaults_remain_available() -> None:
     settings = Settings(_env_file=None)
     assert settings.environment == "development"
+    assert settings.agent_release_report_path is None
+
+
+def test_agent_evidence_batch_limit_is_configurable_within_the_fixed_graph() -> None:
+    assert Settings(
+        _env_file=None,
+        agent_evidence_batch_limit=2,
+    ).agent_evidence_batch_limit == 2
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, agent_evidence_batch_limit=3)
 
 
 def test_nginx_enforces_a_bounded_login_rate_limit() -> None:

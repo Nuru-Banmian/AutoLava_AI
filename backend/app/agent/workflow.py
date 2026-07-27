@@ -33,7 +33,7 @@ PLAN_REPAIR_FEEDBACK = (
     "Do not add identity, store scope, timezone, SQL, schema, URL, or role fields."
 )
 MAX_MODEL_CALLS = 3
-MAX_EVIDENCE_CALLS = 2
+MAX_EVIDENCE_BATCHES = 2
 SETTLEMENT_DETAILS_REQUIRE_EXPLICIT_MESSAGE = (
     "请明确询问结算公司、开票记录、待到账、已确认金额或某个公司的结算金额。"
 )
@@ -99,9 +99,18 @@ class TurnState(TypedDict):
 class AgentTurnWorkflow:
     """A fixed one-turn graph with no loop, interrupt, or checkpoint."""
 
-    def __init__(self, *, model: ModelAdapter, evidence_collector: EvidenceCollector) -> None:
+    def __init__(
+        self,
+        *,
+        model: ModelAdapter,
+        evidence_collector: EvidenceCollector,
+        max_evidence_batches: int = MAX_EVIDENCE_BATCHES,
+    ) -> None:
+        if not 1 <= max_evidence_batches <= MAX_EVIDENCE_BATCHES:
+            raise ValueError("max_evidence_batches must be between 1 and 2")
         self.model = model
         self.evidence_collector = evidence_collector
+        self.max_evidence_batches = max_evidence_batches
         graph = StateGraph(TurnState)
         graph.add_node("plan", self._plan)
         graph.add_node("finish_plan", self._finish_plan)
@@ -234,7 +243,7 @@ class AgentTurnWorkflow:
         if (
             plan is None
             or plan.evidence_plan is None
-            or state["evidence_calls"] >= MAX_EVIDENCE_CALLS
+            or state["evidence_calls"] >= self.max_evidence_batches
         ):
             return {
                 "result": _safe_failure(),
@@ -275,8 +284,7 @@ class AgentTurnWorkflow:
             "evidence_calls": state["evidence_calls"] + 1,
         }
 
-    @staticmethod
-    def _route_collected_evidence(state: TurnState) -> str:
+    def _route_collected_evidence(self, state: TurnState) -> str:
         evidence = state["evidence"]
         plan = state["plan"]
         if evidence is None or state["result"] is not None:
@@ -286,7 +294,7 @@ class AgentTurnWorkflow:
             and evidence.findings.unexplained_amount != 0
             and plan is not None
             and plan.supplemental_evidence_plan is not None
-            and state["evidence_calls"] < MAX_EVIDENCE_CALLS
+            and state["evidence_calls"] < self.max_evidence_batches
         ):
             return "supplement"
         return "answer"
@@ -299,7 +307,7 @@ class AgentTurnWorkflow:
             or plan.supplemental_evidence_plan is None
             or not isinstance(primary, RevenueAnalysisEvidenceBundle)
             or primary.findings.unexplained_amount == 0
-            or state["evidence_calls"] >= MAX_EVIDENCE_CALLS
+            or state["evidence_calls"] >= self.max_evidence_batches
         ):
             return {}
         try:

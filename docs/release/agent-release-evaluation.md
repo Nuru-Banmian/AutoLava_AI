@@ -13,9 +13,10 @@
 ## 固定测试流程
 
 - 单个 2 GB 应用容器，不把 API、Agent 或模型调用拆成多个容器来制造资源余量。
-- 按家庭内部每天仅使用一两次的实际负载，不执行并发压力测试。
+- 按家庭内部每天仅使用一两次的实际负载，不执行并发压力测试。每个样本只允许一个
+  Agent 请求；为验证短写不受阻塞，在该请求的取证阶段仅重叠一个普通短写事务。
 - 串行重复 20 次日常流程：登录、读取门店、读取每日台账/经营分析、提交一次短写事务，
-  然后发起一个 Agent 经营查询；不制造并发负载。
+  然后发起一个 Agent 经营查询。除上述单次短写重叠外，不增加并行用户或 Agent 请求。
 - 使用脱敏的代表性 SQLite 副本；问题只使用固定中文评估问法，不记录原始经营内容。
 - 候选主模型和备用模型使用部署 Secret 注入。报告只记录供应商代号、模型 ID、
   聚合 Token/费用和失败类别，不记录密钥、提示词、回答或经营证据。
@@ -26,17 +27,42 @@
    `AUTOLAVA_AGENT_RELEASE_REPORT_PATH` 为空并确认管理员页面显示门禁未通过。
 2. 配置主备供应商、模型、结构化输出方式、`30` 秒超时、`2000` 输出 Token
    和 `1` 个证据批次上限。业务代码不包含供应商或模型硬编码。
-3. 分别在空闲、普通业务流程和 Agent 流程中采集容器峰值内存。先预热，再串行执行
-   20 个日常样本以计算 p95；不要在 2 GB 服务器上构建镜像。
-4. 从 Agent run statistics 汇总每个请求的模型阶段次数、输入/输出 Token、估算费用
-   和模型延迟。用固定的结构化输出、超时、限流、5xx、鉴权、余额和无效输出用例验证
-   候选 Adapter 的失败语义。
+3. 固定候选镜像并记录不可变摘要，然后导出逐样本 JSON Schema：
+
+   ```sh
+   docker image inspect --format '{{index .RepoDigests 0}}' autolava:candidate
+   python -m app.scripts.evaluate_agent_release --sample-schema \
+     > /data/release-evidence/agent-release-sample.schema.json
+   ```
+
+4. 先预热，再串行执行 20 个样本。每轮分别用 `docker stats --no-stream` 采集空闲、
+   普通业务和 Agent 阶段内存；用单调时钟记录完整请求、SQLite 快照和短写耗时；从
+   Agent run statistics 记录模型阶段次数、输入/输出 Token 与估算费用。先在无 Agent
+   时测一个短写基线，再启动一个 Agent 请求，并只在其取证阶段重叠一个同样的短写。
+   每轮写入一行脱敏 `samples.jsonl`，字段必须通过上一步 Schema；不得记录问题、
+   回答、证据、账号或 Secret。
+
+5. 用固定的结构化输出、超时、限流、5xx、鉴权、余额和无效输出用例验证候选
+   Adapter 的失败语义，结果写入脱敏 `adapter-cases.json`。同时记录
+   `transaction-trace.jsonl`：每个模型调用开始/结束、SQLite 快照开始/结束和进程短写
+   锁获取/释放的单调时间及布尔状态。轨迹必须证明模型调用期间没有活动事务或写锁。
    对固定中文评估问法逐项检查语言是否自然、结论是否清楚、限制说明是否完整、是否
    泄露技术 JSON；20 个样本必须全部通过，语言质量通过率为 100%。
-5. 在同一轮日常流程中测量完整 Agent 请求、SQLite 只读快照和普通短写事务。
-   先测短写基线，再测 Agent 负载下短写；模型网络阶段必须观察到没有活动的 SQLite
-   transaction 或进程写锁。
-6. 用下列命令导出不含 Secret 或经营内容字段的 JSON Schema，并生成当前主备端点、
+
+6. 由仓库脚本按固定的 nearest-rank 方法计算 p95，并对三份原始脱敏证据生成摘要：
+
+   ```sh
+   python -m app.scripts.evaluate_agent_release \
+     --summarize-samples /data/release-evidence/samples.jsonl \
+     > /data/release-evidence/measurement-summary.json
+   sha256sum /data/release-evidence/adapter-cases.json
+   sha256sum /data/release-evidence/transaction-trace.jsonl
+   ```
+
+   报告必须保存候选镜像摘要、采集时间、collector 版本和上述三个 SHA-256。任何原始
+   证据缺失、散列不匹配或样本序号不连续，都不得签发报告。
+
+7. 用下列命令导出不含 Secret 或经营内容字段的报告 JSON Schema，并生成当前主备端点、
    结构化输出方式、thinking 参数、价格、超时、Token 和批量配置的 SHA-256 指纹。
    把聚合值和指纹写入对应字段，然后在目标容器中执行判定：
 
@@ -46,9 +72,11 @@
    python -m app.scripts.evaluate_agent_release --report /data/agent-release-report.json
    ```
 
-7. 命令退出码为 `0` 且输出 `approved: true` 后，才把
+8. 命令退出码为 `0` 且输出 `approved: true` 后，才把
    `AUTOLAVA_AGENT_RELEASE_REPORT_PATH` 设置为该报告路径并重启。报告中的供应商、
    模型、主备 Adapter 完整非密钥配置、超时、Token 和批量上限必须与运行配置一致。
+   重启后 Agent 仍保持关闭；最终管理员必须在管理中心对这个已批准报告重新执行一次
+   “启用”。报告内容或运行配置变化会使该启用绑定失效，必须重新评估并再次显式启用。
 
 ## 发布阈值
 

@@ -75,8 +75,10 @@ fallback equivalents) to estimate cost in conversation-free run statistics.
 Production Agent access also requires a passing, redacted 2 GB release report at
 `AUTOLAVA_AGENT_RELEASE_REPORT_PATH`. The report is evaluated against the exact provider, model,
 fallback order, `AUTOLAVA_MODEL_TIMEOUT_SECONDS`, `AUTOLAVA_MODEL_MAX_OUTPUT_TOKENS`,
-and `AUTOLAVA_AGENT_EVIDENCE_BATCH_LIMIT`. A missing, failed, malformed, or mismatched report keeps the
-Agent globally disabled even when the persisted final-administrator switch is on. See
+and `AUTOLAVA_AGENT_EVIDENCE_BATCH_LIMIT` (one normal batch, optionally one targeted supplemental
+batch). A missing, failed, malformed, or mismatched report keeps the Agent globally disabled.
+Each approved report has its own activation identity, so a newly approved or changed report remains
+off until the final administrator explicitly enables that exact release. See
 `docs/release/agent-release-evaluation.md` for the reproducible measurement method and current
 release decision.
 
