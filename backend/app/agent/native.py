@@ -37,14 +37,20 @@ from app.agent.contracts import (
     MonthlyDailyAverageIncomeResult,
     OperatingDayAverageLedgerRevenueResult,
     OperatingDaysResult,
+    SETTLEMENT_DETAILS_LABEL,
+    SettlementDetailsEvidenceBundle,
+    SettlementDetailsResult,
     WashCountResult,
     TurnResult,
 )
 from app.agent.runtime import RuntimeContext
 
+NativeCollectedEvidence = EvidenceBundle | SettlementDetailsEvidenceBundle
+
 MONTHLY_TOTAL_REVENUE_TOOL = "monthly_total_revenue"
 DAILY_LEDGER_REVENUE_TOOL = "daily_ledger_revenue"
 CONFIRMED_SETTLEMENT_INCOME_TOOL = "confirmed_settlement_income"
+SETTLEMENT_DETAILS_TOOL = "settlement_details"
 OPERATING_DAYS_TOOL = "operating_days"
 OPERATING_DAY_AVERAGE_LEDGER_REVENUE_TOOL = "operating_day_average_ledger_revenue"
 MONTHLY_DAILY_AVERAGE_INCOME_TOOL = "monthly_daily_average_income"
@@ -96,6 +102,11 @@ class ComposableBusinessMetricArguments(MonthlyTotalRevenueArguments):
 class DailyLedgerRevenueExtremeArguments(MonthlyTotalRevenueArguments):
     extreme: Literal["highest", "lowest"]
     filters: EvidenceFilters | None = None
+
+
+class SettlementDetailsArguments(MonthlyTotalRevenueArguments):
+    status: Literal["pending", "confirmed"] | None = None
+    company_name: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 StoreFeatureFlag = Literal[
@@ -233,12 +244,13 @@ class NativeToolScopeResolver(Protocol):
 
 @dataclass(frozen=True)
 class NativeToolSpec:
-    metric: EvidenceMetric
+    metric: EvidenceMetric | None
     result_types: tuple[type[BaseModel], ...]
     arguments_type: type[MonthlyTotalRevenueArguments]
     description: str
     sources: tuple[Literal["store_daily_records", "settlement_records"], ...]
     unit: Literal["EUR", "day", "car", "EUR/car", "EUR/operating_day"]
+    required_features: frozenset[StoreFeatureFlag] = frozenset()
 
 
 NATIVE_TOOLS = {
@@ -267,6 +279,18 @@ NATIVE_TOOLS = {
         description="查询当前受信任门店指定自然月的已确认公司结算收入。",
         sources=("settlement_records",),
         unit="EUR",
+    ),
+    SETTLEMENT_DETAILS_TOOL: NativeToolSpec(
+        metric=None,
+        result_types=(SettlementDetailsResult,),
+        arguments_type=SettlementDetailsArguments,
+        description=(
+            "查询当前受信任门店指定自然月的结算公司、待到账或已确认开票记录；"
+            "公司结算只按开票月份归属，没有日粒度。"
+        ),
+        sources=("settlement_records",),
+        unit="EUR",
+        required_features=frozenset({"company_settlement_enabled"}),
     ),
     OPERATING_DAYS_TOOL: NativeToolSpec(
         metric=EvidenceMetric.OPERATING_DAYS,
@@ -389,9 +413,7 @@ class NativeToolAgentService:
                     description=spec.description,
                     input_schema=spec.arguments_type.model_json_schema(),
                 ),
-                # Historical evidence remains available when optional store
-                # data-entry features are disabled.
-                required_features=frozenset(),
+                required_features=spec.required_features,
             )
             for name, spec in NATIVE_TOOLS.items()
         )
@@ -422,8 +444,8 @@ class NativeToolAgentService:
                 ),
             )
         items = [NativeTranscriptItem(message=message) for message in recent_messages]
-        collected: list[EvidenceBundle] = []
-        evidence_by_reference: dict[str, EvidenceBundle] = {}
+        collected: list[NativeCollectedEvidence] = []
+        evidence_by_reference: dict[str, NativeCollectedEvidence] = {}
         tool_call_count = 0
         for round_number in range(MAX_NATIVE_TOOL_ROUNDS):
             if round_number:
@@ -508,7 +530,7 @@ class NativeToolAgentService:
         context: RuntimeContext,
         *,
         trusted_period: MonthlyTotalRevenueArguments,
-    ) -> tuple[NativeToolResult, EvidenceBundle | None]:
+    ) -> tuple[NativeToolResult, NativeCollectedEvidence | None]:
         tool_spec = NATIVE_TOOLS.get(call.name)
         if tool_spec is None or call.name not in {
             tool.name for tool in _available_tools(context, self.tool_registry)
@@ -540,15 +562,16 @@ class NativeToolAgentService:
                 None,
             )
         request: dict[str, Any] = {
-            "kind": "business_metrics",
-            "metric": tool_spec.metric,
+            "kind": "settlement_details" if tool_spec.metric is None else "business_metrics",
             "period": {
                 "kind": "calendar_month",
                 "year": arguments.year,
                 "month": arguments.month,
             },
         }
-        for field in ("group_by", "filters", "extreme"):
+        if tool_spec.metric is not None:
+            request["metric"] = tool_spec.metric
+        for field in ("group_by", "filters", "extreme", "status", "company_name"):
             value = getattr(arguments, field, None)
             if value is not None:
                 request[field] = value
@@ -571,13 +594,11 @@ class NativeToolAgentService:
                 ),
                 None,
             )
-        if (
-            not isinstance(evidence, EvidenceBundle)
-            or evidence.metric != tool_spec.metric
-            or not isinstance(evidence.result, tool_spec.result_types)
-            or evidence.group_by != getattr(arguments, "group_by", None)
-            or evidence.filters != getattr(arguments, "filters", None)
-            or evidence.extreme != getattr(arguments, "extreme", None)
+        if not _evidence_matches_tool(
+            evidence,
+            tool_spec,
+            arguments,
+            store_id=fresh_context.store_id,
         ):
             return (
                 _failed_tool_result(
@@ -589,7 +610,8 @@ class NativeToolAgentService:
                 ),
                 None,
             )
-        envelope = _native_envelope(evidence, queried_at=self.now())
+        assert isinstance(evidence, (EvidenceBundle, SettlementDetailsEvidenceBundle))
+        envelope = _native_envelope(evidence, tool_spec=tool_spec, queried_at=self.now())
         return (
             NativeToolResult(
                 call_id=call.id,
@@ -612,8 +634,9 @@ def _available_tools(
 
 
 def _native_envelope(
-    evidence: EvidenceBundle,
+    evidence: NativeCollectedEvidence,
     *,
+    tool_spec: NativeToolSpec,
     queried_at: datetime,
 ) -> NativeEvidenceEnvelope:
     facts = evidence.result.model_dump(mode="json")
@@ -622,37 +645,57 @@ def _native_envelope(
         "period": evidence.period.model_dump(mode="json"),
         "calculation_version": evidence.calculation_version,
         "facts": facts,
-        "coverage": evidence.coverage.model_dump(mode="json"),
     }
-    if evidence.group_by is not None:
-        version_payload["group_by"] = evidence.group_by
-    if evidence.filters is not None:
-        version_payload["filters"] = evidence.filters.model_dump(mode="json")
-    if evidence.extreme is not None:
-        version_payload["extreme"] = evidence.extreme
-    if evidence.completeness is not None:
-        version_payload["completeness"] = evidence.completeness.model_dump(mode="json")
+    if isinstance(evidence, EvidenceBundle):
+        coverage = evidence.coverage
+        group_by = evidence.group_by
+        filters = evidence.filters
+        extreme = evidence.extreme
+        completeness = evidence.completeness
+        version_payload["coverage"] = coverage.model_dump(mode="json")
+    else:
+        coverage = EvidenceCoverage(
+            calendar_dates=(evidence.period.end - evidence.period.start).days + 1,
+            recorded_dates=0,
+        )
+        group_by = None
+        filters = None
+        extreme = None
+        completeness = None
+    if group_by is not None:
+        version_payload["group_by"] = group_by
+    if filters is not None:
+        version_payload["filters"] = filters.model_dump(mode="json")
+    if extreme is not None:
+        version_payload["extreme"] = extreme
+    if completeness is not None:
+        version_payload["completeness"] = completeness.model_dump(mode="json")
     digest = hashlib.sha256(
         json.dumps(version_payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     limitations = list(evidence.warnings)
-    if evidence.completeness is not None and evidence.completeness.unrecorded_dates:
-        limitations.append(f"{len(evidence.completeness.unrecorded_dates)} 个日期没有每日台账记录")
-    tool_spec = NATIVE_TOOLS[evidence.metric.value]
+    settlement_grain_limit = "公司结算金额按开票月份归属，没有日粒度。"
+    if (
+        isinstance(evidence, SettlementDetailsEvidenceBundle)
+        and settlement_grain_limit not in limitations
+    ):
+        limitations.append(settlement_grain_limit)
+    if completeness is not None and completeness.unrecorded_dates:
+        limitations.append(f"{len(completeness.unrecorded_dates)} 个日期没有每日台账记录")
     return NativeEvidenceEnvelope(
         reference=f"ev_{digest[:24]}",
         facts=facts,
         scope=evidence.current_store,
         period=evidence.period,
-        group_by=evidence.group_by,
-        filters=evidence.filters,
-        extreme=evidence.extreme,
+        group_by=group_by,
+        filters=filters,
+        extreme=extreme,
         unit=tool_spec.unit,
         source=list(tool_spec.sources),
         queried_at=queried_at,
         data_version=f"sha256:{digest}",
-        coverage=evidence.coverage,
-        completeness=evidence.completeness,
+        coverage=coverage,
+        completeness=completeness,
         limitations=limitations[:20],
         truncated=evidence.truncated,
         failure=NativeEvidenceFailure(status="none"),
@@ -728,7 +771,7 @@ def _hypothesis_reference_error(
 
 def _agent_result(
     state: ConversationState,
-    collected: Sequence[EvidenceBundle],
+    collected: Sequence[NativeCollectedEvidence],
     *,
     content: str,
 ) -> AgentRunResult:
@@ -738,9 +781,7 @@ def _agent_result(
             state=state,
         )
     last_evidence = collected[-1]
-    metric_labels = list(
-        dict.fromkeys(EVIDENCE_METRIC_LABELS[evidence.metric] for evidence in collected)
-    )
+    metric_labels = list(dict.fromkeys(_evidence_label(evidence) for evidence in collected))
     return AgentRunResult(
         turn=TurnResult(route="answer", content=content),
         state=state.model_copy(
@@ -755,6 +796,61 @@ def _agent_result(
         ),
         evidence=last_evidence,
     )
+
+
+def _evidence_matches_tool(
+    evidence: object,
+    tool_spec: NativeToolSpec,
+    arguments: MonthlyTotalRevenueArguments,
+    *,
+    store_id: int,
+) -> bool:
+    if not isinstance(evidence, (EvidenceBundle, SettlementDetailsEvidenceBundle)):
+        return False
+    if (
+        evidence.current_store.id != store_id
+        or evidence.period.start.day != 1
+        or (evidence.period.start.year, evidence.period.start.month)
+        != (arguments.year, arguments.month)
+        or (evidence.period.end.year, evidence.period.end.month)
+        != (arguments.year, arguments.month)
+    ):
+        return False
+    if isinstance(evidence, SettlementDetailsEvidenceBundle):
+        if (
+            tool_spec.metric is not None
+            or evidence.status != "ok"
+            or not isinstance(evidence.result, tool_spec.result_types)
+        ):
+            return False
+        company_name = getattr(arguments, "company_name", None)
+        if company_name is not None and any(
+            name.casefold() != company_name.casefold()
+            for name in [
+                *(company.name for company in evidence.result.companies),
+                *(record.company_name for record in evidence.result.records),
+            ]
+        ):
+            return False
+        status = getattr(arguments, "status", None)
+        if status is not None and any(
+            record.status != status for record in evidence.result.records
+        ):
+            return False
+        return True
+    return bool(
+        evidence.metric == tool_spec.metric
+        and isinstance(evidence.result, tool_spec.result_types)
+        and evidence.group_by == getattr(arguments, "group_by", None)
+        and evidence.filters == getattr(arguments, "filters", None)
+        and evidence.extreme == getattr(arguments, "extreme", None)
+    )
+
+
+def _evidence_label(evidence: NativeCollectedEvidence) -> str:
+    if isinstance(evidence, SettlementDetailsEvidenceBundle):
+        return SETTLEMENT_DETAILS_LABEL
+    return EVIDENCE_METRIC_LABELS[evidence.metric]
 
 
 def _explicit_calendar_month(

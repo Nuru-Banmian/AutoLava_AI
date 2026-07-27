@@ -91,6 +91,21 @@ class Snapshot:
     categories: list[dict[str, object]]
 
 
+@dataclass(frozen=True)
+class SettlementCompanySnapshot:
+    id: int
+    name: str
+    is_active: bool
+
+
+@dataclass(frozen=True)
+class SettlementRecordSnapshot:
+    company_name: str
+    opening_month: date
+    amount: int
+    status: Literal["pending", "confirmed"]
+
+
 class BusinessEvidenceCollector:
     """Collect one validated batch of business evidence in one SQLite snapshot."""
 
@@ -1840,15 +1855,40 @@ class BusinessEvidenceCollector:
                     )
                 ).all()
             )
+            company_snapshots = [
+                SettlementCompanySnapshot(
+                    id=company.id,
+                    name=company.name,
+                    is_active=company.is_active,
+                )
+                for company in companies
+            ]
+            selected_company_snapshots = [
+                SettlementCompanySnapshot(
+                    id=company.id,
+                    name=company.name,
+                    is_active=company.is_active,
+                )
+                for company in selected_companies
+            ]
+            record_snapshots = [
+                SettlementRecordSnapshot(
+                    company_name=record.company_name,
+                    opening_month=record.opening_month,
+                    amount=record.amount,
+                    status=record.status,
+                )
+                for record in records[:MAX_SETTLEMENT_ROWS]
+            ]
         return {
             "settlement_enabled": True,
-            "companies": companies,
+            "companies": company_snapshots,
             "companies_truncated": companies_truncated,
-            "selected_companies": selected_companies,
+            "selected_companies": selected_company_snapshots,
             "company_match": company_match,
             "aggregate": aggregate,
             "company_totals": company_totals,
-            "records": records[:MAX_SETTLEMENT_ROWS],
+            "records": record_snapshots,
             "records_truncated": len(records) > MAX_SETTLEMENT_ROWS,
         }
 

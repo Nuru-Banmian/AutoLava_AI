@@ -8,7 +8,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.agent.contracts import EvidenceBundle, EvidenceMetric, EvidencePeriodResult
+from app.agent.contracts import (
+    EvidenceBundle,
+    EvidenceMetric,
+    EvidencePeriodResult,
+    SettlementDetailsEvidenceBundle,
+)
 from app.services.weather import WEATHER_LABELS
 
 
@@ -54,6 +59,8 @@ _EXACT_VALUE_CONNECTOR = re.compile(
 _PERCENTAGE_CHANGE_CONNECTOR = re.compile(r"\s*(?:增长|增加|上升|提高|下降|减少|降低|下滑)\s*")
 _INCREASE = re.compile(r"增长|增加|上升|提高")
 _DECREASE = re.compile(r"下降|减少|降低|下滑")
+PENDING_SETTLEMENT_AMOUNT = "pending_settlement_amount"
+GroundedEvidence = EvidenceBundle | SettlementDetailsEvidenceBundle
 _METRIC_FIELDS = {
     "月度总收入": "monthly_total_revenue",
     "总收入": "monthly_total_revenue",
@@ -61,6 +68,8 @@ _METRIC_FIELDS = {
     "台账营业额": "daily_ledger_revenue",
     "已确认公司结算收入": "confirmed_settlement_income",
     "公司结算收入": "confirmed_settlement_income",
+    "待到账公司结算金额": "pending_settlement_amount",
+    "待到账金额": "pending_settlement_amount",
     "经营日": "operating_days",
 }
 
@@ -73,7 +82,7 @@ class NativeAnswerClaim(BaseModel):
     statement: str = Field(min_length=1, max_length=1_000)
     status: Literal["verified_fact", "analysis_hypothesis", "unknown"]
     evidence_references: list[str] = Field(default_factory=list, max_length=20)
-    metric: EvidenceMetric | None = None
+    metric: EvidenceMetric | Literal["pending_settlement_amount"] | None = None
     period: EvidencePeriodResult | None = None
     value: Decimal | None = None
     unit: Literal["EUR", "day", "car", "EUR/car", "EUR/operating_day", "percent"] | None = None
@@ -99,9 +108,9 @@ class NativeAnswerClaim(BaseModel):
 
 def answer_is_grounded(
     answer: str,
-    evidence: Sequence[EvidenceBundle],
+    evidence: Sequence[GroundedEvidence],
     claims: Sequence[NativeAnswerClaim] = (),
-    evidence_by_reference: Mapping[str, EvidenceBundle] | None = None,
+    evidence_by_reference: Mapping[str, GroundedEvidence] | None = None,
 ) -> bool:
     """Validate high-impact claims without constraining the answer's prose layout."""
 
@@ -167,7 +176,7 @@ def _is_unsupported_causal_statement(sentence: str) -> bool:
 def _claims_are_grounded(
     answer: str,
     claims: Sequence[NativeAnswerClaim],
-    evidence_by_reference: Mapping[str, EvidenceBundle],
+    evidence_by_reference: Mapping[str, GroundedEvidence],
 ) -> bool:
     for claim in claims:
         if claim.statement not in answer:
@@ -191,7 +200,6 @@ def _claims_are_grounded(
             return False
         if not any(
             bundle is not None
-            and bundle.metric == claim.metric
             and bundle.period == claim.period
             and _claim_value_is_supported(claim, bundle)
             and _claim_literals_match_metadata(claim)
@@ -203,8 +211,19 @@ def _claims_are_grounded(
 
 def _claim_value_is_supported(
     claim: NativeAnswerClaim,
-    bundle: EvidenceBundle,
+    bundle: GroundedEvidence,
 ) -> bool:
+    if isinstance(bundle, SettlementDetailsEvidenceBundle):
+        if claim.unit != "EUR" or claim.metric is None:
+            return False
+        result = bundle.result.model_dump(mode="python")
+        if claim.metric == PENDING_SETTLEMENT_AMOUNT:
+            return claim.value in _settlement_amounts(result, status="pending")
+        if claim.metric == EvidenceMetric.CONFIRMED_SETTLEMENT_INCOME:
+            return claim.value in _settlement_amounts(result, status="confirmed")
+        return False
+    if bundle.metric != claim.metric:
+        return False
     if claim.unit == "percent":
         return bool(
             bundle.comparison is not None
@@ -218,13 +237,18 @@ def _claim_value_is_supported(
         and claim.value
         in _field_values(
             bundle.result.model_dump(mode="python"),
-            claim.metric.value,
+            _metric_value(claim.metric),
         )
     )
 
 
 def _claim_literals_match_metadata(claim: NativeAnswerClaim) -> bool:
-    if claim.period is None or claim.value is None or claim.unit is None:
+    if (
+        claim.metric is None
+        or claim.period is None
+        or claim.value is None
+        or claim.unit is None
+    ):
         return False
     for pattern in (_ISO_DATE, _CHINESE_DATE):
         for match in pattern.finditer(claim.statement):
@@ -250,7 +274,7 @@ def _claim_literals_match_metadata(claim: NativeAnswerClaim) -> bool:
     ]
     day_values = [_decimal(match.group(1)) for match in _DAY_COUNT.finditer(claim.statement)]
     metric_is_visible = any(
-        field == claim.metric.value and term in claim.statement
+        field == _metric_value(claim.metric) and term in claim.statement
         for term, field in _METRIC_FIELDS.items()
     )
     if not metric_is_visible:
@@ -302,7 +326,7 @@ def _has_metric_value_relation(
     metric_matches = [
         match
         for term, field in _METRIC_FIELDS.items()
-        if field == claim.metric.value
+        if field == _metric_value(claim.metric)
         for match in re.finditer(re.escape(term), claim.statement)
     ]
     return any(
@@ -393,7 +417,7 @@ def _contains_phenomenon(statement: str) -> bool:
     )
 
 
-def _dates_are_supported(answer: str, evidence: Sequence[EvidenceBundle]) -> bool:
+def _dates_are_supported(answer: str, evidence: Sequence[GroundedEvidence]) -> bool:
     periods = [(bundle.period.start, bundle.period.end) for bundle in evidence]
     date_spans: list[tuple[int, int]] = []
     for pattern in (_ISO_DATE, _CHINESE_DATE):
@@ -421,7 +445,7 @@ def _dates_are_supported(answer: str, evidence: Sequence[EvidenceBundle]) -> boo
     return True
 
 
-def _quantities_are_supported(answer: str, evidence: Sequence[EvidenceBundle]) -> bool:
+def _quantities_are_supported(answer: str, evidence: Sequence[GroundedEvidence]) -> bool:
     facts_by_unit: dict[str, set[Decimal]] = {}
     for bundle in evidence:
         facts_by_unit.setdefault(bundle.unit, set()).update(_numeric_values(bundle.result))
@@ -449,13 +473,15 @@ def _quantities_are_supported(answer: str, evidence: Sequence[EvidenceBundle]) -
         value = _decimal(match.group(1))
         if value is None or value not in facts_by_unit.get("day", set()):
             return False
-    supported_percentages = {
-        abs(Decimal(str(bundle.comparison.percentage_change)))
-        for bundle in evidence
-        if bundle.comparison is not None
-        and bundle.comparison.percentage_status == "available"
-        and bundle.comparison.percentage_change is not None
-    }
+    supported_percentages: set[Decimal] = set()
+    for bundle in evidence:
+        comparison = getattr(bundle, "comparison", None)
+        if (
+            comparison is not None
+            and comparison.percentage_status == "available"
+            and comparison.percentage_change is not None
+        ):
+            supported_percentages.add(abs(Decimal(str(comparison.percentage_change))))
     for match in _PERCENTAGE.finditer(answer):
         value = _decimal(match.group(1))
         if value is None or value not in supported_percentages:
@@ -478,13 +504,45 @@ def _numeric_values(value: object) -> set[Decimal]:
 
 
 def _values_for_field(
-    evidence: Sequence[EvidenceBundle],
+    evidence: Sequence[GroundedEvidence],
     field: str,
 ) -> set[Decimal]:
-    return set().union(
-        *(_field_values(bundle.result.model_dump(mode="python"), field) for bundle in evidence),
-        set(),
-    )
+    values: set[Decimal] = set()
+    for bundle in evidence:
+        result = bundle.result.model_dump(mode="python")
+        if isinstance(bundle, SettlementDetailsEvidenceBundle):
+            if field == PENDING_SETTLEMENT_AMOUNT:
+                values.update(_settlement_amounts(result, status="pending"))
+                continue
+            if field == EvidenceMetric.CONFIRMED_SETTLEMENT_INCOME:
+                values.update(_settlement_amounts(result, status="confirmed"))
+                continue
+        values.update(_field_values(result, field))
+    return values
+
+
+def _metric_value(metric: EvidenceMetric | Literal["pending_settlement_amount"]) -> str:
+    return metric.value if isinstance(metric, EvidenceMetric) else metric
+
+
+def _settlement_amounts(
+    result: dict[str, object],
+    *,
+    status: Literal["pending", "confirmed"],
+) -> set[Decimal]:
+    amount_field = f"{status}_amount"
+    values = _numeric_values(result.get(amount_field))
+    companies = result.get("companies")
+    if isinstance(companies, list):
+        for company in companies:
+            if isinstance(company, dict):
+                values.update(_numeric_values(company.get(amount_field)))
+    records = result.get("records")
+    if isinstance(records, list):
+        for record in records:
+            if isinstance(record, dict) and record.get("status") == status:
+                values.update(_numeric_values(record.get("amount")))
+    return values
 
 
 def _field_values(value: object, field: str) -> set[Decimal]:
