@@ -5,7 +5,7 @@ from math import ceil
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.agent.factory import configured_openai_profiles
 from app.core.config import Settings
@@ -115,11 +115,44 @@ class AdapterCasesArtifact(ClosedModel):
     cases: list[AdapterCaseResult] = Field(min_length=10, max_length=10)
 
 
+class MonotonicInterval(ClosedModel):
+    started_ms: float = Field(ge=0)
+    ended_ms: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def require_positive_duration(self) -> "MonotonicInterval":
+        if self.ended_ms <= self.started_ms:
+            raise ValueError("trace interval must have positive duration")
+        return self
+
+    def overlaps(self, other: "MonotonicInterval") -> bool:
+        return self.started_ms < other.ended_ms and other.started_ms < self.ended_ms
+
+
 class TransactionTraceSample(ClosedModel):
     sample_index: int = Field(ge=1)
-    observed_model_calls: int = Field(ge=1)
-    observed_short_write_overlaps: int = Field(ge=1)
-    model_calls_outside_sqlite_transactions: bool
+    evidence_stage: MonotonicInterval
+    model_calls: list[MonotonicInterval] = Field(min_length=1)
+    sqlite_snapshots: list[MonotonicInterval] = Field(min_length=1)
+    short_write_locks: list[MonotonicInterval] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def require_safe_model_and_bounded_short_write_intervals(
+        self,
+    ) -> "TransactionTraceSample":
+        protected_intervals = [*self.sqlite_snapshots, *self.short_write_locks]
+        if any(
+            model_call.overlaps(protected)
+            for model_call in self.model_calls
+            for protected in protected_intervals
+        ):
+            raise ValueError("model calls must not overlap SQLite snapshots or write locks")
+        if not any(
+            write_lock.overlaps(self.evidence_stage)
+            for write_lock in self.short_write_locks
+        ):
+            raise ValueError("a bounded short write must overlap the evidence stage")
+        return self
 
 
 class ReleaseChecks(ClosedModel):
@@ -357,14 +390,17 @@ def _release_artifact_blockers(
     ):
         blockers.append("release transaction traces do not match the sample sequence")
         return blockers
+    if any(
+        len(trace.model_calls) != sample.model_stage_count
+        for trace, sample in zip(transaction_samples, samples, strict=True)
+    ):
+        blockers.append("release transaction traces do not cover every model call")
+        return blockers
     derived_checks = ReleaseChecks(
         language_quality=all(sample.language_quality_passed for sample in samples),
         structured_output=case_results["structured_output"],
         failure_semantics=all(case_results[name] for name in FAILURE_CASES),
-        model_calls_outside_sqlite_transactions=all(
-            sample.model_calls_outside_sqlite_transactions
-            for sample in transaction_samples
-        ),
+        model_calls_outside_sqlite_transactions=True,
         safety_release_gate=case_results["safety_release_gate"],
         secrets_redacted=case_results["secrets_redacted"],
         business_content_redacted=case_results["business_content_redacted"],

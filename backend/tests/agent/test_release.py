@@ -62,9 +62,17 @@ def write_release_artifacts(report_path) -> dict[str, str]:
             json.dumps(
                 {
                     "sample_index": index,
-                    "observed_model_calls": 2,
-                    "observed_short_write_overlaps": 1,
-                    "model_calls_outside_sqlite_transactions": True,
+                    "evidence_stage": {"started_ms": 3, "ended_ms": 7},
+                    "model_calls": [
+                        {"started_ms": 1, "ended_ms": 2},
+                        {"started_ms": 8, "ended_ms": 9},
+                    ],
+                    "sqlite_snapshots": [
+                        {"started_ms": 3, "ended_ms": 4},
+                    ],
+                    "short_write_locks": [
+                        {"started_ms": 5, "ended_ms": 6},
+                    ],
                 },
                 separators=(",", ":"),
             ).encode("utf-8")
@@ -284,6 +292,46 @@ def test_release_report_verifies_artifact_hashes_and_runtime_image(tmp_path) -> 
     ]
     assert wrong_image.approved is False
     assert "runtime image does not match the evaluated image" in wrong_image.blockers
+
+
+def test_release_report_requires_a_safe_trace_for_every_model_call(tmp_path) -> None:
+    report_path = tmp_path / "agent-release.json"
+    settings = production_settings(report_path)
+    trace_path = tmp_path / "transaction-trace.jsonl"
+    traces = [
+        json.loads(line)
+        for line in trace_path.read_text(encoding="utf-8").splitlines()
+    ]
+    traces[0]["model_calls"] = traces[0]["model_calls"][:1]
+    trace_content = "".join(
+        json.dumps(trace, separators=(",", ":")) + "\n" for trace in traces
+    )
+    trace_path.write_text(trace_content, encoding="utf-8")
+    report = approved_report(settings)
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    missing_call = agent_release_status(settings)
+
+    assert missing_call.approved is False
+    assert missing_call.blockers == [
+        "release transaction traces do not cover every model call"
+    ]
+
+    traces[0]["model_calls"] = [
+        {"started_ms": 3.5, "ended_ms": 4.5},
+        {"started_ms": 8, "ended_ms": 9},
+    ]
+    trace_content = "".join(
+        json.dumps(trace, separators=(",", ":")) + "\n" for trace in traces
+    )
+    trace_path.write_text(trace_content, encoding="utf-8")
+    report = approved_report(settings)
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    unsafe_overlap = agent_release_status(settings)
+
+    assert unsafe_overlap.approved is False
+    assert unsafe_overlap.blockers == ["release evidence artifact is invalid"]
 
 
 def test_release_sample_summary_uses_nearest_rank_p95_and_preserves_maxima() -> None:
