@@ -9,6 +9,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any, Literal, Protocol
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -43,6 +44,10 @@ EXPLICIT_CALENDAR_MONTH = re.compile(
 EXACT_MONTH_CLARIFICATION = "请提供要查询的准确自然月，例如“2026 年 7 月”。"
 
 
+class NativeToolAccessDenied(RuntimeError):
+    """A non-retryable authorization or tool-contract failure."""
+
+
 class ClosedModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -62,6 +67,28 @@ class NativeToolCall(ClosedModel):
 class MonthlyTotalRevenueArguments(ClosedModel):
     year: int = Field(ge=2000, le=2200)
     month: int = Field(ge=1, le=12)
+
+
+StoreFeatureFlag = Literal[
+    "company_settlement_enabled",
+    "income_items_enabled",
+    "wash_count_enabled",
+]
+
+
+@dataclass(frozen=True)
+class NativeToolRegistration:
+    definition: NativeToolDefinition
+    required_features: frozenset[StoreFeatureFlag]
+
+    def is_available(self, context: RuntimeContext) -> bool:
+        if context.role not in {"admin", "final_admin"} or not context.features.agent_enabled:
+            return False
+        try:
+            ZoneInfo(context.store_timezone)
+        except ZoneInfoNotFoundError:
+            return False
+        return all(getattr(context.features, feature) for feature in self.required_features)
 
 
 class NativeAnalysisHypothesis(ClosedModel):
@@ -164,6 +191,10 @@ class NativeEvidenceCollector(Protocol):
     ) -> object: ...
 
 
+class NativeToolScopeResolver(Protocol):
+    async def refresh(self, context: RuntimeContext) -> RuntimeContext: ...
+
+
 @dataclass(frozen=True)
 class NativeToolSpec:
     metric: EvidenceMetric
@@ -247,19 +278,26 @@ class NativeToolAgentService:
         *,
         model: NativeToolModel,
         evidence_collector: NativeEvidenceCollector,
+        scope_resolver: NativeToolScopeResolver,
         now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ) -> None:
         self.model = model
         self.evidence_collector = evidence_collector
+        self.scope_resolver = scope_resolver
         self.now = now
-        self.tools = [
-            NativeToolDefinition(
-                name=name,
-                description=spec.description,
-                input_schema=MonthlyTotalRevenueArguments.model_json_schema(),
+        self.tool_registry = tuple(
+            NativeToolRegistration(
+                definition=NativeToolDefinition(
+                    name=name,
+                    description=spec.description,
+                    input_schema=MonthlyTotalRevenueArguments.model_json_schema(),
+                ),
+                # Historical evidence remains available when optional store
+                # data-entry features are disabled.
+                required_features=frozenset(),
             )
             for name, spec in NATIVE_TOOLS.items()
-        ]
+        )
 
     async def run(
         self,
@@ -267,6 +305,17 @@ class NativeToolAgentService:
         state: ConversationState,
         recent_messages: list[ModelMessage],
     ) -> AgentRunResult:
+        if not _available_tools(context, self.tool_registry):
+            raise NativeToolAccessDenied("native tools are not available for this runtime scope")
+        catalog_context = await self.scope_resolver.refresh(context)
+        if (
+            catalog_context.user_id != context.user_id
+            or catalog_context.store_id != context.store_id
+        ):
+            raise NativeToolAccessDenied("native tools are not available for this runtime scope")
+        tools = _available_tools(catalog_context, self.tool_registry)
+        if not tools:
+            raise NativeToolAccessDenied("native tools are not available for this runtime scope")
         trusted_period = _explicit_calendar_month(recent_messages)
         if trusted_period is None:
             return AgentRunResult(
@@ -278,8 +327,22 @@ class NativeToolAgentService:
         items = [NativeTranscriptItem(message=message) for message in recent_messages]
         collected: list[EvidenceBundle] = []
         tool_call_count = 0
-        for _ in range(MAX_NATIVE_TOOL_ROUNDS):
-            turn = await self.model.next_turn(items, tools=self.tools)
+        for round_number in range(MAX_NATIVE_TOOL_ROUNDS):
+            if round_number:
+                catalog_context = await self.scope_resolver.refresh(catalog_context)
+                if (
+                    catalog_context.user_id != context.user_id
+                    or catalog_context.store_id != context.store_id
+                ):
+                    raise NativeToolAccessDenied(
+                        "native tools are not available for this runtime scope"
+                    )
+                tools = _available_tools(catalog_context, self.tool_registry)
+                if not tools:
+                    raise NativeToolAccessDenied(
+                        "native tools are not available for this runtime scope"
+                    )
+            turn = await self.model.next_turn(items, tools=tools)
             hypothesis_error = _hypothesis_reference_error(turn.hypotheses, items)
             if hypothesis_error is not None:
                 items.append(
@@ -310,7 +373,7 @@ class NativeToolAgentService:
                 *(
                     self._execute(
                         tool_call,
-                        context,
+                        catalog_context,
                         trusted_period=trusted_period,
                     )
                     for tool_call in turn.tool_calls
@@ -335,39 +398,27 @@ class NativeToolAgentService:
         trusted_period: MonthlyTotalRevenueArguments,
     ) -> tuple[NativeToolResult, EvidenceBundle | None]:
         tool_spec = NATIVE_TOOLS.get(call.name)
-        if tool_spec is None:
-            return (
-                _failed_tool_result(
-                    call,
-                    context,
-                    trusted_period,
-                    self.now(),
-                    tool_spec=None,
-                    category="unavailable_native_tool",
-                    message="请求的经营工具不可用",
-                ),
-                None,
-            )
+        if tool_spec is None or call.name not in {
+            tool.name for tool in _available_tools(context, self.tool_registry)
+        }:
+            raise NativeToolAccessDenied("native tool call is not authorized")
         try:
             arguments = MonthlyTotalRevenueArguments.model_validate(call.arguments)
-        except ValidationError:
-            return (
-                _failed_tool_result(
-                    call,
-                    context,
-                    trusted_period,
-                    self.now(),
-                    tool_spec=tool_spec,
-                    category="invalid_tool_arguments",
-                    message="经营工具参数无效",
-                ),
-                None,
-            )
+        except ValidationError as error:
+            raise NativeToolAccessDenied("native tool call is not authorized") from error
+        fresh_context = await self.scope_resolver.refresh(context)
+        if (
+            fresh_context.user_id != context.user_id
+            or fresh_context.store_id != context.store_id
+            or call.name
+            not in {tool.name for tool in _available_tools(fresh_context, self.tool_registry)}
+        ):
+            raise NativeToolAccessDenied("native tool call is not authorized")
         if arguments != trusted_period:
             return (
                 _failed_tool_result(
                     call,
-                    context,
+                    fresh_context,
                     trusted_period,
                     self.now(),
                     tool_spec=tool_spec,
@@ -393,13 +444,15 @@ class NativeToolAgentService:
                         ]
                     }
                 ),
-                context,
+                fresh_context,
             )
+        except NativeToolAccessDenied:
+            raise
         except Exception:
             return (
                 _failed_tool_result(
                     call,
-                    context,
+                    fresh_context,
                     arguments,
                     self.now(),
                     tool_spec=tool_spec,
@@ -414,7 +467,7 @@ class NativeToolAgentService:
             return (
                 _failed_tool_result(
                     call,
-                    context,
+                    fresh_context,
                     arguments,
                     self.now(),
                     tool_spec=tool_spec,
@@ -430,6 +483,17 @@ class NativeToolAgentService:
             ),
             evidence,
         )
+
+
+def _available_tools(
+    context: RuntimeContext,
+    registrations: Sequence[NativeToolRegistration],
+) -> tuple[NativeToolDefinition, ...]:
+    return tuple(
+        registration.definition
+        for registration in registrations
+        if registration.is_available(context)
+    )
 
 
 def _native_envelope(

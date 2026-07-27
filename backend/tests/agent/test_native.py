@@ -1,8 +1,12 @@
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 
 import pytest
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.agent.business_evidence import BusinessEvidenceCollector
 from app.agent.conversation import ConversationState
 from app.agent.contracts import (
     ConfirmedSettlementIncomeResult,
@@ -19,6 +23,7 @@ from app.agent.contracts import (
 from app.agent.native import (
     FakeNativeToolModel,
     NativeModelTurn,
+    NativeToolAccessDenied,
     NativeToolAgentService,
     NativeToolCall,
     NativeTranscriptItem,
@@ -35,14 +40,54 @@ class FailingEvidenceCollector:
         raise RuntimeError("database details must not reach the model")
 
 
-def _runtime_context() -> RuntimeContext:
+class RecordingEvidenceCollector:
+    def __init__(self) -> None:
+        self.calls = []
+
+    async def collect(self, plan, context):
+        self.calls.append((plan, context))
+        raise AssertionError("unauthorized tool calls must not reach business evidence")
+
+
+class DenyingScopeResolver:
+    calls = 0
+
+    async def refresh(self, context):
+        del context
+        self.calls += 1
+        raise NativeToolAccessDenied("runtime scope is no longer authorized")
+
+
+class PassthroughScopeResolver:
+    calls = 0
+
+    async def refresh(self, context):
+        self.calls += 1
+        return context
+
+
+class DenyExecutionScopeResolver:
+    calls = 0
+
+    async def refresh(self, context):
+        self.calls += 1
+        if self.calls == 1:
+            return context
+        raise NativeToolAccessDenied("runtime scope is no longer authorized")
+
+
+def _runtime_context(
+    *,
+    agent_enabled: bool = True,
+    store_timezone: str = "Europe/Rome",
+) -> RuntimeContext:
     return RuntimeContext(
         user_id=1,
         store_id=2,
         role="admin",
-        store_timezone="Europe/Rome",
+        store_timezone=store_timezone,
         features=RuntimeFeatureFlags(
-            agent_enabled=True,
+            agent_enabled=agent_enabled,
             company_settlement_enabled=True,
             income_items_enabled=True,
             wash_count_enabled=True,
@@ -147,7 +192,11 @@ async def test_native_investigation_chooses_follow_up_from_returned_evidence(
 ) -> None:
     model = EvidenceAdaptiveModel()
     collector = MetricEvidenceCollector(daily_revenue=daily_revenue)
-    service = NativeToolAgentService(model=model, evidence_collector=collector)
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=collector,
+        scope_resolver=PassthroughScopeResolver(),
+    )
 
     result = await service.run(
         _runtime_context(),
@@ -210,7 +259,11 @@ async def test_native_investigation_runs_independent_tool_calls_in_parallel() ->
             },
         ]
     )
-    service = NativeToolAgentService(model=model, evidence_collector=collector)
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=collector,
+        scope_resolver=PassthroughScopeResolver(),
+    )
 
     result = await asyncio.wait_for(
         service.run(
@@ -228,7 +281,7 @@ async def test_native_investigation_runs_independent_tool_calls_in_parallel() ->
     assert result.turn.content == "核对完成。"
 
 
-async def test_native_investigation_keeps_valid_parallel_results_when_one_call_is_invalid() -> None:
+async def test_native_investigation_closes_on_an_invalid_parallel_tool_contract() -> None:
     collector = MetricEvidenceCollector()
     model = FakeNativeToolModel(
         turns=[
@@ -254,22 +307,20 @@ async def test_native_investigation_keeps_valid_parallel_results_when_one_call_i
             },
         ]
     )
-    service = NativeToolAgentService(model=model, evidence_collector=collector)
-
-    result = await service.run(
-        _runtime_context(),
-        ConversationState(),
-        [ModelMessage(role="user", content="调查 2026 年 7 月的经营表现。")],
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=collector,
+        scope_resolver=PassthroughScopeResolver(),
     )
 
-    tool_results = [
-        item.tool_result for item in model.calls[1].items if item.tool_result is not None
-    ]
-    assert [tool_result.call_id for tool_result in tool_results] == ["invalid", "valid"]
-    assert tool_results[0].evidence.failure.category == "invalid_tool_arguments"
-    assert tool_results[1].evidence.facts == {"operating_days": 20}
-    assert collector.metrics == [EvidenceMetric.OPERATING_DAYS]
-    assert result.turn.content == "保留有效证据后结束。"
+    with pytest.raises(NativeToolAccessDenied, match="not authorized"):
+        await service.run(
+            _runtime_context(),
+            ConversationState(),
+            [ModelMessage(role="user", content="调查 2026 年 7 月的经营表现。")],
+        )
+
+    assert len(model.calls) == 1
 
 
 async def test_native_investigation_carries_analysis_hypotheses_between_turns() -> None:
@@ -309,6 +360,7 @@ async def test_native_investigation_carries_analysis_hypotheses_between_turns() 
     service = NativeToolAgentService(
         model=model,
         evidence_collector=MetricEvidenceCollector(),
+        scope_resolver=PassthroughScopeResolver(),
     )
 
     await service.run(
@@ -352,6 +404,7 @@ async def test_native_investigation_returns_unknown_hypothesis_evidence_for_corr
     service = NativeToolAgentService(
         model=model,
         evidence_collector=MetricEvidenceCollector(),
+        scope_resolver=PassthroughScopeResolver(),
     )
 
     result = await service.run(
@@ -417,6 +470,7 @@ async def test_native_investigation_does_not_let_failed_evidence_support_a_hypot
     service = NativeToolAgentService(
         model=model,
         evidence_collector=FailingEvidenceCollector(),
+        scope_resolver=PassthroughScopeResolver(),
     )
 
     result = await service.run(
@@ -451,6 +505,7 @@ async def test_native_investigation_stops_safely_at_the_round_limit() -> None:
     service = NativeToolAgentService(
         model=model,
         evidence_collector=MetricEvidenceCollector(),
+        scope_resolver=PassthroughScopeResolver(),
     )
 
     result = await service.run(
@@ -490,6 +545,7 @@ async def test_native_tool_failure_is_returned_to_the_model_in_the_unified_envel
     service = NativeToolAgentService(
         model=model,
         evidence_collector=FailingEvidenceCollector(),
+        scope_resolver=PassthroughScopeResolver(),
         now=lambda: datetime(2026, 7, 26, 10, 0, tzinfo=timezone.utc),
     )
 
@@ -527,7 +583,11 @@ async def test_native_tool_failure_is_returned_to_the_model_in_the_unified_envel
 async def test_native_loop_does_not_let_the_model_guess_an_unconfirmed_month() -> None:
     collector = FailingEvidenceCollector()
     model = FakeNativeToolModel(turns=[])
-    service = NativeToolAgentService(model=model, evidence_collector=collector)
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=collector,
+        scope_resolver=PassthroughScopeResolver(),
+    )
 
     result = await service.run(
         RuntimeContext(
@@ -550,3 +610,291 @@ async def test_native_loop_does_not_let_the_model_guess_an_unconfirmed_month() -
     assert result.turn.content == "请提供要查询的准确自然月，例如“2026 年 7 月”。"
     assert model.calls == []
     assert collector.calls == 0
+
+
+async def test_native_tool_catalog_rejects_a_disabled_runtime_before_model_execution() -> None:
+    model = FakeNativeToolModel(turns=[])
+    collector = RecordingEvidenceCollector()
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=collector,
+        scope_resolver=PassthroughScopeResolver(),
+    )
+
+    with pytest.raises(NativeToolAccessDenied, match="not available"):
+        await service.run(
+            _runtime_context(agent_enabled=False),
+            ConversationState(),
+            [ModelMessage(role="user", content="2026 年 7 月收入是多少？")],
+        )
+
+    assert model.calls == []
+    assert collector.calls == []
+
+
+@pytest.mark.parametrize(
+    ("name", "arguments"),
+    [
+        ("read_database", {"sql": "SELECT * FROM users"}),
+        (
+            "monthly_total_revenue",
+            {"year": 2026, "month": 7, "table": "users"},
+        ),
+        (
+            "monthly_total_revenue",
+            {"year": 2026, "month": 7, "field": "password_hash"},
+        ),
+        (
+            "monthly_total_revenue",
+            {"year": 2026, "month": 7, "expression": "sum(amount)"},
+        ),
+        (
+            "monthly_total_revenue",
+            {"year": 2026, "month": 7, "path": "/etc/passwd"},
+        ),
+        (
+            "monthly_total_revenue",
+            {"year": 2026, "month": 7, "url": "https://example.test"},
+        ),
+        (
+            "monthly_total_revenue",
+            {"year": 2026, "month": 7, "limit": 1_000_000},
+        ),
+        (
+            "monthly_total_revenue",
+            {"year": 2026, "month": 7, "user_id": 999},
+        ),
+        (
+            "monthly_total_revenue",
+            {"year": 2026, "month": 7, "store_id": 999},
+        ),
+        (
+            "monthly_total_revenue",
+            {"year": 2026, "month": 7, "role": "final_admin"},
+        ),
+        (
+            "monthly_total_revenue",
+            {"year": 2026, "month": 7, "store_timezone": "UTC"},
+        ),
+        (
+            "monthly_total_revenue",
+            {"year": 2026, "month": 7, "features": {"agent_enabled": True}},
+        ),
+        ("monthly_total_revenue", {"year": 2026, "month": 13}),
+        ("monthly_total_revenue", {"year": 2201, "month": 7}),
+    ],
+)
+async def test_native_tool_contract_fails_closed_for_unpublished_or_unbounded_calls(
+    name: str,
+    arguments: dict[str, object],
+) -> None:
+    model = FakeNativeToolModel(
+        turns=[
+            {
+                "message": {"role": "assistant", "content": "尝试调用工具。"},
+                "tool_calls": [
+                    {
+                        "id": "forged-call",
+                        "name": name,
+                        "arguments": arguments,
+                    }
+                ],
+                "signal": "continue",
+            },
+            {
+                "message": {"role": "assistant", "content": "不应重试。"},
+                "signal": "end",
+            },
+        ]
+    )
+    collector = RecordingEvidenceCollector()
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=collector,
+        scope_resolver=PassthroughScopeResolver(),
+    )
+
+    with pytest.raises(NativeToolAccessDenied, match="not authorized"):
+        await service.run(
+            _runtime_context(),
+            ConversationState(),
+            [ModelMessage(role="user", content="2026 年 7 月收入是多少？")],
+        )
+
+    assert len(model.calls) == 1
+    assert collector.calls == []
+
+
+async def test_native_tool_execution_reauthorizes_after_the_model_selects_a_tool() -> None:
+    model = FakeNativeToolModel(
+        turns=[
+            {
+                "message": {"role": "assistant", "content": "查询。"},
+                "tool_calls": [
+                    {
+                        "id": "revoked-call",
+                        "name": "monthly_total_revenue",
+                        "arguments": {"year": 2026, "month": 7},
+                    }
+                ],
+                "signal": "continue",
+            },
+            {
+                "message": {"role": "assistant", "content": "不应重试。"},
+                "signal": "end",
+            },
+        ]
+    )
+    collector = RecordingEvidenceCollector()
+    resolver = DenyExecutionScopeResolver()
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=collector,
+        scope_resolver=resolver,
+    )
+
+    with pytest.raises(NativeToolAccessDenied, match="no longer authorized"):
+        await service.run(
+            _runtime_context(),
+            ConversationState(),
+            [ModelMessage(role="user", content="2026 年 7 月收入是多少？")],
+        )
+
+    assert resolver.calls == 2
+    assert len(model.calls) == 1
+    assert collector.calls == []
+
+
+async def test_native_tool_catalog_reauthorizes_before_the_model_sees_tools() -> None:
+    model = FakeNativeToolModel(turns=[])
+    collector = RecordingEvidenceCollector()
+    resolver = DenyingScopeResolver()
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=collector,
+        scope_resolver=resolver,
+    )
+
+    with pytest.raises(NativeToolAccessDenied, match="no longer authorized"):
+        await service.run(
+            _runtime_context(),
+            ConversationState(),
+            [ModelMessage(role="user", content="2026 年 7 月收入是多少？")],
+        )
+
+    assert resolver.calls == 1
+    assert model.calls == []
+    assert collector.calls == []
+
+
+async def test_native_tool_catalog_rejects_an_invalid_backend_timezone_before_model() -> None:
+    model = FakeNativeToolModel(turns=[])
+    collector = RecordingEvidenceCollector()
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=collector,
+        scope_resolver=PassthroughScopeResolver(),
+    )
+
+    with pytest.raises(NativeToolAccessDenied, match="not available"):
+        await service.run(
+            _runtime_context(store_timezone="not/a-timezone"),
+            ConversationState(),
+            [ModelMessage(role="user", content="2026 年 7 月收入是多少？")],
+        )
+
+    assert model.calls == []
+    assert collector.calls == []
+
+
+@pytest.mark.parametrize(
+    "feature",
+    [
+        "company_settlement_enabled",
+        "income_items_enabled",
+        "wash_count_enabled",
+    ],
+)
+async def test_monthly_revenue_policy_stays_available_when_optional_store_features_are_off(
+    feature: str,
+) -> None:
+    model = FakeNativeToolModel(
+        turns=[
+            {
+                "message": {"role": "assistant", "content": "无需查询。"},
+                "signal": "end",
+            }
+        ]
+    )
+    context = _runtime_context()
+    context = context.model_copy(
+        update={"features": context.features.model_copy(update={feature: False})}
+    )
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=RecordingEvidenceCollector(),
+        scope_resolver=PassthroughScopeResolver(),
+    )
+
+    await service.run(
+        context,
+        ConversationState(),
+        [ModelMessage(role="user", content="2026 年 7 月收入是多少？")],
+    )
+
+    assert [tool.name for tool in model.calls[0].tools] == [
+        "monthly_total_revenue",
+        "daily_ledger_revenue",
+        "confirmed_settlement_income",
+        "operating_days",
+    ]
+
+
+async def test_native_business_query_reauthorizes_inside_its_sqlite_snapshot(
+    db_session: AsyncSession,
+) -> None:
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    authorization_sessions = []
+
+    async def deny_inside_snapshot(session, context):
+        del context
+        authorization_sessions.append(session)
+        raise NativeToolAccessDenied("runtime scope is no longer authorized")
+
+    model = FakeNativeToolModel(
+        turns=[
+            {
+                "message": {"role": "assistant", "content": "查询。"},
+                "tool_calls": [
+                    {
+                        "id": "atomic-call",
+                        "name": "monthly_total_revenue",
+                        "arguments": {"year": 2026, "month": 7},
+                    }
+                ],
+                "signal": "continue",
+            }
+        ]
+    )
+    collector = BusinessEvidenceCollector(
+        session_factory,
+        scope_authorizer=deny_inside_snapshot,
+    )
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=collector,
+        scope_resolver=PassthroughScopeResolver(),
+    )
+
+    with pytest.raises(NativeToolAccessDenied, match="no longer authorized"):
+        await service.run(
+            _runtime_context(),
+            ConversationState(),
+            [ModelMessage(role="user", content="2026 年 7 月收入是多少？")],
+        )
+
+    assert authorization_sessions == [db_session]
+    assert len(model.calls) == 1

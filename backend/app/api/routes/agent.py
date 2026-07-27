@@ -17,6 +17,7 @@ from app.agent.conversation import (
 )
 from app.agent.contracts import ModelMessage
 from app.agent.model import CONFIGURATION_CATEGORIES
+from app.agent.native import NativeToolAccessDenied
 from app.agent.runtime import RuntimeContext, RuntimeFeatureFlags
 from app.api.deps import CurrentUser, Session
 from app.api.routes.agent_admin import agent_enabled
@@ -111,7 +112,10 @@ async def run_agent_turn(
     # The model call happens after the short write and outside any SQLite snapshot.
     await end_read_transaction(session)
     runner: AgentRunner = request.app.state.agent_service
-    run_result = await runner.run(context, state, recent_messages)
+    try:
+        run_result = await runner.run(context, state, recent_messages)
+    except NativeToolAccessDenied as error:
+        raise HTTPException(403, "Agent 工具授权已失效") from error
     result = run_result.turn
 
     async with sqlite_short_write(session):

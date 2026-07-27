@@ -25,7 +25,9 @@ from app.agent.factory import create_model_adapter
 from app.agent.model import ModelAttempt
 from app.agent.native import NativeToolAgentService, NativeToolModel
 from app.agent.runtime import RuntimeContext
+from app.agent.tool_access import DatabaseNativeToolScopeResolver
 from app.agent.workflow import AgentTurnWorkflow
+from app.api.routes.agent_admin import agent_enabled
 from app.core.config import Settings
 
 CORE_RULES = (
@@ -186,11 +188,17 @@ def create_agent_service(
 ) -> AgentService | NativeToolAgentService:
     if native_model is not None:
         native_options = {"now": native_now} if native_now is not None else {}
+        scope_resolver = DatabaseNativeToolScopeResolver(
+            session_factory,
+            agent_enabled=agent_enabled,
+        )
+        evidence_collector = (
+            native_evidence_collector or BusinessEvidenceCollector(session_factory)
+        ).with_scope_authorizer(scope_resolver.refresh_in_session)
         return NativeToolAgentService(
             model=native_model,
-            evidence_collector=(
-                native_evidence_collector or BusinessEvidenceCollector(session_factory)
-            ),
+            evidence_collector=evidence_collector,
+            scope_resolver=scope_resolver,
             **native_options,
         )
     return AgentService(
