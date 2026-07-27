@@ -1,5 +1,5 @@
 from collections import defaultdict
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -104,6 +104,19 @@ class SettlementRecordSnapshot:
     opening_month: date
     amount: int
     status: Literal["pending", "confirmed"]
+
+
+def _settlement_company_snapshots(
+    companies: Sequence[SettlementCompany],
+) -> list[SettlementCompanySnapshot]:
+    return [
+        SettlementCompanySnapshot(
+            id=company.id,
+            name=company.name,
+            is_active=company.is_active,
+        )
+        for company in companies
+    ]
 
 
 class BusinessEvidenceCollector:
@@ -1855,22 +1868,8 @@ class BusinessEvidenceCollector:
                     )
                 ).all()
             )
-            company_snapshots = [
-                SettlementCompanySnapshot(
-                    id=company.id,
-                    name=company.name,
-                    is_active=company.is_active,
-                )
-                for company in companies
-            ]
-            selected_company_snapshots = [
-                SettlementCompanySnapshot(
-                    id=company.id,
-                    name=company.name,
-                    is_active=company.is_active,
-                )
-                for company in selected_companies
-            ]
+            company_snapshots = _settlement_company_snapshots(companies)
+            selected_company_snapshots = _settlement_company_snapshots(selected_companies)
             record_snapshots = [
                 SettlementRecordSnapshot(
                     company_name=record.company_name,

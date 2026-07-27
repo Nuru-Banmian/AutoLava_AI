@@ -1829,7 +1829,7 @@ def test_settlement_amount_claims_are_grounded_by_status_and_invoice_month() -> 
     period = {"start": "2026-07-01", "end": "2026-07-31"}
     answer = (
         "Acme 的待到账公司结算金额为 120 欧元；"
-        "已确认公司结算收入为 80 欧元。"
+        "Acme 的已确认公司结算收入为 80 欧元。"
     )
 
     assert answer_is_grounded(
@@ -1846,16 +1846,38 @@ def test_settlement_amount_claims_are_grounded_by_status_and_invoice_month() -> 
                 period=period,
                 value=120,
                 unit="EUR",
+                settlement_scope="company",
+                company_name="Acme",
             ),
             NativeAnswerClaim(
-                statement="已确认公司结算收入为 80 欧元",
+                statement="Acme 的已确认公司结算收入为 80 欧元",
                 status="verified_fact",
                 evidence_references=[reference],
                 metric="confirmed_settlement_income",
                 period=period,
                 value=80,
                 unit="EUR",
+                settlement_scope="company",
+                company_name="Acme",
             ),
+        ],
+        {reference: evidence},
+    )
+    assert not answer_is_grounded(
+        "Beta 的待到账公司结算金额为 120 欧元。",
+        [evidence],
+        [
+            NativeAnswerClaim(
+                statement="Beta 的待到账公司结算金额为 120 欧元",
+                status="verified_fact",
+                evidence_references=[reference],
+                metric="pending_settlement_amount",
+                period=period,
+                value=120,
+                unit="EUR",
+                settlement_scope="company",
+                company_name="Beta",
+            )
         ],
         {reference: evidence},
     )

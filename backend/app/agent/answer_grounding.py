@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import date
 from decimal import Decimal, InvalidOperation
+from enum import StrEnum
 import re
 from typing import Literal
 
@@ -59,7 +60,12 @@ _EXACT_VALUE_CONNECTOR = re.compile(
 _PERCENTAGE_CHANGE_CONNECTOR = re.compile(r"\s*(?:增长|增加|上升|提高|下降|减少|降低|下滑)\s*")
 _INCREASE = re.compile(r"增长|增加|上升|提高")
 _DECREASE = re.compile(r"下降|减少|降低|下滑")
-PENDING_SETTLEMENT_AMOUNT = "pending_settlement_amount"
+
+class SettlementClaimMetric(StrEnum):
+    PENDING_AMOUNT = "pending_settlement_amount"
+
+
+ClaimMetric = EvidenceMetric | SettlementClaimMetric
 GroundedEvidence = EvidenceBundle | SettlementDetailsEvidenceBundle
 _METRIC_FIELDS = {
     "月度总收入": "monthly_total_revenue",
@@ -82,11 +88,13 @@ class NativeAnswerClaim(BaseModel):
     statement: str = Field(min_length=1, max_length=1_000)
     status: Literal["verified_fact", "analysis_hypothesis", "unknown"]
     evidence_references: list[str] = Field(default_factory=list, max_length=20)
-    metric: EvidenceMetric | Literal["pending_settlement_amount"] | None = None
+    metric: ClaimMetric | None = None
     period: EvidencePeriodResult | None = None
     value: Decimal | None = None
     unit: Literal["EUR", "day", "car", "EUR/car", "EUR/operating_day", "percent"] | None = None
     relationship: Literal["none", "correlation", "causation"] = "none"
+    settlement_scope: Literal["all_companies", "company"] | None = None
+    company_name: str | None = Field(default=None, min_length=1, max_length=120)
 
     @model_validator(mode="after")
     def require_auditable_fact_shape(self) -> "NativeAnswerClaim":
@@ -103,6 +111,12 @@ class NativeAnswerClaim(BaseModel):
             or self.unit is None
         ):
             raise ValueError("verified facts require evidence, metric, period, value, and unit")
+        if self.settlement_scope == "company" and (
+            self.company_name is None or self.company_name not in self.statement
+        ):
+            raise ValueError("company settlement claims require a visible company name")
+        if self.settlement_scope != "company" and self.company_name is not None:
+            raise ValueError("company name requires company settlement scope")
         return self
 
 
@@ -217,10 +231,10 @@ def _claim_value_is_supported(
         if claim.unit != "EUR" or claim.metric is None:
             return False
         result = bundle.result.model_dump(mode="python")
-        if claim.metric == PENDING_SETTLEMENT_AMOUNT:
-            return claim.value in _settlement_amounts(result, status="pending")
+        if claim.metric == SettlementClaimMetric.PENDING_AMOUNT:
+            return _settlement_claim_value_is_supported(claim, result, status="pending")
         if claim.metric == EvidenceMetric.CONFIRMED_SETTLEMENT_INCOME:
-            return claim.value in _settlement_amounts(result, status="confirmed")
+            return _settlement_claim_value_is_supported(claim, result, status="confirmed")
         return False
     if bundle.metric != claim.metric:
         return False
@@ -511,7 +525,7 @@ def _values_for_field(
     for bundle in evidence:
         result = bundle.result.model_dump(mode="python")
         if isinstance(bundle, SettlementDetailsEvidenceBundle):
-            if field == PENDING_SETTLEMENT_AMOUNT:
+            if field == SettlementClaimMetric.PENDING_AMOUNT:
                 values.update(_settlement_amounts(result, status="pending"))
                 continue
             if field == EvidenceMetric.CONFIRMED_SETTLEMENT_INCOME:
@@ -521,8 +535,42 @@ def _values_for_field(
     return values
 
 
-def _metric_value(metric: EvidenceMetric | Literal["pending_settlement_amount"]) -> str:
-    return metric.value if isinstance(metric, EvidenceMetric) else metric
+def _metric_value(metric: ClaimMetric) -> str:
+    return metric.value
+
+
+def _settlement_claim_value_is_supported(
+    claim: NativeAnswerClaim,
+    result: dict[str, object],
+    *,
+    status: Literal["pending", "confirmed"],
+) -> bool:
+    if claim.settlement_scope == "all_companies":
+        if re.search(r"合计|总计|全部结算公司|所有结算公司", claim.statement) is None:
+            return False
+        return claim.value in _numeric_values(result.get(f"{status}_amount"))
+    if claim.settlement_scope != "company" or claim.company_name is None:
+        return False
+    amount_field = f"{status}_amount"
+    companies = result.get("companies")
+    if isinstance(companies, list) and any(
+        isinstance(company, dict)
+        and company.get("name") == claim.company_name
+        and claim.value in _numeric_values(company.get(amount_field))
+        for company in companies
+    ):
+        return True
+    records = result.get("records")
+    return bool(
+        isinstance(records, list)
+        and any(
+            isinstance(record, dict)
+            and record.get("company_name") == claim.company_name
+            and record.get("status") == status
+            and claim.value in _numeric_values(record.get("amount"))
+            for record in records
+        )
+    )
 
 
 def _settlement_amounts(

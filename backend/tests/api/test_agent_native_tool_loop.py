@@ -107,28 +107,30 @@ class GroundedSettlementModel:
                 "message": {
                     "role": "assistant",
                     "content": (
-                        "待到账公司结算金额为 120 欧元；"
-                        "已确认公司结算收入为 80 欧元。"
+                        "所有结算公司的待到账公司结算金额合计为 120 欧元；"
+                        "所有结算公司的已确认公司结算收入合计为 80 欧元。"
                     ),
                 },
                 "answer_claims": [
                     {
-                        "statement": "待到账公司结算金额为 120 欧元",
+                        "statement": "所有结算公司的待到账公司结算金额合计为 120 欧元",
                         "status": "verified_fact",
                         "metric": "pending_settlement_amount",
                         "period": evidence.period.model_dump(mode="json"),
                         "value": 120,
                         "unit": "EUR",
                         "evidence_references": [evidence.reference],
+                        "settlement_scope": "all_companies",
                     },
                     {
-                        "statement": "已确认公司结算收入为 80 欧元",
+                        "statement": "所有结算公司的已确认公司结算收入合计为 80 欧元",
                         "status": "verified_fact",
                         "metric": "confirmed_settlement_income",
                         "period": evidence.period.model_dump(mode="json"),
                         "value": 80,
                         "unit": "EUR",
                         "evidence_references": [evidence.reference],
+                        "settlement_scope": "all_companies",
                     },
                 ],
                 "signal": "end",
@@ -378,7 +380,8 @@ async def test_native_settlement_tool_returns_only_the_current_store_invoice_mon
     }
     assert "Secret" not in evidence.model_dump_json()
     assert response.json()["content"] == (
-        "待到账公司结算金额为 120 欧元；已确认公司结算收入为 80 欧元。"
+        "所有结算公司的待到账公司结算金额合计为 120 欧元；"
+        "所有结算公司的已确认公司结算收入合计为 80 欧元。"
     )
 
     stored = await db_session.scalar(select(AgentEvidence))
