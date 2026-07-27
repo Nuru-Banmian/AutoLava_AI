@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from calendar import monthrange
 from collections.abc import Callable, Iterable, Sequence
 from datetime import date, datetime, timezone
@@ -24,6 +25,10 @@ from app.agent.runtime import RuntimeContext
 
 MONTHLY_TOTAL_REVENUE_TOOL = "monthly_total_revenue"
 MAX_NATIVE_TOOL_ROUNDS = 4
+EXPLICIT_CALENDAR_MONTH = re.compile(
+    r"(?P<year>20\d{2}|21\d{2}|2200)\s*年\s*(?P<month>1[0-2]|0?[1-9])\s*月"
+)
+EXACT_MONTH_CLARIFICATION = "请提供要查询的准确自然月，例如“2026 年 7 月”。"
 
 
 class ClosedModel(BaseModel):
@@ -185,6 +190,14 @@ class NativeToolAgentService:
         state: ConversationState,
         recent_messages: list[ModelMessage],
     ) -> AgentRunResult:
+        trusted_period = _explicit_calendar_month(recent_messages)
+        if trusted_period is None:
+            return AgentRunResult(
+                turn=TurnResult(route="clarify", content=EXACT_MONTH_CLARIFICATION),
+                state=state.model_copy(
+                    update={"pending_clarifications": [EXACT_MONTH_CLARIFICATION]}
+                ),
+            )
         items = [NativeTranscriptItem(message=message) for message in recent_messages]
         collected: EvidenceBundle | None = None
         for _ in range(MAX_NATIVE_TOOL_ROUNDS):
@@ -210,7 +223,11 @@ class NativeToolAgentService:
                 )
             if len(turn.tool_calls) != 1:
                 raise ValueError("the monthly revenue slice accepts one tool call per round")
-            tool_result, new_evidence = await self._execute(turn.tool_calls[0], context)
+            tool_result, new_evidence = await self._execute(
+                turn.tool_calls[0],
+                context,
+                trusted_period=trusted_period,
+            )
             if new_evidence is not None:
                 collected = new_evidence
             items.append(NativeTranscriptItem(tool_result=tool_result))
@@ -220,10 +237,24 @@ class NativeToolAgentService:
         self,
         call: NativeToolCall,
         context: RuntimeContext,
+        *,
+        trusted_period: MonthlyTotalRevenueArguments,
     ) -> tuple[NativeToolResult, EvidenceBundle | None]:
         if call.name != MONTHLY_TOTAL_REVENUE_TOOL:
             raise ValueError("unavailable native tool")
         arguments = MonthlyTotalRevenueArguments.model_validate(call.arguments)
+        if arguments != trusted_period:
+            return (
+                _failed_tool_result(
+                    call,
+                    context,
+                    trusted_period,
+                    self.now(),
+                    category="period_scope_mismatch",
+                    message="工具期间与用户确认的自然月不一致",
+                ),
+                None,
+            )
         try:
             evidence = await self.evidence_collector.collect(
                 EvidencePlan.model_validate(
@@ -300,6 +331,9 @@ def _failed_tool_result(
     context: RuntimeContext,
     arguments: MonthlyTotalRevenueArguments,
     queried_at: datetime,
+    *,
+    category: str = "business_query_unavailable",
+    message: str = "经营查询暂时不可用",
 ) -> NativeToolResult:
     start = date(arguments.year, arguments.month, 1)
     end = date(arguments.year, arguments.month, monthrange(arguments.year, arguments.month)[1])
@@ -326,8 +360,24 @@ def _failed_tool_result(
             truncated=False,
             failure=NativeEvidenceFailure(
                 status="failed",
-                category="business_query_unavailable",
-                message="经营查询暂时不可用",
+                category=category,
+                message=message,
             ),
         ),
+    )
+
+
+def _explicit_calendar_month(
+    messages: Sequence[ModelMessage],
+) -> MonthlyTotalRevenueArguments | None:
+    user_message = next(
+        (message.content for message in reversed(messages) if message.role == "user"),
+        "",
+    )
+    match = EXPLICIT_CALENDAR_MONTH.search(user_message)
+    if match is None:
+        return None
+    return MonthlyTotalRevenueArguments(
+        year=int(match.group("year")),
+        month=int(match.group("month")),
     )
