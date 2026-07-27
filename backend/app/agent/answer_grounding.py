@@ -540,12 +540,18 @@ def _metric_value(metric: ClaimMetric) -> str:
 
 
 def _mentions_settlement_company(statement: str, company_name: str) -> bool:
-    return (
-        re.search(
-            rf"结算公司「{re.escape(company_name)}」(?:的|：|:|\s|，|,|。|；|;)",
+    escaped_name = re.escape(company_name)
+    boundary_after = r"(?=\s*(?:公司|的|：|:|，|,|。|；|;))"
+    return bool(
+        f"「{company_name}」" in statement
+        or re.search(
+            rf"(?<![0-9A-Za-z_]){escaped_name}{boundary_after}",
             statement,
         )
-        is not None
+        or re.search(
+            rf"结算公司\s*{escaped_name}{boundary_after}",
+            statement,
+        )
     )
 
 

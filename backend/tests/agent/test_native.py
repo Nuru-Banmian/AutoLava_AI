@@ -1910,6 +1910,17 @@ def test_settlement_amount_claims_are_grounded_by_status_and_invoice_month() -> 
             settlement_scope="company",
             company_name="Acme",
         )
+    NativeAnswerClaim(
+        statement="Acme 公司的待到账公司结算金额为 120 欧元",
+        status="verified_fact",
+        evidence_references=[reference],
+        metric="pending_settlement_amount",
+        period=period,
+        value=120,
+        unit="EUR",
+        settlement_scope="company",
+        company_name="Acme",
+    )
     filtered = _settlement_evidence(
         company_name="Acme",
         query_company_name="Acme",
