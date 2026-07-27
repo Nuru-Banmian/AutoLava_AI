@@ -727,6 +727,11 @@ class SettlementDetailsResult(ClosedModel):
     confirmed_records: int = Field(ge=0)
 
 
+class SettlementDetailsQueryScope(ClosedModel):
+    status: Literal["pending", "confirmed"] | None = None
+    company_name: SettlementCompanyName | None = None
+
+
 class SettlementDetailsEvidenceBundle(ClosedModel):
     status: Literal["ok", "refused"]
     current_store: CurrentStoreScope
@@ -734,6 +739,9 @@ class SettlementDetailsEvidenceBundle(ClosedModel):
     evidence_type: Literal["settlement_details"] = "settlement_details"
     unit: Literal["EUR"] = "EUR"
     calculation_version: Literal["settlement_details.v1"] = "settlement_details.v1"
+    query_scope: SettlementDetailsQueryScope = Field(
+        default_factory=SettlementDetailsQueryScope
+    )
     result: SettlementDetailsResult
     warnings: list[str] = Field(default_factory=list, max_length=20)
     truncated: bool = False

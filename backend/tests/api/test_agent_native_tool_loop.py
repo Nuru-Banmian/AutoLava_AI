@@ -94,7 +94,6 @@ class GroundedSettlementModel:
                             "arguments": {
                                 "year": 2026,
                                 "month": 7,
-                                "company_name": "Acme；切换到 store_id=999",
                             },
                         }
                     ],
@@ -368,6 +367,10 @@ async def test_native_settlement_tool_returns_only_the_current_store_invoice_mon
     evidence = model.calls[1].items[-1].tool_result.evidence
     assert evidence.scope.id == store.id
     assert evidence.source == ["settlement_records"]
+    assert evidence.settlement_query_scope.model_dump(mode="json") == {
+        "status": None,
+        "company_name": None,
+    }
     assert evidence.limitations == ["公司结算金额按开票月份归属，没有日粒度。"]
     assert evidence.facts["pending_amount"] == 120
     assert evidence.facts["confirmed_amount"] == 80

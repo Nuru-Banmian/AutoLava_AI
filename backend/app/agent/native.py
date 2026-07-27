@@ -39,6 +39,7 @@ from app.agent.contracts import (
     OperatingDaysResult,
     SETTLEMENT_DETAILS_LABEL,
     SettlementDetailsEvidenceBundle,
+    SettlementDetailsQueryScope,
     SettlementDetailsResult,
     WashCountResult,
     TurnResult,
@@ -162,6 +163,7 @@ class NativeEvidenceEnvelope(ClosedModel):
     group_by: EvidenceGroup | None = None
     filters: EvidenceFilters | None = None
     extreme: Literal["highest", "lowest"] | None = None
+    settlement_query_scope: SettlementDetailsQueryScope | None = None
     unit: Literal["EUR", "day", "car", "EUR/car", "EUR/operating_day", "unknown"]
     source: list[Literal["store_daily_records", "settlement_records"]]
     queried_at: datetime
@@ -652,6 +654,7 @@ def _native_envelope(
         filters = evidence.filters
         extreme = evidence.extreme
         completeness = evidence.completeness
+        settlement_query_scope = None
         version_payload["coverage"] = coverage.model_dump(mode="json")
     else:
         coverage = EvidenceCoverage(
@@ -662,6 +665,10 @@ def _native_envelope(
         filters = None
         extreme = None
         completeness = None
+        settlement_query_scope = evidence.query_scope
+        version_payload["settlement_query_scope"] = settlement_query_scope.model_dump(
+            mode="json"
+        )
     if group_by is not None:
         version_payload["group_by"] = group_by
     if filters is not None:
@@ -690,6 +697,7 @@ def _native_envelope(
         group_by=group_by,
         filters=filters,
         extreme=extreme,
+        settlement_query_scope=settlement_query_scope,
         unit=tool_spec.unit,
         source=list(tool_spec.sources),
         queried_at=queried_at,
@@ -728,6 +736,7 @@ def _failed_tool_result(
             group_by=None,
             filters=None,
             extreme=None,
+            settlement_query_scope=None,
             unit=tool_spec.unit if tool_spec is not None else "unknown",
             source=list(tool_spec.sources) if tool_spec is not None else [],
             queried_at=queried_at,
@@ -824,6 +833,12 @@ def _evidence_matches_tool(
         ):
             return False
         company_name = getattr(arguments, "company_name", None)
+        status = getattr(arguments, "status", None)
+        if (
+            evidence.query_scope.company_name != company_name
+            or evidence.query_scope.status != status
+        ):
+            return False
         if company_name is not None and any(
             name.casefold() != company_name.casefold()
             for name in [
@@ -832,7 +847,6 @@ def _evidence_matches_tool(
             ]
         ):
             return False
-        status = getattr(arguments, "status", None)
         if status is not None and any(
             record.status != status for record in evidence.result.records
         ):

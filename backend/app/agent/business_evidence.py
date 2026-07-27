@@ -803,6 +803,10 @@ class BusinessEvidenceCollector:
                 status="refused",
                 current_store={"id": context.store_id},
                 period={"start": start, "end": end},
+                query_scope={
+                    "status": request.status,
+                    "company_name": request.company_name,
+                },
                 result=empty_result,
                 warnings=[message],
                 summary=message,
@@ -827,6 +831,10 @@ class BusinessEvidenceCollector:
                 status="refused",
                 current_store={"id": context.store_id},
                 period={"start": start, "end": end},
+                query_scope={
+                    "status": request.status,
+                    "company_name": request.company_name,
+                },
                 result=empty_result,
                 warnings=[message],
                 summary=message,
@@ -840,6 +848,10 @@ class BusinessEvidenceCollector:
                 status="ok",
                 current_store={"id": context.store_id},
                 period={"start": start, "end": end},
+                query_scope={
+                    "status": request.status,
+                    "company_name": request.company_name,
+                },
                 result=empty_result,
                 warnings=[message],
                 truncated=snapshot["companies_truncated"],
@@ -884,6 +896,10 @@ class BusinessEvidenceCollector:
             status="ok",
             current_store={"id": context.store_id},
             period={"start": start, "end": end},
+            query_scope={
+                "status": request.status,
+                "company_name": request.company_name,
+            },
             result={
                 "companies": companies,
                 "records": records,

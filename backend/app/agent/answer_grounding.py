@@ -112,7 +112,8 @@ class NativeAnswerClaim(BaseModel):
         ):
             raise ValueError("verified facts require evidence, metric, period, value, and unit")
         if self.settlement_scope == "company" and (
-            self.company_name is None or self.company_name not in self.statement
+            self.company_name is None
+            or not _mentions_settlement_company(self.statement, self.company_name)
         ):
             raise ValueError("company settlement claims require a visible company name")
         if self.settlement_scope != "company" and self.company_name is not None:
@@ -230,11 +231,10 @@ def _claim_value_is_supported(
     if isinstance(bundle, SettlementDetailsEvidenceBundle):
         if claim.unit != "EUR" or claim.metric is None:
             return False
-        result = bundle.result.model_dump(mode="python")
         if claim.metric == SettlementClaimMetric.PENDING_AMOUNT:
-            return _settlement_claim_value_is_supported(claim, result, status="pending")
+            return _settlement_claim_value_is_supported(claim, bundle, status="pending")
         if claim.metric == EvidenceMetric.CONFIRMED_SETTLEMENT_INCOME:
-            return _settlement_claim_value_is_supported(claim, result, status="confirmed")
+            return _settlement_claim_value_is_supported(claim, bundle, status="confirmed")
         return False
     if bundle.metric != claim.metric:
         return False
@@ -539,17 +539,38 @@ def _metric_value(metric: ClaimMetric) -> str:
     return metric.value
 
 
+def _mentions_settlement_company(statement: str, company_name: str) -> bool:
+    return (
+        re.search(
+            rf"结算公司「{re.escape(company_name)}」(?:的|：|:|\s|，|,|。|；|;)",
+            statement,
+        )
+        is not None
+    )
+
+
 def _settlement_claim_value_is_supported(
     claim: NativeAnswerClaim,
-    result: dict[str, object],
+    evidence: SettlementDetailsEvidenceBundle,
     *,
     status: Literal["pending", "confirmed"],
 ) -> bool:
+    result = evidence.result.model_dump(mode="python")
+    if evidence.query_scope.status not in {None, status}:
+        return False
     if claim.settlement_scope == "all_companies":
-        if re.search(r"合计|总计|全部结算公司|所有结算公司", claim.statement) is None:
+        if (
+            evidence.query_scope.company_name is not None
+            or re.search(r"合计|总计|全部结算公司|所有结算公司", claim.statement) is None
+        ):
             return False
         return claim.value in _numeric_values(result.get(f"{status}_amount"))
     if claim.settlement_scope != "company" or claim.company_name is None:
+        return False
+    if (
+        evidence.query_scope.company_name is not None
+        and evidence.query_scope.company_name.casefold() != claim.company_name.casefold()
+    ):
         return False
     amount_field = f"{status}_amount"
     companies = result.get("companies")
