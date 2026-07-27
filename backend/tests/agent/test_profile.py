@@ -24,6 +24,8 @@ def test_openai_compatible_profile_is_entirely_configuration_driven() -> None:
         model_id="configured-model",
         model_api_key="test-only-key",
         model_structured_output_method="function_calling",
+        model_timeout_seconds=23,
+        model_max_output_tokens=1700,
     )
 
     adapter = create_model_adapter(settings)
@@ -33,6 +35,8 @@ def test_openai_compatible_profile_is_entirely_configuration_driven() -> None:
     assert str(adapter.primary.profile.base_url) == "https://provider.invalid/v1"
     assert adapter.primary.profile.model_id == "configured-model"
     assert adapter.primary.profile.structured_output_method == "function_calling"
+    assert adapter.primary.profile.timeout_seconds == 23
+    assert adapter.primary.profile.max_output_tokens == 1700
     assert "test-only-key" not in repr(adapter.primary.profile)
 
 

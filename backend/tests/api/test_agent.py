@@ -112,7 +112,7 @@ async def test_only_final_administrator_can_persist_the_global_agent_switch(
     await _login(client, "admin")
     initial = await client.get("/api/admin/agent-settings")
     assert initial.status_code == 200
-    assert initial.json() == {"enabled": False}
+    assert initial.json() == {"enabled": False, "release_approved": True}
     forbidden = await client.patch(
         "/api/admin/agent-settings", json={"enabled": True}
     )
@@ -123,9 +123,45 @@ async def test_only_final_administrator_can_persist_the_global_agent_switch(
         "/api/admin/agent-settings", json={"enabled": True}
     )
     assert enabled.status_code == 200
-    assert enabled.json() == {"enabled": True}
+    assert enabled.json() == {"enabled": True, "release_approved": True}
     assert (await client.get("/api/admin/agent-settings")).json() == {
-        "enabled": True
+        "enabled": True,
+        "release_approved": True,
+    }
+
+
+async def test_production_release_gate_keeps_agent_globally_disabled(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AUTOLAVA_BOOTSTRAP_USERNAME", "owner")
+    get_settings.cache_clear()
+    await user_factory(username="owner", password="secret", role="admin")
+    db_session.add(AgentSettings(id=1, enabled=True))
+    await db_session.commit()
+    await _login(client, "owner")
+
+    from app.api.routes import agent_admin
+
+    production = get_settings().model_copy(
+        update={
+            "environment": "production",
+            "agent_release_report_path": "",
+        }
+    )
+    monkeypatch.setattr(agent_admin, "get_settings", lambda: production)
+
+    current = await client.get("/api/admin/agent-settings")
+    rejected = await client.patch(
+        "/api/admin/agent-settings", json={"enabled": True}
+    )
+
+    assert current.json() == {"enabled": False, "release_approved": False}
+    assert rejected.status_code == 409
+    assert rejected.json() == {
+        "detail": "Agent 发布门禁尚未通过，保持全局关闭"
     }
 
 

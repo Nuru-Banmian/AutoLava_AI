@@ -1,0 +1,125 @@
+import json
+
+from app.agent.release import agent_release_status
+from app.core.config import Settings
+
+
+def approved_report() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "target": {
+            "memory_limit_mb": 2048,
+            "single_container": True,
+        },
+        "profile": {
+            "provider": "candidate",
+            "model": "candidate-model",
+            "fallback_provider": "backup",
+            "fallback_model": "backup-model",
+            "timeout_seconds": 30,
+            "max_output_tokens": 2000,
+            "evidence_batch_limit": 1,
+        },
+        "measurements": {
+            "idle_peak_memory_mb": 420,
+            "business_peak_memory_mb": 610,
+            "agent_peak_memory_mb": 1320,
+            "request_p95_ms": 9000,
+            "model_stage_count_max": 2,
+            "input_tokens_max": 4500,
+            "output_tokens_max": 900,
+            "estimated_cost_eur_max": 0.02,
+            "sqlite_snapshot_p95_ms": 120,
+            "short_write_baseline_p95_ms": 35,
+            "short_write_with_agent_p95_ms": 70,
+        },
+        "checks": {
+            "structured_output": True,
+            "failure_semantics": True,
+            "model_calls_outside_sqlite_transactions": True,
+            "safety_release_gate": True,
+            "secrets_redacted": True,
+            "business_content_redacted": True,
+        },
+        "thresholds": {
+            "minimum_free_memory_mb": 256,
+            "request_p95_ms": 15000,
+            "estimated_cost_eur_max": 0.05,
+            "sqlite_snapshot_p95_ms": 500,
+            "short_write_with_agent_p95_ms": 200,
+            "short_write_slowdown_max": 3,
+        },
+    }
+
+
+def production_settings(report_path) -> Settings:
+    return Settings(
+        _env_file=None,
+        environment="production",
+        database_path=report_path.parent / "production.sqlite3",
+        jwt_secret="a" * 32,
+        model_adapter="openai_compatible",
+        model_provider="candidate",
+        model_base_url="https://provider.invalid/v1",
+        model_id="candidate-model",
+        model_api_key="test-only-key",
+        fallback_model_provider="backup",
+        fallback_model_base_url="https://backup.invalid/v1",
+        fallback_model_id="backup-model",
+        fallback_model_api_key="test-only-backup-key",
+        agent_release_report_path=str(report_path),
+    )
+
+
+def test_production_agent_release_requires_a_complete_matching_pass_report(tmp_path) -> None:
+    report_path = tmp_path / "agent-release.json"
+    settings = production_settings(report_path)
+
+    missing = agent_release_status(settings)
+    assert missing.approved is False
+    assert missing.blockers == ["release report is missing"]
+
+    report = approved_report()
+    report["checks"]["structured_output"] = False
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    failed = agent_release_status(settings)
+    assert failed.approved is False
+    assert "structured output validation failed" in failed.blockers
+
+    report["checks"]["structured_output"] = True
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    passed = agent_release_status(settings)
+    assert passed.approved is True
+    assert passed.blockers == []
+
+
+def test_release_report_cannot_approve_a_different_runtime_profile(tmp_path) -> None:
+    report_path = tmp_path / "agent-release.json"
+    report_path.write_text(json.dumps(approved_report()), encoding="utf-8")
+    settings = production_settings(report_path).model_copy(
+        update={"model_id": "unmeasured-model"}
+    )
+
+    status = agent_release_status(settings)
+
+    assert status.approved is False
+    assert status.blockers == ["runtime model profile does not match the evaluated profile"]
+
+
+def test_release_report_cannot_weaken_the_repository_thresholds(tmp_path) -> None:
+    report_path = tmp_path / "agent-release.json"
+    report = approved_report()
+    report["thresholds"]["minimum_free_memory_mb"] = 1
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    status = agent_release_status(production_settings(report_path))
+
+    assert status.approved is False
+    assert status.blockers == ["release thresholds do not match the approved policy"]
+
+
+def test_non_production_keeps_the_fake_adapter_development_seam_open() -> None:
+    status = agent_release_status(Settings(_env_file=None))
+
+    assert status.approved is True
+    assert status.blockers == []

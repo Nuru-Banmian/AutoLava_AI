@@ -32,6 +32,8 @@ class Settings(BaseSettings):
         "json_schema", "function_calling", "json_mode"
     ] = "json_schema"
     model_thinking_parameters: dict[str, str | int | bool] = Field(default_factory=dict)
+    model_timeout_seconds: float = Field(default=30, gt=0, le=120)
+    model_max_output_tokens: int = Field(default=2000, ge=100, le=10_000)
     model_input_cost_per_million: float | None = None
     model_output_cost_per_million: float | None = None
     fallback_model_provider: str = "fallback"
@@ -46,6 +48,8 @@ class Settings(BaseSettings):
     )
     fallback_model_input_cost_per_million: float | None = None
     fallback_model_output_cost_per_million: float | None = None
+    agent_evidence_batch_limit: Literal[1] = 1
+    agent_release_report_path: str = ""
 
     @model_validator(mode="after")
     def validate_production_settings(self) -> "Settings":

@@ -28,10 +28,12 @@ function renderPanel(isOwner: boolean) {
 it("lets the final administrator persist the global Agent switch", async () => {
   let enabled = false;
   server.use(
-    http.get("/api/admin/agent-settings", () => HttpResponse.json({ enabled })),
+    http.get("/api/admin/agent-settings", () =>
+      HttpResponse.json({ enabled, release_approved: true }),
+    ),
     http.patch("/api/admin/agent-settings", async ({ request }) => {
       enabled = (await request.json() as { enabled: boolean }).enabled;
-      return HttpResponse.json({ enabled });
+      return HttpResponse.json({ enabled, release_approved: true });
     }),
   );
   renderPanel(true);
@@ -49,7 +51,7 @@ it("lets the final administrator persist the global Agent switch", async () => {
 it("shows ordinary administrators the state without allowing changes", async () => {
   server.use(
     http.get("/api/admin/agent-settings", () =>
-      HttpResponse.json({ enabled: true }),
+      HttpResponse.json({ enabled: true, release_approved: true }),
     ),
   );
   renderPanel(false);
@@ -59,4 +61,21 @@ it("shows ordinary administrators the state without allowing changes", async () 
   });
   expect(toggle).toBeDisabled();
   expect(screen.getByText("仅最终管理员可以修改此设置")).toBeInTheDocument();
+});
+
+it("keeps the switch disabled until the production release gate passes", async () => {
+  server.use(
+    http.get("/api/admin/agent-settings", () =>
+      HttpResponse.json({ enabled: false, release_approved: false }),
+    ),
+  );
+  renderPanel(true);
+
+  const toggle = await screen.findByRole("switch", {
+    name: "全局启用 Agent",
+  });
+  expect(toggle).toBeDisabled();
+  expect(
+    screen.getByText("生产发布门禁尚未通过，Agent 保持全局关闭"),
+  ).toBeInTheDocument();
 });

@@ -72,6 +72,14 @@ switch providers. Provider/model pricing can be supplied with
 `AUTOLAVA_MODEL_INPUT_COST_PER_MILLION` and `AUTOLAVA_MODEL_OUTPUT_COST_PER_MILLION` (and the
 fallback equivalents) to estimate cost in conversation-free run statistics.
 
+Production Agent access also requires a passing, redacted 2 GB release report at
+`AUTOLAVA_AGENT_RELEASE_REPORT_PATH`. The report is evaluated against the exact provider, model,
+fallback order, `AUTOLAVA_MODEL_TIMEOUT_SECONDS`, `AUTOLAVA_MODEL_MAX_OUTPUT_TOKENS`,
+and `AUTOLAVA_AGENT_EVIDENCE_BATCH_LIMIT`. A missing, failed, malformed, or mismatched report keeps the
+Agent globally disabled even when the persisted final-administrator switch is on. See
+`docs/release/agent-release-evaluation.md` for the reproducible measurement method and current
+release decision.
+
 The API container runs Alembic before starting. On an empty volume it then creates the schema, and
 the administrator bootstrap command is idempotent:
 

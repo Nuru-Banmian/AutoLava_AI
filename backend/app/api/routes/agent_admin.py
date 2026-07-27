@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
 
 from app.api.deps import CurrentUser, Session, require_admin
+from app.agent.release import agent_release_status
+from app.core.config import get_settings
 from app.core.database import sqlite_short_write
 from app.models.operations import AgentSettings
 from app.services.access import require_fresh_user
@@ -21,14 +23,19 @@ class AgentSettingsBody(BaseModel):
 
 async def agent_enabled(session: Session) -> bool:
     settings = await session.get(AgentSettings, 1)
-    return settings.enabled if settings is not None else False
+    requested = settings.enabled if settings is not None else False
+    return requested and agent_release_status(get_settings()).approved
 
 
 @router.get("")
 async def get_agent_settings(
     session: Session, _actor: Administrator
 ) -> dict[str, bool]:
-    return {"enabled": await agent_enabled(session)}
+    release = agent_release_status(get_settings())
+    return {
+        "enabled": await agent_enabled(session),
+        "release_approved": release.approved,
+    }
 
 
 @router.patch("")
@@ -40,10 +47,13 @@ async def patch_agent_settings(
         fresh_actor = await require_fresh_user(session, user_id=actor_id)
         if not is_owner(fresh_actor):
             raise HTTPException(403, "只有最终管理员可以控制 Agent")
+        release = agent_release_status(get_settings())
+        if body.enabled and not release.approved:
+            raise HTTPException(409, "Agent 发布门禁尚未通过，保持全局关闭")
         settings = await session.get(AgentSettings, 1)
         if settings is None:
             settings = AgentSettings(id=1, enabled=body.enabled)
             session.add(settings)
         else:
             settings.enabled = body.enabled
-    return {"enabled": body.enabled}
+    return {"enabled": body.enabled, "release_approved": release.approved}

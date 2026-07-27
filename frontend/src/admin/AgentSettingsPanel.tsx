@@ -19,6 +19,8 @@ export function AgentSettingsPanel({ isOwner }: { isOwner: boolean }) {
     onSuccess: (next) => settings.refetch().then(() => next),
   });
   const enabled = update.data?.enabled ?? settings.data?.enabled ?? false;
+  const releaseApproved =
+    update.data?.release_approved ?? settings.data?.release_approved ?? false;
 
   return (
     <section
@@ -41,7 +43,7 @@ export function AgentSettingsPanel({ isOwner }: { isOwner: boolean }) {
             aria-checked={enabled}
             aria-label="全局启用 Agent"
             className="inline-flex items-center gap-3 rounded-md border px-3 py-2 text-sm disabled:opacity-60"
-            disabled={!isOwner || update.isPending}
+            disabled={!isOwner || !releaseApproved || update.isPending}
             onClick={() => update.mutate(!enabled)}
             role="switch"
             type="button"
@@ -59,6 +61,11 @@ export function AgentSettingsPanel({ isOwner }: { isOwner: boolean }) {
           {!isOwner && (
             <p className="text-sm text-muted-foreground">
               仅最终管理员可以修改此设置
+            </p>
+          )}
+          {!releaseApproved && (
+            <p className="text-sm text-amber-700">
+              生产发布门禁尚未通过，Agent 保持全局关闭
             </p>
           )}
           {update.isSuccess && (

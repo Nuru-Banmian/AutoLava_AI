@@ -18,6 +18,8 @@ def create_model_adapter(settings: Settings) -> ModelAdapter:
         api_key=settings.model_api_key,
         structured_output_method=settings.model_structured_output_method,
         thinking_parameters=settings.model_thinking_parameters,
+        timeout_seconds=settings.model_timeout_seconds,
+        max_output_tokens=settings.model_max_output_tokens,
         input_cost_per_million=settings.model_input_cost_per_million,
         output_cost_per_million=settings.model_output_cost_per_million,
     )
@@ -31,6 +33,8 @@ def create_model_adapter(settings: Settings) -> ModelAdapter:
                 api_key=settings.fallback_model_api_key,
                 structured_output_method=settings.fallback_model_structured_output_method,
                 thinking_parameters=settings.fallback_model_thinking_parameters,
+                timeout_seconds=settings.model_timeout_seconds,
+                max_output_tokens=settings.model_max_output_tokens,
                 input_cost_per_million=settings.fallback_model_input_cost_per_million,
                 output_cost_per_million=settings.fallback_model_output_cost_per_million,
             )
