@@ -34,6 +34,7 @@ class EvidenceRequestKind(StrEnum):
     BUSINESS_METRICS = "business_metrics"
     SETTLEMENT_DETAILS = "settlement_details"
     DAILY_LEDGER = "daily_ledger"
+    DAILY_LEDGER_DRILLDOWN = "daily_ledger_drilldown"
     REVENUE_ANALYSIS = "revenue_analysis"
 
 
@@ -275,6 +276,18 @@ class DailyLedgerRequest(ClosedModel):
     date: CalendarDate
 
 
+class DailyLedgerDrilldownRequest(ClosedModel):
+    kind: Literal["daily_ledger_drilldown"] = "daily_ledger_drilldown"
+    dates: list[CalendarDate] = Field(min_length=1, max_length=31)
+
+    @field_validator("dates")
+    @classmethod
+    def require_unique_dates(cls, values: list[CalendarDate]) -> list[CalendarDate]:
+        if len(values) != len(set(values)):
+            raise ValueError("daily ledger drilldown dates must be unique")
+        return values
+
+
 class RevenueAnalysisRequest(ClosedModel):
     kind: Literal["revenue_analysis"] = "revenue_analysis"
     period: EvidencePeriod | None = None
@@ -283,7 +296,11 @@ class RevenueAnalysisRequest(ClosedModel):
 
 
 EvidenceRequestUnion = Annotated[
-    EvidenceRequest | SettlementDetailsRequest | DailyLedgerRequest | RevenueAnalysisRequest,
+    EvidenceRequest
+    | SettlementDetailsRequest
+    | DailyLedgerRequest
+    | DailyLedgerDrilldownRequest
+    | RevenueAnalysisRequest,
     Field(discriminator="kind"),
 ]
 
@@ -461,6 +478,23 @@ class DailyLedgerResult(ClosedModel):
     raw_event: UntrustedRawEvent | None = None
 
 
+class DailyLedgerDrilldownResult(ClosedModel):
+    detail_status: Literal["details", "summary_only"]
+    records: list[DailyLedgerResult] = Field(default_factory=list, max_length=10)
+    unrecorded_dates: list[CalendarDate] = Field(default_factory=list, max_length=31)
+    matched_records: int = Field(ge=0, le=31)
+    suggested_action: OpenBusinessRecordsAction | None = None
+
+    @model_validator(mode="after")
+    def require_bounded_detail_shape(self) -> "DailyLedgerDrilldownResult":
+        if self.detail_status == "details":
+            if self.matched_records != len(self.records) or self.suggested_action is not None:
+                raise ValueError("daily ledger details require every matched record")
+        elif self.records or self.suggested_action is None:
+            raise ValueError("summary-only daily ledger results require a navigation suggestion")
+        return self
+
+
 class EvidenceComparisonResult(ClosedModel):
     status: Literal["ok", "no_data"]
     period: EvidencePeriodResult
@@ -489,6 +523,7 @@ EvidenceResult = (
     | GroupedMetricResult
     | DailyLedgerExtremeResult
     | DailyLedgerResult
+    | DailyLedgerDrilldownResult
 )
 
 
@@ -528,6 +563,11 @@ class EvidenceBundle(ClosedModel):
     group_by: EvidenceGroup | None = None
     filters: EvidenceFilters | None = None
     extreme: Literal["highest", "lowest"] | None = None
+    selected_dates: list[CalendarDate] | None = Field(
+        default=None,
+        max_length=31,
+        exclude_if=lambda value: value is None,
+    )
     unit: Literal[
         "EUR",
         "day",
@@ -550,6 +590,7 @@ class EvidenceBundle(ClosedModel):
         "grouped_business_metric.v1",
         "daily_ledger_extreme.v1",
         "daily_ledger.v1",
+        "daily_ledger_drilldown.v1",
     ]
     result: EvidenceResult
     coverage: EvidenceCoverage
@@ -577,10 +618,43 @@ class EvidenceBundle(ClosedModel):
             if (
                 self.status != "ok"
                 or self.unit == "mixed"
-                or self.calculation_version == "daily_ledger.v1"
-                or isinstance(self.result, DailyLedgerResult)
+                or self.calculation_version in {"daily_ledger.v1", "daily_ledger_drilldown.v1"}
+                or isinstance(self.result, (DailyLedgerResult, DailyLedgerDrilldownResult))
+                or self.selected_dates is not None
             ):
                 raise ValueError("business metric evidence has an inconsistent shape")
+            return self
+        if self.calculation_version == "daily_ledger_drilldown.v1":
+            if not isinstance(self.result, DailyLedgerDrilldownResult):
+                raise ValueError("daily ledger drilldown evidence has an inconsistent shape")
+            recorded_dates = {
+                row.facts.date for row in self.result.records if row.facts is not None
+            }
+            if (
+                self.status != "ok"
+                or self.unit != "mixed"
+                or not self.selected_dates
+                or len(self.selected_dates) != len(set(self.selected_dates))
+                or self.period.start != min(self.selected_dates)
+                or self.period.end != max(self.selected_dates)
+                or self.coverage.calendar_dates != len(self.selected_dates)
+                or self.coverage.recorded_dates != self.result.matched_records
+                or len(recorded_dates) != len(self.result.records)
+                or any(
+                    row.facts is None or row.facts.date not in self.selected_dates
+                    for row in self.result.records
+                )
+                or any(value not in self.selected_dates for value in self.result.unrecorded_dates)
+                or (
+                    self.result.detail_status == "details"
+                    and (
+                        recorded_dates.intersection(self.result.unrecorded_dates)
+                        or recorded_dates.union(self.result.unrecorded_dates)
+                        != set(self.selected_dates)
+                    )
+                )
+            ):
+                raise ValueError("daily ledger drilldown evidence has an inconsistent shape")
             return self
         if (
             self.unit != "mixed"
@@ -590,6 +664,7 @@ class EvidenceBundle(ClosedModel):
             or self.filters is not None
             or self.extreme is not None
             or self.comparison is not None
+            or self.selected_dates is not None
             or self.period.start != self.period.end
             or self.coverage.calendar_dates != 1
         ):

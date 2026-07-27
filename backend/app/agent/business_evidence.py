@@ -20,6 +20,8 @@ from app.agent.contracts import (
     DailyLedgerAmount,
     DailyLedgerDecomposition,
     DailyLedgerFacts,
+    DailyLedgerDrilldownRequest,
+    DailyLedgerDrilldownResult,
     DailyLedgerRequest,
     DailyLedgerResult,
     DailyLedgerExtremeResult,
@@ -52,6 +54,7 @@ Now = Callable[[ZoneInfo], datetime]
 ScopeAuthorizer = Callable[[AsyncSession, RuntimeContext], Awaitable[RuntimeContext]]
 MAX_SETTLEMENT_ROWS = 50
 MAX_GROUP_ROWS = 400
+MAX_DAILY_LEDGER_DETAIL_ROWS = 10
 MAJOR_DRIVER_THRESHOLD = Decimal("0.6")
 WEEKDAY_DATABASE_VALUES = {
     "星期一": "1",
@@ -165,6 +168,8 @@ class BusinessEvidenceCollector:
             return await self._collect_settlement_details(request, context)
         if isinstance(request, DailyLedgerRequest):
             return await self._collect_daily_ledger(request.date, context)
+        if isinstance(request, DailyLedgerDrilldownRequest):
+            return await self._collect_daily_ledger_drilldown(request.dates, context)
         if isinstance(request, RevenueAnalysisRequest):
             return await self._collect_revenue_analysis(request, context)
         start, end = self._resolve_period(request.period, context)
@@ -951,55 +956,13 @@ class BusinessEvidenceCollector:
                 summary=warning,
             )
 
-        sorted_items = sorted(
-            record.items,
-            key=lambda item: (
-                item.sort_order,
-                item.category_name.casefold(),
-                item.id,
-            ),
-        )
-        income_categories = [
-            DailyLedgerAmount(name=item.category_name, amount=item.amount)
-            for item in sorted_items
-            if item.include_in_total
-        ]
-        other_data = [
-            DailyLedgerAmount(name=item.category_name, amount=item.amount)
-            for item in sorted_items
-            if not item.include_in_total
-        ]
-        raw_event = (
-            UntrustedRawEvent(text=record.activity)
-            if record.activity is not None and record.activity.strip()
-            else None
-        )
-        missing_fields: list[Literal["recorded_weather", "wash_count"]] = []
-        unavailable_fields: list[Literal["wash_count"]] = []
-        if record.weather is None:
-            missing_fields.append("recorded_weather")
-        if context.features.wash_count_enabled:
-            if record.wash_count is None:
-                missing_fields.append("wash_count")
-            wash_count = record.wash_count
-        else:
-            wash_count = None
-            unavailable_fields.append("wash_count")
-        facts = DailyLedgerFacts(
-            date=record.date,
-            daily_revenue=record.daily_revenue,
-            income_mode=("分类记账" if record.income_mode == "composed" else "总额记账"),
-            income_categories=income_categories,
-            other_data=other_data,
-            operating_status=record.is_open,
-            recorded_weather=record.weather,
-            wash_count=wash_count,
-        )
+        result = _daily_ledger_result(record, context)
+        assert result.facts is not None
         summary = _daily_ledger_summary(
-            facts=facts,
-            missing_fields=missing_fields,
-            unavailable_fields=unavailable_fields,
-            raw_event=raw_event,
+            facts=result.facts,
+            missing_fields=result.missing_fields,
+            unavailable_fields=result.unavailable_fields,
+            raw_event=result.raw_event,
         )
         return EvidenceBundle(
             status="ok",
@@ -1008,14 +971,117 @@ class BusinessEvidenceCollector:
             metric=EvidenceMetric.DAILY_LEDGER,
             unit="mixed",
             calculation_version="daily_ledger.v1",
-            result=DailyLedgerResult(
-                facts=facts,
-                missing_fields=missing_fields,
-                unavailable_fields=unavailable_fields,
-                raw_event=raw_event,
-            ),
+            result=result,
             coverage={"calendar_dates": 1, "recorded_dates": 1},
             comparison=None,
+            warnings=[],
+            truncated=False,
+            summary=summary,
+        )
+
+    async def _collect_daily_ledger_drilldown(
+        self,
+        targets: list[date],
+        context: RuntimeContext,
+    ) -> EvidenceBundle:
+        selected_dates = sorted(targets)
+        results: list[DailyLedgerResult] = []
+        recorded_dates: set[date] = set()
+        matched_records = 0
+        for attempt in range(2):
+            try:
+                async with self._authorized_session(context) as (session, context):
+                    if len(selected_dates) > MAX_DAILY_LEDGER_DETAIL_ROWS:
+                        matched_records = int(
+                            await session.scalar(
+                                select(func.count(StoreDailyRecord.id)).where(
+                                    StoreDailyRecord.store_id == context.store_id,
+                                    StoreDailyRecord.date.in_(selected_dates),
+                                )
+                            )
+                            or 0
+                        )
+                    else:
+                        records = list(
+                            (
+                                await session.scalars(
+                                    select(StoreDailyRecord)
+                                    .where(
+                                        StoreDailyRecord.store_id == context.store_id,
+                                        StoreDailyRecord.date.in_(selected_dates),
+                                    )
+                                    .options(selectinload(StoreDailyRecord.items))
+                                    .order_by(StoreDailyRecord.date)
+                                )
+                            ).all()
+                        )
+                        matched_records = len(records)
+                        recorded_dates = {record.date for record in records}
+                        results = [_daily_ledger_result(record, context) for record in records]
+                break
+            except OperationalError as error:
+                if attempt == 1 or not _is_temporary_sqlite_failure(error):
+                    raise
+
+        period = EvidencePeriodResult(start=selected_dates[0], end=selected_dates[-1])
+        if len(selected_dates) > MAX_DAILY_LEDGER_DETAIL_ROWS:
+            action = {
+                "type": "open_business_records",
+                "start_month": period.start.strftime("%Y-%m"),
+                "end_month": period.end.strftime("%Y-%m"),
+            }
+            warning = (
+                f"请求 {len(selected_dates)} 个日期，超过每日台账明细上限 "
+                f"{MAX_DAILY_LEDGER_DETAIL_ROWS}；仅返回摘要，建议打开受控经营记录视图。"
+            )
+            return EvidenceBundle(
+                status="ok",
+                current_store={"id": context.store_id},
+                period=period,
+                metric=EvidenceMetric.DAILY_LEDGER,
+                selected_dates=selected_dates,
+                unit="mixed",
+                calculation_version="daily_ledger_drilldown.v1",
+                result=DailyLedgerDrilldownResult(
+                    detail_status="summary_only",
+                    records=[],
+                    unrecorded_dates=[],
+                    matched_records=matched_records,
+                    suggested_action=action,
+                ),
+                coverage={
+                    "calendar_dates": len(selected_dates),
+                    "recorded_dates": matched_records,
+                },
+                warnings=[warning],
+                truncated=True,
+                summary=warning,
+            )
+
+        unrecorded_dates = [target for target in selected_dates if target not in recorded_dates]
+        summary = (
+            f"已按线索钻取 {len(selected_dates)} 个日期："
+            f"{matched_records} 个有每日台账，{len(unrecorded_dates)} 个未记录。"
+        )
+        return EvidenceBundle(
+            status="ok",
+            current_store={"id": context.store_id},
+            period=period,
+            metric=EvidenceMetric.DAILY_LEDGER,
+            selected_dates=selected_dates,
+            unit="mixed",
+            calculation_version="daily_ledger_drilldown.v1",
+            result=DailyLedgerDrilldownResult(
+                detail_status="details",
+                records=results,
+                unrecorded_dates=unrecorded_dates,
+                matched_records=matched_records,
+                suggested_action=None,
+            ),
+            coverage={
+                "calendar_dates": len(selected_dates),
+                "recorded_dates": matched_records,
+            },
             warnings=[],
             truncated=False,
             summary=summary,
@@ -2236,6 +2302,61 @@ def _extreme_summary(
 def _is_temporary_sqlite_failure(error: OperationalError) -> bool:
     message = str(error.orig).lower()
     return "locked" in message or "busy" in message
+
+
+def _daily_ledger_result(
+    record: StoreDailyRecord,
+    context: RuntimeContext,
+) -> DailyLedgerResult:
+    sorted_items = sorted(
+        record.items,
+        key=lambda item: (
+            item.sort_order,
+            item.category_name.casefold(),
+            item.id,
+        ),
+    )
+    income_categories = [
+        DailyLedgerAmount(name=item.category_name, amount=item.amount)
+        for item in sorted_items
+        if item.include_in_total
+    ]
+    other_data = [
+        DailyLedgerAmount(name=item.category_name, amount=item.amount)
+        for item in sorted_items
+        if not item.include_in_total
+    ]
+    raw_event = (
+        UntrustedRawEvent(text=record.activity)
+        if record.activity is not None and record.activity.strip()
+        else None
+    )
+    missing_fields: list[Literal["recorded_weather", "wash_count"]] = []
+    unavailable_fields: list[Literal["wash_count"]] = []
+    if record.weather is None:
+        missing_fields.append("recorded_weather")
+    if context.features.wash_count_enabled:
+        if record.wash_count is None:
+            missing_fields.append("wash_count")
+        wash_count = record.wash_count
+    else:
+        wash_count = None
+        unavailable_fields.append("wash_count")
+    return DailyLedgerResult(
+        facts=DailyLedgerFacts(
+            date=record.date,
+            daily_revenue=record.daily_revenue,
+            income_mode=("分类记账" if record.income_mode == "composed" else "总额记账"),
+            income_categories=income_categories,
+            other_data=other_data,
+            operating_status=record.is_open,
+            recorded_weather=record.weather,
+            wash_count=wash_count,
+        ),
+        missing_fields=missing_fields,
+        unavailable_fields=unavailable_fields,
+        raw_event=raw_event,
+    )
 
 
 def _daily_ledger_summary(

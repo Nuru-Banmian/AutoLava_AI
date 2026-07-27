@@ -20,6 +20,7 @@ from app.agent.contracts import (
     AverageRevenuePerCarResult,
     CategoryAmountResult,
     DailyLedgerRevenueResult,
+    DailyLedgerDrilldownResult,
     DailyLedgerExtremeResult,
     EVIDENCE_METRIC_LABELS,
     EvidenceBundle,
@@ -60,6 +61,7 @@ AVERAGE_REVENUE_PER_CAR_TOOL = "average_revenue_per_car"
 INCOME_CATEGORY_AMOUNT_TOOL = "income_category_amount"
 OTHER_DATA_AMOUNT_TOOL = "other_data_amount"
 DAILY_LEDGER_REVENUE_EXTREME_TOOL = "daily_ledger_revenue_extreme"
+DAILY_LEDGER_DETAILS_TOOL = "daily_ledger_details"
 MAX_NATIVE_TOOL_ROUNDS = 4
 MAX_NATIVE_TOOL_CALLS = 8
 INVESTIGATION_LIMIT_MESSAGE = "调查已达到本轮资源上限；以下结论仅基于已返回的证据。"
@@ -103,6 +105,18 @@ class ComposableBusinessMetricArguments(MonthlyTotalRevenueArguments):
 class DailyLedgerRevenueExtremeArguments(MonthlyTotalRevenueArguments):
     extreme: Literal["highest", "lowest"]
     filters: EvidenceFilters | None = None
+
+
+class DailyLedgerDetailsArguments(MonthlyTotalRevenueArguments):
+    dates: list[date] = Field(min_length=1, max_length=31)
+
+    @model_validator(mode="after")
+    def require_unique_dates_in_month(self) -> "DailyLedgerDetailsArguments":
+        if len(self.dates) != len(set(self.dates)):
+            raise ValueError("daily ledger detail dates must be unique")
+        if any((value.year, value.month) != (self.year, self.month) for value in self.dates):
+            raise ValueError("daily ledger detail dates must stay inside the requested month")
+        return self
 
 
 class SettlementDetailsArguments(MonthlyTotalRevenueArguments):
@@ -163,8 +177,17 @@ class NativeEvidenceEnvelope(ClosedModel):
     group_by: EvidenceGroup | None = None
     filters: EvidenceFilters | None = None
     extreme: Literal["highest", "lowest"] | None = None
+    selected_dates: list[date] | None = None
     settlement_query_scope: SettlementDetailsQueryScope | None = None
-    unit: Literal["EUR", "day", "car", "EUR/car", "EUR/operating_day", "unknown"]
+    unit: Literal[
+        "EUR",
+        "day",
+        "car",
+        "EUR/car",
+        "EUR/operating_day",
+        "mixed",
+        "unknown",
+    ]
     source: list[Literal["store_daily_records", "settlement_records"]]
     queried_at: datetime
     data_version: str = Field(min_length=1, max_length=100)
@@ -251,7 +274,7 @@ class NativeToolSpec:
     arguments_type: type[MonthlyTotalRevenueArguments]
     description: str
     sources: tuple[Literal["store_daily_records", "settlement_records"], ...]
-    unit: Literal["EUR", "day", "car", "EUR/car", "EUR/operating_day"]
+    unit: Literal["EUR", "day", "car", "EUR/car", "EUR/operating_day", "mixed"]
     required_features: frozenset[StoreFeatureFlag] = frozenset()
 
 
@@ -357,6 +380,17 @@ NATIVE_TOOLS = {
         description="查询经营日每日台账营业额的最高或最低日期，支持批准的筛选。",
         sources=("store_daily_records",),
         unit="EUR",
+    ),
+    DAILY_LEDGER_DETAILS_TOOL: NativeToolSpec(
+        metric=EvidenceMetric.DAILY_LEDGER,
+        result_types=(DailyLedgerDrilldownResult,),
+        arguments_type=DailyLedgerDetailsArguments,
+        description=(
+            "按聚合线索钻取当前受信任门店指定自然月内的受控日期集合；"
+            "返回每日台账事实、原始事件和缺失字段，不用于无条件读取整月明细。"
+        ),
+        sources=("store_daily_records",),
+        unit="mixed",
     ),
 }
 
@@ -563,17 +597,25 @@ class NativeToolAgentService:
                 ),
                 None,
             )
-        request: dict[str, Any] = {
-            "kind": "settlement_details" if tool_spec.metric is None else "business_metrics",
-            "period": {
+        request_kind = (
+            "settlement_details"
+            if tool_spec.metric is None
+            else (
+                "daily_ledger_drilldown"
+                if call.name == DAILY_LEDGER_DETAILS_TOOL
+                else "business_metrics"
+            )
+        )
+        request: dict[str, Any] = {"kind": request_kind}
+        if call.name != DAILY_LEDGER_DETAILS_TOOL:
+            request["period"] = {
                 "kind": "calendar_month",
                 "year": arguments.year,
                 "month": arguments.month,
-            },
-        }
-        if tool_spec.metric is not None:
+            }
+        if tool_spec.metric is not None and call.name != DAILY_LEDGER_DETAILS_TOOL:
             request["metric"] = tool_spec.metric
-        for field in ("group_by", "filters", "extreme", "status", "company_name"):
+        for field in ("group_by", "filters", "extreme", "status", "company_name", "dates"):
             value = getattr(arguments, field, None)
             if value is not None:
                 request[field] = value
@@ -653,6 +695,7 @@ def _native_envelope(
         group_by = evidence.group_by
         filters = evidence.filters
         extreme = evidence.extreme
+        selected_dates = evidence.selected_dates
         completeness = evidence.completeness
         settlement_query_scope = None
         version_payload["coverage"] = coverage.model_dump(mode="json")
@@ -664,6 +707,7 @@ def _native_envelope(
         group_by = None
         filters = None
         extreme = None
+        selected_dates = None
         completeness = None
         settlement_query_scope = evidence.query_scope
         version_payload["settlement_query_scope"] = settlement_query_scope.model_dump(mode="json")
@@ -673,6 +717,10 @@ def _native_envelope(
         version_payload["filters"] = filters.model_dump(mode="json")
     if extreme is not None:
         version_payload["extreme"] = extreme
+    if selected_dates is not None:
+        version_payload["selected_dates"] = [
+            selected_date.isoformat() for selected_date in selected_dates
+        ]
     if completeness is not None:
         version_payload["completeness"] = completeness.model_dump(mode="json")
     digest = hashlib.sha256(
@@ -695,6 +743,7 @@ def _native_envelope(
         group_by=group_by,
         filters=filters,
         extreme=extreme,
+        selected_dates=selected_dates,
         settlement_query_scope=settlement_query_scope,
         unit=tool_spec.unit,
         source=list(tool_spec.sources),
@@ -734,6 +783,7 @@ def _failed_tool_result(
             group_by=None,
             filters=None,
             extreme=None,
+            selected_dates=None,
             settlement_query_scope=None,
             unit=tool_spec.unit if tool_spec is not None else "unknown",
             source=list(tool_spec.sources) if tool_spec is not None else [],
@@ -814,6 +864,16 @@ def _evidence_matches_tool(
 ) -> bool:
     if not isinstance(evidence, (EvidenceBundle, SettlementDetailsEvidenceBundle)):
         return False
+    if isinstance(arguments, DailyLedgerDetailsArguments):
+        return bool(
+            isinstance(evidence, EvidenceBundle)
+            and evidence.current_store.id == store_id
+            and evidence.metric == EvidenceMetric.DAILY_LEDGER
+            and isinstance(evidence.result, tool_spec.result_types)
+            and evidence.selected_dates == sorted(arguments.dates)
+            and evidence.period.start == min(arguments.dates)
+            and evidence.period.end == max(arguments.dates)
+        )
     if (
         evidence.current_store.id != store_id
         or evidence.period.start.day != 1
