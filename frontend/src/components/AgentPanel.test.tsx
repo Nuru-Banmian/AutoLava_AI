@@ -41,6 +41,7 @@ function LocationProbe() {
 
 const emptyState = {
   confirmed_period: null,
+  pending_period: null,
   metrics: [],
   filters: {},
   comparison: null,

@@ -27,6 +27,7 @@ from app.agent.conversation import (
     ConversationAnalysisHypothesis,
     ConversationEvidenceReference,
     ConversationState,
+    InferredPeriod,
     InvestigationPartial,
     InvestigationProgress,
 )
@@ -110,6 +111,44 @@ ANSWER_EVIDENCE_FAILURE_MESSAGE = "回答中的关键经营声明缺少本轮有
 EXPLICIT_CALENDAR_MONTH = re.compile(
     r"(?P<year>20\d{2}|21\d{2}|2200)\s*年\s*(?P<month>1[0-2]|0?[1-9])\s*月"
 )
+EXPLICIT_ISO_DATE = re.compile(
+    r"(?P<year>20\d{2}|21\d{2}|2200)-(?P<month>1[0-2]|0[1-9])-(?:3[01]|[12]\d|0[1-9])"
+)
+EXPLICIT_CHINESE_DATE = re.compile(
+    r"(?P<year>20\d{2}|21\d{2}|2200)\s*年\s*"
+    r"(?P<month>1[0-2]|0?[1-9])\s*月\s*(?:3[01]|[12]\d|0?[1-9])\s*日"
+)
+CURRENT_MONTH_PERIOD = re.compile(r"(?<!上)(?:本月|这个月|当月)")
+PREVIOUS_MONTH_PERIOD = re.compile(r"(?:上月|上个月)")
+AFFIRMATIVE_PERIOD_CONFIRMATION = re.compile(
+    r"\s*(?:(?:好的?|可以|确认|没错|对|是)"
+    r"(?:[，,\s]*(?:就)?按(?:这个|该)(?:期间|范围)?(?:继续)?)?"
+    r"|(?:就)?按(?:这个|该)(?:期间|范围)(?:继续)?|继续)\s*[。.!！]?\s*"
+)
+VAGUE_PERIOD_TERMS = (
+    "最近",
+    "近期",
+    "近来",
+    "前段时间",
+    "前些日子",
+    "前些时候",
+    "早些时候",
+    "早些日子",
+    "早前",
+    "先前",
+    "此前",
+    "前不久",
+    "前一阵",
+    "前阵子",
+    "过去一段时间",
+    "过去一阵",
+    "这段时间",
+    "这阵子",
+    "这些天",
+    "这几天",
+    "不久前",
+)
+NEGATED_VAGUE_PERIOD_PREFIX = re.compile(r"(?:不要|不用|别|不查|不看|不是|并非)(?:查|看|说|指)?$")
 EXACT_MONTH_CLARIFICATION = "请提供要查询的准确自然月，例如“2026 年 7 月”。"
 CAPABILITY_BOUNDARY_MESSAGE = (
     "我专注于 AutoLava 使用、当前门店经营分析和证据支持的经营建议。"
@@ -823,7 +862,12 @@ class NativeToolAgentService:
                 [],
                 reason="本轮调查已达到总时间上限。",
             )
-        trusted_period = _trusted_period(state, recent_messages)
+        trusted_period = _trusted_period(
+            state,
+            recent_messages,
+            context=context,
+            now=self.now(),
+        )
         items = [
             NativeTranscriptItem(message=_investigation_context_message(state)),
             *(NativeTranscriptItem(message=message) for message in recent_messages),
@@ -989,9 +1033,18 @@ class NativeToolAgentService:
                 pending_directions = turn.pending_directions
             if turn.signal == "end":
                 if period_confirmation_required:
-                    clarification = (
-                        _period_confirmation_prompt(pending_period_candidate)
+                    inferred_period = (
+                        _resolved_month_period(
+                            pending_period_candidate,
+                            context=context,
+                            now=self.now(),
+                        )
                         if pending_period_candidate is not None
+                        else None
+                    )
+                    clarification = (
+                        _period_confirmation_prompt(inferred_period)
+                        if inferred_period is not None
                         else EXACT_MONTH_CLARIFICATION
                     )
                     return AgentRunResult(
@@ -1002,6 +1055,7 @@ class NativeToolAgentService:
                         state=state.model_copy(
                             update={
                                 "pending_clarifications": [clarification],
+                                "pending_period": inferred_period,
                             }
                         ),
                     )
@@ -2021,6 +2075,7 @@ def _agent_result(
                 "pending_directions": list(resolved_pending_directions),
                 "metrics": metric_labels,
                 "pending_clarifications": [],
+                "pending_period": None,
             }
         ),
         evidence=last_evidence,
@@ -2223,44 +2278,45 @@ def _evidence_label(evidence: NativeCollectedEvidence) -> str:
 
 def _explicit_calendar_month(
     messages: Sequence[ModelMessage],
-    state: ConversationState,
+    *,
+    context: RuntimeContext,
+    now: datetime,
 ) -> MonthlyTotalRevenueArguments | None:
     user_message = next(
         (message.content for message in reversed(messages) if message.role == "user"),
         "",
     )
     match = EXPLICIT_CALENDAR_MONTH.search(user_message)
-    if (
-        match is None
-        and re.fullmatch(r"\s*(?:确认|是|对|可以|继续|没错|好的|好)\s*[。.!！]?\s*", user_message)
-        and state.pending_clarifications
-    ):
-        match = next(
-            (
-                candidate
-                for clarification in reversed(state.pending_clarifications)
-                if (candidate := EXPLICIT_CALENDAR_MONTH.search(clarification)) is not None
-            ),
-            None,
+    if match is not None:
+        return MonthlyTotalRevenueArguments(
+            year=int(match.group("year")),
+            month=int(match.group("month")),
         )
-    if match is None:
-        return None
-    return MonthlyTotalRevenueArguments(
-        year=int(match.group("year")),
-        month=int(match.group("month")),
+    explicit_date = EXPLICIT_ISO_DATE.search(user_message) or EXPLICIT_CHINESE_DATE.search(
+        user_message
     )
+    if explicit_date is not None:
+        return MonthlyTotalRevenueArguments(
+            year=int(explicit_date.group("year")),
+            month=int(explicit_date.group("month")),
+        )
+    local_today = now.astimezone(ZoneInfo(context.store_timezone)).date()
+    if PREVIOUS_MONTH_PERIOD.search(user_message):
+        previous_month_end = date.fromordinal(local_today.replace(day=1).toordinal() - 1)
+        return MonthlyTotalRevenueArguments(
+            year=previous_month_end.year,
+            month=previous_month_end.month,
+        )
+    if CURRENT_MONTH_PERIOD.search(user_message):
+        return MonthlyTotalRevenueArguments(year=local_today.year, month=local_today.month)
+    return None
 
 
-def _period_confirmation_prompt(arguments: MonthlyTotalRevenueArguments) -> str:
-    start = date(arguments.year, arguments.month, 1)
-    end = date(
-        arguments.year,
-        arguments.month,
-        monthrange(arguments.year, arguments.month)[1],
-    )
+def _period_confirmation_prompt(period: InferredPeriod) -> str:
     return (
-        f"我推定查询期间为 {arguments.year} 年 {arguments.month} 月"
-        f"（{start.isoformat()} 至 {end.isoformat()}）。请确认是否按此期间继续。"
+        f"我推定查询期间为 {period.start.year} 年 {period.start.month} 月"
+        f"（{period.start.isoformat()} 至 {period.end.isoformat()}）。"
+        "请确认是否按此期间继续。"
     )
 
 
@@ -2322,10 +2378,24 @@ def _approved_knowledge_answer(
 def _trusted_period(
     state: ConversationState,
     messages: Sequence[ModelMessage],
+    *,
+    context: RuntimeContext,
+    now: datetime,
 ) -> MonthlyTotalRevenueArguments | None:
-    explicit = _explicit_calendar_month(messages, state)
+    explicit = _explicit_calendar_month(messages, context=context, now=now)
     if explicit is not None:
         return explicit
+    user_message = next(
+        (message.content for message in reversed(messages) if message.role == "user"),
+        "",
+    )
+    if state.pending_period is not None and AFFIRMATIVE_PERIOD_CONFIRMATION.fullmatch(user_message):
+        return MonthlyTotalRevenueArguments(
+            year=state.pending_period.start.year,
+            month=state.pending_period.start.month,
+        )
+    if _has_unresolved_vague_period(user_message):
+        return None
     period = state.confirmed_period
     if (
         period is None
@@ -2336,12 +2406,44 @@ def _trusted_period(
     return MonthlyTotalRevenueArguments(year=period.start.year, month=period.start.month)
 
 
+def _has_unresolved_vague_period(user_message: str) -> bool:
+    for term in VAGUE_PERIOD_TERMS:
+        for match in re.finditer(re.escape(term), user_message):
+            prefix = user_message[max(0, match.start() - 8) : match.start()]
+            if not NEGATED_VAGUE_PERIOD_PREFIX.search(prefix):
+                return True
+    return False
+
+
+def _resolved_month_period(
+    arguments: MonthlyTotalRevenueArguments,
+    *,
+    context: RuntimeContext,
+    now: datetime,
+) -> InferredPeriod | None:
+    start = date(arguments.year, arguments.month, 1)
+    local_today = now.astimezone(ZoneInfo(context.store_timezone)).date()
+    if start > local_today:
+        return None
+    end = date(
+        arguments.year,
+        arguments.month,
+        monthrange(arguments.year, arguments.month)[1],
+    )
+    return InferredPeriod(start=start, end=min(end, local_today))
+
+
 def _investigation_context_message(state: ConversationState) -> ModelMessage:
     context = {
         "investigation_goal": state.investigation_goal,
         "confirmed_period": (
             state.confirmed_period.model_dump(mode="json")
             if state.confirmed_period is not None
+            else None
+        ),
+        "pending_period": (
+            state.pending_period.model_dump(mode="json")
+            if state.pending_period is not None
             else None
         ),
         "confirmed_objects": state.confirmed_objects,

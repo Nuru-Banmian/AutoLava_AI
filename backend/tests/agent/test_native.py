@@ -2305,6 +2305,7 @@ async def test_native_loop_does_not_let_the_model_guess_an_unconfirmed_month() -
         model=model,
         evidence_collector=collector,
         scope_resolver=PassthroughScopeResolver(),
+        now=lambda: datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc),
     )
 
     result = await service.run(
@@ -2326,8 +2327,14 @@ async def test_native_loop_does_not_let_the_model_guess_an_unconfirmed_month() -
 
     assert result.turn.route == "clarify"
     assert result.turn.content == (
-        "我推定查询期间为 2026 年 7 月（2026-07-01 至 2026-07-31）。请确认是否按此期间继续。"
+        "我推定查询期间为 2026 年 7 月（2026-07-01 至 2026-07-26）。请确认是否按此期间继续。"
     )
+    assert result.state.confirmed_period is None
+    assert result.state.pending_period is not None
+    assert result.state.pending_period.model_dump(mode="json") == {
+        "start": "2026-07-01",
+        "end": "2026-07-26",
+    }
     assert len(model.calls) == 2
     tool_result = model.calls[1].items[-1].tool_result
     assert tool_result is not None

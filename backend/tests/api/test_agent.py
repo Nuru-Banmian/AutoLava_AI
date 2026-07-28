@@ -264,6 +264,7 @@ async def test_agent_route_builds_trusted_runtime_context_for_current_store(
     assert state.model_dump(mode="json") == {
         "investigation_goal": "你能做什么？",
         "confirmed_period": None,
+        "pending_period": None,
         "confirmed_objects": [],
         "evidence_references": [],
         "analysis_hypotheses": [],
@@ -1624,6 +1625,7 @@ async def test_current_conversation_restores_full_messages_and_structured_state(
     assert payload["state"] == {
         "investigation_goal": "保留完整问题，包括 €123 和全部细节。",
         "confirmed_period": None,
+        "pending_period": None,
         "confirmed_objects": [],
         "evidence_references": [],
         "analysis_hypotheses": [],
@@ -1824,6 +1826,7 @@ async def test_reset_requires_confirmation_and_permanently_deletes_current_conve
     expected_state = {
         "investigation_goal": None,
         "confirmed_period": {"start": "2026-07-01", "end": "2026-07-26"},
+        "pending_period": None,
         "confirmed_objects": [],
         "evidence_references": [],
         "analysis_hypotheses": [],
@@ -1889,6 +1892,7 @@ async def test_reset_requires_confirmation_and_permanently_deletes_current_conve
         "state": {
             "investigation_goal": None,
             "confirmed_period": None,
+            "pending_period": None,
             "confirmed_objects": [],
             "evidence_references": [],
             "analysis_hypotheses": [],
