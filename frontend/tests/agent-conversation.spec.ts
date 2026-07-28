@@ -168,7 +168,7 @@ test("ordinary users cannot see or invoke the Agent", async ({ page }) => {
   await expect(page.getByRole("textbox", { name: "向 Agent 提问" })).toHaveCount(0);
 });
 
-test("administrator restores, switches, and permanently resets per-store conversations", async ({
+test("administrator restores, switches, and permanently clears a current investigation", async ({
   page,
 }) => {
   await mockAgentApi(page);
@@ -187,16 +187,20 @@ test("administrator restores, switches, and permanently resets per-store convers
     .getByTestId("desktop-store-picker")
     .getByRole("combobox", { name: "门店" });
   await storePicker.selectOption("2");
-  await expect(page.getByText("当前对话为空")).toBeVisible();
+  await expect(page.getByText("当前调查为空")).toBeVisible();
   await expect(page.getByRole("button", { name: "查看营业记录" })).toHaveCount(0);
   await storePicker.selectOption("1");
   await expect(page.getByText("之前的问题")).toBeVisible();
 
-  await page.getByRole("button", { name: "重置对话" }).click();
+  await page.getByRole("button", { name: "开始新调查" }).click();
   const dialog = page.getByRole("alertdialog");
   await expect(dialog).toContainText("此操作不可恢复");
-  await dialog.getByRole("button", { name: "确认永久重置" }).click();
-  await expect(page.getByText("当前对话为空")).toBeVisible();
+  await dialog.getByRole("button", { name: "取消" }).click();
+  await expect(page.getByText("之前的问题")).toBeVisible();
+
+  await page.getByRole("button", { name: "开始新调查" }).click();
+  await dialog.getByRole("button", { name: "永久删除并开始新调查" }).click();
+  await expect(page.getByText("当前调查为空")).toBeVisible();
   await expect(page.getByText("之前的问题")).toHaveCount(0);
 });
 

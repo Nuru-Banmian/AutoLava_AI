@@ -272,7 +272,7 @@
       "covers": ["administrator_query", "refresh_restore", "conversation_reset"],
       "test_file": "tests/agent-conversation.spec.ts",
       "test_titles": [
-        "administrator restores, switches, and permanently resets per-store conversations"
+        "administrator restores, switches, and permanently clears a current investigation"
       ]
     },
     {
