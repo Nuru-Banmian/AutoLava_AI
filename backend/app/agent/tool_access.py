@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.native import NativeToolAccessDenied
+from app.agent.external_evidence import country_code_for_timezone
 from app.agent.runtime import RuntimeContext, RuntimeFeatureFlags
 from app.core.database import end_read_transaction
 from app.services.access import require_fresh_store_access, require_fresh_user
@@ -56,6 +57,9 @@ class DatabaseNativeToolScopeResolver:
                 store_id=store.id,
                 role="final_admin" if is_owner(user) else "admin",
                 store_timezone=store.timezone,
+                store_latitude=float(store.latitude),
+                store_longitude=float(store.longitude),
+                store_country_code=country_code_for_timezone(store.timezone),
                 features=RuntimeFeatureFlags(
                     agent_enabled=enabled,
                     company_settlement_enabled=store.company_settlement_enabled,

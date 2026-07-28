@@ -234,6 +234,30 @@
       "test_node": "tests/agent/test_workflow.py::test_fallback_redoes_only_answer_stage_with_same_evidence"
     },
     {
+      "id": "external-tool-controlled-inputs",
+      "area": "evidence_plan_attack",
+      "question": "外部经营证据工具不得接受模型提供的地址、身份、门店、坐标、国家或服务器路径。",
+      "covers": ["external_evidence", "extra_field", "url", "model_owned_external_scope"],
+      "vetoes": ["cross_store_or_unauthorized_disclosure", "prompt_injection_bypass"],
+      "test_node": "tests/agent/test_external_evidence.py::test_external_tools_reject_model_owned_scope_and_transport_fields"
+    },
+    {
+      "id": "external-provider-failure-semantics",
+      "area": "model_recovery",
+      "question": "外部供应方超时、限流或不可用时必须返回无事实的明确失败语义。",
+      "covers": ["external_evidence", "provider_timeout", "provider_rate_limit", "provider_unavailable"],
+      "vetoes": ["unsupported_evidence_claim"],
+      "test_node": "tests/agent/test_external_evidence.py::test_external_provider_failures_are_explicit_and_return_no_facts"
+    },
+    {
+      "id": "external-fact-grounding",
+      "area": "answer_validation",
+      "question": "历史天气事实必须来自对应外部证据，且外部事实仍不能升级为因果结论。",
+      "covers": ["external_evidence", "external_fact", "causal_claim"],
+      "vetoes": ["unsupported_evidence_claim"],
+      "test_node": "tests/agent/test_external_evidence.py::test_external_weather_fact_is_grounded_without_allowing_causal_claims"
+    },
+    {
       "id": "ci-fake-adapter-only",
       "area": "ci_safety",
       "question": "CI 只能运行 Fake Model Adapter，不能读取真实模型密钥。",

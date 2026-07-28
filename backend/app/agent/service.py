@@ -21,15 +21,27 @@ from app.agent.contracts import (
     EVIDENCE_METRIC_LABELS,
     EvidenceBundle,
     EvidenceMetric,
+    ExternalEvidenceBundle,
+    MessageRole,
     SETTLEMENT_DETAILS_LABEL,
     ModelMessage,
     RevenueAnalysisEvidenceBundle,
     SettlementDetailsEvidenceBundle,
     TurnResult,
 )
+from app.agent.external_evidence import (
+    ExternalEvidenceService,
+    NagerPublicHolidayProvider,
+    OpenMeteoHistoricalWeatherProvider,
+)
 from app.agent.factory import create_model_adapter
 from app.agent.model import ModelAttempt
-from app.agent.native import NativeInvestigationLimits, NativeToolAgentService, NativeToolModel
+from app.agent.native import (
+    NativeExternalEvidenceCollector,
+    NativeInvestigationLimits,
+    NativeToolAgentService,
+    NativeToolModel,
+)
 from app.agent.runtime import RuntimeContext
 from app.agent.tool_access import DatabaseNativeToolScopeResolver
 from app.agent.workflow import AgentTurnWorkflow
@@ -125,9 +137,9 @@ class AgentService:
         attempts: list[ModelAttempt] = []
         workflow_result = await self.workflow.run(
             [
-                ModelMessage(role="system", content=f"{CORE_RULES}\n{runtime_scope}"),
+                ModelMessage(role=MessageRole.SYSTEM, content=f"{CORE_RULES}\n{runtime_scope}"),
                 ModelMessage(
-                    role="system",
+                    role=MessageRole.SYSTEM,
                     content=(
                         "Structured conversation state:\n"
                         f"{json.dumps(state.model_dump(mode='json'), ensure_ascii=False)}"
@@ -151,6 +163,12 @@ class AgentService:
                 metric_label = SETTLEMENT_DETAILS_LABEL
             elif isinstance(evidence, RevenueAnalysisEvidenceBundle):
                 metric_label = "经营分析"
+            elif isinstance(evidence, ExternalEvidenceBundle):
+                metric_label = (
+                    "历史天气外部经营证据"
+                    if evidence.evidence_type == "historical_weather"
+                    else "公共假期外部经营证据"
+                )
             else:
                 metric_label = EVIDENCE_METRIC_LABELS[evidence.metric]
             comparison_period = (
@@ -207,6 +225,7 @@ def create_agent_service(
     native_model: NativeToolModel | None = None,
     native_now: Callable[[], datetime] | None = None,
     native_evidence_collector: BusinessEvidenceCollector | None = None,
+    external_evidence_collector: NativeExternalEvidenceCollector | None = None,
 ) -> AgentService | NativeToolAgentService:
     if native_model is not None:
         native_options = {"now": native_now} if native_now is not None else {}
@@ -217,9 +236,14 @@ def create_agent_service(
         evidence_collector = (
             native_evidence_collector or BusinessEvidenceCollector(session_factory)
         ).with_scope_authorizer(scope_resolver.refresh_in_session)
+        external_collector = external_evidence_collector or ExternalEvidenceService(
+            weather_provider=OpenMeteoHistoricalWeatherProvider(),
+            holiday_provider=NagerPublicHolidayProvider(),
+        )
         return NativeToolAgentService(
             model=native_model,
             evidence_collector=evidence_collector,
+            external_evidence_collector=external_collector,
             scope_resolver=scope_resolver,
             limits=NativeInvestigationLimits(
                 max_model_calls=settings.agent_investigation_max_model_calls,
@@ -277,7 +301,16 @@ def _legacy_evidence_reference(
 
 def _legacy_evidence_sources(
     evidence: CollectedEvidence,
-) -> list[Literal["store_daily_records", "settlement_records"]]:
+) -> list[
+    Literal[
+        "store_daily_records",
+        "settlement_records",
+        "open_meteo_historical",
+        "nager_date_public_holidays",
+    ]
+]:
+    if isinstance(evidence, ExternalEvidenceBundle):
+        return [evidence.source]
     if isinstance(evidence, SettlementDetailsEvidenceBundle):
         return ["settlement_records"]
     if isinstance(evidence, RevenueAnalysisEvidenceBundle):

@@ -13,6 +13,7 @@ from app.agent.contracts import (
     EvidenceBundle,
     EvidenceMetric,
     EvidencePeriodResult,
+    ExternalEvidenceBundle,
     SettlementDetailsEvidenceBundle,
 )
 from app.services.weather import WEATHER_LABELS
@@ -92,7 +93,14 @@ class EvidenceCalculationClaimMetric(StrEnum):
     EVIDENCE_CALCULATION = "evidence_calculation"
 
 
-ClaimMetric = EvidenceMetric | SettlementClaimMetric | EvidenceCalculationClaimMetric
+class ExternalClaimMetric(StrEnum):
+    HISTORICAL_WEATHER = "historical_weather"
+    PUBLIC_HOLIDAYS = "public_holidays"
+
+
+ClaimMetric = (
+    EvidenceMetric | SettlementClaimMetric | EvidenceCalculationClaimMetric | ExternalClaimMetric
+)
 
 
 @runtime_checkable
@@ -110,7 +118,12 @@ class EvidenceCalculationGrounding(Protocol):
     def cannot_calculate_reason(self) -> str | None: ...
 
 
-GroundedEvidence = EvidenceBundle | SettlementDetailsEvidenceBundle | EvidenceCalculationGrounding
+GroundedEvidence = (
+    EvidenceBundle
+    | SettlementDetailsEvidenceBundle
+    | EvidenceCalculationGrounding
+    | ExternalEvidenceBundle
+)
 _METRIC_FIELDS = {
     "月度总收入": "monthly_total_revenue",
     "总收入": "monthly_total_revenue",
@@ -123,6 +136,9 @@ _METRIC_FIELDS = {
     "经营日": "operating_days",
     "证据计算结果": "evidence_calculation",
     "计算结果": "evidence_calculation",
+    "历史天气": "historical_weather",
+    "公共假期": "public_holidays",
+    "假期": "public_holidays",
 }
 
 
@@ -146,9 +162,11 @@ class NativeAnswerClaim(BaseModel):
             "EUR/operating_day",
             "ratio",
             "percent",
+            "external_fact",
         ]
         | None
     ) = None
+    external_fact: str | None = Field(default=None, min_length=1, max_length=200)
     relationship: Literal["none", "correlation", "causation"] = "none"
     settlement_scope: Literal["all_companies", "company"] | None = None
     company_name: str | None = Field(default=None, min_length=1, max_length=120)
@@ -160,14 +178,29 @@ class NativeAnswerClaim(BaseModel):
             for reference in self.evidence_references
         ):
             raise ValueError("invalid evidence reference")
-        if self.status == "verified_fact" and (
-            not self.evidence_references
-            or self.metric is None
-            or self.period is None
-            or self.value is None
-            or self.unit is None
-        ):
-            raise ValueError("verified facts require evidence, metric, period, value, and unit")
+        if self.status == "verified_fact":
+            if (
+                not self.evidence_references
+                or self.metric is None
+                or self.period is None
+                or self.unit is None
+            ):
+                raise ValueError("verified facts require evidence, metric, period, and unit")
+            if isinstance(self.metric, ExternalClaimMetric):
+                if (
+                    self.unit != "external_fact"
+                    or self.external_fact is None
+                    or self.value is not None
+                ):
+                    raise ValueError(
+                        "verified external facts require external_fact and external_fact unit"
+                    )
+            elif (
+                self.value is None or self.unit == "external_fact" or self.external_fact is not None
+            ):
+                raise ValueError(
+                    "verified business facts require a numeric value and business unit"
+                )
         if self.settlement_scope == "company" and (
             self.company_name is None
             or not _mentions_settlement_company(self.statement, self.company_name)
@@ -274,7 +307,9 @@ def _claims_are_grounded(
             return False
         if _UNSUPPORTED_FACT_COMPARISON.search(claim.statement):
             return False
-        if _contains_phenomenon(claim.statement):
+        if _contains_phenomenon(claim.statement) and not isinstance(
+            claim.metric, ExternalClaimMetric
+        ):
             return False
         referenced = [
             evidence_by_reference.get(reference) for reference in claim.evidence_references
@@ -296,6 +331,15 @@ def _claim_value_is_supported(
     claim: NativeAnswerClaim,
     bundle: GroundedEvidence,
 ) -> bool:
+    if isinstance(bundle, ExternalEvidenceBundle):
+        if (
+            not isinstance(claim.metric, ExternalClaimMetric)
+            or claim.unit != "external_fact"
+            or claim.external_fact is None
+            or claim.metric.value != bundle.evidence_type
+        ):
+            return False
+        return _external_fact_is_supported(claim, bundle)
     if isinstance(bundle, EvidenceCalculationGrounding):
         return bool(
             claim.metric == EvidenceCalculationClaimMetric.EVIDENCE_CALCULATION
@@ -377,7 +421,7 @@ def _daily_ledger_revenue_claim_is_supported(
 
 
 def _claim_literals_match_metadata(claim: NativeAnswerClaim) -> bool:
-    if claim.metric is None or claim.period is None or claim.value is None or claim.unit is None:
+    if claim.metric is None or claim.period is None or claim.unit is None:
         return False
     for pattern in (_ISO_DATE, _CHINESE_DATE):
         for match in pattern.finditer(claim.statement):
@@ -397,6 +441,18 @@ def _claim_literals_match_metadata(claim: NativeAnswerClaim) -> bool:
             continue
         if int(match.group(1)) != claim.period.start.month:
             return False
+    if isinstance(claim.metric, ExternalClaimMetric):
+        return bool(
+            claim.unit == "external_fact"
+            and claim.external_fact is not None
+            and claim.external_fact in claim.statement
+            and any(
+                field == claim.metric.value and term in claim.statement
+                for term, field in _METRIC_FIELDS.items()
+            )
+        )
+    if claim.value is None:
+        return False
     money_values = [_decimal(match.group(1)) for match in _MONEY.finditer(claim.statement)]
     percentage_values = [
         _decimal(match.group(1)) for match in _PERCENTAGE.finditer(claim.statement)
@@ -672,6 +728,8 @@ def _values_for_field(
             ):
                 values.add(bundle.exact_result)
             continue
+        if isinstance(bundle, ExternalEvidenceBundle):
+            continue
         result = bundle.result.model_dump(mode="python")
         if isinstance(bundle, SettlementDetailsEvidenceBundle):
             if field == SettlementClaimMetric.PENDING_AMOUNT:
@@ -688,6 +746,39 @@ def _values_for_field(
             continue
         values.update(_field_values(result, field))
     return values
+
+
+def _external_fact_is_supported(
+    claim: NativeAnswerClaim,
+    bundle: ExternalEvidenceBundle,
+) -> bool:
+    if claim.external_fact is None:
+        return False
+    key = "days" if bundle.evidence_type == "historical_weather" else "holidays"
+    rows = bundle.result.get(key)
+    if not isinstance(rows, list):
+        return False
+    allowed_fields = (
+        ("weather",) if bundle.evidence_type == "historical_weather" else ("local_name", "name")
+    )
+    supported_dates: set[date] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if not any(row.get(field) == claim.external_fact for field in allowed_fields):
+            continue
+        try:
+            supported_dates.add(date.fromisoformat(str(row["date"])))
+        except (KeyError, ValueError):
+            continue
+    claimed_dates: set[date] = set()
+    for pattern in (_ISO_DATE, _CHINESE_DATE):
+        for match in pattern.finditer(claim.statement):
+            try:
+                claimed_dates.add(date(*(int(part) for part in match.groups())))
+            except ValueError:
+                return False
+    return bool(claimed_dates and claimed_dates.issubset(supported_dates))
 
 
 def _metric_value(metric: ClaimMetric) -> str:

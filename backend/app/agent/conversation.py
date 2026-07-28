@@ -1,5 +1,5 @@
 from datetime import date, datetime, timezone
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 from sqlalchemy import delete, select
@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.contracts import (
     CollectedEvidence,
+    MessageRole,
     ModelMessage,
     OpenBusinessRecordsAction,
     TurnResult,
@@ -39,7 +40,14 @@ EvidenceReferenceId = Annotated[
 
 class ConversationEvidenceReference(ClosedModel):
     reference: EvidenceReferenceId
-    source: list[Literal["store_daily_records", "settlement_records"]] = Field(
+    source: list[
+        Literal[
+            "store_daily_records",
+            "settlement_records",
+            "open_meteo_historical",
+            "nager_date_public_holidays",
+        ]
+    ] = Field(
         min_length=1,
         max_length=2,
     )
@@ -207,7 +215,7 @@ async def recent_model_messages(
         )
     )
     return [
-        ModelMessage(role=message.role, content=message.content)
+        ModelMessage(role=MessageRole(message.role), content=message.content)
         for message in reversed(newest_first)
     ]
 
@@ -230,9 +238,13 @@ async def conversation_response(
         messages=[
             ConversationMessageResponse(
                 id=message.id,
-                role=message.role,
+                role=cast(Literal["user", "assistant"], message.role),
                 content=message.content,
-                action=message.action,
+                action=(
+                    OpenBusinessRecordsAction.model_validate(message.action)
+                    if message.action is not None
+                    else None
+                ),
                 created_at=message.created_at,
             )
             for message in messages

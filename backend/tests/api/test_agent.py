@@ -280,6 +280,9 @@ async def test_agent_route_builds_trusted_runtime_context_for_current_store(
     assert context.store_id == store_id
     assert context.role == "final_admin"
     assert context.store_timezone == "Europe/Rome"
+    assert context.store_latitude == 45
+    assert context.store_longitude == 9
+    assert context.store_country_code == "IT"
     assert context.features.model_dump() == {
         "agent_enabled": True,
         "company_settlement_enabled": True,

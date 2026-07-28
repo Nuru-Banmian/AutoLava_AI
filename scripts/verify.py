@@ -62,8 +62,11 @@ def quick(env: dict[str, str]) -> None:
     backend("ruff", "check", ".", env=env)
     backend(
         "mypy",
+        "app/agent/answer_grounding.py",
         "app/agent/contracts.py",
         "app/agent/conversation.py",
+        "app/agent/external_evidence.py",
+        "app/agent/native.py",
         "app/agent/runtime.py",
         "app/agent/service.py",
         "app/api/routes/agent.py",

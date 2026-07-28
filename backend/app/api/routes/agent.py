@@ -16,6 +16,7 @@ from app.agent.conversation import (
     recent_model_messages,
 )
 from app.agent.contracts import ModelMessage
+from app.agent.external_evidence import country_code_for_timezone
 from app.agent.model import CONFIGURATION_CATEGORIES
 from app.agent.native import NativeToolAccessDenied
 from app.agent.runtime import RuntimeContext, RuntimeFeatureFlags
@@ -86,6 +87,9 @@ async def run_agent_turn(
         store_id=store.id,
         role="final_admin" if is_owner(user) else "admin",
         store_timezone=store.timezone,
+        store_latitude=float(store.latitude),
+        store_longitude=float(store.longitude),
+        store_country_code=country_code_for_timezone(store.timezone),
         features=RuntimeFeatureFlags(
             agent_enabled=enabled,
             company_settlement_enabled=store.company_settlement_enabled,
