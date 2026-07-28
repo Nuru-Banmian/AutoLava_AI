@@ -56,12 +56,15 @@ export function AppShell() {
   const { error: storeError, refetch: refetchStores } = useStore();
   const { pathname } = useLocation();
   const isAdminRoute = pathname === "/admin" || pathname.startsWith("/admin/");
+  const isAgentRoute = pathname === "/agent";
   const isBusinessRecordsRoute = pathname === "/database";
 
   return (
     <div className="min-h-screen bg-muted/20 md:pl-64">
       <UnsavedRouteGuard />
-      <header className="border-b bg-background md:fixed md:left-0 md:top-0 md:z-40 md:w-64 md:border-0 md:bg-transparent md:text-primary-foreground">
+      <header
+        className={`border-b bg-background md:fixed md:left-0 md:top-0 md:z-40 md:w-64 md:border-0 md:bg-transparent md:text-primary-foreground ${isAgentRoute ? "hidden md:block" : ""}`}
+      >
         <div className="flex items-center gap-3 px-4 py-3">
           <strong>AutoLava AI</strong>
           {!isAdminRoute && (
@@ -103,7 +106,11 @@ export function AppShell() {
         </div>
       </aside>
       <main
-        className={`mx-auto max-w-7xl p-4 pb-24 md:p-6 md:pb-6 ${isBusinessRecordsRoute ? "lg:flex lg:h-dvh lg:flex-col lg:overflow-hidden" : ""}`}
+        className={
+          isAgentRoute
+            ? "h-dvh min-w-0 overflow-hidden md:mx-auto md:max-w-7xl md:p-6"
+            : `mx-auto max-w-7xl p-4 pb-24 md:p-6 md:pb-6 ${isBusinessRecordsRoute ? "lg:flex lg:h-dvh lg:flex-col lg:overflow-hidden" : ""}`
+        }
       >
         {logoutError && (
           <p className="mb-4 text-sm text-destructive" role="alert">
@@ -130,12 +137,14 @@ export function AppShell() {
         )}
         <Outlet />
       </main>
-      <nav
-        aria-label="移动导航"
-        className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t bg-background px-1 py-2 md:hidden"
-      >
-        <Navigation surface="mobile" />
-      </nav>
+      {!isAgentRoute && (
+        <nav
+          aria-label="移动导航"
+          className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t bg-background px-1 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] md:hidden"
+        >
+          <Navigation surface="mobile" />
+        </nav>
+      )}
     </div>
   );
 }

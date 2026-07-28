@@ -212,7 +212,10 @@ it("places the complete Agent workspace before the briefing sidebar for administ
   );
 
   const agent = await screen.findByRole("region", { name: "门店 Agent" });
+  const mobileEntry = screen.getByRole("region", { name: "移动 Agent 入口" });
   const briefing = screen.getByRole("complementary", { name: "经营简报" });
+  expect(mobileEntry).toHaveClass("md:hidden");
+  expect(agent).toHaveClass("hidden", "md:flex");
   expect(agent.compareDocumentPosition(briefing) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(screen.getByRole("heading", { name: "经营简报" })).toBeInTheDocument();
 });

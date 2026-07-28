@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
-import { MemoryRouter, useLocation } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 
 import { AgentPanel } from "@/components/AgentPanel";
@@ -23,6 +23,48 @@ function renderPanel(storeId = 7) {
     <MemoryRouter>
       <QueryClientProvider client={client}>
         <AgentPanel storeId={storeId} />
+        <LocationProbe />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+  return { client, ...rendered };
+}
+
+function renderMobileEntry(storeId = 7) {
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+  const rendered = render(
+    <MemoryRouter>
+      <QueryClientProvider client={client}>
+        <AgentPanel storeId={storeId} surface="mobile-entry" />
+        <LocationProbe />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+  return { client, ...rendered };
+}
+
+function renderMobileFlow(storeId = 7) {
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+  const rendered = render(
+    <MemoryRouter>
+      <QueryClientProvider client={client}>
+        <Routes>
+          <Route
+            path="/"
+            element={<AgentPanel key="mobile-entry" storeId={storeId} surface="mobile-entry" />}
+          />
+          <Route path="/agent" element={<AgentPanel key="workspace" storeId={storeId} />} />
+        </Routes>
         <LocationProbe />
       </QueryClientProvider>
     </MemoryRouter>,
@@ -95,6 +137,78 @@ function investigationState() {
     analysis_hypotheses: [],
   };
 }
+
+it("keeps a current investigation compact on the mobile home entry", async () => {
+  server.use(
+    http.get("/api/agent/status", () => HttpResponse.json({ enabled: true })),
+    http.get("/api/agent/stores/7/conversation", () =>
+      HttpResponse.json({
+        ...conversation(8, [
+          { id: 31, role: "user", content: "不要在首页展开的问题" },
+          { id: 32, role: "assistant", content: "不要在首页展开的完整回答" },
+        ]),
+        state: investigationState(),
+      }),
+    ),
+  );
+  renderMobileEntry();
+
+  expect(await screen.findByText("调查最近营业额变化")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "继续当前调查" })).toHaveAttribute("href", "/agent");
+  expect(screen.queryByText("不要在首页展开的问题")).not.toBeInTheDocument();
+  expect(screen.queryByText("不要在首页展开的完整回答")).not.toBeInTheDocument();
+  expect(screen.queryByRole("textbox", { name: "向 Agent 提问" })).not.toBeInTheDocument();
+});
+
+it("starts an empty investigation from the mobile home entry and opens the full page", async () => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let submittedQuestion: string | null = null;
+  server.use(
+    http.get("/api/agent/status", () => HttpResponse.json({ enabled: true })),
+    http.get("/api/agent/stores/7/conversation", () => HttpResponse.json(conversation(null))),
+    http.post("/api/agent/stores/7/turn", async ({ request }) => {
+      submittedQuestion = ((await request.json()) as { question: string }).question;
+      await pending;
+      return HttpResponse.json({
+        route: "answer",
+        content: "已完成调查。",
+        recovery_status: "retried",
+        progress: [{ status: "investigating", message: "已核对经营证据" }],
+        partial: {
+          verified_facts: ["营业额数据已核对"],
+          incomplete_directions: ["天气证据"],
+          unknowns: ["仍需确认天气影响"],
+        },
+        conversation: conversation(9, [
+          { id: 41, role: "user", content: "最近营业额怎么样？" },
+          { id: 42, role: "assistant", content: "已完成调查。" },
+        ]),
+      });
+    }),
+  );
+  renderMobileFlow();
+
+  fireEvent.change(await screen.findByRole("textbox", { name: "向 Agent 提问" }), {
+    target: { value: "最近营业额怎么样？" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "发送并打开调查" }));
+
+  await waitFor(() => expect(submittedQuestion).toBe("最近营业额怎么样？"));
+  await waitFor(() => expect(screen.getByLabelText("当前位置")).toHaveTextContent("/agent"));
+  expect(screen.getByRole("status")).toHaveTextContent("正在理解问题");
+  expect(screen.getByRole("textbox", { name: "向 Agent 提问" })).toBeDisabled();
+
+  release();
+  expect(await screen.findByText("已完成调查。")).toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("已核对经营证据");
+  expect(screen.getByRole("status")).toHaveTextContent("已自动重试");
+  expect(screen.getByRole("region", { name: "部分调查结果" })).toHaveTextContent(
+    "营业额数据已核对",
+  );
+});
 
 it("shows no conversation entry while the global Agent switch is off", async () => {
   server.use(http.get("/api/agent/status", () => HttpResponse.json({ enabled: false })));

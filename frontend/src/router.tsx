@@ -11,6 +11,7 @@ import { AuthProvider, useAuth } from "@/auth/AuthProvider";
 import { AppShell } from "@/layouts/AppShell";
 import { AccountPasswordPage } from "@/pages/AccountPasswordPage";
 import { AdminPage } from "@/pages/AdminPage";
+import { AgentPage } from "@/pages/AgentPage";
 import { BusinessRecordsPage } from "@/pages/BusinessRecordsPage";
 import { CompanySettlementPage } from "@/pages/CompanySettlementPage";
 import { HomePage } from "@/pages/HomePage";
@@ -44,6 +45,11 @@ function AdminRoute() {
   return user?.role === "admin" ? <AdminPage /> : <Navigate to="/" replace />;
 }
 
+function AgentRoute() {
+  const { user } = useAuth();
+  return user?.role === "admin" ? <AgentPage /> : <Navigate to="/" replace />;
+}
+
 function MoreRoute() {
   const location = useLocation();
   const status = (location.state as { status?: unknown } | null)?.status;
@@ -72,6 +78,7 @@ const routes: RouteObject[] = [
         element: <ProtectedShell />,
         children: [
           { index: true, element: <HomePage /> },
+          { path: "agent", element: <AgentRoute /> },
           { path: "ledger", element: <LedgerPage /> },
           { path: "settlements", element: <CompanySettlementPage /> },
           { path: "database", element: <BusinessRecordsPage /> },

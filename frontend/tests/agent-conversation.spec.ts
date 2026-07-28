@@ -49,8 +49,14 @@ const workspaceState = {
 async function mockAgentApi(
   page: Page,
   role: "admin" | "user" = "admin",
-  options: { enabled?: boolean; workspace?: boolean } = {},
+  options: { enabled?: boolean; workspace?: boolean; empty?: boolean; holdTurn?: boolean } = {},
 ) {
+  let releaseTurn: () => void = () => undefined;
+  const turnGate = options.holdTurn
+    ? new Promise<void>((resolve) => {
+        releaseTurn = resolve;
+      })
+    : Promise.resolve();
   let nextMessageId = options.workspace ? 100 : 10;
   const longConversation = Array.from(
     { length: 30 },
@@ -64,32 +70,34 @@ async function mockAgentApi(
   const messages = new Map<number, Message[]>([
     [
       1,
-      options.workspace
-        ? longConversation
-        : [
-            {
-              id: 1,
-              role: "user",
-              content: "之前的问题",
-              created_at: "2026-07-26T12:00:00Z",
-            },
-            {
-              id: 2,
-              role: "assistant",
-              content: "之前保存的完整回答",
-              action: {
-                type: "open_business_records",
-                start_month: "2025-01",
-                end_month: "2025-12",
+      options.empty
+        ? []
+        : options.workspace
+          ? longConversation
+          : [
+              {
+                id: 1,
+                role: "user",
+                content: "之前的问题",
+                created_at: "2026-07-26T12:00:00Z",
               },
-              created_at: "2026-07-26T12:00:01Z",
-            },
-          ],
+              {
+                id: 2,
+                role: "assistant",
+                content: "之前保存的完整回答",
+                action: {
+                  type: "open_business_records",
+                  start_month: "2025-01",
+                  end_month: "2025-12",
+                },
+                created_at: "2026-07-26T12:00:01Z",
+              },
+            ],
     ],
     [2, []],
   ]);
   const states = new Map<number, typeof emptyState | typeof workspaceState>([
-    [1, options.workspace ? workspaceState : emptyState],
+    [1, options.workspace && !options.empty ? workspaceState : emptyState],
     [2, emptyState],
   ]);
   const snapshot = (storeId: number) => {
@@ -180,6 +188,7 @@ async function mockAgentApi(
     if (turnMatch && request.method() === "POST") {
       const storeId = Number(turnMatch[1]);
       const body = request.postDataJSON() as { question: string };
+      await turnGate;
       const current = messages.get(storeId) ?? [];
       current.push(
         {
@@ -215,6 +224,7 @@ async function mockAgentApi(
     }
     return json({ detail: `unmocked ${request.method()} ${path}` }, 500);
   });
+  return { releaseTurn };
 }
 
 test("ordinary users cannot see or invoke the Agent", async ({ page }) => {
@@ -284,6 +294,62 @@ test("desktop Agent workspace keeps the investigation usable and accessible", as
   await expect(page.getByRole("textbox", { name: "向 Agent 提问" })).toBeFocused();
 });
 
+test("mobile home keeps a current investigation compact and continues it full-screen", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockAgentApi(page, "admin", { workspace: true });
+  await page.goto("/");
+
+  const entry = page.getByRole("region", { name: "移动 Agent 入口" });
+  await expect(entry).toContainText("调查最近营业额变化");
+  await expect(entry.getByRole("link", { name: "继续当前调查" })).toBeVisible();
+  await expect(page.getByRole("list", { name: "当前调查" })).toBeHidden();
+
+  await entry.getByRole("link", { name: "继续当前调查" }).click();
+  await expect(page).toHaveURL("/agent");
+  await expect(page.getByRole("list", { name: "当前调查" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "移动导航" })).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "向 Agent 提问" })).toBeInViewport();
+
+  const evidenceSummary = page.getByText("经营数据 · 2026-06-01 至 2026-06-30");
+  await evidenceSummary.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("group", { name: "调查证据" })).toContainText("每日台账");
+  await expect(page.getByRole("textbox", { name: "向 Agent 提问" })).toBeInViewport();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    ),
+  ).toBe(false);
+});
+
+test("mobile home starts an empty investigation and opens its full-screen result", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const { releaseTurn } = await mockAgentApi(page, "admin", { empty: true, holdTurn: true });
+  await page.goto("/");
+
+  const entry = page.getByRole("region", { name: "移动 Agent 入口" });
+  await entry.getByRole("textbox", { name: "向 Agent 提问" }).fill("最近营业额怎么样？");
+  await entry.getByRole("button", { name: "发送并打开调查" }).click();
+
+  await expect(page).toHaveURL("/agent");
+  await expect(page.getByRole("status")).toContainText("正在理解问题");
+  await expect(page.getByText("1号门店的完整回答")).toHaveCount(0);
+  releaseTurn();
+  await expect(page.getByText("1号门店的完整回答")).toBeVisible();
+  await expect(page.getByRole("status")).toContainText("已核对经营证据");
+  await expect(page.getByRole("textbox", { name: "向 Agent 提问" })).toBeInViewport();
+  await expect(page.getByRole("navigation", { name: "移动导航" })).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    ),
+  ).toBe(false);
+});
+
 test("disabled Agent stays explicit without exposing configuration details", async ({ page }) => {
   await mockAgentApi(page, "admin", { enabled: false });
   await page.goto("/");
@@ -341,9 +407,13 @@ for (const viewport of [
     await mockAgentApi(page);
     await page.goto("/");
 
+    if (viewport.keyboard) {
+      await page.getByRole("link", { name: "继续当前调查" }).click();
+      await expect(page).toHaveURL("/agent");
+    }
     const action = page.getByRole("button", { name: "查看营业记录" });
     await expect(action).toBeVisible();
-    await expect(page).toHaveURL("/");
+    await expect(page).toHaveURL(viewport.keyboard ? "/agent" : "/");
     if (viewport.keyboard) {
       await action.focus();
       await page.keyboard.press("Enter");

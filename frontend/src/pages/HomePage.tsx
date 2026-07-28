@@ -81,20 +81,38 @@ export function HomePage() {
     ) : (
       <p role="status">该门店已归档，仅可查看历史数据和经营分析。</p>
     );
+  const refreshError =
+    refresh.error && refresh.variables === selected.id ? (
+      <p role="alert">{refresh.error instanceof ApiError ? refresh.error.detail : "刷新失败"}</p>
+    ) : null;
+  const briefingBody = (
+    <>
+      {briefing}
+      {actions}
+      {refreshError}
+    </>
+  );
 
   if (user?.role === "admin") {
     return (
       <section className="grid min-w-0 gap-4">
-        <header>
+        <AgentPanel
+          key={`mobile-${selected.id}`}
+          className="md:hidden"
+          storeId={selected.id}
+          surface="mobile-entry"
+          timezone={selected.timezone}
+        />
+        <header className="hidden md:block">
           <h1 className="text-2xl font-semibold">Agent 调查</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             围绕当前门店持续提问，并随时核对回答所依据的经营证据。
           </p>
         </header>
-        <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
+        <div className="hidden min-w-0 gap-4 md:grid lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
           <AgentPanel
             key={selected.id}
-            className="lg:h-[calc(100dvh-8.5rem)] lg:min-h-[42rem]"
+            className="hidden lg:h-[calc(100dvh-8.5rem)] lg:min-h-[42rem] md:flex"
             storeId={selected.id}
             timezone={selected.timezone}
           />
@@ -108,15 +126,12 @@ export function HomePage() {
               </h2>
               <p className="text-sm text-muted-foreground">当前门店的日常概览</p>
             </div>
-            {briefing}
-            {actions}
-            {refresh.error && refresh.variables === selected.id && (
-              <p role="alert">
-                {refresh.error instanceof ApiError ? refresh.error.detail : "刷新失败"}
-              </p>
-            )}
+            {briefingBody}
           </aside>
         </div>
+        <aside aria-label="每日简报" className="grid min-w-0 gap-3 md:hidden">
+          {briefingBody}
+        </aside>
       </section>
     );
   }
@@ -126,11 +141,7 @@ export function HomePage() {
       <header>
         <h1 className="text-2xl font-semibold">仪表盘</h1>
       </header>
-      <section aria-label="每日简报">{briefing}</section>
-      {actions}
-      {refresh.error && refresh.variables === selected.id && (
-        <p role="alert">{refresh.error instanceof ApiError ? refresh.error.detail : "刷新失败"}</p>
-      )}
+      <section aria-label="每日简报">{briefingBody}</section>
     </section>
   );
 }
