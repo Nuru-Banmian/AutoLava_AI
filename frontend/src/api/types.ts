@@ -212,6 +212,15 @@ export interface AgentTurnResult {
   route: "clarify" | "answer" | "safe_failure";
   content: string;
   recovery_status: "none" | "retried" | "fallback";
+  progress: Array<{
+    status: "investigating" | "waiting" | "partial";
+    message: string;
+  }>;
+  partial: {
+    verified_facts: string[];
+    incomplete_directions: string[];
+    unknowns: string[];
+  } | null;
   conversation: AgentConversation;
 }
 export interface WeatherResponse {

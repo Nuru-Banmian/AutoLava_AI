@@ -4,6 +4,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import pytest
+from pydantic import ValidationError
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +16,7 @@ from app.agent.contracts import (
     ConfirmedSettlementIncomeResult,
     CurrentStoreScope,
     DailyLedgerRevenueResult,
+    EVIDENCE_METRIC_LABELS,
     EvidenceBundle,
     EvidenceComparisonResult,
     EvidenceCompleteness,
@@ -32,15 +34,19 @@ from app.agent.contracts import (
     WashCountResult,
 )
 from app.agent.answer_grounding import NativeAnswerClaim, answer_is_grounded
+from app.agent.model import ModelAdapterError, ModelErrorCategory
 from app.agent.native import (
     ANSWER_EVIDENCE_FAILURE_MESSAGE,
     EVIDENCE_CALCULATION_TOOL,
     FakeNativeToolModel,
     NativeCalculationEnvelope,
+    NativeInvestigationLimits,
+    NativeModelUsage,
     NativeModelTurn,
     NativeToolAccessDenied,
     NativeToolAgentService,
     NativeToolCall,
+    NativeToolError,
     NativeTranscriptItem,
 )
 from app.agent.runtime import RuntimeContext, RuntimeFeatureFlags
@@ -337,11 +343,13 @@ class EvidenceAdaptiveModel:
             selected = "operating_days" if daily_revenue < 1_000 else "confirmed_settlement_income"
         else:
             return NativeModelTurn(
+                usage=NativeModelUsage(),
                 message={"role": "assistant", "content": "证据已足够，结束调查。"},
                 signal="end",
             )
         self.selected_tools.append(selected)
         return NativeModelTurn(
+            usage=NativeModelUsage(),
             message={"role": "assistant", "content": f"继续检验 {selected}。"},
             tool_calls=[
                 NativeToolCall(
@@ -370,6 +378,7 @@ class EvidenceCalculationModel:
             assert isinstance(calculation.evidence, NativeCalculationEnvelope)
             self.calculation = calculation.evidence
             return NativeModelTurn(
+                usage=NativeModelUsage(),
                 message={"role": "assistant", "content": "证据计算结果为 60 欧元。"},
                 answer_claims=[
                     {
@@ -386,6 +395,7 @@ class EvidenceCalculationModel:
             )
         if len(results) == 2:
             return NativeModelTurn(
+                usage=NativeModelUsage(),
                 message={"role": "assistant", "content": "使用已返回证据精确计算。"},
                 tool_calls=[
                     NativeToolCall(
@@ -403,6 +413,7 @@ class EvidenceCalculationModel:
                 signal="continue",
             )
         return NativeModelTurn(
+            usage=NativeModelUsage(),
             message={"role": "assistant", "content": "先取得计算输入。"},
             tool_calls=[
                 NativeToolCall(
@@ -1443,6 +1454,7 @@ class FailedEvidenceHypothesisModel:
         self.calls.append(list(items))
         if len(self.calls) == 1:
             return NativeModelTurn(
+                usage=NativeModelUsage(),
                 message={"role": "assistant", "content": "先查询。"},
                 tool_calls=[
                     NativeToolCall(
@@ -1456,6 +1468,7 @@ class FailedEvidenceHypothesisModel:
         if len(self.calls) == 2:
             failed_result = next(item.tool_result for item in items if item.tool_result is not None)
             return NativeModelTurn(
+                usage=NativeModelUsage(),
                 message={"role": "assistant", "content": "失败结果支持该假设。"},
                 hypotheses=[
                     {
@@ -1467,7 +1480,8 @@ class FailedEvidenceHypothesisModel:
                 signal="end",
             )
         return NativeModelTurn(
-            message={"role": "assistant", "content": "查询失败，假设仍无法确认。"},
+            usage=NativeModelUsage(),
+            message={"role": "assistant", "content": "月度总收入目前无法确认。"},
             hypotheses=[
                 {
                     "statement": "收入偏低与经营日偏少相关",
@@ -1477,7 +1491,7 @@ class FailedEvidenceHypothesisModel:
             ],
             answer_claims=[
                 {
-                    "statement": "查询失败，假设仍无法确认",
+                    "statement": "月度总收入目前无法确认",
                     "status": "unknown",
                 }
             ],
@@ -1502,7 +1516,7 @@ async def test_native_investigation_does_not_let_failed_evidence_support_a_hypot
     correction = model.calls[2][-1].message
     assert correction is not None
     assert "成功证据" in correction.content
-    assert result.turn.content == "查询失败，假设仍无法确认。"
+    assert result.turn.content == "月度总收入目前无法确认。"
 
 
 class SuccessfulEvidenceHypothesisModel:
@@ -1514,6 +1528,7 @@ class SuccessfulEvidenceHypothesisModel:
         self.calls.append(list(items))
         if len(self.calls) == 1:
             return NativeModelTurn(
+                usage=NativeModelUsage(),
                 message={"role": "assistant", "content": "先查询经营日。"},
                 tool_calls=[
                     NativeToolCall(
@@ -1527,6 +1542,7 @@ class SuccessfulEvidenceHypothesisModel:
         if len(self.calls) == 2:
             evidence = next(item.tool_result for item in items if item.tool_result is not None)
             return NativeModelTurn(
+                usage=NativeModelUsage(),
                 message={"role": "assistant", "content": "该证据支持收入假设。"},
                 hypotheses=[
                     {
@@ -1538,6 +1554,7 @@ class SuccessfulEvidenceHypothesisModel:
                 signal="end",
             )
         return NativeModelTurn(
+            usage=NativeModelUsage(),
             message={"role": "assistant", "content": "该假设目前仍无法确认。"},
             hypotheses=[
                 {
@@ -1605,8 +1622,575 @@ async def test_native_investigation_stops_safely_at_the_round_limit() -> None:
     )
 
     assert result.turn.route == "answer"
-    assert result.turn.content == "调查已达到本轮资源上限；以下结论仅基于已返回的证据。"
+    assert result.turn.content == "本轮调查已达到模型调用上限。"
+    assert result.partial is not None
     assert len(model.calls) == 4
+
+
+async def test_native_investigation_preserves_verified_facts_at_the_model_call_limit() -> None:
+    model = FakeNativeToolModel(
+        turns=[
+            {
+                "message": {"role": "assistant", "content": "先核对台账营业额。"},
+                "tool_calls": [
+                    {
+                        "id": "verified-revenue",
+                        "name": "daily_ledger_revenue",
+                        "arguments": {"year": 2026, "month": 7},
+                    }
+                ],
+                "signal": "continue",
+            }
+        ]
+    )
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=MetricEvidenceCollector(daily_revenue=1_200),
+        scope_resolver=PassthroughScopeResolver(),
+        limits=NativeInvestigationLimits(max_model_calls=1),
+    )
+
+    result = await service.run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="深入调查 2026 年 7 月。")],
+    )
+
+    assert len(model.calls) == 1
+    assert result.turn.route == "answer"
+    assert result.partial is not None
+    assert result.partial.verified_facts == ["daily_ledger_revenue=1200"]
+    assert "已确认事实：" not in result.turn.content
+    assert result.partial is not None
+    assert result.partial.unknowns
+    assert result.evidence is not None
+    assert result.progress[0].status == "partial"
+    assert result.progress[0].message == "本轮调查已达到模型调用上限。"
+
+
+@pytest.mark.parametrize(
+    ("usage", "limits", "expected_reason"),
+    [
+        (
+            NativeModelUsage(input_tokens=80, output_tokens=21, estimated_cost_eur=0.01),
+            NativeInvestigationLimits(max_tokens=100),
+            "Token 上限",
+        ),
+        (
+            NativeModelUsage(input_tokens=20, output_tokens=10, estimated_cost_eur=0.11),
+            NativeInvestigationLimits(max_cost_eur=0.10),
+            "费用上限",
+        ),
+    ],
+)
+async def test_native_investigation_stops_before_tools_when_model_usage_exceeds_budget(
+    usage: NativeModelUsage,
+    limits: NativeInvestigationLimits,
+    expected_reason: str,
+) -> None:
+    collector = MetricEvidenceCollector()
+    model = FakeNativeToolModel(
+        turns=[
+            {
+                "message": {"role": "assistant", "content": "继续查询。"},
+                "tool_calls": [
+                    {
+                        "id": "must-not-run",
+                        "name": "daily_ledger_revenue",
+                        "arguments": {"year": 2026, "month": 7},
+                    }
+                ],
+                "usage": usage.model_dump(),
+                "signal": "continue",
+            }
+        ]
+    )
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=collector,
+        scope_resolver=PassthroughScopeResolver(),
+        limits=limits,
+    )
+
+    result = await service.run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="调查 2026 年 7 月。")],
+    )
+
+    assert expected_reason in result.turn.content
+    assert result.partial is not None
+    assert result.partial.verified_facts == []
+    assert collector.metrics == []
+
+
+class SlowNativeModel:
+    calls = 0
+
+    async def next_turn(self, items, *, tools):
+        del items, tools
+        self.calls += 1
+        await asyncio.sleep(0.2)
+        raise AssertionError("the investigation deadline must cancel the model call")
+
+
+async def test_native_investigation_enforces_one_total_deadline() -> None:
+    model = SlowNativeModel()
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=MetricEvidenceCollector(),
+        scope_resolver=PassthroughScopeResolver(),
+        limits=NativeInvestigationLimits(timeout_seconds=0.05),
+    )
+
+    result = await service.run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="调查 2026 年 7 月。")],
+    )
+
+    assert model.calls == 1
+    assert "总时间上限" in result.turn.content
+    assert result.partial is not None
+    assert result.partial.unknowns
+
+
+class FailingThenRecoveringNativeModel:
+    def __init__(
+        self,
+        category: ModelErrorCategory,
+        *,
+        usage: NativeModelUsage | None = None,
+    ) -> None:
+        self.category = category
+        self.usage = usage if usage is not None else NativeModelUsage()
+        self.calls = 0
+
+    async def next_turn(self, items, *, tools):
+        del items, tools
+        self.calls += 1
+        if self.calls == 1:
+            raise ModelAdapterError(
+                "provider-private failure payload",
+                category=self.category,
+            )
+        return NativeModelTurn(
+            message={"role": "assistant", "content": "经营情况目前未知。"},
+            answer_claims=[{"statement": "经营情况目前未知", "status": "unknown"}],
+            usage=self.usage,
+            signal="end",
+        )
+
+
+async def test_native_investigation_retries_one_recoverable_model_failure() -> None:
+    model = FailingThenRecoveringNativeModel(ModelErrorCategory.TIMEOUT)
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=MetricEvidenceCollector(),
+        scope_resolver=PassthroughScopeResolver(),
+        limits=NativeInvestigationLimits(retry_attempts=1),
+    )
+
+    result = await service.run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="调查 2026 年 7 月。")],
+    )
+
+    assert model.calls == 2
+    assert result.turn.route == "answer"
+    assert result.turn.recovery_status == "retried"
+    assert [item.model_dump() for item in result.progress] == [
+        {
+            "status": "waiting",
+            "message": "模型服务暂时不可用，正在进行有限重试。",
+        }
+    ]
+
+
+async def test_native_token_limit_preserves_retry_progress() -> None:
+    model = FailingThenRecoveringNativeModel(
+        ModelErrorCategory.TIMEOUT,
+        usage=NativeModelUsage(input_tokens=101),
+    )
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=MetricEvidenceCollector(),
+        scope_resolver=PassthroughScopeResolver(),
+        limits=NativeInvestigationLimits(max_tokens=100, retry_attempts=1),
+    )
+
+    result = await service.run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="调查 2026 年 7 月。")],
+    )
+
+    assert result.turn.route == "answer"
+    assert result.partial is not None
+    assert result.turn.recovery_status == "retried"
+    assert [item.status for item in result.progress] == ["waiting", "partial"]
+    assert "Token 上限" in result.progress[-1].message
+
+
+@pytest.mark.parametrize(
+    "category",
+    [
+        ModelErrorCategory.INVALID_API_KEY,
+        ModelErrorCategory.PERMISSION_DENIED,
+        ModelErrorCategory.SAFETY_REFUSAL,
+        ModelErrorCategory.PROMPT_INJECTION,
+        ModelErrorCategory.INVALID_OUTPUT,
+    ],
+)
+async def test_native_investigation_never_retries_nonrecoverable_model_failures(
+    category: ModelErrorCategory,
+) -> None:
+    model = FailingThenRecoveringNativeModel(category)
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=MetricEvidenceCollector(),
+        scope_resolver=PassthroughScopeResolver(),
+        limits=NativeInvestigationLimits(retry_attempts=3),
+    )
+
+    result = await service.run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="调查 2026 年 7 月。")],
+    )
+
+    assert model.calls == 1
+    assert result.turn.route == "safe_failure"
+    assert "provider-private" not in result.turn.content
+
+
+class ClassifiedFailureEvidenceCollector(MetricEvidenceCollector):
+    def __init__(self, category: str, *, recover_after: int | None = None) -> None:
+        super().__init__(daily_revenue=900)
+        self.category = category
+        self.recover_after = recover_after
+        self.calls = 0
+
+    async def collect(self, plan, context):
+        self.calls += 1
+        if self.recover_after is None or self.calls <= self.recover_after:
+            raise NativeToolError(
+                "tool-private SQL and payload",
+                category=self.category,
+            )
+        return await super().collect(plan, context)
+
+
+def _tool_retry_model() -> FakeNativeToolModel:
+    return FakeNativeToolModel(
+        turns=[
+            {
+                "message": {"role": "assistant", "content": "核对台账。"},
+                "tool_calls": [
+                    {
+                        "id": "retryable-tool",
+                        "name": "daily_ledger_revenue",
+                        "arguments": {"year": 2026, "month": 7},
+                    }
+                ],
+                "signal": "continue",
+            },
+            {
+                "message": {"role": "assistant", "content": "每日台账营业额目前未知。"},
+                "answer_claims": [{"statement": "每日台账营业额目前未知", "status": "unknown"}],
+                "signal": "end",
+            },
+        ]
+    )
+
+
+async def test_native_investigation_retries_one_recoverable_tool_failure() -> None:
+    collector = ClassifiedFailureEvidenceCollector("timeout", recover_after=1)
+    service = NativeToolAgentService(
+        model=_tool_retry_model(),
+        evidence_collector=collector,
+        scope_resolver=PassthroughScopeResolver(),
+        limits=NativeInvestigationLimits(retry_attempts=1),
+    )
+
+    result = await service.run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="调查 2026 年 7 月。")],
+    )
+
+    assert collector.calls == 2
+    assert result.evidence is not None
+    assert result.turn.recovery_status == "retried"
+    assert [item.model_dump() for item in result.progress] == [
+        {
+            "status": "waiting",
+            "message": "经营工具暂时不可用，已完成有限重试。",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "category",
+    ["permission", "safety", "configuration", "data_integrity"],
+)
+async def test_native_investigation_never_retries_nonrecoverable_tool_failures(
+    category: str,
+) -> None:
+    collector = ClassifiedFailureEvidenceCollector(category)
+    service = NativeToolAgentService(
+        model=_tool_retry_model(),
+        evidence_collector=collector,
+        scope_resolver=PassthroughScopeResolver(),
+        limits=NativeInvestigationLimits(retry_attempts=3),
+    )
+
+    result = await service.run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="调查 2026 年 7 月。")],
+    )
+
+    assert collector.calls == 1
+    assert "tool-private" not in result.turn.content
+
+
+async def test_native_tool_retries_count_toward_the_tool_call_limit() -> None:
+    collector = ClassifiedFailureEvidenceCollector("timeout")
+    service = NativeToolAgentService(
+        model=_tool_retry_model(),
+        evidence_collector=collector,
+        scope_resolver=PassthroughScopeResolver(),
+        limits=NativeInvestigationLimits(max_tool_calls=1, retry_attempts=3),
+    )
+
+    result = await service.run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="调查 2026 年 7 月。")],
+    )
+
+    assert collector.calls == 1
+    assert "工具调用上限" in result.turn.content
+    assert result.partial is not None
+    assert result.partial.incomplete_directions == ["每日台账营业额"]
+    assert "retryable-tool" not in result.turn.content
+    assert "daily_ledger_revenue" not in result.turn.content
+
+
+class RevokeSettlementDuringRetryScopeResolver:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def refresh(self, context):
+        self.calls += 1
+        if self.calls < 3:
+            return context
+        return context.model_copy(
+            update={
+                "features": context.features.model_copy(
+                    update={"company_settlement_enabled": False}
+                )
+            }
+        )
+
+
+async def test_native_tool_retry_rechecks_current_tool_availability() -> None:
+    collector = ClassifiedFailureEvidenceCollector("timeout")
+    model = FakeNativeToolModel(
+        turns=[
+            {
+                "message": {"role": "assistant", "content": "核对公司结算。"},
+                "tool_calls": [
+                    {
+                        "id": "revoked-settlement",
+                        "name": "settlement_details",
+                        "arguments": {"year": 2026, "month": 7},
+                    }
+                ],
+                "signal": "continue",
+            }
+        ]
+    )
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=collector,
+        scope_resolver=RevokeSettlementDuringRetryScopeResolver(),
+        limits=NativeInvestigationLimits(retry_attempts=1),
+    )
+
+    with pytest.raises(NativeToolAccessDenied):
+        await service.run(
+            _runtime_context(),
+            ConversationState(),
+            [ModelMessage(role="user", content="调查 2026 年 7 月公司结算。")],
+        )
+
+    assert collector.calls == 1
+
+
+class ParallelPartialEvidenceCollector(MetricEvidenceCollector):
+    async def collect(self, plan, context):
+        metric = plan.requests[0].metric
+        if metric == EvidenceMetric.OPERATING_DAYS:
+            raise NativeToolError("private timeout payload", category="timeout")
+        return await super().collect(plan, context)
+
+
+async def test_native_parallel_budget_failure_keeps_already_verified_evidence() -> None:
+    model = FakeNativeToolModel(
+        turns=[
+            {
+                "message": {"role": "assistant", "content": "并行核对。"},
+                "tool_calls": [
+                    {
+                        "id": "verified",
+                        "name": "daily_ledger_revenue",
+                        "arguments": {"year": 2026, "month": 7},
+                    },
+                    {
+                        "id": "retry-limited",
+                        "name": "operating_days",
+                        "arguments": {"year": 2026, "month": 7},
+                    },
+                ],
+                "signal": "continue",
+            }
+        ]
+    )
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=ParallelPartialEvidenceCollector(daily_revenue=700),
+        scope_resolver=PassthroughScopeResolver(),
+        limits=NativeInvestigationLimits(max_tool_calls=2, retry_attempts=1),
+    )
+
+    result = await service.run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="调查 2026 年 7 月。")],
+    )
+
+    assert result.evidence is not None
+    assert result.partial is not None
+    assert result.partial.verified_facts == ["daily_ledger_revenue=700"]
+
+
+async def test_native_answer_must_name_failed_tool_directions_as_unknown() -> None:
+    model = FakeNativeToolModel(
+        turns=[
+            {
+                "message": {"role": "assistant", "content": "查询月度总收入。"},
+                "tool_calls": [
+                    {
+                        "id": "failed-revenue",
+                        "name": "monthly_total_revenue",
+                        "arguments": {"year": 2026, "month": 7},
+                    },
+                    {
+                        "id": "failed-wash-count",
+                        "name": "wash_count",
+                        "arguments": {"year": 2026, "month": 7},
+                    },
+                ],
+                "signal": "continue",
+            },
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "月度总收入目前未知，洗车数量可能正常。",
+                },
+                "answer_claims": [
+                    {"statement": "月度总收入目前未知", "status": "unknown"},
+                    {"statement": "洗车数量可能正常", "status": "analysis_hypothesis"},
+                ],
+                "signal": "end",
+            },
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "月度总收入目前未知；洗车数量目前也未知。",
+                },
+                "answer_claims": [
+                    {"statement": "月度总收入目前未知", "status": "unknown"},
+                    {"statement": "洗车数量目前也未知", "status": "unknown"},
+                ],
+                "signal": "end",
+            },
+        ]
+    )
+    result = await NativeToolAgentService(
+        model=model,
+        evidence_collector=FailingEvidenceCollector(),
+        scope_resolver=PassthroughScopeResolver(),
+    ).run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="调查 2026 年 7 月。")],
+    )
+
+    correction = model.calls[2].items[-1].message
+    assert correction is not None
+    assert "洗车数量" in correction.content
+    assert result.turn.content == "月度总收入目前未知；洗车数量目前也未知。"
+
+
+@pytest.mark.parametrize(
+    "unsafe_content",
+    [
+        '{\n  "tool": {\n    "sql": "UPDATE records\\nSET amount = 1"\n  }\n}',
+        "经营情况目前未知。PRAGMA table_info(records)",
+        "经营情况目前未知。EXPLAIN QUERY PLAN SELECT * FROM records",
+        "SELECT " + ("column_name, " * 100) + "column_name FROM records",
+    ],
+)
+async def test_native_answer_rejects_internal_json_sql_and_system_message_echoes(
+    unsafe_content: str,
+) -> None:
+    model = FakeNativeToolModel(
+        turns=[
+            {
+                "message": {"role": "assistant", "content": unsafe_content},
+                "answer_claims": [
+                    {
+                        "statement": "内部工具原始载荷",
+                        "status": "unknown",
+                    }
+                ],
+                "signal": "end",
+            },
+            {
+                "message": {"role": "assistant", "content": "经营情况目前未知。"},
+                "answer_claims": [{"statement": "经营情况目前未知", "status": "unknown"}],
+                "signal": "end",
+            },
+        ]
+    )
+    result = await NativeToolAgentService(
+        model=model,
+        evidence_collector=MetricEvidenceCollector(),
+        scope_resolver=PassthroughScopeResolver(),
+    ).run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="调查 2026 年 7 月。")],
+    )
+
+    assert len(model.calls) == 2
+    assert result.turn.content == "经营情况目前未知。"
+    assert unsafe_content not in result.turn.content
+
+
+def test_native_model_turn_requires_trusted_usage_metadata() -> None:
+    with pytest.raises(ValidationError, match="usage"):
+        NativeModelTurn.model_validate(
+            {
+                "message": {"role": "assistant", "content": "经营情况目前未知。"},
+                "answer_claims": [{"statement": "经营情况目前未知", "status": "unknown"}],
+                "signal": "end",
+            }
+        )
 
 
 async def test_native_tool_failure_is_returned_to_the_model_in_the_unified_envelope() -> None:
@@ -2340,7 +2924,10 @@ async def test_daily_ledger_drilldown_maps_a_controlled_date_set_after_aggregate
                 "signal": "continue",
             },
             {
-                "message": {"role": "assistant", "content": "目前无法继续。"},
+                "message": {
+                    "role": "assistant",
+                    "content": "每日台账营业额与每日台账明细目前无法继续。",
+                },
                 "signal": "end",
             },
         ]
@@ -2567,7 +3154,7 @@ async def test_semantic_tool_rejects_evidence_from_a_different_filter_scope() ->
                 "signal": "continue",
             },
             {
-                "message": {"role": "assistant", "content": "目前无法确认。"},
+                "message": {"role": "assistant", "content": "收入分类金额目前无法确认。"},
                 "signal": "end",
             },
         ]
@@ -2653,7 +3240,10 @@ async def test_semantic_tools_map_only_approved_grouping_filters_and_extremes(
                 "signal": "continue",
             },
             {
-                "message": {"role": "assistant", "content": "目前无法继续。"},
+                "message": {
+                    "role": "assistant",
+                    "content": f"{EVIDENCE_METRIC_LABELS[metric]}目前无法继续。",
+                },
                 "signal": "end",
             },
         ]

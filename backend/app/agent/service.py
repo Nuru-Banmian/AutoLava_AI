@@ -38,6 +38,7 @@ from app.agent.factory import create_model_adapter
 from app.agent.model import ModelAttempt
 from app.agent.native import (
     NativeExternalEvidenceCollector,
+    NativeInvestigationLimits,
     NativeToolAgentService,
     NativeToolModel,
 )
@@ -244,6 +245,14 @@ def create_agent_service(
             evidence_collector=evidence_collector,
             external_evidence_collector=external_collector,
             scope_resolver=scope_resolver,
+            limits=NativeInvestigationLimits(
+                max_model_calls=settings.agent_investigation_max_model_calls,
+                max_tool_calls=settings.agent_investigation_max_tool_calls,
+                timeout_seconds=settings.agent_investigation_timeout_seconds,
+                max_tokens=settings.agent_investigation_max_tokens,
+                max_cost_eur=settings.agent_investigation_max_cost_eur,
+                retry_attempts=settings.agent_investigation_retry_attempts,
+            ),
             **native_options,
         )
     return AgentService(

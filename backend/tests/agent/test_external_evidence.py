@@ -16,6 +16,7 @@ from app.agent.conversation import ConversationState
 from app.agent.contracts import ModelMessage
 from app.agent.native import (
     FakeNativeToolModel,
+    NativeInvestigationLimits,
     NativeToolAgentService,
     NativeToolAccessDenied,
 )
@@ -696,6 +697,59 @@ async def test_native_catalog_exposes_bounded_external_tools_with_external_envel
     assert returned["public_holidays"].source == ["nager_date_public_holidays"]
     assert returned["public_holidays"].geographic_scope.country_code == "IT"
     assert result.turn.content == "外部证据已返回。"
+
+
+async def test_external_tools_share_the_native_investigation_tool_budget() -> None:
+    weather_provider = RecordingWeatherProvider()
+    holiday_provider = RecordingHolidayProvider()
+    model = FakeNativeToolModel(
+        turns=[
+            {
+                "message": {"role": "assistant", "content": "补充外部经营证据。"},
+                "tool_calls": [
+                    {
+                        "id": "weather-1",
+                        "name": "historical_weather",
+                        "arguments": {"year": 2026, "month": 7},
+                    }
+                ],
+                "signal": "continue",
+            },
+            {
+                "message": {"role": "assistant", "content": "继续补充外部经营证据。"},
+                "tool_calls": [
+                    {
+                        "id": "holiday-1",
+                        "name": "public_holidays",
+                        "arguments": {"year": 2026, "month": 7},
+                    }
+                ],
+                "signal": "continue",
+            },
+        ]
+    )
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=object(),
+        external_evidence_collector=ExternalEvidenceService(
+            weather_provider=weather_provider,
+            holiday_provider=holiday_provider,
+            now=lambda: NOW,
+        ),
+        scope_resolver=StaticScopeResolver(),
+        now=lambda: NOW,
+        limits=NativeInvestigationLimits(max_tool_calls=1),
+    )
+
+    result = await service.run(
+        _context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="调查 2026 年 7 月的天气和公共假期。")],
+    )
+
+    assert len(weather_provider.calls) + len(holiday_provider.calls) == 1
+    assert result.partial is not None
+    assert "工具调用上限" in result.turn.content
 
 
 async def test_external_tools_reject_model_owned_scope_and_transport_fields() -> None:
