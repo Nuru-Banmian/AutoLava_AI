@@ -1,6 +1,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
+from decimal import Decimal
 
 import pytest
 
@@ -33,7 +34,9 @@ from app.agent.contracts import (
 from app.agent.answer_grounding import NativeAnswerClaim, answer_is_grounded
 from app.agent.native import (
     ANSWER_EVIDENCE_FAILURE_MESSAGE,
+    EVIDENCE_CALCULATION_TOOL,
     FakeNativeToolModel,
+    NativeCalculationEnvelope,
     NativeModelTurn,
     NativeToolAccessDenied,
     NativeToolAgentService,
@@ -349,6 +352,150 @@ class EvidenceAdaptiveModel:
             ],
             signal="continue",
         )
+
+
+class EvidenceCalculationModel:
+    def __init__(self) -> None:
+        self.calls = []
+        self.calculation: NativeCalculationEnvelope | None = None
+
+    async def next_turn(self, items, *, tools):
+        self.calls.append((list(items), list(tools)))
+        results = [item.tool_result for item in items if item.tool_result is not None]
+        calculation = next(
+            (result for result in results if result.name == EVIDENCE_CALCULATION_TOOL),
+            None,
+        )
+        if calculation is not None:
+            assert isinstance(calculation.evidence, NativeCalculationEnvelope)
+            self.calculation = calculation.evidence
+            return NativeModelTurn(
+                message={"role": "assistant", "content": "证据计算结果为 60 欧元。"},
+                answer_claims=[
+                    {
+                        "statement": "证据计算结果为 60 欧元",
+                        "status": "verified_fact",
+                        "metric": "evidence_calculation",
+                        "period": {"start": "2026-07-01", "end": "2026-07-31"},
+                        "value": 60,
+                        "unit": "EUR",
+                        "evidence_references": [calculation.evidence.reference],
+                    }
+                ],
+                signal="end",
+            )
+        if len(results) == 2:
+            return NativeModelTurn(
+                message={"role": "assistant", "content": "使用已返回证据精确计算。"},
+                tool_calls=[
+                    NativeToolCall(
+                        id="calculate",
+                        name=EVIDENCE_CALCULATION_TOOL,
+                        arguments={
+                            "operation": "difference",
+                            "evidence_references": [
+                                results[0].evidence.reference,
+                                results[1].evidence.reference,
+                            ],
+                        },
+                    )
+                ],
+                signal="continue",
+            )
+        return NativeModelTurn(
+            message={"role": "assistant", "content": "先取得计算输入。"},
+            tool_calls=[
+                NativeToolCall(
+                    id="daily",
+                    name="daily_ledger_revenue",
+                    arguments={"year": 2026, "month": 7},
+                ),
+                NativeToolCall(
+                    id="settlement",
+                    name="confirmed_settlement_income",
+                    arguments={"year": 2026, "month": 7},
+                ),
+            ],
+            signal="continue",
+        )
+
+
+async def test_native_calculation_uses_returned_evidence_without_another_business_query() -> None:
+    model = EvidenceCalculationModel()
+    collector = MetricEvidenceCollector()
+
+    result = await NativeToolAgentService(
+        model=model,
+        evidence_collector=collector,
+        scope_resolver=PassthroughScopeResolver(),
+        now=lambda: datetime(2026, 7, 28, 10, tzinfo=timezone.utc),
+    ).run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="精确计算 2026 年 7 月两项收入的差额。")],
+    )
+
+    assert result.turn.content == "证据计算结果为 60 欧元。"
+    assert collector.metrics == [
+        EvidenceMetric.DAILY_LEDGER_REVENUE,
+        EvidenceMetric.CONFIRMED_SETTLEMENT_INCOME,
+    ]
+    assert model.calculation is not None
+    assert model.calculation.exact_result == Decimal("60")
+    assert model.calculation.unit == "EUR"
+    assert model.calculation.cannot_calculate_reason is None
+    assert EVIDENCE_CALCULATION_TOOL in {tool.name for tool in model.calls[1][1]}
+
+
+@pytest.mark.parametrize(
+    ("unit", "answer"),
+    [
+        ("car", "证据计算结果为 12 辆。"),
+        ("EUR/car", "证据计算结果为 12 欧元/车。"),
+        ("EUR/operating_day", "证据计算结果为 12 欧元/经营日。"),
+        ("ratio", "证据计算结果为 12 倍。"),
+    ],
+)
+def test_calculation_grounding_checks_visible_values_for_every_derived_unit(
+    unit: str,
+    answer: str,
+) -> None:
+    reference = "ev_333333333333333333333333"
+    evidence = NativeCalculationEnvelope(
+        reference=reference,
+        formula="ev_111111111111111111111111 / ev_222222222222222222222222",
+        input_evidence_references=[
+            "ev_111111111111111111111111",
+            "ev_222222222222222222222222",
+        ],
+        input_data_versions=["sha256:first", "sha256:second"],
+        exact_result=Decimal("12"),
+        unit=unit,
+        cannot_calculate_reason=None,
+        scope=CurrentStoreScope(id=2),
+        period=EvidencePeriodResult(start=date(2026, 7, 1), end=date(2026, 7, 31)),
+        calculated_at=datetime(2026, 7, 28, 10, tzinfo=timezone.utc),
+        data_version="sha256:calculation",
+        failure={"status": "none"},
+    )
+    claim = NativeAnswerClaim(
+        statement=answer.rstrip("。"),
+        status="verified_fact",
+        metric="evidence_calculation",
+        period=evidence.period,
+        value=12,
+        unit=unit,
+        evidence_references=[reference],
+    )
+
+    assert answer_is_grounded(answer, [evidence], [claim], {reference: evidence})
+    wrong_answer = answer.replace("12", "999")
+    assert not answer_is_grounded(
+        wrong_answer,
+        [evidence],
+        [claim.model_copy(update={"statement": wrong_answer.rstrip("。")})],
+        {reference: evidence},
+    )
 
 
 @pytest.mark.parametrize(
@@ -1230,7 +1377,7 @@ async def test_native_investigation_carries_analysis_hypotheses_between_turns() 
         [ModelMessage(role="user", content="调查 2026 年 7 月收入为何偏低。")],
     )
 
-    hypothesis = model.calls[1].items[1].hypotheses[0]
+    hypothesis = next(item.hypotheses[0] for item in model.calls[1].items if item.hypotheses)
     assert hypothesis.statement == "收入偏低可能与经营日偏少相关"
     assert hypothesis.status == "testing"
 
@@ -1356,6 +1503,76 @@ async def test_native_investigation_does_not_let_failed_evidence_support_a_hypot
     assert correction is not None
     assert "成功证据" in correction.content
     assert result.turn.content == "查询失败，假设仍无法确认。"
+
+
+class SuccessfulEvidenceHypothesisModel:
+    def __init__(self) -> None:
+        self.calls: list[list[NativeTranscriptItem]] = []
+
+    async def next_turn(self, items, *, tools):
+        del tools
+        self.calls.append(list(items))
+        if len(self.calls) == 1:
+            return NativeModelTurn(
+                message={"role": "assistant", "content": "先查询经营日。"},
+                tool_calls=[
+                    NativeToolCall(
+                        id="days",
+                        name="operating_days",
+                        arguments={"year": 2026, "month": 7},
+                    )
+                ],
+                signal="continue",
+            )
+        if len(self.calls) == 2:
+            evidence = next(item.tool_result for item in items if item.tool_result is not None)
+            return NativeModelTurn(
+                message={"role": "assistant", "content": "该证据支持收入假设。"},
+                hypotheses=[
+                    {
+                        "statement": "收入偏低与经营日偏少相关",
+                        "status": "supported",
+                        "evidence_references": [evidence.evidence.reference],
+                    }
+                ],
+                signal="end",
+            )
+        return NativeModelTurn(
+            message={"role": "assistant", "content": "该假设目前仍无法确认。"},
+            hypotheses=[
+                {
+                    "statement": "收入偏低与经营日偏少相关",
+                    "status": "unresolved",
+                }
+            ],
+            answer_claims=[
+                {
+                    "statement": "该假设目前仍无法确认",
+                    "status": "unknown",
+                }
+            ],
+            signal="end",
+        )
+
+
+async def test_native_does_not_mark_hypotheses_supported_without_semantic_validation() -> None:
+    model = SuccessfulEvidenceHypothesisModel()
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=MetricEvidenceCollector(),
+        scope_resolver=PassthroughScopeResolver(),
+    )
+
+    result = await service.run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="调查 2026 年 7 月收入为何偏低。")],
+    )
+
+    correction = model.calls[2][-1].message
+    assert correction is not None
+    assert "不能验证证据与分析假设之间的语义关系" in correction.content
+    assert result.state.analysis_hypotheses[0].status == "unresolved"
 
 
 async def test_native_investigation_stops_safely_at_the_round_limit() -> None:
@@ -1775,6 +1992,7 @@ async def test_monthly_revenue_policy_stays_available_when_optional_store_featur
         "other_data_amount",
         "daily_ledger_revenue_extreme",
         "daily_ledger_details",
+        EVIDENCE_CALCULATION_TOOL,
     ]
     if feature == "company_settlement_enabled":
         expected_tools.remove("settlement_details")
