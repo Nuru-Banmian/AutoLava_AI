@@ -1,4 +1,5 @@
 from typing import Literal, Protocol
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
@@ -17,14 +18,15 @@ from app.agent.conversation import (
 )
 from app.agent.contracts import ModelMessage
 from app.agent.external_evidence import country_code_for_timezone
-from app.agent.model import CONFIGURATION_CATEGORIES
 from app.agent.native import NativeToolAccessDenied
 from app.agent.runtime import RuntimeContext, RuntimeFeatureFlags
 from app.api.deps import CurrentUser, Session
 from app.api.routes.agent_admin import agent_enabled
+from app.core.config import get_settings
 from app.core.database import end_read_transaction, sqlite_short_write
-from app.models.agent import AgentAlert, AgentEvidence, AgentRunStat
+from app.models.agent import AgentEvidence
 from app.services.access import require_fresh_store_access, require_fresh_user
+from app.services.agent_observability import record_agent_observability
 from app.services.owner import is_administrator, is_owner
 
 router = APIRouter(prefix="/agent", tags=["agent"])
@@ -123,6 +125,7 @@ async def run_agent_turn(
     except NativeToolAccessDenied as error:
         raise HTTPException(403, "Agent 工具授权已失效") from error
     result = run_result.turn
+    run_id = str(uuid4())
 
     async with sqlite_short_write(session):
         user = await _require_agent_administrator(session, user_id)
@@ -148,46 +151,16 @@ async def run_agent_turn(
                     payload=run_result.evidence.model_dump(mode="json"),
                 )
             )
-        for attempt in run_result.attempts:
-            session.add(
-                AgentRunStat(
-                    user_id=user_id,
-                    store_id=authorized_store_id,
-                    role=context.role,
-                    stage=attempt.stage,
-                    provider=attempt.provider,
-                    model=attempt.model,
-                    input_tokens=attempt.input_tokens,
-                    output_tokens=attempt.output_tokens,
-                    result=attempt.result,
-                    error_category=(
-                        attempt.error_category.value if attempt.error_category is not None else None
-                    ),
-                    latency_ms=attempt.latency_ms,
-                    estimated_cost=attempt.estimated_cost,
-                    is_fallback=attempt.is_fallback,
-                )
-            )
-            if attempt.error_category in CONFIGURATION_CATEGORIES:
-                alert_type = (
-                    "budget"
-                    if attempt.error_category.value == "insufficient_balance"
-                    else "configuration"
-                )
-                session.add(
-                    AgentAlert(
-                        alert_type=alert_type,
-                        provider=attempt.provider,
-                        model=attempt.model,
-                        error_category=attempt.error_category.value,
-                        message=(
-                            "模型预算不可用，请检查供应商账户。"
-                            if alert_type == "budget"
-                            else "模型配置不可用，请检查供应商设置。"
-                        ),
-                        is_resolved=False,
-                    )
-                )
+        await record_agent_observability(
+            session,
+            run_id=run_id,
+            user_id=user_id,
+            store_id=authorized_store_id,
+            role=context.role,
+            attempts=run_result.attempts,
+            turn=result,
+            max_cost_eur=get_settings().agent_investigation_max_cost_eur,
+        )
         await append_message(
             session,
             conversation=conversation,
