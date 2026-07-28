@@ -2634,6 +2634,7 @@ async def test_monthly_revenue_policy_stays_available_when_optional_store_featur
         "other_data_amount",
         "daily_ledger_revenue_extreme",
         "daily_ledger_details",
+        "event_investigation",
         "search_system_knowledge",
         "open_business_records",
         EVIDENCE_CALCULATION_TOOL,

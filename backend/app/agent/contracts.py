@@ -35,6 +35,7 @@ class EvidenceRequestKind(StrEnum):
     SETTLEMENT_DETAILS = "settlement_details"
     DAILY_LEDGER = "daily_ledger"
     DAILY_LEDGER_DRILLDOWN = "daily_ledger_drilldown"
+    EVENT_INVESTIGATION = "event_investigation"
     REVENUE_ANALYSIS = "revenue_analysis"
 
 
@@ -50,6 +51,17 @@ class EvidenceMetric(StrEnum):
     INCOME_CATEGORY_AMOUNT = "income_category_amount"
     OTHER_DATA_AMOUNT = "other_data_amount"
     DAILY_LEDGER = "daily_ledger"
+    EVENT_INVESTIGATION = "event_investigation"
+
+
+class EventTypeCode(StrEnum):
+    ACCESS_DISRUPTION = "access_disruption"
+    EQUIPMENT_ISSUE = "equipment_issue"
+    LOCAL_EVENT = "local_event"
+    PROMOTION = "promotion"
+    SCHEDULE_CHANGE = "schedule_change"
+    STAFFING_ISSUE = "staffing_issue"
+    WEATHER_DISRUPTION = "weather_disruption"
 
 
 EVIDENCE_METRIC_LABELS = {
@@ -64,6 +76,7 @@ EVIDENCE_METRIC_LABELS = {
     EvidenceMetric.INCOME_CATEGORY_AMOUNT: "收入分类金额",
     EvidenceMetric.OTHER_DATA_AMOUNT: "其他数据金额",
     EvidenceMetric.DAILY_LEDGER: "每日台账",
+    EvidenceMetric.EVENT_INVESTIGATION: "事件调查",
 }
 SETTLEMENT_DETAILS_LABEL = "公司结算明细"
 MONTHLY_TOTAL_REVENUE_LABEL = "月度总收入"
@@ -293,6 +306,11 @@ class DailyLedgerDrilldownRequest(ClosedModel):
         return values
 
 
+class EventInvestigationRequest(ClosedModel):
+    kind: Literal["event_investigation"] = "event_investigation"
+    period: CalendarMonthPeriod
+
+
 class RevenueAnalysisRequest(ClosedModel):
     kind: Literal["revenue_analysis"] = "revenue_analysis"
     period: EvidencePeriod | None = None
@@ -305,6 +323,7 @@ EvidenceRequestUnion = Annotated[
     | SettlementDetailsRequest
     | DailyLedgerRequest
     | DailyLedgerDrilldownRequest
+    | EventInvestigationRequest
     | RevenueAnalysisRequest,
     Field(discriminator="kind"),
 ]
@@ -506,6 +525,52 @@ class DailyLedgerDrilldownResult(ClosedModel):
         return self
 
 
+class EventType(ClosedModel):
+    code: EventTypeCode
+    name: str = Field(min_length=1, max_length=50)
+
+
+class EventObservation(ClosedModel):
+    date: CalendarDate
+    daily_revenue: int = Field(ge=0)
+    operating_status: Literal["营业", "休息", "提前休息"]
+    recorded_weather: str | None = Field(default=None, max_length=50)
+    wash_count: int | None = Field(default=None, ge=0)
+    raw_event: UntrustedRawEvent
+    classification_status: Literal["classified", "unclassified"]
+    event_types: list[EventType] = Field(max_length=7)
+    store_event_identifier: str | None = Field(
+        default=None,
+        pattern=r"^store_event_[0-9a-f]{16}$",
+    )
+    source_record_id: int = Field(gt=0)
+    source_event_fingerprint: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    analysis_version: Literal["event_type_rules.v1"]
+
+    @model_validator(mode="after")
+    def require_classification_shape(self) -> "EventObservation":
+        codes = [event_type.code for event_type in self.event_types]
+        if len(codes) != len(set(codes)):
+            raise ValueError("event types must be unique")
+        if (self.classification_status == "classified") != bool(self.event_types):
+            raise ValueError("event classification status must match its types")
+        return self
+
+
+class EventInvestigationResult(ClosedModel):
+    observations: list[EventObservation] = Field(max_length=31)
+    classified_events: int = Field(ge=0, le=31)
+    unclassified_events: int = Field(ge=0, le=31)
+
+    @model_validator(mode="after")
+    def require_event_counts(self) -> "EventInvestigationResult":
+        if self.classified_events + self.unclassified_events != len(self.observations):
+            raise ValueError("event investigation counts must match observations")
+        if len({observation.date for observation in self.observations}) != len(self.observations):
+            raise ValueError("event investigation dates must be unique")
+        return self
+
+
 class EvidenceComparisonResult(ClosedModel):
     status: Literal["ok", "no_data"]
     period: EvidencePeriodResult
@@ -535,6 +600,7 @@ EvidenceResult = (
     | DailyLedgerExtremeResult
     | DailyLedgerResult
     | DailyLedgerDrilldownResult
+    | EventInvestigationResult
 )
 
 
@@ -718,6 +784,7 @@ class EvidenceBundle(ClosedModel):
         "daily_ledger_extreme.v1",
         "daily_ledger.v1",
         "daily_ledger_drilldown.v1",
+        "event_investigation.v1",
     ]
     result: EvidenceResult
     coverage: EvidenceCoverage
@@ -740,6 +807,26 @@ class EvidenceBundle(ClosedModel):
                 or not isinstance(self.result, MonthlyTotalRevenueResult)
             ):
                 raise ValueError("monthly revenue evidence has an inconsistent shape")
+            return self
+        if self.metric == EvidenceMetric.EVENT_INVESTIGATION:
+            if (
+                self.status != "ok"
+                or self.unit != "mixed"
+                or self.calculation_version != "event_investigation.v1"
+                or not isinstance(self.result, EventInvestigationResult)
+                or self.group_by is not None
+                or self.filters is not None
+                or self.extreme is not None
+                or self.selected_dates is not None
+                or self.comparison is not None
+                or self.coverage.recorded_dates != len(self.result.observations)
+                or self.coverage.calendar_dates != (self.period.end - self.period.start).days + 1
+                or any(
+                    observation.date < self.period.start or observation.date > self.period.end
+                    for observation in self.result.observations
+                )
+            ):
+                raise ValueError("event investigation evidence has an inconsistent shape")
             return self
         if self.metric != EvidenceMetric.DAILY_LEDGER:
             if (
