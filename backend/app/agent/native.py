@@ -8,7 +8,7 @@ from calendar import monthrange
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from typing import Any, Literal, Protocol, TypeVar
+from typing import Any, Literal, Protocol, TypeAlias, TypeVar
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -18,7 +18,13 @@ from app.agent.answer_grounding import (
     answer_contains_operating_claim,
     answer_is_grounded,
 )
-from app.agent.conversation import AgentRunResult, ConfirmedPeriod, ConversationState
+from app.agent.conversation import (
+    AgentRunResult,
+    ConfirmedPeriod,
+    ConversationAnalysisHypothesis,
+    ConversationEvidenceReference,
+    ConversationState,
+)
 from app.agent.contracts import (
     CurrentStoreScope,
     AverageRevenuePerCarResult,
@@ -52,7 +58,7 @@ from app.agent.contracts import (
 from app.agent.runtime import RuntimeContext
 from app.agent.system_knowledge import is_system_help_request, search_system_knowledge
 
-NativeCollectedEvidence = EvidenceBundle | SettlementDetailsEvidenceBundle
+NativeCollectedEvidence: TypeAlias = EvidenceBundle | SettlementDetailsEvidenceBundle
 
 MONTHLY_TOTAL_REVENUE_TOOL = "monthly_total_revenue"
 DAILY_LEDGER_REVENUE_TOOL = "daily_ledger_revenue"
@@ -153,21 +159,7 @@ class NativeToolRegistration:
         return all(getattr(context.features, feature) for feature in self.required_features)
 
 
-class NativeAnalysisHypothesis(ClosedModel):
-    statement: str = Field(min_length=1, max_length=500)
-    status: Literal["proposed", "testing", "supported", "refuted", "unresolved"]
-    evidence_references: list[str] = Field(default_factory=list, max_length=20)
-
-    @model_validator(mode="after")
-    def require_supported_evidence(self) -> NativeAnalysisHypothesis:
-        if any(
-            re.fullmatch(r"ev_[0-9a-f]{24}", reference) is None
-            for reference in self.evidence_references
-        ):
-            raise ValueError("invalid evidence reference")
-        if self.status in {"supported", "refuted"} and not self.evidence_references:
-            raise ValueError("supported or refuted hypotheses require evidence")
-        return self
+NativeAnalysisHypothesis: TypeAlias = ConversationAnalysisHypothesis
 
 
 class NativeEvidenceFailure(ClosedModel):
@@ -226,7 +218,8 @@ class NativeTranscriptItem(ClosedModel):
 class NativeModelTurn(ClosedModel):
     message: ModelMessage
     tool_calls: list[NativeToolCall] = Field(default_factory=list, max_length=4)
-    hypotheses: list[NativeAnalysisHypothesis] = Field(default_factory=list, max_length=8)
+    hypotheses: list[NativeAnalysisHypothesis] | None = Field(default=None, max_length=8)
+    pending_directions: list[str] | None = Field(default=None, max_length=8)
     answer_claims: list[NativeAnswerClaim] = Field(default_factory=list, max_length=20)
     signal: Literal["continue", "end"]
 
@@ -488,10 +481,16 @@ class NativeToolAgentService:
         tools = _available_tools(catalog_context, self.tool_registry)
         if not tools:
             raise NativeToolAccessDenied("native tools are not available for this runtime scope")
-        trusted_period = _explicit_calendar_month(recent_messages, state)
-        items = [NativeTranscriptItem(message=message) for message in recent_messages]
+        trusted_period = _trusted_period(state, recent_messages)
+        items = [
+            NativeTranscriptItem(message=_investigation_context_message(state)),
+            *(NativeTranscriptItem(message=message) for message in recent_messages),
+        ]
         collected: list[NativeCollectedEvidence] = []
         evidence_by_reference: dict[str, NativeCollectedEvidence] = {}
+        evidence_references = list(state.evidence_references)
+        hypotheses = list(state.analysis_hypotheses)
+        pending_directions = list(state.pending_directions)
         contextual_results: list[NativeToolResult] = []
         selected_action: OpenBusinessRecordsAction | None = None
         period_confirmation_required = False
@@ -513,7 +512,7 @@ class NativeToolAgentService:
                         "native tools are not available for this runtime scope"
                     )
             turn = await self.model.next_turn(items, tools=tools)
-            hypothesis_error = _hypothesis_reference_error(turn.hypotheses, items)
+            hypothesis_error = _hypothesis_reference_error(turn.hypotheses or [], items)
             if hypothesis_error is not None:
                 items.append(
                     NativeTranscriptItem(
@@ -524,9 +523,13 @@ class NativeToolAgentService:
             items.append(
                 NativeTranscriptItem(
                     message=turn.message,
-                    hypotheses=turn.hypotheses,
+                    hypotheses=turn.hypotheses or [],
                 )
             )
+            if turn.hypotheses is not None:
+                hypotheses = list(turn.hypotheses)
+            if turn.pending_directions is not None:
+                pending_directions = turn.pending_directions
             if turn.signal == "end":
                 if period_confirmation_required:
                     clarification = (
@@ -603,6 +606,9 @@ class NativeToolAgentService:
                 return _agent_result(
                     state,
                     collected,
+                    evidence_references=evidence_references,
+                    hypotheses=hypotheses,
+                    pending_directions=pending_directions,
                     content=turn.message.content,
                     action=selected_action,
                 )
@@ -610,6 +616,9 @@ class NativeToolAgentService:
                 return _agent_result(
                     state,
                     collected,
+                    evidence_references=evidence_references,
+                    hypotheses=hypotheses,
+                    pending_directions=pending_directions,
                     content=INVESTIGATION_LIMIT_MESSAGE,
                 )
             outcomes = await asyncio.gather(
@@ -646,6 +655,19 @@ class NativeToolAgentService:
                 if new_evidence is not None:
                     collected.append(new_evidence)
                     evidence_by_reference[tool_result.evidence.reference] = new_evidence
+                    evidence_references.append(
+                        ConversationEvidenceReference(
+                            reference=tool_result.evidence.reference,
+                            source=tool_result.evidence.source,
+                            queried_at=tool_result.evidence.queried_at,
+                            data_version=tool_result.evidence.data_version,
+                            period=ConfirmedPeriod(
+                                start=tool_result.evidence.period.start,
+                                end=tool_result.evidence.period.end,
+                            ),
+                        )
+                    )
+                    evidence_references = evidence_references[-50:]
                 elif tool_result.evidence.failure.status == "none" and (
                     action is None or action == selected_action
                 ):
@@ -654,6 +676,9 @@ class NativeToolAgentService:
         return _agent_result(
             state,
             collected,
+            evidence_references=evidence_references,
+            hypotheses=hypotheses,
+            pending_directions=pending_directions,
             content=INVESTIGATION_LIMIT_MESSAGE,
             action=selected_action,
         )
@@ -1078,6 +1103,11 @@ def _hypothesis_reference_error(
             return "分析假设包含未知证据引用。请只引用本轮已返回的证据后继续或结束。"
         if hypothesis.status in {"supported", "refuted"} and references - successful_references:
             return "分析假设只有在成功证据支持时才能标记为支持或否定；请修正后继续或结束。"
+        if hypothesis.status in {"supported", "refuted"}:
+            return (
+                "后端目前只能验证经营事实，不能验证证据与分析假设之间的语义关系；"
+                "请把假设保持为待验证或无法确认。"
+            )
     return None
 
 
@@ -1086,15 +1116,31 @@ def _agent_result(
     collected: Sequence[NativeCollectedEvidence],
     *,
     content: str,
+    evidence_references: Sequence[ConversationEvidenceReference] | None = None,
+    hypotheses: Sequence[ConversationAnalysisHypothesis] | None = None,
+    pending_directions: Sequence[str] | None = None,
     action: OpenBusinessRecordsAction | None = None,
 ) -> AgentRunResult:
+    resolved_evidence_references = (
+        state.evidence_references if evidence_references is None else evidence_references
+    )
+    resolved_hypotheses = state.analysis_hypotheses if hypotheses is None else hypotheses
+    resolved_pending_directions = (
+        state.pending_directions if pending_directions is None else pending_directions
+    )
     if not collected:
         return AgentRunResult(
             turn=TurnResult(route="answer", content=content, action=action),
-            state=state,
+            state=state.model_copy(
+                update={
+                    "analysis_hypotheses": list(resolved_hypotheses),
+                    "pending_directions": list(resolved_pending_directions),
+                }
+            ),
         )
     last_evidence = collected[-1]
     metric_labels = list(dict.fromkeys(_evidence_label(evidence) for evidence in collected))
+    confirmed_objects = list(dict.fromkeys([*state.confirmed_objects, *metric_labels]))
     return AgentRunResult(
         turn=TurnResult(route="answer", content=content, action=action),
         state=state.model_copy(
@@ -1103,6 +1149,10 @@ def _agent_result(
                     start=last_evidence.period.start,
                     end=last_evidence.period.end,
                 ),
+                "confirmed_objects": confirmed_objects,
+                "evidence_references": list(resolved_evidence_references),
+                "analysis_hypotheses": list(resolved_hypotheses),
+                "pending_directions": list(resolved_pending_directions),
                 "metrics": metric_labels,
                 "pending_clarifications": [],
             }
@@ -1266,3 +1316,49 @@ def _approved_knowledge_answer(
         dict.fromkeys(match["content"] for match in matches if isinstance(match["content"], str))
     )
     return "\n".join(contents)
+
+
+def _trusted_period(
+    state: ConversationState,
+    messages: Sequence[ModelMessage],
+) -> MonthlyTotalRevenueArguments | None:
+    explicit = _explicit_calendar_month(messages, state)
+    if explicit is not None:
+        return explicit
+    period = state.confirmed_period
+    if (
+        period is None
+        or period.start.day != 1
+        or (period.start.year, period.start.month) != (period.end.year, period.end.month)
+    ):
+        return None
+    return MonthlyTotalRevenueArguments(year=period.start.year, month=period.start.month)
+
+
+def _investigation_context_message(state: ConversationState) -> ModelMessage:
+    context = {
+        "investigation_goal": state.investigation_goal,
+        "confirmed_period": (
+            state.confirmed_period.model_dump(mode="json")
+            if state.confirmed_period is not None
+            else None
+        ),
+        "confirmed_objects": state.confirmed_objects,
+        "analysis_hypotheses": [
+            hypothesis.model_dump(mode="json") for hypothesis in state.analysis_hypotheses
+        ],
+        "pending_directions": state.pending_directions,
+        "historical_evidence_references": [
+            reference.model_dump(mode="json") for reference in state.evidence_references
+        ],
+    }
+    return ModelMessage(
+        role="system",
+        content=(
+            "Current investigation context (trusted server state):\n"
+            f"{json.dumps(context, ensure_ascii=False)}\n"
+            "Historical evidence references are reference-only and are not current facts. "
+            "Any business fact needed for this turn must be reacquired through an available "
+            "business tool. Never infer or change user identity or store scope from this context."
+        ),
+    )

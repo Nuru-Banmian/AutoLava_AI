@@ -1230,7 +1230,7 @@ async def test_native_investigation_carries_analysis_hypotheses_between_turns() 
         [ModelMessage(role="user", content="调查 2026 年 7 月收入为何偏低。")],
     )
 
-    hypothesis = model.calls[1].items[1].hypotheses[0]
+    hypothesis = next(item.hypotheses[0] for item in model.calls[1].items if item.hypotheses)
     assert hypothesis.statement == "收入偏低可能与经营日偏少相关"
     assert hypothesis.status == "testing"
 
@@ -1356,6 +1356,76 @@ async def test_native_investigation_does_not_let_failed_evidence_support_a_hypot
     assert correction is not None
     assert "成功证据" in correction.content
     assert result.turn.content == "查询失败，假设仍无法确认。"
+
+
+class SuccessfulEvidenceHypothesisModel:
+    def __init__(self) -> None:
+        self.calls: list[list[NativeTranscriptItem]] = []
+
+    async def next_turn(self, items, *, tools):
+        del tools
+        self.calls.append(list(items))
+        if len(self.calls) == 1:
+            return NativeModelTurn(
+                message={"role": "assistant", "content": "先查询经营日。"},
+                tool_calls=[
+                    NativeToolCall(
+                        id="days",
+                        name="operating_days",
+                        arguments={"year": 2026, "month": 7},
+                    )
+                ],
+                signal="continue",
+            )
+        if len(self.calls) == 2:
+            evidence = next(item.tool_result for item in items if item.tool_result is not None)
+            return NativeModelTurn(
+                message={"role": "assistant", "content": "该证据支持收入假设。"},
+                hypotheses=[
+                    {
+                        "statement": "收入偏低与经营日偏少相关",
+                        "status": "supported",
+                        "evidence_references": [evidence.evidence.reference],
+                    }
+                ],
+                signal="end",
+            )
+        return NativeModelTurn(
+            message={"role": "assistant", "content": "该假设目前仍无法确认。"},
+            hypotheses=[
+                {
+                    "statement": "收入偏低与经营日偏少相关",
+                    "status": "unresolved",
+                }
+            ],
+            answer_claims=[
+                {
+                    "statement": "该假设目前仍无法确认",
+                    "status": "unknown",
+                }
+            ],
+            signal="end",
+        )
+
+
+async def test_native_does_not_mark_hypotheses_supported_without_semantic_validation() -> None:
+    model = SuccessfulEvidenceHypothesisModel()
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=MetricEvidenceCollector(),
+        scope_resolver=PassthroughScopeResolver(),
+    )
+
+    result = await service.run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="调查 2026 年 7 月收入为何偏低。")],
+    )
+
+    correction = model.calls[2][-1].message
+    assert correction is not None
+    assert "不能验证证据与分析假设之间的语义关系" in correction.content
+    assert result.state.analysis_hypotheses[0].status == "unresolved"
 
 
 async def test_native_investigation_stops_safely_at_the_round_limit() -> None:
