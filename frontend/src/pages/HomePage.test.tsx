@@ -173,7 +173,7 @@ it("clears a refresh error when the selected store changes", async () => {
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
-it("places the Agent after briefing cards for administrators only", async () => {
+it("places the complete Agent workspace before the briefing sidebar for administrators", async () => {
   vi.mocked(useAuth).mockReturnValue({
     user: { id: 1, username: "admin", role: "admin", is_owner: false },
   } as ReturnType<typeof useAuth>);
@@ -212,6 +212,7 @@ it("places the Agent after briefing cards for administrators only", async () => 
   );
 
   const agent = await screen.findByRole("region", { name: "门店 Agent" });
-  const briefing = screen.getByRole("region", { name: "每日简报" });
-  expect(briefing.compareDocumentPosition(agent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const briefing = screen.getByRole("complementary", { name: "经营简报" });
+  expect(agent.compareDocumentPosition(briefing) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "经营简报" })).toBeInTheDocument();
 });

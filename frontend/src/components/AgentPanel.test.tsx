@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
 import { MemoryRouter, useLocation } from "react-router-dom";
@@ -76,6 +76,26 @@ function conversation(
   };
 }
 
+function investigationState() {
+  return {
+    ...emptyState,
+    investigation_goal: "调查最近营业额变化",
+    pending_period: { start: "2026-07-01", end: "2026-07-14" },
+    pending_directions: ["确认期间后检查每日台账营业额"],
+    evidence_references: [
+      {
+        reference: "ev_0123456789abcdef01234567",
+        source: ["store_daily_records"],
+        queried_at: "2026-07-14T10:30:00Z",
+        data_version: "private-version-token",
+        period: { start: "2026-06-01", end: "2026-06-30" },
+        use_as_current_fact: false,
+      },
+    ],
+    analysis_hypotheses: [],
+  };
+}
+
 it("shows no conversation entry while the global Agent switch is off", async () => {
   server.use(http.get("/api/agent/status", () => HttpResponse.json({ enabled: false })));
   renderPanel();
@@ -97,6 +117,9 @@ it("shows progress before revealing one complete direct answer", async () => {
       return HttpResponse.json({
         route: "answer",
         content: "这是一次性出现的完整回答。",
+        recovery_status: "none",
+        progress: [{ status: "investigating", message: "已核对经营证据" }],
+        partial: null,
         conversation: conversation(1, [
           { id: 1, role: "user", content: "你能做什么？" },
           { id: 2, role: "assistant", content: "这是一次性出现的完整回答。" },
@@ -117,7 +140,98 @@ it("shows progress before revealing one complete direct answer", async () => {
   expect(await screen.findByText("正在整理回答…")).toBeInTheDocument();
   expect(screen.queryByText(/完整回答/)).not.toBeInTheDocument();
   expect(await screen.findByText("这是一次性出现的完整回答。")).toBeInTheDocument();
-  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("已核对经营证据");
+});
+
+it("shows verified partial results, unknowns, and a redacted recovery status", async () => {
+  server.use(
+    http.get("/api/agent/status", () => HttpResponse.json({ enabled: true })),
+    http.get("/api/agent/stores/7/conversation", () => HttpResponse.json(conversation(null))),
+    http.post("/api/agent/stores/7/turn", () =>
+      HttpResponse.json({
+        route: "safe_failure",
+        content: "目前只能提供部分调查结果。",
+        recovery_status: "retried",
+        progress: [{ status: "partial", message: "部分证据暂时无法取得" }],
+        partial: {
+          verified_facts: ["六月每日台账营业额为 €1,200"],
+          incomplete_directions: ["经营日"],
+          unknowns: ["经营日目前无法根据已返回证据判断"],
+        },
+        conversation: conversation(9, [
+          { id: 51, role: "assistant", content: "目前只能提供部分调查结果。" },
+        ]),
+      }),
+    ),
+  );
+  renderPanel();
+
+  fireEvent.change(await screen.findByRole("textbox", { name: "向 Agent 提问" }), {
+    target: { value: "深入调查六月经营表现" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
+
+  const partial = await screen.findByRole("region", { name: "部分调查结果" });
+  expect(partial).toHaveTextContent("六月每日台账营业额为 €1,200");
+  expect(partial).toHaveTextContent("尚未完成：经营日");
+  expect(partial).toHaveTextContent("经营日目前无法根据已返回证据判断");
+  expect(screen.getByRole("status")).toHaveTextContent("已自动重试");
+  expect(document.body).not.toHaveTextContent(/provider|模型|密钥|配置/i);
+});
+
+it("shows an inferred period and lets the user confirm it without retyping the question", async () => {
+  let submittedQuestion: string | null = null;
+  server.use(
+    http.get("/api/agent/status", () => HttpResponse.json({ enabled: true })),
+    http.get("/api/agent/stores/7/conversation", () =>
+      HttpResponse.json({
+        ...conversation(8),
+        state: investigationState(),
+      }),
+    ),
+    http.post("/api/agent/stores/7/turn", async ({ request }) => {
+      submittedQuestion = ((await request.json()) as { question: string }).question;
+      return HttpResponse.json({
+        route: "answer",
+        content: "已按确认期间继续调查。",
+        recovery_status: "none",
+        progress: [{ status: "investigating", message: "已确认期间并完成调查" }],
+        partial: null,
+        conversation: conversation(8, [
+          { id: 41, role: "assistant", content: "已按确认期间继续调查。" },
+        ]),
+      });
+    }),
+  );
+  renderPanel();
+
+  expect(await screen.findByRole("region", { name: "待确认期间" })).toHaveTextContent(
+    "2026-07-01 至 2026-07-14",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "确认这个期间" }));
+
+  await waitFor(() => expect(submittedQuestion).toBe("确认"));
+  expect(await screen.findByText("已按确认期间继续调查。")).toBeInTheDocument();
+});
+
+it("expands readable evidence without exposing internal references or versions", async () => {
+  server.use(
+    http.get("/api/agent/status", () => HttpResponse.json({ enabled: true })),
+    http.get("/api/agent/stores/7/conversation", () =>
+      HttpResponse.json({
+        ...conversation(8, [{ id: 32, role: "assistant", content: "六月营业额已核对。" }]),
+        state: investigationState(),
+      }),
+    ),
+  );
+  renderPanel();
+
+  const evidence = await screen.findByRole("group", { name: "调查证据" });
+  fireEvent.click(within(evidence).getByText("经营数据 · 2026-06-01 至 2026-06-30"));
+  expect(evidence).toHaveTextContent("查询时间");
+  expect(evidence).toHaveTextContent("每日台账");
+  expect(evidence).not.toHaveTextContent("ev_0123456789abcdef01234567");
+  expect(evidence).not.toHaveTextContent("private-version-token");
 });
 
 it("renders a clarification as the completed turn and stays within its card", async () => {
@@ -289,6 +403,9 @@ it("keeps an in-flight turn in its originating store cache after switching", asy
       return HttpResponse.json({
         route: "answer",
         content: "七号门店的回答",
+        recovery_status: "none",
+        progress: [{ status: "investigating", message: "七号门店的调查进度" }],
+        partial: null,
         conversation: conversation(7, [
           { id: 70, role: "user", content: "七号门店的问题" },
           { id: 71, role: "assistant", content: "七号门店的回答" },
@@ -322,4 +439,5 @@ it("keeps an in-flight turn in its originating store cache after switching", asy
   );
   expect(screen.getByText("八号门店的回答")).toBeInTheDocument();
   expect(screen.queryByText("七号门店的回答")).not.toBeInTheDocument();
+  expect(screen.queryByText("七号门店的调查进度")).not.toBeInTheDocument();
 });
