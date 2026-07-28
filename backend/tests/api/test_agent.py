@@ -22,7 +22,7 @@ from app.agent.service import AgentService
 from app.agent.workflow import AgentTurnWorkflow
 from app.core.config import get_settings
 from app.models.identity import Store, User
-from app.models.agent import AgentConversation, AgentEvidence, AgentMessage
+from app.models.agent import AgentConversation, AgentEvidence, AgentMessage, AgentRunStat
 from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
 from app.models.operations import AgentSettings
 from app.models.settlement import SettlementCompany, SettlementRecord
@@ -1784,10 +1784,41 @@ async def test_reset_requires_confirmation_and_permanently_deletes_current_conve
     store_factory,
     agent_service: RecordingAgentService,
 ) -> None:
-    await user_factory(username="admin", password="secret", role="admin")
+    user = await user_factory(username="admin", password="secret", role="admin")
     store = await store_factory(name="Roma")
+    other_store = await store_factory(name="Milano")
     store_id = store.id
-    db_session.add(AgentSettings(id=1, enabled=True))
+    other_store_id = other_store.id
+    db_session.add_all(
+        [
+            AgentSettings(id=1, enabled=True),
+            StoreDailyRecord(
+                store_id=store_id,
+                date=date(2026, 7, 26),
+                daily_revenue=240,
+                income_mode="legacy_total",
+                wash_count=4,
+                is_open="营业",
+                created_by=user.id,
+                updated_by=user.id,
+            ),
+            AgentRunStat(
+                user_id=user.id,
+                store_id=store_id,
+                role="admin",
+                stage="primary",
+                provider="test-provider",
+                model="test-model",
+                input_tokens=10,
+                output_tokens=5,
+                result="success",
+                error_category=None,
+                latency_ms=20,
+                estimated_cost=0.001,
+                is_fallback=False,
+            ),
+        ]
+    )
     await db_session.commit()
     await _login(client, "admin")
     expected_state = {
@@ -1811,6 +1842,11 @@ async def test_reset_requires_confirmation_and_permanently_deletes_current_conve
         json={"question": "这条消息之后会永久删除"},
     )
     assert sent.status_code == 200
+    other_sent = await client.post(
+        f"/api/agent/stores/{other_store_id}/turn",
+        json={"question": "另一个门店仍在进行的调查"},
+    )
+    assert other_sent.status_code == 200
     conversation_id = sent.json()["conversation"]["id"]
     persisted = await db_session.get(AgentConversation, conversation_id)
     assert persisted is not None
@@ -1840,7 +1876,10 @@ async def test_reset_requires_confirmation_and_permanently_deletes_current_conve
         f"/api/agent/stores/{store_id}/conversation",
         json={"confirmation": "permanently_delete"},
     )
+    await client.post("/api/auth/logout")
+    await _login(client, "admin")
     restored = await client.get(f"/api/agent/stores/{store_id}/conversation")
+    other_restored = await client.get(f"/api/agent/stores/{other_store_id}/conversation")
 
     assert deleted.status_code == 204
     assert restored.status_code == 200
@@ -1862,9 +1901,15 @@ async def test_reset_requires_confirmation_and_permanently_deletes_current_conve
         "created_at": None,
         "updated_at": None,
     }
-    assert await db_session.scalar(select(func.count()).select_from(AgentConversation)) == 0
-    assert await db_session.scalar(select(func.count()).select_from(AgentMessage)) == 0
+    assert [message["content"] for message in other_restored.json()["messages"]] == [
+        "另一个门店仍在进行的调查",
+        "这是完整回答。",
+    ]
+    assert await db_session.scalar(select(func.count()).select_from(AgentConversation)) == 1
+    assert await db_session.scalar(select(func.count()).select_from(AgentMessage)) == 2
     assert await db_session.scalar(select(func.count()).select_from(AgentEvidence)) == 0
+    assert await db_session.scalar(select(func.count()).select_from(StoreDailyRecord)) == 1
+    assert await db_session.scalar(select(func.count()).select_from(AgentRunStat)) == 1
 
 
 async def test_in_flight_turn_cannot_recreate_a_conversation_after_reset(

@@ -226,7 +226,7 @@ it("restores the complete current conversation from the server", async () => {
   expect(screen.getByText("刷新后仍然完整显示的回答")).toBeInTheDocument();
 });
 
-it("requires irreversible confirmation before resetting the conversation", async () => {
+it("requires irreversible confirmation before starting a new investigation", async () => {
   let resets = 0;
   server.use(
     http.get("/api/agent/status", () => HttpResponse.json({ enabled: true })),
@@ -249,12 +249,20 @@ it("requires irreversible confirmation before resetting the conversation", async
   renderPanel();
 
   await screen.findByText("即将删除的问题");
-  fireEvent.click(screen.getByRole("button", { name: "重置对话" }));
+  fireEvent.click(screen.getByRole("button", { name: "开始新调查" }));
   expect(screen.getByRole("alertdialog")).toHaveTextContent("此操作不可恢复");
   expect(resets).toBe(0);
-  fireEvent.click(screen.getByRole("button", { name: "确认永久重置" }));
+  fireEvent.click(screen.getByRole("button", { name: "取消" }));
 
-  expect(await screen.findByText("当前对话为空")).toBeInTheDocument();
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  expect(screen.getByText("即将删除的问题")).toBeInTheDocument();
+  expect(screen.getByText("即将删除的回答")).toBeInTheDocument();
+  expect(resets).toBe(0);
+
+  fireEvent.click(screen.getByRole("button", { name: "开始新调查" }));
+  fireEvent.click(screen.getByRole("button", { name: "永久删除并开始新调查" }));
+
+  expect(await screen.findByText("当前调查为空")).toBeInTheDocument();
   expect(screen.queryByText("即将删除的问题")).not.toBeInTheDocument();
   expect(resets).toBe(1);
 });
