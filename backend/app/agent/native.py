@@ -9,12 +9,17 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from typing import Any, Literal, Protocol, TypeAlias
+from typing import Any, Literal, Protocol, TypeAlias, TypeVar
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
-from app.agent.answer_grounding import GroundedEvidence, NativeAnswerClaim, answer_is_grounded
+from app.agent.answer_grounding import (
+    GroundedEvidence,
+    NativeAnswerClaim,
+    answer_contains_operating_claim,
+    answer_is_grounded,
+)
 from app.agent.conversation import (
     AgentRunResult,
     ConfirmedPeriod,
@@ -56,6 +61,7 @@ from app.agent.contracts import (
     MonthlyDailyAverageIncomeResult,
     OperatingDayAverageLedgerRevenueResult,
     OperatingDaysResult,
+    OpenBusinessRecordsAction,
     SETTLEMENT_DETAILS_LABEL,
     SettlementDetailsEvidenceBundle,
     SettlementDetailsQueryScope,
@@ -64,6 +70,7 @@ from app.agent.contracts import (
     TurnResult,
 )
 from app.agent.runtime import RuntimeContext
+from app.agent.system_knowledge import is_system_help_request, search_system_knowledge
 
 NativeCollectedEvidence: TypeAlias = EvidenceBundle | SettlementDetailsEvidenceBundle
 
@@ -79,6 +86,8 @@ AVERAGE_REVENUE_PER_CAR_TOOL = "average_revenue_per_car"
 INCOME_CATEGORY_AMOUNT_TOOL = "income_category_amount"
 OTHER_DATA_AMOUNT_TOOL = "other_data_amount"
 DAILY_LEDGER_REVENUE_EXTREME_TOOL = "daily_ledger_revenue_extreme"
+SEARCH_SYSTEM_KNOWLEDGE_TOOL = "search_system_knowledge"
+OPEN_BUSINESS_RECORDS_TOOL = "open_business_records"
 DAILY_LEDGER_DETAILS_TOOL = "daily_ledger_details"
 EVIDENCE_CALCULATION_TOOL = "evidence_calculation"
 MAX_NATIVE_TOOL_ROUNDS = 4
@@ -89,6 +98,10 @@ EXPLICIT_CALENDAR_MONTH = re.compile(
     r"(?P<year>20\d{2}|21\d{2}|2200)\s*年\s*(?P<month>1[0-2]|0?[1-9])\s*月"
 )
 EXACT_MONTH_CLARIFICATION = "请提供要查询的准确自然月，例如“2026 年 7 月”。"
+CAPABILITY_BOUNDARY_MESSAGE = (
+    "我专注于 AutoLava 使用、当前门店经营分析和证据支持的经营建议。"
+    "你可以问我产品操作或当前门店问题。"
+)
 
 
 class NativeToolAccessDenied(RuntimeError):
@@ -142,6 +155,15 @@ class SettlementDetailsArguments(MonthlyTotalRevenueArguments):
     company_name: str | None = Field(default=None, min_length=1, max_length=120)
 
 
+class SearchSystemKnowledgeArguments(ClosedModel):
+    pass
+
+
+class OpenBusinessRecordsArguments(ClosedModel):
+    start_month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    end_month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+
+
 StoreFeatureFlag = Literal[
     "company_settlement_enabled",
     "income_items_enabled",
@@ -192,7 +214,14 @@ class NativeEvidenceEnvelope(ClosedModel):
         "mixed",
         "unknown",
     ]
-    source: list[Literal["store_daily_records", "settlement_records"]]
+    source: list[
+        Literal[
+            "store_daily_records",
+            "settlement_records",
+            "system_knowledge",
+            "navigation_registry",
+        ]
+    ]
     queried_at: datetime
     data_version: str = Field(min_length=1, max_length=100)
     coverage: EvidenceCoverage
@@ -517,6 +546,28 @@ class NativeToolAgentService:
         ) + (
             NativeToolRegistration(
                 definition=NativeToolDefinition(
+                    name=SEARCH_SYSTEM_KNOWLEDGE_TOOL,
+                    description=(
+                        "搜索批准的 AutoLava 只读产品文档、领域语言、操作说明和能力描述。"
+                        "不接受路径、网址或任意文件。"
+                    ),
+                    input_schema=SearchSystemKnowledgeArguments.model_json_schema(),
+                ),
+                required_features=frozenset(),
+            ),
+            NativeToolRegistration(
+                definition=NativeToolDefinition(
+                    name=OPEN_BUSINESS_RECORDS_TOOL,
+                    description=(
+                        "准备打开已注册的营业记录只读筛选视图。只接受受控月份范围，"
+                        "不接受网址、写入、导入导出或备份参数。"
+                    ),
+                    input_schema=OpenBusinessRecordsArguments.model_json_schema(),
+                ),
+                required_features=frozenset(),
+            ),
+            NativeToolRegistration(
+                definition=NativeToolDefinition(
                     name=EVIDENCE_CALCULATION_TOOL,
                     description=(
                         "只使用本轮已返回的证据引用执行固定精确计算；"
@@ -546,13 +597,6 @@ class NativeToolAgentService:
         if not tools:
             raise NativeToolAccessDenied("native tools are not available for this runtime scope")
         trusted_period = _trusted_period(state, recent_messages)
-        if trusted_period is None:
-            return AgentRunResult(
-                turn=TurnResult(route="clarify", content=EXACT_MONTH_CLARIFICATION),
-                state=state.model_copy(
-                    update={"pending_clarifications": [EXACT_MONTH_CLARIFICATION]}
-                ),
-            )
         items = [
             NativeTranscriptItem(message=_investigation_context_message(state)),
             *(NativeTranscriptItem(message=message) for message in recent_messages),
@@ -564,6 +608,10 @@ class NativeToolAgentService:
         evidence_references = list(state.evidence_references)
         hypotheses = list(state.analysis_hypotheses)
         pending_directions = list(state.pending_directions)
+        contextual_results: list[NativeToolResult] = []
+        selected_action: OpenBusinessRecordsAction | None = None
+        period_confirmation_required = False
+        pending_period_candidate: MonthlyTotalRevenueArguments | None = None
         tool_call_count = 0
         for round_number in range(MAX_NATIVE_TOOL_ROUNDS):
             if round_number:
@@ -600,7 +648,24 @@ class NativeToolAgentService:
             if turn.pending_directions is not None:
                 pending_directions = turn.pending_directions
             if turn.signal == "end":
-                if not answer_is_grounded(
+                if period_confirmation_required:
+                    clarification = (
+                        _period_confirmation_prompt(pending_period_candidate)
+                        if pending_period_candidate is not None
+                        else EXACT_MONTH_CLARIFICATION
+                    )
+                    return AgentRunResult(
+                        turn=TurnResult(
+                            route="clarify",
+                            content=clarification,
+                        ),
+                        state=state.model_copy(
+                            update={
+                                "pending_clarifications": [clarification],
+                            }
+                        ),
+                    )
+                if (collected or calculations) and not answer_is_grounded(
                     turn.message.content,
                     [*collected, *calculations],
                     turn.answer_claims,
@@ -613,6 +678,51 @@ class NativeToolAgentService:
                         ),
                         state=state,
                     )
+                if not collected and not contextual_results:
+                    if answer_is_grounded(
+                        turn.message.content,
+                        [*collected, *calculations],
+                        turn.answer_claims,
+                        evidence_by_reference,
+                    ):
+                        return _agent_result(
+                            state,
+                            collected,
+                            content=turn.message.content,
+                        )
+                    if answer_contains_operating_claim(turn.message.content):
+                        return AgentRunResult(
+                            turn=TurnResult(
+                                route="safe_failure",
+                                content=ANSWER_EVIDENCE_FAILURE_MESSAGE,
+                            ),
+                            state=state,
+                        )
+                    return _agent_result(
+                        state,
+                        collected,
+                        content=CAPABILITY_BOUNDARY_MESSAGE,
+                    )
+                if not collected:
+                    if selected_action is not None:
+                        return _agent_result(
+                            state,
+                            collected,
+                            content=_navigation_confirmation(selected_action),
+                            action=selected_action,
+                        )
+                    knowledge_answer = _approved_knowledge_answer(contextual_results)
+                    if knowledge_answer is not None:
+                        return _agent_result(
+                            state,
+                            collected,
+                            content=knowledge_answer,
+                        )
+                    return _agent_result(
+                        state,
+                        collected,
+                        content=CAPABILITY_BOUNDARY_MESSAGE,
+                    )
                 return _agent_result(
                     state,
                     collected,
@@ -620,6 +730,7 @@ class NativeToolAgentService:
                     hypotheses=hypotheses,
                     pending_directions=pending_directions,
                     content=turn.message.content,
+                    action=selected_action,
                 )
             if tool_call_count + len(turn.tool_calls) > MAX_NATIVE_TOOL_CALLS:
                 return _agent_result(
@@ -636,13 +747,32 @@ class NativeToolAgentService:
                         tool_call,
                         catalog_context,
                         trusted_period=trusted_period,
+                        recent_messages=recent_messages,
                         calculation_inputs=calculation_inputs,
                     )
                     for tool_call in turn.tool_calls
                 )
             )
             tool_call_count += len(turn.tool_calls)
-            for tool_result, new_evidence in outcomes:
+            round_actions = [action for _, _, action in outcomes if action is not None]
+            if len(round_actions) > 1 or (selected_action is not None and round_actions):
+                raise NativeToolAccessDenied("native tool call is not authorized")
+            if round_actions and _navigation_action_is_authorized(
+                recent_messages,
+                round_actions[0],
+            ):
+                selected_action = round_actions[0]
+            for tool_result, new_evidence, action in outcomes:
+                if tool_result.evidence.failure.category == "period_confirmation_required":
+                    period_confirmation_required = True
+                    candidate = MonthlyTotalRevenueArguments(
+                        year=tool_result.evidence.period.start.year,
+                        month=tool_result.evidence.period.start.month,
+                    )
+                    if pending_period_candidate is None:
+                        pending_period_candidate = candidate
+                    elif pending_period_candidate != candidate:
+                        pending_period_candidate = None
                 if new_evidence is not None:
                     collected.append(new_evidence)
                     evidence_by_reference[tool_result.evidence.reference] = new_evidence
@@ -660,12 +790,15 @@ class NativeToolAgentService:
                         )
                     )
                     evidence_references = evidence_references[-50:]
-                elif (
+                elif tool_result.evidence.failure.status == "none" and (
                     isinstance(tool_result.evidence, NativeCalculationEnvelope)
-                    and tool_result.evidence.failure.status == "none"
                 ):
                     calculations.append(tool_result.evidence)
                     evidence_by_reference[tool_result.evidence.reference] = tool_result.evidence
+                elif tool_result.evidence.failure.status == "none" and (
+                    action is None or action == selected_action
+                ):
+                    contextual_results.append(tool_result)
                 if isinstance(tool_result.evidence, NativeEvidenceEnvelope):
                     tool_spec = NATIVE_TOOLS.get(tool_result.name)
                     fact_name = tool_spec.calculation_field if tool_spec is not None else None
@@ -702,6 +835,7 @@ class NativeToolAgentService:
             hypotheses=hypotheses,
             pending_directions=pending_directions,
             content=INVESTIGATION_LIMIT_MESSAGE,
+            action=selected_action,
         )
 
     async def _execute(
@@ -709,10 +843,25 @@ class NativeToolAgentService:
         call: NativeToolCall,
         context: RuntimeContext,
         *,
-        trusted_period: MonthlyTotalRevenueArguments,
+        trusted_period: MonthlyTotalRevenueArguments | None,
+        recent_messages: Sequence[ModelMessage],
         calculation_inputs: dict[str, EvidenceCalculationInput],
-    ) -> tuple[NativeToolResult, NativeCollectedEvidence | None]:
+    ) -> tuple[
+        NativeToolResult,
+        NativeCollectedEvidence | None,
+        OpenBusinessRecordsAction | None,
+    ]:
+        if call.name == SEARCH_SYSTEM_KNOWLEDGE_TOOL:
+            return await self._search_system_knowledge(
+                call,
+                context,
+                recent_messages,
+            )
+        if call.name == OPEN_BUSINESS_RECORDS_TOOL:
+            return await self._open_business_records(call, context)
         if call.name == EVIDENCE_CALCULATION_TOOL:
+            if trusted_period is None:
+                raise NativeToolAccessDenied("native tool call is not authorized")
             try:
                 calculation_request = EvidenceCalculationRequest.model_validate(call.arguments)
             except ValidationError as error:
@@ -754,24 +903,32 @@ class NativeToolAgentService:
                     evidence=calculation_envelope,
                 ),
                 None,
+                None,
             )
         tool_spec = NATIVE_TOOLS.get(call.name)
-        if tool_spec is None or call.name not in {
-            tool.name for tool in _available_tools(context, self.tool_registry)
-        }:
+        if tool_spec is None:
             raise NativeToolAccessDenied("native tool call is not authorized")
-        try:
-            arguments = tool_spec.arguments_type.model_validate(call.arguments)
-        except ValidationError as error:
-            raise NativeToolAccessDenied("native tool call is not authorized") from error
-        fresh_context = await self.scope_resolver.refresh(context)
-        if (
-            fresh_context.user_id != context.user_id
-            or fresh_context.store_id != context.store_id
-            or call.name
-            not in {tool.name for tool in _available_tools(fresh_context, self.tool_registry)}
-        ):
-            raise NativeToolAccessDenied("native tool call is not authorized")
+        arguments, fresh_context = await _validated_context_arguments(
+            call,
+            context,
+            self.tool_registry,
+            tool_spec.arguments_type,
+            self.scope_resolver,
+        )
+        if trusted_period is None:
+            return (
+                _failed_tool_result(
+                    call,
+                    fresh_context,
+                    arguments,
+                    self.now(),
+                    tool_spec=tool_spec,
+                    category="period_confirmation_required",
+                    message=EXACT_MONTH_CLARIFICATION,
+                ),
+                None,
+                None,
+            )
         if arguments.year != trusted_period.year or arguments.month != trusted_period.month:
             return (
                 _failed_tool_result(
@@ -783,6 +940,7 @@ class NativeToolAgentService:
                     category="period_scope_mismatch",
                     message="工具期间与用户确认的自然月不一致",
                 ),
+                None,
                 None,
             )
         request: dict[str, Any] = {"kind": tool_spec.request_kind}
@@ -816,6 +974,7 @@ class NativeToolAgentService:
                     tool_spec=tool_spec,
                 ),
                 None,
+                None,
             )
         if not _evidence_matches_tool(
             evidence,
@@ -832,6 +991,7 @@ class NativeToolAgentService:
                     tool_spec=tool_spec,
                 ),
                 None,
+                None,
             )
         assert isinstance(evidence, (EvidenceBundle, SettlementDetailsEvidenceBundle))
         envelope = _native_envelope(evidence, tool_spec=tool_spec, queried_at=self.now())
@@ -842,6 +1002,89 @@ class NativeToolAgentService:
                 evidence=envelope,
             ),
             evidence,
+            None,
+        )
+
+    async def _search_system_knowledge(
+        self,
+        call: NativeToolCall,
+        context: RuntimeContext,
+        recent_messages: Sequence[ModelMessage],
+    ) -> tuple[NativeToolResult, None, None]:
+        arguments, _ = await _validated_context_arguments(
+            call,
+            context,
+            self.tool_registry,
+            SearchSystemKnowledgeArguments,
+            self.scope_resolver,
+        )
+        assert isinstance(arguments, SearchSystemKnowledgeArguments)
+        user_question = next(
+            (message.content for message in reversed(recent_messages) if message.role == "user"),
+            "",
+        )
+        matches = (
+            search_system_knowledge(user_question) if is_system_help_request(user_question) else []
+        )
+        facts = {
+            "matches": [
+                {
+                    "id": entry.id,
+                    "title": entry.title,
+                    "content": entry.content,
+                    "source_kind": "approved_system_knowledge",
+                }
+                for entry in matches
+            ]
+        }
+        return (
+            _context_tool_result(
+                call,
+                context,
+                facts=facts,
+                source="system_knowledge",
+                queried_at=self.now(),
+            ),
+            None,
+            None,
+        )
+
+    async def _open_business_records(
+        self,
+        call: NativeToolCall,
+        context: RuntimeContext,
+    ) -> tuple[NativeToolResult, None, OpenBusinessRecordsAction]:
+        arguments, _ = await _validated_context_arguments(
+            call,
+            context,
+            self.tool_registry,
+            OpenBusinessRecordsArguments,
+            self.scope_resolver,
+        )
+        assert isinstance(arguments, OpenBusinessRecordsArguments)
+        try:
+            action = OpenBusinessRecordsAction.model_validate(
+                {
+                    "type": "open_business_records",
+                    "start_month": arguments.start_month,
+                    "end_month": arguments.end_month,
+                }
+            )
+        except ValidationError as error:
+            raise NativeToolAccessDenied("native tool call is not authorized") from error
+        current_month = self.now().astimezone(ZoneInfo(context.store_timezone)).strftime("%Y-%m")
+        if action.end_month > current_month:
+            raise NativeToolAccessDenied("native tool call is not authorized")
+        return (
+            _context_tool_result(
+                call,
+                context,
+                facts={"action": action.model_dump(mode="json")},
+                source="navigation_registry",
+                queried_at=self.now(),
+            ),
+            None,
+            action,
         )
 
 
@@ -853,6 +1096,73 @@ def _available_tools(
         registration.definition
         for registration in registrations
         if registration.is_available(context)
+    )
+
+
+ContextArguments = TypeVar("ContextArguments", bound=BaseModel)
+
+
+async def _validated_context_arguments(
+    call: NativeToolCall,
+    context: RuntimeContext,
+    registrations: Sequence[NativeToolRegistration],
+    arguments_type: type[ContextArguments],
+    scope_resolver: NativeToolScopeResolver,
+) -> tuple[ContextArguments, RuntimeContext]:
+    if call.name not in {tool.name for tool in _available_tools(context, registrations)}:
+        raise NativeToolAccessDenied("native tool call is not authorized")
+    try:
+        arguments = arguments_type.model_validate(call.arguments)
+    except ValidationError as error:
+        raise NativeToolAccessDenied("native tool call is not authorized") from error
+    fresh_context = await scope_resolver.refresh(context)
+    if (
+        fresh_context.user_id != context.user_id
+        or fresh_context.store_id != context.store_id
+        or call.name not in {tool.name for tool in _available_tools(fresh_context, registrations)}
+    ):
+        raise NativeToolAccessDenied("native tool call is not authorized")
+    return arguments, fresh_context
+
+
+def _context_tool_result(
+    call: NativeToolCall,
+    context: RuntimeContext,
+    *,
+    facts: dict[str, Any],
+    source: Literal["system_knowledge", "navigation_registry"],
+    queried_at: datetime,
+) -> NativeToolResult:
+    local_date = queried_at.astimezone(ZoneInfo(context.store_timezone)).date()
+    digest = hashlib.sha256(
+        json.dumps(
+            {
+                "scope": context.store_id,
+                "source": source,
+                "facts": facts,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    return NativeToolResult(
+        call_id=call.id,
+        name=call.name,
+        evidence=NativeEvidenceEnvelope(
+            reference=f"ev_{digest[:24]}",
+            facts=facts,
+            scope=CurrentStoreScope(id=context.store_id),
+            period=EvidencePeriodResult(start=local_date, end=local_date),
+            unit="unknown",
+            source=[source],
+            queried_at=queried_at,
+            data_version=f"sha256:{digest}",
+            coverage=EvidenceCoverage(calendar_dates=1, recorded_dates=0),
+            limitations=[],
+            truncated=False,
+            failure=NativeEvidenceFailure(status="none"),
+        ),
     )
 
 
@@ -1065,18 +1375,26 @@ def _agent_result(
     state: ConversationState,
     collected: Sequence[NativeCollectedEvidence],
     *,
-    evidence_references: Sequence[ConversationEvidenceReference],
-    hypotheses: Sequence[ConversationAnalysisHypothesis],
-    pending_directions: Sequence[str],
     content: str,
+    evidence_references: Sequence[ConversationEvidenceReference] | None = None,
+    hypotheses: Sequence[ConversationAnalysisHypothesis] | None = None,
+    pending_directions: Sequence[str] | None = None,
+    action: OpenBusinessRecordsAction | None = None,
 ) -> AgentRunResult:
+    resolved_evidence_references = (
+        state.evidence_references if evidence_references is None else evidence_references
+    )
+    resolved_hypotheses = state.analysis_hypotheses if hypotheses is None else hypotheses
+    resolved_pending_directions = (
+        state.pending_directions if pending_directions is None else pending_directions
+    )
     if not collected:
         return AgentRunResult(
-            turn=TurnResult(route="answer", content=content),
+            turn=TurnResult(route="answer", content=content, action=action),
             state=state.model_copy(
                 update={
-                    "analysis_hypotheses": list(hypotheses),
-                    "pending_directions": list(pending_directions),
+                    "analysis_hypotheses": list(resolved_hypotheses),
+                    "pending_directions": list(resolved_pending_directions),
                 }
             ),
         )
@@ -1084,7 +1402,7 @@ def _agent_result(
     metric_labels = list(dict.fromkeys(_evidence_label(evidence) for evidence in collected))
     confirmed_objects = list(dict.fromkeys([*state.confirmed_objects, *metric_labels]))
     return AgentRunResult(
-        turn=TurnResult(route="answer", content=content),
+        turn=TurnResult(route="answer", content=content, action=action),
         state=state.model_copy(
             update={
                 "confirmed_period": ConfirmedPeriod(
@@ -1092,9 +1410,9 @@ def _agent_result(
                     end=last_evidence.period.end,
                 ),
                 "confirmed_objects": confirmed_objects,
-                "evidence_references": list(evidence_references),
-                "analysis_hypotheses": list(hypotheses),
-                "pending_directions": list(pending_directions),
+                "evidence_references": list(resolved_evidence_references),
+                "analysis_hypotheses": list(resolved_hypotheses),
+                "pending_directions": list(resolved_pending_directions),
                 "metrics": metric_labels,
                 "pending_clarifications": [],
             }
@@ -1175,12 +1493,26 @@ def _evidence_label(evidence: NativeCollectedEvidence) -> str:
 
 def _explicit_calendar_month(
     messages: Sequence[ModelMessage],
+    state: ConversationState,
 ) -> MonthlyTotalRevenueArguments | None:
     user_message = next(
         (message.content for message in reversed(messages) if message.role == "user"),
         "",
     )
     match = EXPLICIT_CALENDAR_MONTH.search(user_message)
+    if (
+        match is None
+        and re.fullmatch(r"\s*(?:确认|是|对|可以|继续|没错|好的|好)\s*[。.!！]?\s*", user_message)
+        and state.pending_clarifications
+    ):
+        match = next(
+            (
+                candidate
+                for clarification in reversed(state.pending_clarifications)
+                if (candidate := EXPLICIT_CALENDAR_MONTH.search(clarification)) is not None
+            ),
+            None,
+        )
     if match is None:
         return None
     return MonthlyTotalRevenueArguments(
@@ -1189,11 +1521,79 @@ def _explicit_calendar_month(
     )
 
 
+def _period_confirmation_prompt(arguments: MonthlyTotalRevenueArguments) -> str:
+    start = date(arguments.year, arguments.month, 1)
+    end = date(
+        arguments.year,
+        arguments.month,
+        monthrange(arguments.year, arguments.month)[1],
+    )
+    return (
+        f"我推定查询期间为 {arguments.year} 年 {arguments.month} 月"
+        f"（{start.isoformat()} 至 {end.isoformat()}）。请确认是否按此期间继续。"
+    )
+
+
+_NAVIGATION_INTENT = re.compile(r"打开|带我去|跳转|查看")
+
+
+def _navigation_action_is_authorized(
+    messages: Sequence[ModelMessage],
+    action: OpenBusinessRecordsAction,
+) -> bool:
+    user_message = next(
+        (message.content for message in reversed(messages) if message.role == "user"),
+        "",
+    )
+    return bool(
+        _NAVIGATION_INTENT.search(user_message)
+        and _month_is_visible(user_message, action.start_month)
+        and _month_is_visible(user_message, action.end_month)
+    )
+
+
+def _month_is_visible(message: str, month: str) -> bool:
+    year, month_number = month.split("-")
+    return bool(
+        month in message
+        or re.search(
+            rf"{re.escape(year)}\s*年\s*0?{int(month_number)}\s*月",
+            message,
+        )
+        or (year in message and re.search(rf"(?<!\d)0?{int(month_number)}\s*月", message))
+    )
+
+
+def _navigation_confirmation(action: OpenBusinessRecordsAction) -> str:
+    return f"已准备打开 {action.start_month} 至 {action.end_month} 的营业记录筛选视图。"
+
+
+def _approved_knowledge_answer(
+    contextual_results: Sequence[NativeToolResult],
+) -> str | None:
+    matches = [
+        match
+        for result in contextual_results
+        if isinstance(result.evidence, NativeEvidenceEnvelope)
+        and result.evidence.source == ["system_knowledge"]
+        for match in result.evidence.facts.get("matches", [])
+        if isinstance(match, dict)
+        and isinstance(match.get("title"), str)
+        and isinstance(match.get("content"), str)
+    ]
+    if not matches:
+        return None
+    contents = list(
+        dict.fromkeys(match["content"] for match in matches if isinstance(match["content"], str))
+    )
+    return "\n".join(contents)
+
+
 def _trusted_period(
     state: ConversationState,
     messages: Sequence[ModelMessage],
 ) -> MonthlyTotalRevenueArguments | None:
-    explicit = _explicit_calendar_month(messages)
+    explicit = _explicit_calendar_month(messages, state)
     if explicit is not None:
         return explicit
     period = state.confirmed_period

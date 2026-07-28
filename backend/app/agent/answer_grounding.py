@@ -209,6 +209,17 @@ def answer_is_grounded(
     return True
 
 
+def answer_contains_operating_claim(answer: str) -> bool:
+    """Identify prose that requires business evidence without routing user intent."""
+
+    return _contains_business_fact(answer) or any(
+        _OPERATING_SUBJECT.search(clause)
+        or _OPERATING_JUDGMENT.search(clause)
+        or _contains_phenomenon(clause)
+        for clause in _clauses(answer)
+    )
+
+
 def _answer_without_evidence_is_safe(
     answer: str,
     claims: Sequence[NativeAnswerClaim],

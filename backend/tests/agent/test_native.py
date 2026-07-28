@@ -1676,7 +1676,47 @@ async def test_native_tool_failure_is_returned_to_the_model_in_the_unified_envel
 
 async def test_native_loop_does_not_let_the_model_guess_an_unconfirmed_month() -> None:
     collector = FailingEvidenceCollector()
-    model = FakeNativeToolModel(turns=[])
+    model = FakeNativeToolModel(
+        turns=[
+            {
+                "message": {"role": "assistant", "content": "尝试查询。"},
+                "tool_calls": [
+                    {
+                        "id": "guessed-period",
+                        "name": "monthly_total_revenue",
+                        "arguments": {"year": 2026, "month": 7},
+                    }
+                ],
+                "signal": "continue",
+            },
+            {
+                "message": {"role": "assistant", "content": "等待期间确认。"},
+                "signal": "end",
+            },
+            {
+                "message": {"role": "assistant", "content": "按确认期间查询。"},
+                "tool_calls": [
+                    {
+                        "id": "confirmed-period",
+                        "name": "monthly_total_revenue",
+                        "arguments": {"year": 2026, "month": 7},
+                    }
+                ],
+                "signal": "continue",
+            },
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "经营查询暂时不可用，目前无法确认月度总收入。",
+                },
+                "answer_claims": [
+                    {"statement": "经营查询暂时不可用", "status": "unknown"},
+                    {"statement": "目前无法确认月度总收入", "status": "unknown"},
+                ],
+                "signal": "end",
+            },
+        ]
+    )
     service = NativeToolAgentService(
         model=model,
         evidence_collector=collector,
@@ -1701,9 +1741,27 @@ async def test_native_loop_does_not_let_the_model_guess_an_unconfirmed_month() -
     )
 
     assert result.turn.route == "clarify"
-    assert result.turn.content == "请提供要查询的准确自然月，例如“2026 年 7 月”。"
-    assert model.calls == []
+    assert result.turn.content == (
+        "我推定查询期间为 2026 年 7 月（2026-07-01 至 2026-07-31）。请确认是否按此期间继续。"
+    )
+    assert len(model.calls) == 2
+    tool_result = model.calls[1].items[-1].tool_result
+    assert tool_result is not None
+    assert tool_result.evidence.failure.category == "period_confirmation_required"
     assert collector.calls == 0
+
+    continued = await service.run(
+        _runtime_context(),
+        result.state,
+        [
+            ModelMessage(role="user", content="最近的月度总收入是多少？"),
+            ModelMessage(role="assistant", content=result.turn.content),
+            ModelMessage(role="user", content="确认"),
+        ],
+    )
+
+    assert continued.turn.content == "经营查询暂时不可用，目前无法确认月度总收入。"
+    assert collector.calls == 1
 
 
 async def test_native_tool_catalog_rejects_a_disabled_runtime_before_model_execution() -> None:
@@ -1992,6 +2050,8 @@ async def test_monthly_revenue_policy_stays_available_when_optional_store_featur
         "other_data_amount",
         "daily_ledger_revenue_extreme",
         "daily_ledger_details",
+        "search_system_knowledge",
+        "open_business_records",
         EVIDENCE_CALCULATION_TOOL,
     ]
     if feature == "company_settlement_enabled":
