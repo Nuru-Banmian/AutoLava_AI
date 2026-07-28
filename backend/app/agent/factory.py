@@ -5,6 +5,10 @@ from app.agent.model import (
     OpenAICompatibleProfile,
     ResilientModelAdapter,
 )
+from app.agent.native_model import (
+    OpenAICompatibleNativeToolModel,
+    ResilientNativeToolModel,
+)
 from app.core.config import Settings
 
 
@@ -50,4 +54,16 @@ def create_model_adapter(settings: Settings) -> ModelAdapter:
     return ResilientModelAdapter(
         OpenAICompatibleModelAdapter(primary_profile),
         fallback=fallback,
+    )
+
+
+def create_native_model_adapter(settings: Settings) -> ResilientNativeToolModel:
+    primary_profile, fallback_profile = configured_openai_profiles(settings)
+    fallback = (
+        OpenAICompatibleNativeToolModel(fallback_profile) if fallback_profile is not None else None
+    )
+    return ResilientNativeToolModel(
+        OpenAICompatibleNativeToolModel(primary_profile),
+        fallback=fallback,
+        retry_attempts=settings.agent_investigation_retry_attempts,
     )

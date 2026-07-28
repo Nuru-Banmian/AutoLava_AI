@@ -34,7 +34,7 @@ from app.agent.external_evidence import (
     NagerPublicHolidayProvider,
     OpenMeteoHistoricalWeatherProvider,
 )
-from app.agent.factory import create_model_adapter
+from app.agent.factory import create_model_adapter, create_native_model_adapter
 from app.agent.model import ModelAttempt
 from app.agent.native import (
     NativeExternalEvidenceCollector,
@@ -227,6 +227,8 @@ def create_agent_service(
     native_evidence_collector: BusinessEvidenceCollector | None = None,
     external_evidence_collector: NativeExternalEvidenceCollector | None = None,
 ) -> AgentService | NativeToolAgentService:
+    if native_model is None and settings.model_adapter == "openai_compatible":
+        native_model = create_native_model_adapter(settings)
     if native_model is not None:
         native_options = {"now": native_now} if native_now is not None else {}
         scope_resolver = DatabaseNativeToolScopeResolver(

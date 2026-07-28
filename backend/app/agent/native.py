@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import re
 from calendar import monthrange
@@ -29,7 +30,7 @@ from app.agent.conversation import (
     InvestigationPartial,
     InvestigationProgress,
 )
-from app.agent.model import ModelAdapterError, RECOVERABLE_CATEGORIES
+from app.agent.model import ModelAdapterError, ModelAttempt, RECOVERABLE_CATEGORIES
 from app.agent.evidence_calculation import (
     CalculationUnit,
     CannotCalculateReason,
@@ -365,12 +366,15 @@ class NativeToolResult(ClosedModel):
 class NativeTranscriptItem(ClosedModel):
     message: ModelMessage | None = None
     tool_result: NativeToolResult | None = None
+    tool_calls: list[NativeToolCall] = Field(default_factory=list, max_length=4)
     hypotheses: list[NativeAnalysisHypothesis] = Field(default_factory=list, max_length=8)
 
     @model_validator(mode="after")
     def require_one_item(self) -> NativeTranscriptItem:
         if (self.message is None) == (self.tool_result is None):
             raise ValueError("a transcript item requires exactly one message or tool result")
+        if self.tool_calls and (self.message is None or self.message.role != "assistant"):
+            raise ValueError("native tool calls require an assistant message")
         if self.hypotheses and (self.message is None or self.message.role != "assistant"):
             raise ValueError("analysis hypotheses require an assistant message")
         return self
@@ -422,6 +426,7 @@ class NativeToolModel(Protocol):
         items: Sequence[NativeTranscriptItem],
         *,
         tools: Sequence[NativeToolDefinition],
+        observer: Callable[[ModelAttempt], None] | None = None,
     ) -> NativeModelTurn: ...
 
 
@@ -691,6 +696,19 @@ class FakeNativeToolModel:
         )
 
 
+async def _call_native_model(
+    model: NativeToolModel,
+    items: Sequence[NativeTranscriptItem],
+    *,
+    tools: Sequence[NativeToolDefinition],
+    observer: Callable[[ModelAttempt], None],
+) -> NativeModelTurn:
+    parameters = inspect.signature(model.next_turn).parameters
+    if "observer" in parameters:
+        return await model.next_turn(items, tools=tools, observer=observer)
+    return await model.next_turn(items, tools=tools)
+
+
 class NativeToolAgentService:
     """Provider-neutral loop for evidence-driven, bounded investigations."""
 
@@ -764,6 +782,33 @@ class NativeToolAgentService:
         state: ConversationState,
         recent_messages: list[ModelMessage],
     ) -> AgentRunResult:
+        attempts: list[ModelAttempt] = []
+        result = await self._run(
+            context,
+            state,
+            recent_messages,
+            observer=attempts.append,
+        )
+        recovery_status = result.turn.recovery_status
+        if any(attempt.is_fallback for attempt in attempts):
+            recovery_status = "fallback"
+        elif recovery_status == "none" and any(attempt.result == "failure" for attempt in attempts):
+            recovery_status = "retried"
+        return result.model_copy(
+            update={
+                "turn": result.turn.model_copy(update={"recovery_status": recovery_status}),
+                "attempts": attempts,
+            }
+        )
+
+    async def _run(
+        self,
+        context: RuntimeContext,
+        state: ConversationState,
+        recent_messages: list[ModelMessage],
+        *,
+        observer: Callable[[ModelAttempt], None],
+    ) -> AgentRunResult:
         deadline = asyncio.get_running_loop().time() + self.limits.timeout_seconds
         if not _available_tools(context, self.tool_registry):
             raise NativeToolAccessDenied("native tools are not available for this runtime scope")
@@ -831,7 +876,12 @@ class NativeToolAgentService:
                         pending_directions=[*failed_directions, *pending_directions],
                     )
             turn: NativeModelTurn | None = None
-            for retry_number in range(self.limits.retry_attempts + 1):
+            model_retry_attempts = (
+                0
+                if getattr(self.model, "provider_recovery_managed", False)
+                else self.limits.retry_attempts
+            )
+            for retry_number in range(model_retry_attempts + 1):
                 if model_call_count >= self.limits.max_model_calls:
                     return _partial_agent_result(
                         state,
@@ -844,7 +894,12 @@ class NativeToolAgentService:
                 model_call_count += 1
                 try:
                     turn = await _before_deadline(
-                        self.model.next_turn(items, tools=tools),
+                        _call_native_model(
+                            self.model,
+                            items,
+                            tools=tools,
+                            observer=observer,
+                        ),
                         deadline,
                     )
                     break
@@ -860,7 +915,7 @@ class NativeToolAgentService:
                 except ModelAdapterError as error:
                     if (
                         error.category in RECOVERABLE_CATEGORIES
-                        and retry_number < self.limits.retry_attempts
+                        and retry_number < model_retry_attempts
                     ):
                         retried = True
                         progress.append(
@@ -924,6 +979,7 @@ class NativeToolAgentService:
             items.append(
                 NativeTranscriptItem(
                     message=turn.message,
+                    tool_calls=turn.tool_calls,
                     hypotheses=turn.hypotheses or [],
                 )
             )
