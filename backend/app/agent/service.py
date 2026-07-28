@@ -1,8 +1,10 @@
+import hashlib
 import json
 import re
 from contextlib import AbstractAsyncContextManager
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,23 +13,28 @@ from app.agent.conversation import (
     AgentRunResult,
     ConfirmedPeriod,
     ConversationComparison,
+    ConversationEvidenceReference,
     ConversationState,
 )
 from app.agent.contracts import (
+    CollectedEvidence,
     EVIDENCE_METRIC_LABELS,
+    EvidenceBundle,
+    EvidenceMetric,
     ExternalEvidenceBundle,
+    MessageRole,
     SETTLEMENT_DETAILS_LABEL,
     ModelMessage,
     RevenueAnalysisEvidenceBundle,
     SettlementDetailsEvidenceBundle,
     TurnResult,
 )
-from app.agent.factory import create_model_adapter
 from app.agent.external_evidence import (
     ExternalEvidenceService,
     NagerPublicHolidayProvider,
     OpenMeteoHistoricalWeatherProvider,
 )
+from app.agent.factory import create_model_adapter
 from app.agent.model import ModelAttempt
 from app.agent.native import (
     NativeExternalEvidenceCollector,
@@ -92,8 +99,14 @@ NEGATED_VAGUE_PERIOD_PREFIX = re.compile(r"(?:不要|不用|别|不查|不看|�
 
 
 class AgentService:
-    def __init__(self, workflow: AgentTurnWorkflow) -> None:
+    def __init__(
+        self,
+        workflow: AgentTurnWorkflow,
+        *,
+        now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+    ) -> None:
         self.workflow = workflow
+        self.now = now
 
     async def run(
         self,
@@ -123,9 +136,9 @@ class AgentService:
         attempts: list[ModelAttempt] = []
         workflow_result = await self.workflow.run(
             [
-                ModelMessage(role="system", content=f"{CORE_RULES}\n{runtime_scope}"),
+                ModelMessage(role=MessageRole.SYSTEM, content=f"{CORE_RULES}\n{runtime_scope}"),
                 ModelMessage(
-                    role="system",
+                    role=MessageRole.SYSTEM,
                     content=(
                         "Structured conversation state:\n"
                         f"{json.dumps(state.model_dump(mode='json'), ensure_ascii=False)}"
@@ -138,7 +151,10 @@ class AgentService:
         )
         result = workflow_result.turn
         pending_clarifications = [result.content] if result.route == "clarify" else []
-        state_update: dict[str, object] = {"pending_clarifications": pending_clarifications}
+        state_update: dict[str, object] = {
+            "pending_clarifications": pending_clarifications,
+            "pending_directions": [result.content] if result.route == "clarify" else [],
+        }
         if workflow_result.evidence is not None:
             evidence = workflow_result.evidence
             comparison = getattr(evidence, "comparison", None)
@@ -167,6 +183,13 @@ class AgentService:
                         start=evidence.period.start,
                         end=evidence.period.end,
                     ),
+                    "confirmed_objects": list(
+                        dict.fromkeys([*state.confirmed_objects, metric_label])
+                    ),
+                    "evidence_references": [
+                        *state.evidence_references,
+                        _legacy_evidence_reference(evidence, queried_at=self.now()),
+                    ][-50:],
                     "metrics": [metric_label],
                     "filters": _conversation_filters(getattr(evidence, "filters", None)),
                     "comparison": (
@@ -245,6 +268,53 @@ def _requires_exact_period(messages: list[ModelMessage]) -> bool:
             if not NEGATED_VAGUE_PERIOD_PREFIX.search(prefix):
                 return True
     return False
+
+
+def _legacy_evidence_reference(
+    evidence: CollectedEvidence,
+    *,
+    queried_at: datetime,
+) -> ConversationEvidenceReference:
+    payload = json.dumps(
+        evidence.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    digest = hashlib.sha256(payload).hexdigest()
+    return ConversationEvidenceReference(
+        reference=f"ev_{digest[:24]}",
+        source=_legacy_evidence_sources(evidence),
+        queried_at=queried_at,
+        data_version=f"sha256:{digest}",
+        period=ConfirmedPeriod(start=evidence.period.start, end=evidence.period.end),
+    )
+
+
+def _legacy_evidence_sources(
+    evidence: CollectedEvidence,
+) -> list[
+    Literal[
+        "store_daily_records",
+        "settlement_records",
+        "open_meteo_historical",
+        "nager_date_public_holidays",
+    ]
+]:
+    if isinstance(evidence, ExternalEvidenceBundle):
+        return [evidence.source]
+    if isinstance(evidence, SettlementDetailsEvidenceBundle):
+        return ["settlement_records"]
+    if isinstance(evidence, RevenueAnalysisEvidenceBundle):
+        return ["store_daily_records", "settlement_records"]
+    assert isinstance(evidence, EvidenceBundle)
+    if evidence.metric in {
+        EvidenceMetric.MONTHLY_TOTAL_REVENUE,
+        EvidenceMetric.MONTHLY_DAILY_AVERAGE_INCOME,
+    }:
+        return ["store_daily_records", "settlement_records"]
+    if evidence.metric == EvidenceMetric.CONFIRMED_SETTLEMENT_INCOME:
+        return ["settlement_records"]
+    return ["store_daily_records"]
 
 
 def _conversation_filters(filters: object) -> dict[str, list[str]]:

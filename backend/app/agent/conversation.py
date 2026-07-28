@@ -1,12 +1,13 @@
 from datetime import date, datetime, timezone
-from typing import Literal
+from typing import Annotated, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.contracts import (
     CollectedEvidence,
+    MessageRole,
     ModelMessage,
     OpenBusinessRecordsAction,
     TurnResult,
@@ -31,8 +32,56 @@ class ConversationComparison(ClosedModel):
     label: str = Field(min_length=1, max_length=120)
 
 
+EvidenceReferenceId = Annotated[
+    str,
+    StringConstraints(pattern=r"^ev_[0-9a-f]{24}$"),
+]
+
+
+class ConversationEvidenceReference(ClosedModel):
+    reference: EvidenceReferenceId
+    source: list[
+        Literal[
+            "store_daily_records",
+            "settlement_records",
+            "open_meteo_historical",
+            "nager_date_public_holidays",
+        ]
+    ] = Field(
+        min_length=1,
+        max_length=2,
+    )
+    queried_at: datetime
+    data_version: str = Field(min_length=1, max_length=100)
+    period: ConfirmedPeriod
+    use_as_current_fact: Literal[False] = False
+
+
+class ConversationAnalysisHypothesis(ClosedModel):
+    statement: str = Field(min_length=1, max_length=500)
+    status: Literal["proposed", "testing", "supported", "refuted", "unresolved"]
+    evidence_references: list[EvidenceReferenceId] = Field(default_factory=list, max_length=20)
+
+    @model_validator(mode="after")
+    def require_supported_evidence(self) -> "ConversationAnalysisHypothesis":
+        if self.status in {"supported", "refuted"} and not self.evidence_references:
+            raise ValueError("supported or refuted hypotheses require evidence")
+        return self
+
+
 class ConversationState(ClosedModel):
+    investigation_goal: str | None = Field(default=None, min_length=1, max_length=2_000)
     confirmed_period: ConfirmedPeriod | None = None
+    confirmed_objects: list[str] = Field(default_factory=list, max_length=20)
+    evidence_references: list[ConversationEvidenceReference] = Field(
+        default_factory=list,
+        max_length=50,
+    )
+    analysis_hypotheses: list[ConversationAnalysisHypothesis] = Field(
+        default_factory=list,
+        max_length=8,
+    )
+    pending_directions: list[str] = Field(default_factory=list, max_length=8)
     metrics: list[str] = Field(default_factory=list, max_length=20)
     filters: dict[str, list[str]] = Field(default_factory=dict)
     comparison: ConversationComparison | None = None
@@ -151,7 +200,7 @@ async def recent_model_messages(
         )
     )
     return [
-        ModelMessage(role=message.role, content=message.content)
+        ModelMessage(role=MessageRole(message.role), content=message.content)
         for message in reversed(newest_first)
     ]
 
@@ -174,9 +223,13 @@ async def conversation_response(
         messages=[
             ConversationMessageResponse(
                 id=message.id,
-                role=message.role,
+                role=cast(Literal["user", "assistant"], message.role),
                 content=message.content,
-                action=message.action,
+                action=(
+                    OpenBusinessRecordsAction.model_validate(message.action)
+                    if message.action is not None
+                    else None
+                ),
                 created_at=message.created_at,
             )
             for message in messages

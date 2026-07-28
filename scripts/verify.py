@@ -98,6 +98,7 @@ def agent(env: dict[str, str]) -> None:
         "tests/api/test_agent_observability.py",
         "tests/api/test_agent_periods.py",
         "tests/api/test_agent_prompt_injection_sources.py",
+        "tests/api/test_agent_system_knowledge_navigation.py",
         "tests/api/test_agent_wash_count_evidence.py",
         env=env,
     )
@@ -175,6 +176,7 @@ def ci_backend_agent(env: dict[str, str]) -> None:
         "tests/api/test_agent_observability.py",
         "tests/api/test_agent_periods.py",
         "tests/api/test_agent_prompt_injection_sources.py",
+        "tests/api/test_agent_system_knowledge_navigation.py",
         "tests/api/test_agent_wash_count_evidence.py",
         env=env,
     )

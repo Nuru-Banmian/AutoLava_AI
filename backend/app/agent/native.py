@@ -8,18 +8,40 @@ from calendar import monthrange
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from typing import Any, Literal, Protocol
+from decimal import Decimal
+from typing import Any, Literal, Protocol, TypeAlias, TypeVar
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
-from app.agent.answer_grounding import NativeAnswerClaim, answer_is_grounded
-from app.agent.conversation import AgentRunResult, ConfirmedPeriod, ConversationState
+from app.agent.answer_grounding import (
+    GroundedEvidence,
+    NativeAnswerClaim,
+    answer_contains_operating_claim,
+    answer_is_grounded,
+)
+from app.agent.conversation import (
+    AgentRunResult,
+    ConfirmedPeriod,
+    ConversationAnalysisHypothesis,
+    ConversationEvidenceReference,
+    ConversationState,
+)
+from app.agent.evidence_calculation import (
+    CalculationUnit,
+    CannotCalculateReason,
+    EvidenceCalculationInput,
+    EvidenceCalculationRequest,
+    EvidenceCalculationResult,
+    calculate_evidence,
+)
 from app.agent.contracts import (
     CurrentStoreScope,
     AverageRevenuePerCarResult,
     CategoryAmountResult,
+    ClosedModel,
     DailyLedgerRevenueResult,
+    DailyLedgerDrilldownResult,
     DailyLedgerExtremeResult,
     EVIDENCE_METRIC_LABELS,
     EvidenceBundle,
@@ -35,11 +57,14 @@ from app.agent.contracts import (
     ExternalGeographicScope,
     ConfirmedSettlementIncomeResult,
     GroupedMetricResult,
+    MAX_DAILY_LEDGER_DRILLDOWN_DATES,
+    MessageRole,
     ModelMessage,
     MonthlyTotalRevenueResult,
     MonthlyDailyAverageIncomeResult,
     OperatingDayAverageLedgerRevenueResult,
     OperatingDaysResult,
+    OpenBusinessRecordsAction,
     SETTLEMENT_DETAILS_LABEL,
     SettlementDetailsEvidenceBundle,
     SettlementDetailsQueryScope,
@@ -48,9 +73,12 @@ from app.agent.contracts import (
     TurnResult,
 )
 from app.agent.runtime import RuntimeContext
+from app.agent.system_knowledge import is_system_help_request, search_system_knowledge
 
-NativeCollectedEvidence = EvidenceBundle | SettlementDetailsEvidenceBundle | ExternalEvidenceBundle
-NativeBusinessEvidence = EvidenceBundle | SettlementDetailsEvidenceBundle
+NativeCollectedEvidence: TypeAlias = (
+    EvidenceBundle | SettlementDetailsEvidenceBundle | ExternalEvidenceBundle
+)
+NativeBusinessEvidence: TypeAlias = EvidenceBundle | SettlementDetailsEvidenceBundle
 
 MONTHLY_TOTAL_REVENUE_TOOL = "monthly_total_revenue"
 DAILY_LEDGER_REVENUE_TOOL = "daily_ledger_revenue"
@@ -64,6 +92,10 @@ AVERAGE_REVENUE_PER_CAR_TOOL = "average_revenue_per_car"
 INCOME_CATEGORY_AMOUNT_TOOL = "income_category_amount"
 OTHER_DATA_AMOUNT_TOOL = "other_data_amount"
 DAILY_LEDGER_REVENUE_EXTREME_TOOL = "daily_ledger_revenue_extreme"
+SEARCH_SYSTEM_KNOWLEDGE_TOOL = "search_system_knowledge"
+OPEN_BUSINESS_RECORDS_TOOL = "open_business_records"
+DAILY_LEDGER_DETAILS_TOOL = "daily_ledger_details"
+EVIDENCE_CALCULATION_TOOL = "evidence_calculation"
 HISTORICAL_WEATHER_TOOL = "historical_weather"
 PUBLIC_HOLIDAYS_TOOL = "public_holidays"
 MAX_NATIVE_TOOL_ROUNDS = 4
@@ -74,14 +106,14 @@ EXPLICIT_CALENDAR_MONTH = re.compile(
     r"(?P<year>20\d{2}|21\d{2}|2200)\s*年\s*(?P<month>1[0-2]|0?[1-9])\s*月"
 )
 EXACT_MONTH_CLARIFICATION = "请提供要查询的准确自然月，例如“2026 年 7 月”。"
+CAPABILITY_BOUNDARY_MESSAGE = (
+    "我专注于 AutoLava 使用、当前门店经营分析和证据支持的经营建议。"
+    "你可以问我产品操作或当前门店问题。"
+)
 
 
 class NativeToolAccessDenied(RuntimeError):
     """A non-retryable authorization or tool-contract failure."""
-
-
-class ClosedModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
 
 
 class NativeToolDefinition(ClosedModel):
@@ -111,9 +143,33 @@ class DailyLedgerRevenueExtremeArguments(MonthlyTotalRevenueArguments):
     filters: EvidenceFilters | None = None
 
 
+class DailyLedgerDetailsArguments(MonthlyTotalRevenueArguments):
+    dates: list[date] = Field(
+        min_length=1,
+        max_length=MAX_DAILY_LEDGER_DRILLDOWN_DATES,
+    )
+
+    @model_validator(mode="after")
+    def require_unique_dates_in_month(self) -> "DailyLedgerDetailsArguments":
+        if len(self.dates) != len(set(self.dates)):
+            raise ValueError("daily ledger detail dates must be unique")
+        if any((value.year, value.month) != (self.year, self.month) for value in self.dates):
+            raise ValueError("daily ledger detail dates must stay inside the requested month")
+        return self
+
+
 class SettlementDetailsArguments(MonthlyTotalRevenueArguments):
     status: Literal["pending", "confirmed"] | None = None
     company_name: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class SearchSystemKnowledgeArguments(ClosedModel):
+    pass
+
+
+class OpenBusinessRecordsArguments(ClosedModel):
+    start_month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    end_month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
 
 
 StoreFeatureFlag = Literal[
@@ -149,21 +205,7 @@ class NativeToolRegistration:
         return True
 
 
-class NativeAnalysisHypothesis(ClosedModel):
-    statement: str = Field(min_length=1, max_length=500)
-    status: Literal["proposed", "testing", "supported", "refuted", "unresolved"]
-    evidence_references: list[str] = Field(default_factory=list, max_length=20)
-
-    @model_validator(mode="after")
-    def require_supported_evidence(self) -> NativeAnalysisHypothesis:
-        if any(
-            re.fullmatch(r"ev_[0-9a-f]{24}", reference) is None
-            for reference in self.evidence_references
-        ):
-            raise ValueError("invalid evidence reference")
-        if self.status in {"supported", "refuted"} and not self.evidence_references:
-            raise ValueError("supported or refuted hypotheses require evidence")
-        return self
+NativeAnalysisHypothesis: TypeAlias = ConversationAnalysisHypothesis
 
 
 class NativeEvidenceFailure(ClosedModel):
@@ -180,6 +222,7 @@ class NativeEvidenceEnvelope(ClosedModel):
     group_by: EvidenceGroup | None = None
     filters: EvidenceFilters | None = None
     extreme: Literal["highest", "lowest"] | None = None
+    selected_dates: list[date] | None = None
     settlement_query_scope: SettlementDetailsQueryScope | None = None
     unit: Literal[
         "EUR",
@@ -187,6 +230,7 @@ class NativeEvidenceEnvelope(ClosedModel):
         "car",
         "EUR/car",
         "EUR/operating_day",
+        "mixed",
         "external_fact",
         "unknown",
     ]
@@ -194,6 +238,8 @@ class NativeEvidenceEnvelope(ClosedModel):
         Literal[
             "store_daily_records",
             "settlement_records",
+            "system_knowledge",
+            "navigation_registry",
             "open_meteo_historical",
             "nager_date_public_holidays",
         ]
@@ -216,10 +262,44 @@ class NativeEvidenceEnvelope(ClosedModel):
     failure: NativeEvidenceFailure
 
 
+class NativeCalculationEnvelope(ClosedModel):
+    reference: str = Field(pattern=r"^ev_[0-9a-f]{24}$")
+    formula: str | None
+    input_evidence_references: list[str] = Field(min_length=2, max_length=8)
+    input_data_versions: list[str] = Field(max_length=8)
+    exact_result: Decimal | None
+    unit: CalculationUnit | None
+    cannot_calculate_reason: CannotCalculateReason | None
+    scope: CurrentStoreScope
+    period: EvidencePeriodResult
+    calculated_at: datetime
+    data_version: str = Field(min_length=1, max_length=100)
+    failure: NativeEvidenceFailure
+
+    @model_validator(mode="after")
+    def require_result_or_reason(self) -> NativeCalculationEnvelope:
+        succeeded = self.cannot_calculate_reason is None
+        if succeeded and (
+            self.formula is None
+            or self.exact_result is None
+            or self.unit is None
+            or self.failure.status != "none"
+        ):
+            raise ValueError("successful evidence calculation requires an exact result")
+        if not succeeded and (
+            self.formula is not None
+            or self.exact_result is not None
+            or self.unit is not None
+            or self.failure.status != "failed"
+        ):
+            raise ValueError("failed evidence calculation requires only a reason")
+        return self
+
+
 class NativeToolResult(ClosedModel):
     call_id: str = Field(min_length=1, max_length=100)
     name: str = Field(min_length=1, max_length=100)
-    evidence: NativeEvidenceEnvelope
+    evidence: NativeEvidenceEnvelope | NativeCalculationEnvelope
 
 
 class NativeTranscriptItem(ClosedModel):
@@ -239,7 +319,8 @@ class NativeTranscriptItem(ClosedModel):
 class NativeModelTurn(ClosedModel):
     message: ModelMessage
     tool_calls: list[NativeToolCall] = Field(default_factory=list, max_length=4)
-    hypotheses: list[NativeAnalysisHypothesis] = Field(default_factory=list, max_length=8)
+    hypotheses: list[NativeAnalysisHypothesis] | None = Field(default=None, max_length=8)
+    pending_directions: list[str] | None = Field(default=None, max_length=8)
     answer_claims: list[NativeAnswerClaim] = Field(default_factory=list, max_length=20)
     signal: Literal["continue", "end"]
 
@@ -317,10 +398,17 @@ class NativeToolSpec:
         "car",
         "EUR/car",
         "EUR/operating_day",
+        "mixed",
         "external_fact",
     ]
+    calculation_field: str | None
+    request_kind: Literal[
+        "business_metrics",
+        "settlement_details",
+        "daily_ledger_drilldown",
+    ] = "business_metrics"
+    include_period: bool = True
     required_features: frozenset[StoreFeatureFlag] = frozenset()
-    collection: Literal["business_metrics", "settlement_details", "external"] = "business_metrics"
     external_evidence_type: Literal["historical_weather", "public_holidays"] | None = None
     required_geography: Literal["coordinates", "country"] | None = None
 
@@ -335,6 +423,7 @@ NATIVE_TOOLS = {
         ),
         sources=("store_daily_records", "settlement_records"),
         unit="EUR",
+        calculation_field="monthly_total_revenue",
     ),
     DAILY_LEDGER_REVENUE_TOOL: NativeToolSpec(
         metric=EvidenceMetric.DAILY_LEDGER_REVENUE,
@@ -343,6 +432,7 @@ NATIVE_TOOLS = {
         description="查询当前受信任门店指定自然月的每日台账营业额合计。",
         sources=("store_daily_records",),
         unit="EUR",
+        calculation_field="daily_ledger_revenue",
     ),
     CONFIRMED_SETTLEMENT_INCOME_TOOL: NativeToolSpec(
         metric=EvidenceMetric.CONFIRMED_SETTLEMENT_INCOME,
@@ -351,6 +441,7 @@ NATIVE_TOOLS = {
         description="查询当前受信任门店指定自然月的已确认公司结算收入。",
         sources=("settlement_records",),
         unit="EUR",
+        calculation_field="confirmed_settlement_income",
     ),
     SETTLEMENT_DETAILS_TOOL: NativeToolSpec(
         metric=None,
@@ -362,8 +453,9 @@ NATIVE_TOOLS = {
         ),
         sources=("settlement_records",),
         unit="EUR",
+        request_kind="settlement_details",
+        calculation_field=None,
         required_features=frozenset({"company_settlement_enabled"}),
-        collection="settlement_details",
     ),
     OPERATING_DAYS_TOOL: NativeToolSpec(
         metric=EvidenceMetric.OPERATING_DAYS,
@@ -372,6 +464,7 @@ NATIVE_TOOLS = {
         description="查询当前受信任门店指定自然月的经营日数量。",
         sources=("store_daily_records",),
         unit="day",
+        calculation_field="operating_days",
     ),
     OPERATING_DAY_AVERAGE_LEDGER_REVENUE_TOOL: NativeToolSpec(
         metric=EvidenceMetric.OPERATING_DAY_AVERAGE_LEDGER_REVENUE,
@@ -380,6 +473,7 @@ NATIVE_TOOLS = {
         description="查询经营日均台账营业额；分母只包含营业和提前休息的经营日。",
         sources=("store_daily_records",),
         unit="EUR/operating_day",
+        calculation_field="operating_day_average_ledger_revenue",
     ),
     MONTHLY_DAILY_AVERAGE_INCOME_TOOL: NativeToolSpec(
         metric=EvidenceMetric.MONTHLY_DAILY_AVERAGE_INCOME,
@@ -388,6 +482,7 @@ NATIVE_TOOLS = {
         description="查询指定自然月的月度日均收入，包含已确认公司结算收入。",
         sources=("store_daily_records", "settlement_records"),
         unit="EUR/operating_day",
+        calculation_field="monthly_daily_average_income",
     ),
     WASH_COUNT_TOOL: NativeToolSpec(
         metric=EvidenceMetric.WASH_COUNT,
@@ -396,6 +491,7 @@ NATIVE_TOOLS = {
         description="查询洗车数量及其经营日数据覆盖；缺失洗车数量不会按零计算。",
         sources=("store_daily_records",),
         unit="car",
+        calculation_field="wash_count",
     ),
     AVERAGE_REVENUE_PER_CAR_TOOL: NativeToolSpec(
         metric=EvidenceMetric.AVERAGE_REVENUE_PER_CAR,
@@ -404,6 +500,7 @@ NATIVE_TOOLS = {
         description="查询平均每车收入及其一致的营业额、洗车数量和覆盖范围。",
         sources=("store_daily_records",),
         unit="EUR/car",
+        calculation_field="average_revenue_per_car",
     ),
     INCOME_CATEGORY_AMOUNT_TOOL: NativeToolSpec(
         metric=EvidenceMetric.INCOME_CATEGORY_AMOUNT,
@@ -412,6 +509,7 @@ NATIVE_TOOLS = {
         description="查询动态收入分类金额，支持批准的分组和筛选。",
         sources=("store_daily_records",),
         unit="EUR",
+        calculation_field="amount",
     ),
     OTHER_DATA_AMOUNT_TOOL: NativeToolSpec(
         metric=EvidenceMetric.OTHER_DATA_AMOUNT,
@@ -420,6 +518,7 @@ NATIVE_TOOLS = {
         description="查询不计入总营业额的其他数据，支持批准的分组和筛选。",
         sources=("store_daily_records",),
         unit="EUR",
+        calculation_field="amount",
     ),
     DAILY_LEDGER_REVENUE_EXTREME_TOOL: NativeToolSpec(
         metric=EvidenceMetric.DAILY_LEDGER_REVENUE,
@@ -428,6 +527,21 @@ NATIVE_TOOLS = {
         description="查询经营日每日台账营业额的最高或最低日期，支持批准的筛选。",
         sources=("store_daily_records",),
         unit="EUR",
+        calculation_field="daily_ledger_revenue",
+    ),
+    DAILY_LEDGER_DETAILS_TOOL: NativeToolSpec(
+        metric=EvidenceMetric.DAILY_LEDGER,
+        result_types=(DailyLedgerDrilldownResult,),
+        arguments_type=DailyLedgerDetailsArguments,
+        description=(
+            "按聚合线索钻取当前受信任门店指定自然月内的受控日期集合；"
+            "返回每日台账事实、原始事件和缺失字段，不用于无条件读取整月明细。"
+        ),
+        sources=("store_daily_records",),
+        unit="mixed",
+        calculation_field=None,
+        request_kind="daily_ledger_drilldown",
+        include_period=False,
     ),
     HISTORICAL_WEATHER_TOOL: NativeToolSpec(
         metric=None,
@@ -438,7 +552,7 @@ NATIVE_TOOLS = {
         ),
         sources=("open_meteo_historical",),
         unit="external_fact",
-        collection="external",
+        calculation_field=None,
         external_evidence_type="historical_weather",
         required_geography="coordinates",
     ),
@@ -451,7 +565,7 @@ NATIVE_TOOLS = {
         ),
         sources=("nager_date_public_holidays",),
         unit="external_fact",
-        collection="external",
+        calculation_field=None,
         external_evidence_type="public_holidays",
         required_geography="country",
     ),
@@ -518,7 +632,41 @@ class NativeToolAgentService:
                 required_geography=spec.required_geography,
             )
             for name, spec in NATIVE_TOOLS.items()
-            if spec.collection != "external" or self.external_evidence_collector is not None
+            if spec.external_evidence_type is None or self.external_evidence_collector is not None
+        ) + (
+            NativeToolRegistration(
+                definition=NativeToolDefinition(
+                    name=SEARCH_SYSTEM_KNOWLEDGE_TOOL,
+                    description=(
+                        "搜索批准的 AutoLava 只读产品文档、领域语言、操作说明和能力描述。"
+                        "不接受路径、网址或任意文件。"
+                    ),
+                    input_schema=SearchSystemKnowledgeArguments.model_json_schema(),
+                ),
+                required_features=frozenset(),
+            ),
+            NativeToolRegistration(
+                definition=NativeToolDefinition(
+                    name=OPEN_BUSINESS_RECORDS_TOOL,
+                    description=(
+                        "准备打开已注册的营业记录只读筛选视图。只接受受控月份范围，"
+                        "不接受网址、写入、导入导出或备份参数。"
+                    ),
+                    input_schema=OpenBusinessRecordsArguments.model_json_schema(),
+                ),
+                required_features=frozenset(),
+            ),
+            NativeToolRegistration(
+                definition=NativeToolDefinition(
+                    name=EVIDENCE_CALCULATION_TOOL,
+                    description=(
+                        "只使用本轮已返回的证据引用执行固定精确计算；"
+                        "不能查询新经营数据或指定身份、门店、字段、SQL、表或任意表达式。"
+                    ),
+                    input_schema=EvidenceCalculationRequest.model_json_schema(),
+                ),
+                required_features=frozenset(),
+            ),
         )
 
     async def run(
@@ -538,17 +686,22 @@ class NativeToolAgentService:
         tools = _available_tools(catalog_context, self.tool_registry)
         if not tools:
             raise NativeToolAccessDenied("native tools are not available for this runtime scope")
-        trusted_period = _explicit_calendar_month(recent_messages)
-        if trusted_period is None:
-            return AgentRunResult(
-                turn=TurnResult(route="clarify", content=EXACT_MONTH_CLARIFICATION),
-                state=state.model_copy(
-                    update={"pending_clarifications": [EXACT_MONTH_CLARIFICATION]}
-                ),
-            )
-        items = [NativeTranscriptItem(message=message) for message in recent_messages]
+        trusted_period = _trusted_period(state, recent_messages)
+        items = [
+            NativeTranscriptItem(message=_investigation_context_message(state)),
+            *(NativeTranscriptItem(message=message) for message in recent_messages),
+        ]
         collected: list[NativeCollectedEvidence] = []
-        evidence_by_reference: dict[str, NativeCollectedEvidence] = {}
+        calculations: list[NativeCalculationEnvelope] = []
+        evidence_by_reference: dict[str, GroundedEvidence] = {}
+        calculation_inputs: dict[str, EvidenceCalculationInput] = {}
+        evidence_references = list(state.evidence_references)
+        hypotheses = list(state.analysis_hypotheses)
+        pending_directions = list(state.pending_directions)
+        contextual_results: list[NativeToolResult] = []
+        selected_action: OpenBusinessRecordsAction | None = None
+        period_confirmation_required = False
+        pending_period_candidate: MonthlyTotalRevenueArguments | None = None
         tool_call_count = 0
         for round_number in range(MAX_NATIVE_TOOL_ROUNDS):
             if round_number:
@@ -566,24 +719,45 @@ class NativeToolAgentService:
                         "native tools are not available for this runtime scope"
                     )
             turn = await self.model.next_turn(items, tools=tools)
-            hypothesis_error = _hypothesis_reference_error(turn.hypotheses, items)
+            hypothesis_error = _hypothesis_reference_error(turn.hypotheses or [], items)
             if hypothesis_error is not None:
                 items.append(
                     NativeTranscriptItem(
-                        message=ModelMessage(role="system", content=hypothesis_error)
+                        message=ModelMessage(role=MessageRole.SYSTEM, content=hypothesis_error)
                     )
                 )
                 continue
             items.append(
                 NativeTranscriptItem(
                     message=turn.message,
-                    hypotheses=turn.hypotheses,
+                    hypotheses=turn.hypotheses or [],
                 )
             )
+            if turn.hypotheses is not None:
+                hypotheses = list(turn.hypotheses)
+            if turn.pending_directions is not None:
+                pending_directions = turn.pending_directions
             if turn.signal == "end":
-                if not answer_is_grounded(
+                if period_confirmation_required:
+                    clarification = (
+                        _period_confirmation_prompt(pending_period_candidate)
+                        if pending_period_candidate is not None
+                        else EXACT_MONTH_CLARIFICATION
+                    )
+                    return AgentRunResult(
+                        turn=TurnResult(
+                            route="clarify",
+                            content=clarification,
+                        ),
+                        state=state.model_copy(
+                            update={
+                                "pending_clarifications": [clarification],
+                            }
+                        ),
+                    )
+                if (collected or calculations) and not answer_is_grounded(
                     turn.message.content,
-                    collected,
+                    [*collected, *calculations],
                     turn.answer_claims,
                     evidence_by_reference,
                 ):
@@ -594,15 +768,67 @@ class NativeToolAgentService:
                         ),
                         state=state,
                     )
+                if not collected and not contextual_results:
+                    if answer_is_grounded(
+                        turn.message.content,
+                        [*collected, *calculations],
+                        turn.answer_claims,
+                        evidence_by_reference,
+                    ):
+                        return _agent_result(
+                            state,
+                            collected,
+                            content=turn.message.content,
+                        )
+                    if answer_contains_operating_claim(turn.message.content):
+                        return AgentRunResult(
+                            turn=TurnResult(
+                                route="safe_failure",
+                                content=ANSWER_EVIDENCE_FAILURE_MESSAGE,
+                            ),
+                            state=state,
+                        )
+                    return _agent_result(
+                        state,
+                        collected,
+                        content=CAPABILITY_BOUNDARY_MESSAGE,
+                    )
+                if not collected:
+                    if selected_action is not None:
+                        return _agent_result(
+                            state,
+                            collected,
+                            content=_navigation_confirmation(selected_action),
+                            action=selected_action,
+                        )
+                    knowledge_answer = _approved_knowledge_answer(contextual_results)
+                    if knowledge_answer is not None:
+                        return _agent_result(
+                            state,
+                            collected,
+                            content=knowledge_answer,
+                        )
+                    return _agent_result(
+                        state,
+                        collected,
+                        content=CAPABILITY_BOUNDARY_MESSAGE,
+                    )
                 return _agent_result(
                     state,
                     collected,
+                    evidence_references=evidence_references,
+                    hypotheses=hypotheses,
+                    pending_directions=pending_directions,
                     content=turn.message.content,
+                    action=selected_action,
                 )
             if tool_call_count + len(turn.tool_calls) > MAX_NATIVE_TOOL_CALLS:
                 return _agent_result(
                     state,
                     collected,
+                    evidence_references=evidence_references,
+                    hypotheses=hypotheses,
+                    pending_directions=pending_directions,
                     content=INVESTIGATION_LIMIT_MESSAGE,
                 )
             outcomes = await asyncio.gather(
@@ -611,20 +837,95 @@ class NativeToolAgentService:
                         tool_call,
                         catalog_context,
                         trusted_period=trusted_period,
+                        recent_messages=recent_messages,
+                        calculation_inputs=calculation_inputs,
                     )
                     for tool_call in turn.tool_calls
                 )
             )
             tool_call_count += len(turn.tool_calls)
-            for tool_result, new_evidence in outcomes:
+            round_actions = [action for _, _, action in outcomes if action is not None]
+            if len(round_actions) > 1 or (selected_action is not None and round_actions):
+                raise NativeToolAccessDenied("native tool call is not authorized")
+            if round_actions and _navigation_action_is_authorized(
+                recent_messages,
+                round_actions[0],
+            ):
+                selected_action = round_actions[0]
+            for tool_result, new_evidence, action in outcomes:
+                if tool_result.evidence.failure.category == "period_confirmation_required":
+                    period_confirmation_required = True
+                    candidate = MonthlyTotalRevenueArguments(
+                        year=tool_result.evidence.period.start.year,
+                        month=tool_result.evidence.period.start.month,
+                    )
+                    if pending_period_candidate is None:
+                        pending_period_candidate = candidate
+                    elif pending_period_candidate != candidate:
+                        pending_period_candidate = None
                 if new_evidence is not None:
                     collected.append(new_evidence)
                     evidence_by_reference[tool_result.evidence.reference] = new_evidence
+                    assert isinstance(tool_result.evidence, NativeEvidenceEnvelope)
+                    evidence_references.append(
+                        ConversationEvidenceReference(
+                            reference=tool_result.evidence.reference,
+                            source=tool_result.evidence.source,
+                            queried_at=tool_result.evidence.queried_at,
+                            data_version=tool_result.evidence.data_version,
+                            period=ConfirmedPeriod(
+                                start=tool_result.evidence.period.start,
+                                end=tool_result.evidence.period.end,
+                            ),
+                        )
+                    )
+                    evidence_references = evidence_references[-50:]
+                elif tool_result.evidence.failure.status == "none" and (
+                    isinstance(tool_result.evidence, NativeCalculationEnvelope)
+                ):
+                    calculations.append(tool_result.evidence)
+                    evidence_by_reference[tool_result.evidence.reference] = tool_result.evidence
+                elif tool_result.evidence.failure.status == "none" and (
+                    action is None or action == selected_action
+                ):
+                    contextual_results.append(tool_result)
+                if isinstance(tool_result.evidence, NativeEvidenceEnvelope):
+                    tool_spec = NATIVE_TOOLS.get(tool_result.name)
+                    fact_name = tool_spec.calculation_field if tool_spec is not None else None
+                    raw_value = (
+                        tool_result.evidence.facts.get(fact_name) if fact_name is not None else None
+                    )
+                    primary_value = (
+                        Decimal(str(raw_value))
+                        if isinstance(raw_value, (int, float, Decimal))
+                        and not isinstance(raw_value, bool)
+                        else None
+                    )
+                    calculation_inputs[tool_result.evidence.reference] = EvidenceCalculationInput(
+                        reference=tool_result.evidence.reference,
+                        primary_value=primary_value,
+                        unit=(
+                            tool_spec.unit
+                            if tool_spec is not None and tool_spec.calculation_field is not None
+                            else None
+                        ),
+                        store_id=tool_result.evidence.scope.id,
+                        queried_at=tool_result.evidence.queried_at,
+                        data_version=tool_result.evidence.data_version,
+                        available=(
+                            tool_result.evidence.failure.status == "none"
+                            and primary_value is not None
+                        ),
+                    )
                 items.append(NativeTranscriptItem(tool_result=tool_result))
         return _agent_result(
             state,
             collected,
+            evidence_references=evidence_references,
+            hypotheses=hypotheses,
+            pending_directions=pending_directions,
             content=INVESTIGATION_LIMIT_MESSAGE,
+            action=selected_action,
         )
 
     async def _execute(
@@ -632,25 +933,92 @@ class NativeToolAgentService:
         call: NativeToolCall,
         context: RuntimeContext,
         *,
-        trusted_period: MonthlyTotalRevenueArguments,
-    ) -> tuple[NativeToolResult, NativeCollectedEvidence | None]:
+        trusted_period: MonthlyTotalRevenueArguments | None,
+        recent_messages: Sequence[ModelMessage],
+        calculation_inputs: dict[str, EvidenceCalculationInput],
+    ) -> tuple[
+        NativeToolResult,
+        NativeCollectedEvidence | None,
+        OpenBusinessRecordsAction | None,
+    ]:
+        if call.name == SEARCH_SYSTEM_KNOWLEDGE_TOOL:
+            return await self._search_system_knowledge(
+                call,
+                context,
+                recent_messages,
+            )
+        if call.name == OPEN_BUSINESS_RECORDS_TOOL:
+            return await self._open_business_records(call, context)
+        if call.name == EVIDENCE_CALCULATION_TOOL:
+            if trusted_period is None:
+                raise NativeToolAccessDenied("native tool call is not authorized")
+            try:
+                calculation_request = EvidenceCalculationRequest.model_validate(call.arguments)
+            except ValidationError as error:
+                raise NativeToolAccessDenied("native tool call is not authorized") from error
+            fresh_context = await self.scope_resolver.refresh(context)
+            if (
+                fresh_context.user_id != context.user_id
+                or fresh_context.store_id != context.store_id
+                or call.name
+                not in {tool.name for tool in _available_tools(fresh_context, self.tool_registry)}
+            ):
+                raise NativeToolAccessDenied("native tool call is not authorized")
+            calculated_at = self.now()
+            calculation = calculate_evidence(
+                calculation_request,
+                calculation_inputs,
+                current_store_id=fresh_context.store_id,
+                now=calculated_at,
+            )
+            calculation_envelope = _calculation_envelope(
+                calculation,
+                request=calculation_request,
+                context=fresh_context,
+                period=EvidencePeriodResult(
+                    start=date(trusted_period.year, trusted_period.month, 1),
+                    end=date(
+                        trusted_period.year,
+                        trusted_period.month,
+                        monthrange(trusted_period.year, trusted_period.month)[1],
+                    ),
+                ),
+                available_evidence=calculation_inputs,
+                calculated_at=calculated_at,
+            )
+            return (
+                NativeToolResult(
+                    call_id=call.id,
+                    name=call.name,
+                    evidence=calculation_envelope,
+                ),
+                None,
+                None,
+            )
         tool_spec = NATIVE_TOOLS.get(call.name)
-        if tool_spec is None or call.name not in {
-            tool.name for tool in _available_tools(context, self.tool_registry)
-        }:
+        if tool_spec is None:
             raise NativeToolAccessDenied("native tool call is not authorized")
-        try:
-            arguments = tool_spec.arguments_type.model_validate(call.arguments)
-        except ValidationError as error:
-            raise NativeToolAccessDenied("native tool call is not authorized") from error
-        fresh_context = await self.scope_resolver.refresh(context)
-        if (
-            fresh_context.user_id != context.user_id
-            or fresh_context.store_id != context.store_id
-            or call.name
-            not in {tool.name for tool in _available_tools(fresh_context, self.tool_registry)}
-        ):
-            raise NativeToolAccessDenied("native tool call is not authorized")
+        arguments, fresh_context = await _validated_context_arguments(
+            call,
+            context,
+            self.tool_registry,
+            tool_spec.arguments_type,
+            self.scope_resolver,
+        )
+        if trusted_period is None:
+            return (
+                _failed_tool_result(
+                    call,
+                    fresh_context,
+                    arguments,
+                    self.now(),
+                    tool_spec=tool_spec,
+                    category="period_confirmation_required",
+                    message=EXACT_MONTH_CLARIFICATION,
+                ),
+                None,
+                None,
+            )
         if arguments.year != trusted_period.year or arguments.month != trusted_period.month:
             return (
                 _failed_tool_result(
@@ -663,6 +1031,7 @@ class NativeToolAgentService:
                     message="工具期间与用户确认的自然月不一致",
                 ),
                 None,
+                None,
             )
         start = date(arguments.year, arguments.month, 1)
         end = date(
@@ -670,8 +1039,8 @@ class NativeToolAgentService:
             arguments.month,
             monthrange(arguments.year, arguments.month)[1],
         )
-        if tool_spec.collection == "external":
-            if self.external_evidence_collector is None or tool_spec.external_evidence_type is None:
+        if tool_spec.external_evidence_type is not None:
+            if self.external_evidence_collector is None:
                 return (
                     _failed_tool_result(
                         call,
@@ -682,6 +1051,7 @@ class NativeToolAgentService:
                         category="external_provider_unavailable",
                         message="外部证据供应方暂时不可用",
                     ),
+                    None,
                     None,
                 )
             external_evidence = await self.external_evidence_collector.collect(
@@ -701,18 +1071,18 @@ class NativeToolAgentService:
                     evidence=envelope,
                 ),
                 external_evidence if external_evidence.status == "ok" else None,
+                None,
             )
-        request: dict[str, Any] = {
-            "kind": tool_spec.collection,
-            "period": {
+        request: dict[str, Any] = {"kind": tool_spec.request_kind}
+        if tool_spec.include_period:
+            request["period"] = {
                 "kind": "calendar_month",
                 "year": arguments.year,
                 "month": arguments.month,
-            },
-        }
-        if tool_spec.metric is not None:
+            }
+        if tool_spec.request_kind == "business_metrics" and tool_spec.metric is not None:
             request["metric"] = tool_spec.metric
-        for field in ("group_by", "filters", "extreme", "status", "company_name"):
+        for field in ("group_by", "filters", "extreme", "status", "company_name", "dates"):
             value = getattr(arguments, field, None)
             if value is not None:
                 request[field] = value
@@ -721,7 +1091,7 @@ class NativeToolAgentService:
         except ValidationError as error:
             raise NativeToolAccessDenied("native tool call is not authorized") from error
         try:
-            collected_evidence = await self.evidence_collector.collect(plan, fresh_context)
+            evidence = await self.evidence_collector.collect(plan, fresh_context)
         except NativeToolAccessDenied:
             raise
         except Exception:
@@ -734,9 +1104,10 @@ class NativeToolAgentService:
                     tool_spec=tool_spec,
                 ),
                 None,
+                None,
             )
         if not _evidence_matches_tool(
-            collected_evidence,
+            evidence,
             tool_spec,
             arguments,
             store_id=fresh_context.store_id,
@@ -750,23 +1121,100 @@ class NativeToolAgentService:
                     tool_spec=tool_spec,
                 ),
                 None,
+                None,
             )
-        assert isinstance(
-            collected_evidence,
-            (EvidenceBundle, SettlementDetailsEvidenceBundle),
-        )
-        envelope = _native_envelope(
-            collected_evidence,
-            tool_spec=tool_spec,
-            queried_at=self.now(),
-        )
+        assert isinstance(evidence, (EvidenceBundle, SettlementDetailsEvidenceBundle))
+        envelope = _native_envelope(evidence, tool_spec=tool_spec, queried_at=self.now())
         return (
             NativeToolResult(
                 call_id=call.id,
                 name=call.name,
                 evidence=envelope,
             ),
-            collected_evidence,
+            evidence,
+            None,
+        )
+
+    async def _search_system_knowledge(
+        self,
+        call: NativeToolCall,
+        context: RuntimeContext,
+        recent_messages: Sequence[ModelMessage],
+    ) -> tuple[NativeToolResult, None, None]:
+        arguments, _ = await _validated_context_arguments(
+            call,
+            context,
+            self.tool_registry,
+            SearchSystemKnowledgeArguments,
+            self.scope_resolver,
+        )
+        assert isinstance(arguments, SearchSystemKnowledgeArguments)
+        user_question = next(
+            (message.content for message in reversed(recent_messages) if message.role == "user"),
+            "",
+        )
+        matches = (
+            search_system_knowledge(user_question) if is_system_help_request(user_question) else []
+        )
+        facts = {
+            "matches": [
+                {
+                    "id": entry.id,
+                    "title": entry.title,
+                    "content": entry.content,
+                    "source_kind": "approved_system_knowledge",
+                }
+                for entry in matches
+            ]
+        }
+        return (
+            _context_tool_result(
+                call,
+                context,
+                facts=facts,
+                source="system_knowledge",
+                queried_at=self.now(),
+            ),
+            None,
+            None,
+        )
+
+    async def _open_business_records(
+        self,
+        call: NativeToolCall,
+        context: RuntimeContext,
+    ) -> tuple[NativeToolResult, None, OpenBusinessRecordsAction]:
+        arguments, _ = await _validated_context_arguments(
+            call,
+            context,
+            self.tool_registry,
+            OpenBusinessRecordsArguments,
+            self.scope_resolver,
+        )
+        assert isinstance(arguments, OpenBusinessRecordsArguments)
+        try:
+            action = OpenBusinessRecordsAction.model_validate(
+                {
+                    "type": "open_business_records",
+                    "start_month": arguments.start_month,
+                    "end_month": arguments.end_month,
+                }
+            )
+        except ValidationError as error:
+            raise NativeToolAccessDenied("native tool call is not authorized") from error
+        current_month = self.now().astimezone(ZoneInfo(context.store_timezone)).strftime("%Y-%m")
+        if action.end_month > current_month:
+            raise NativeToolAccessDenied("native tool call is not authorized")
+        return (
+            _context_tool_result(
+                call,
+                context,
+                facts={"action": action.model_dump(mode="json")},
+                source="navigation_registry",
+                queried_at=self.now(),
+            ),
+            None,
+            action,
         )
 
 
@@ -778,6 +1226,73 @@ def _available_tools(
         registration.definition
         for registration in registrations
         if registration.is_available(context)
+    )
+
+
+ContextArguments = TypeVar("ContextArguments", bound=BaseModel)
+
+
+async def _validated_context_arguments(
+    call: NativeToolCall,
+    context: RuntimeContext,
+    registrations: Sequence[NativeToolRegistration],
+    arguments_type: type[ContextArguments],
+    scope_resolver: NativeToolScopeResolver,
+) -> tuple[ContextArguments, RuntimeContext]:
+    if call.name not in {tool.name for tool in _available_tools(context, registrations)}:
+        raise NativeToolAccessDenied("native tool call is not authorized")
+    try:
+        arguments = arguments_type.model_validate(call.arguments)
+    except ValidationError as error:
+        raise NativeToolAccessDenied("native tool call is not authorized") from error
+    fresh_context = await scope_resolver.refresh(context)
+    if (
+        fresh_context.user_id != context.user_id
+        or fresh_context.store_id != context.store_id
+        or call.name not in {tool.name for tool in _available_tools(fresh_context, registrations)}
+    ):
+        raise NativeToolAccessDenied("native tool call is not authorized")
+    return arguments, fresh_context
+
+
+def _context_tool_result(
+    call: NativeToolCall,
+    context: RuntimeContext,
+    *,
+    facts: dict[str, Any],
+    source: Literal["system_knowledge", "navigation_registry"],
+    queried_at: datetime,
+) -> NativeToolResult:
+    local_date = queried_at.astimezone(ZoneInfo(context.store_timezone)).date()
+    digest = hashlib.sha256(
+        json.dumps(
+            {
+                "scope": context.store_id,
+                "source": source,
+                "facts": facts,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    return NativeToolResult(
+        call_id=call.id,
+        name=call.name,
+        evidence=NativeEvidenceEnvelope(
+            reference=f"ev_{digest[:24]}",
+            facts=facts,
+            scope=CurrentStoreScope(id=context.store_id),
+            period=EvidencePeriodResult(start=local_date, end=local_date),
+            unit="unknown",
+            source=[source],
+            queried_at=queried_at,
+            data_version=f"sha256:{digest}",
+            coverage=EvidenceCoverage(calendar_dates=1, recorded_dates=0),
+            limitations=[],
+            truncated=False,
+            failure=NativeEvidenceFailure(status="none"),
+        ),
     )
 
 
@@ -799,6 +1314,7 @@ def _native_envelope(
         group_by = evidence.group_by
         filters = evidence.filters
         extreme = evidence.extreme
+        selected_dates = evidence.selected_dates
         completeness = evidence.completeness
         settlement_query_scope = None
         version_payload["coverage"] = coverage.model_dump(mode="json")
@@ -810,6 +1326,7 @@ def _native_envelope(
         group_by = None
         filters = None
         extreme = None
+        selected_dates = None
         completeness = None
         settlement_query_scope = evidence.query_scope
         version_payload["settlement_query_scope"] = settlement_query_scope.model_dump(mode="json")
@@ -819,6 +1336,10 @@ def _native_envelope(
         version_payload["filters"] = filters.model_dump(mode="json")
     if extreme is not None:
         version_payload["extreme"] = extreme
+    if selected_dates is not None:
+        version_payload["selected_dates"] = [
+            selected_date.isoformat() for selected_date in selected_dates
+        ]
     if completeness is not None:
         version_payload["completeness"] = completeness.model_dump(mode="json")
     digest = hashlib.sha256(
@@ -841,6 +1362,7 @@ def _native_envelope(
         group_by=group_by,
         filters=filters,
         extreme=extreme,
+        selected_dates=selected_dates,
         settlement_query_scope=settlement_query_scope,
         unit=tool_spec.unit,
         source=list(tool_spec.sources),
@@ -895,6 +1417,57 @@ def _native_external_envelope(
     )
 
 
+def _calculation_envelope(
+    calculation: EvidenceCalculationResult,
+    *,
+    request: EvidenceCalculationRequest,
+    context: RuntimeContext,
+    period: EvidencePeriodResult,
+    available_evidence: dict[str, EvidenceCalculationInput],
+    calculated_at: datetime,
+) -> NativeCalculationEnvelope:
+    input_data_versions = [
+        available_evidence[reference].data_version
+        for reference in request.evidence_references
+        if reference in available_evidence
+    ]
+    version_payload = {
+        "scope": context.store_id,
+        "period": period.model_dump(mode="json"),
+        "operation": request.operation,
+        "input_evidence_references": request.evidence_references,
+        "input_data_versions": input_data_versions,
+        "formula": calculation.formula,
+        "exact_result": (
+            str(calculation.exact_result) if calculation.exact_result is not None else None
+        ),
+        "unit": calculation.unit,
+        "cannot_calculate_reason": calculation.cannot_calculate_reason,
+    }
+    digest = hashlib.sha256(
+        json.dumps(version_payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    failed = calculation.cannot_calculate_reason is not None
+    return NativeCalculationEnvelope(
+        reference=f"ev_{digest[:24]}",
+        formula=calculation.formula,
+        input_evidence_references=request.evidence_references,
+        input_data_versions=input_data_versions,
+        exact_result=calculation.exact_result,
+        unit=calculation.unit,
+        cannot_calculate_reason=calculation.cannot_calculate_reason,
+        scope=CurrentStoreScope(id=context.store_id),
+        period=period,
+        calculated_at=calculated_at,
+        data_version=f"sha256:{digest}",
+        failure=NativeEvidenceFailure(
+            status="failed" if failed else "none",
+            category="evidence_calculation_unavailable" if failed else None,
+            message=calculation.cannot_calculate_reason if failed else None,
+        ),
+    )
+
+
 def _failed_tool_result(
     call: NativeToolCall,
     context: RuntimeContext,
@@ -921,6 +1494,7 @@ def _failed_tool_result(
             group_by=None,
             filters=None,
             extreme=None,
+            selected_dates=None,
             settlement_query_scope=None,
             unit=tool_spec.unit if tool_spec is not None else "unknown",
             source=list(tool_spec.sources) if tool_spec is not None else [],
@@ -960,6 +1534,11 @@ def _hypothesis_reference_error(
             return "分析假设包含未知证据引用。请只引用本轮已返回的证据后继续或结束。"
         if hypothesis.status in {"supported", "refuted"} and references - successful_references:
             return "分析假设只有在成功证据支持时才能标记为支持或否定；请修正后继续或结束。"
+        if hypothesis.status in {"supported", "refuted"}:
+            return (
+                "后端目前只能验证经营事实，不能验证证据与分析假设之间的语义关系；"
+                "请把假设保持为待验证或无法确认。"
+            )
     return None
 
 
@@ -968,22 +1547,43 @@ def _agent_result(
     collected: Sequence[NativeCollectedEvidence],
     *,
     content: str,
+    evidence_references: Sequence[ConversationEvidenceReference] | None = None,
+    hypotheses: Sequence[ConversationAnalysisHypothesis] | None = None,
+    pending_directions: Sequence[str] | None = None,
+    action: OpenBusinessRecordsAction | None = None,
 ) -> AgentRunResult:
+    resolved_evidence_references = (
+        state.evidence_references if evidence_references is None else evidence_references
+    )
+    resolved_hypotheses = state.analysis_hypotheses if hypotheses is None else hypotheses
+    resolved_pending_directions = (
+        state.pending_directions if pending_directions is None else pending_directions
+    )
     if not collected:
         return AgentRunResult(
-            turn=TurnResult(route="answer", content=content),
-            state=state,
+            turn=TurnResult(route="answer", content=content, action=action),
+            state=state.model_copy(
+                update={
+                    "analysis_hypotheses": list(resolved_hypotheses),
+                    "pending_directions": list(resolved_pending_directions),
+                }
+            ),
         )
     last_evidence = collected[-1]
     metric_labels = list(dict.fromkeys(_evidence_label(evidence) for evidence in collected))
+    confirmed_objects = list(dict.fromkeys([*state.confirmed_objects, *metric_labels]))
     return AgentRunResult(
-        turn=TurnResult(route="answer", content=content),
+        turn=TurnResult(route="answer", content=content, action=action),
         state=state.model_copy(
             update={
                 "confirmed_period": ConfirmedPeriod(
                     start=last_evidence.period.start,
                     end=last_evidence.period.end,
                 ),
+                "confirmed_objects": confirmed_objects,
+                "evidence_references": list(resolved_evidence_references),
+                "analysis_hypotheses": list(resolved_hypotheses),
+                "pending_directions": list(resolved_pending_directions),
                 "metrics": metric_labels,
                 "pending_clarifications": [],
             }
@@ -1001,6 +1601,16 @@ def _evidence_matches_tool(
 ) -> bool:
     if not isinstance(evidence, (EvidenceBundle, SettlementDetailsEvidenceBundle)):
         return False
+    if isinstance(arguments, DailyLedgerDetailsArguments):
+        return bool(
+            isinstance(evidence, EvidenceBundle)
+            and evidence.current_store.id == store_id
+            and evidence.metric == EvidenceMetric.DAILY_LEDGER
+            and isinstance(evidence.result, tool_spec.result_types)
+            and evidence.selected_dates == sorted(arguments.dates)
+            and evidence.period.start == min(arguments.dates)
+            and evidence.period.end == max(arguments.dates)
+        )
     if (
         evidence.current_store.id != store_id
         or evidence.period.start.day != 1
@@ -1060,15 +1670,143 @@ def _evidence_label(evidence: NativeCollectedEvidence) -> str:
 
 def _explicit_calendar_month(
     messages: Sequence[ModelMessage],
+    state: ConversationState,
 ) -> MonthlyTotalRevenueArguments | None:
     user_message = next(
         (message.content for message in reversed(messages) if message.role == "user"),
         "",
     )
     match = EXPLICIT_CALENDAR_MONTH.search(user_message)
+    if (
+        match is None
+        and re.fullmatch(r"\s*(?:确认|是|对|可以|继续|没错|好的|好)\s*[。.!！]?\s*", user_message)
+        and state.pending_clarifications
+    ):
+        match = next(
+            (
+                candidate
+                for clarification in reversed(state.pending_clarifications)
+                if (candidate := EXPLICIT_CALENDAR_MONTH.search(clarification)) is not None
+            ),
+            None,
+        )
     if match is None:
         return None
     return MonthlyTotalRevenueArguments(
         year=int(match.group("year")),
         month=int(match.group("month")),
+    )
+
+
+def _period_confirmation_prompt(arguments: MonthlyTotalRevenueArguments) -> str:
+    start = date(arguments.year, arguments.month, 1)
+    end = date(
+        arguments.year,
+        arguments.month,
+        monthrange(arguments.year, arguments.month)[1],
+    )
+    return (
+        f"我推定查询期间为 {arguments.year} 年 {arguments.month} 月"
+        f"（{start.isoformat()} 至 {end.isoformat()}）。请确认是否按此期间继续。"
+    )
+
+
+_NAVIGATION_INTENT = re.compile(r"打开|带我去|跳转|查看")
+
+
+def _navigation_action_is_authorized(
+    messages: Sequence[ModelMessage],
+    action: OpenBusinessRecordsAction,
+) -> bool:
+    user_message = next(
+        (message.content for message in reversed(messages) if message.role == "user"),
+        "",
+    )
+    return bool(
+        _NAVIGATION_INTENT.search(user_message)
+        and _month_is_visible(user_message, action.start_month)
+        and _month_is_visible(user_message, action.end_month)
+    )
+
+
+def _month_is_visible(message: str, month: str) -> bool:
+    year, month_number = month.split("-")
+    return bool(
+        month in message
+        or re.search(
+            rf"{re.escape(year)}\s*年\s*0?{int(month_number)}\s*月",
+            message,
+        )
+        or (year in message and re.search(rf"(?<!\d)0?{int(month_number)}\s*月", message))
+    )
+
+
+def _navigation_confirmation(action: OpenBusinessRecordsAction) -> str:
+    return f"已准备打开 {action.start_month} 至 {action.end_month} 的营业记录筛选视图。"
+
+
+def _approved_knowledge_answer(
+    contextual_results: Sequence[NativeToolResult],
+) -> str | None:
+    matches = [
+        match
+        for result in contextual_results
+        if isinstance(result.evidence, NativeEvidenceEnvelope)
+        and result.evidence.source == ["system_knowledge"]
+        for match in result.evidence.facts.get("matches", [])
+        if isinstance(match, dict)
+        and isinstance(match.get("title"), str)
+        and isinstance(match.get("content"), str)
+    ]
+    if not matches:
+        return None
+    contents = list(
+        dict.fromkeys(match["content"] for match in matches if isinstance(match["content"], str))
+    )
+    return "\n".join(contents)
+
+
+def _trusted_period(
+    state: ConversationState,
+    messages: Sequence[ModelMessage],
+) -> MonthlyTotalRevenueArguments | None:
+    explicit = _explicit_calendar_month(messages, state)
+    if explicit is not None:
+        return explicit
+    period = state.confirmed_period
+    if (
+        period is None
+        or period.start.day != 1
+        or (period.start.year, period.start.month) != (period.end.year, period.end.month)
+    ):
+        return None
+    return MonthlyTotalRevenueArguments(year=period.start.year, month=period.start.month)
+
+
+def _investigation_context_message(state: ConversationState) -> ModelMessage:
+    context = {
+        "investigation_goal": state.investigation_goal,
+        "confirmed_period": (
+            state.confirmed_period.model_dump(mode="json")
+            if state.confirmed_period is not None
+            else None
+        ),
+        "confirmed_objects": state.confirmed_objects,
+        "analysis_hypotheses": [
+            hypothesis.model_dump(mode="json") for hypothesis in state.analysis_hypotheses
+        ],
+        "pending_directions": state.pending_directions,
+        "historical_evidence_references": [
+            reference.model_dump(mode="json") for reference in state.evidence_references
+        ],
+    }
+    return ModelMessage(
+        role=MessageRole.SYSTEM,
+        content=(
+            "Current investigation context (trusted server state):\n"
+            f"{json.dumps(context, ensure_ascii=False)}\n"
+            "Historical evidence references are reference-only and are not current facts. "
+            "Any business fact needed for this turn must be reacquired through an available "
+            "business tool. Never infer or change user identity or store scope from this context."
+        ),
     )

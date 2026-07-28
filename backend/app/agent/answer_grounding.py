@@ -5,7 +5,7 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 import re
-from typing import Literal
+from typing import Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -30,7 +30,29 @@ _MONEY = re.compile(
     re.IGNORECASE,
 )
 _DAY_COUNT = re.compile(r"(?<![\d.])(-?\d+(?:[.,]\d+)?)\s*(?:个)?(?:经营)?日(?!期)")
+_CAR_COUNT = re.compile(r"(?<![\d.])(-?\d+(?:[.,]\d+)?)\s*(?:辆|车次)")
+_EUR_PER_CAR = re.compile(
+    r"(?<![\d.])(-?\d+(?:[.,]\d+)?)\s*(?:欧元\s*(?:/|每)\s*(?:车|辆)|EUR/car)",
+    re.IGNORECASE,
+)
+_EUR_PER_OPERATING_DAY = re.compile(
+    r"(?<![\d.])(-?\d+(?:[.,]\d+)?)\s*(?:欧元\s*(?:/|每)\s*经营日|EUR/operating_day)",
+    re.IGNORECASE,
+)
+_RATIO = re.compile(r"(?<![\d.])(-?\d+(?:[.,]\d+)?)\s*倍")
 _PERCENTAGE = re.compile(r"(?<![\d.])(-?\d+(?:[.,]\d+)?)\s*(?:%|％|百分比)")
+_EXACT_UNIT_PATTERNS = {
+    "EUR": _MONEY,
+    "day": _DAY_COUNT,
+    "car": _CAR_COUNT,
+    "EUR/car": _EUR_PER_CAR,
+    "EUR/operating_day": _EUR_PER_OPERATING_DAY,
+    "ratio": _RATIO,
+}
+_DERIVED_EXACT_UNIT_PATTERNS = {
+    unit: pattern for unit, pattern in _EXACT_UNIT_PATTERNS.items() if unit not in {"EUR", "day"}
+}
+_DERIVED_MONEY_PATTERNS = (_EUR_PER_CAR, _EUR_PER_OPERATING_DAY)
 _CROSS_SCOPE = re.compile(r"另一个门店|其他门店|其它门店|全部门店|所有门店")
 _UNSUPPORTED_METRIC = re.compile(r"利润|毛利|净利|客单价")
 _PHENOMENON = re.compile(r"天气|暴雨|降雨|下雨|降雪|高温|低温|事件|公共假期|节假日|假期|促销")
@@ -67,13 +89,41 @@ class SettlementClaimMetric(StrEnum):
     PENDING_AMOUNT = "pending_settlement_amount"
 
 
+class EvidenceCalculationClaimMetric(StrEnum):
+    EVIDENCE_CALCULATION = "evidence_calculation"
+
+
 class ExternalClaimMetric(StrEnum):
     HISTORICAL_WEATHER = "historical_weather"
     PUBLIC_HOLIDAYS = "public_holidays"
 
 
-ClaimMetric = EvidenceMetric | SettlementClaimMetric | ExternalClaimMetric
-GroundedEvidence = EvidenceBundle | SettlementDetailsEvidenceBundle | ExternalEvidenceBundle
+ClaimMetric = (
+    EvidenceMetric | SettlementClaimMetric | EvidenceCalculationClaimMetric | ExternalClaimMetric
+)
+
+
+@runtime_checkable
+class EvidenceCalculationGrounding(Protocol):
+    @property
+    def period(self) -> EvidencePeriodResult: ...
+
+    @property
+    def exact_result(self) -> Decimal | None: ...
+
+    @property
+    def unit(self) -> str | None: ...
+
+    @property
+    def cannot_calculate_reason(self) -> str | None: ...
+
+
+GroundedEvidence = (
+    EvidenceBundle
+    | SettlementDetailsEvidenceBundle
+    | EvidenceCalculationGrounding
+    | ExternalEvidenceBundle
+)
 _METRIC_FIELDS = {
     "月度总收入": "monthly_total_revenue",
     "总收入": "monthly_total_revenue",
@@ -84,6 +134,8 @@ _METRIC_FIELDS = {
     "待到账公司结算金额": "pending_settlement_amount",
     "待到账金额": "pending_settlement_amount",
     "经营日": "operating_days",
+    "证据计算结果": "evidence_calculation",
+    "计算结果": "evidence_calculation",
     "历史天气": "historical_weather",
     "公共假期": "public_holidays",
     "假期": "public_holidays",
@@ -108,6 +160,7 @@ class NativeAnswerClaim(BaseModel):
             "car",
             "EUR/car",
             "EUR/operating_day",
+            "ratio",
             "percent",
             "external_fact",
         ]
@@ -189,6 +242,17 @@ def answer_is_grounded(
     return True
 
 
+def answer_contains_operating_claim(answer: str) -> bool:
+    """Identify prose that requires business evidence without routing user intent."""
+
+    return _contains_business_fact(answer) or any(
+        _OPERATING_SUBJECT.search(clause)
+        or _OPERATING_JUDGMENT.search(clause)
+        or _contains_phenomenon(clause)
+        for clause in _clauses(answer)
+    )
+
+
 def _answer_without_evidence_is_safe(
     answer: str,
     claims: Sequence[NativeAnswerClaim],
@@ -254,7 +318,7 @@ def _claims_are_grounded(
             return False
         if not any(
             bundle is not None
-            and bundle.period == claim.period
+            and _claim_period_is_supported(claim, bundle)
             and _claim_value_is_supported(claim, bundle)
             and _claim_literals_match_metadata(claim)
             for bundle in referenced
@@ -276,6 +340,14 @@ def _claim_value_is_supported(
         ):
             return False
         return _external_fact_is_supported(claim, bundle)
+    if isinstance(bundle, EvidenceCalculationGrounding):
+        return bool(
+            claim.metric == EvidenceCalculationClaimMetric.EVIDENCE_CALCULATION
+            and bundle.cannot_calculate_reason is None
+            and bundle.exact_result is not None
+            and claim.value == bundle.exact_result
+            and claim.unit == bundle.unit
+        )
     if isinstance(bundle, SettlementDetailsEvidenceBundle):
         if claim.unit != "EUR" or claim.metric is None:
             return False
@@ -284,6 +356,11 @@ def _claim_value_is_supported(
         if claim.metric == EvidenceMetric.CONFIRMED_SETTLEMENT_INCOME:
             return _settlement_claim_value_is_supported(claim, bundle, status="confirmed")
         return False
+    if (
+        bundle.metric == EvidenceMetric.DAILY_LEDGER
+        and claim.metric == EvidenceMetric.DAILY_LEDGER_REVENUE
+    ):
+        return _daily_ledger_revenue_claim_is_supported(claim, bundle)
     if bundle.metric != claim.metric:
         return False
     if claim.unit == "percent":
@@ -301,6 +378,45 @@ def _claim_value_is_supported(
             bundle.result.model_dump(mode="python"),
             _metric_value(claim.metric),
         )
+    )
+
+
+def _claim_period_is_supported(
+    claim: NativeAnswerClaim,
+    bundle: GroundedEvidence,
+) -> bool:
+    if claim.period is None:
+        return False
+    if bundle.period == claim.period:
+        return True
+    return bool(
+        isinstance(bundle, EvidenceBundle)
+        and bundle.metric == EvidenceMetric.DAILY_LEDGER
+        and claim.period.start == claim.period.end
+        and bundle.selected_dates is not None
+        and claim.period.start in bundle.selected_dates
+    )
+
+
+def _daily_ledger_revenue_claim_is_supported(
+    claim: NativeAnswerClaim,
+    bundle: EvidenceBundle,
+) -> bool:
+    if (
+        claim.unit != "EUR"
+        or claim.period is None
+        or claim.period.start != claim.period.end
+        or claim.value is None
+    ):
+        return False
+    result = bundle.result.model_dump(mode="python")
+    candidates = result.get("records", [result])
+    return any(
+        isinstance(candidate, dict)
+        and isinstance(candidate.get("facts"), dict)
+        and candidate["facts"].get("date") == claim.period.start
+        and Decimal(candidate["facts"].get("daily_revenue")) == claim.value
+        for candidate in candidates
     )
 
 
@@ -348,7 +464,7 @@ def _claim_literals_match_metadata(claim: NativeAnswerClaim) -> bool:
     )
     if not metric_is_visible:
         return False
-    if claim.unit in {"EUR", "day"} and not _has_exact_value_relation(claim):
+    if claim.unit != "percent" and not _has_exact_value_relation(claim):
         return False
     if claim.unit == "percent" and not _has_percentage_change_relation(claim):
         return False
@@ -373,11 +489,20 @@ def _claim_literals_match_metadata(claim: NativeAnswerClaim) -> bool:
         or percentage_values
     ):
         return False
+    derived_pattern = _DERIVED_EXACT_UNIT_PATTERNS.get(claim.unit or "")
+    if derived_pattern is not None:
+        visible_values = [
+            _decimal(match.group(1)) for match in derived_pattern.finditer(claim.statement)
+        ]
+        if not visible_values or any(value != claim.value for value in visible_values):
+            return False
     return True
 
 
 def _has_exact_value_relation(claim: NativeAnswerClaim) -> bool:
-    value_pattern = _MONEY if claim.unit == "EUR" else _DAY_COUNT
+    value_pattern = _EXACT_UNIT_PATTERNS.get(claim.unit or "")
+    if value_pattern is None:
+        return False
     return _has_metric_value_relation(claim, value_pattern, _EXACT_VALUE_CONNECTOR)
 
 
@@ -441,8 +566,7 @@ def _key_literals_are_claimed(
             _CHINESE_DATE,
             _CHINESE_MONTH,
             _CHINESE_MONTH_WITHOUT_YEAR,
-            _MONEY,
-            _DAY_COUNT,
+            *_EXACT_UNIT_PATTERNS.values(),
             _PERCENTAGE,
         )
         for match in pattern.finditer(answer)
@@ -471,8 +595,7 @@ def _operating_statements_are_claimed(
 
 def _contains_business_fact(answer: str) -> bool:
     return bool(
-        _MONEY.search(answer)
-        or _DAY_COUNT.search(answer)
+        any(pattern.search(answer) for pattern in _EXACT_UNIT_PATTERNS.values())
         or _PERCENTAGE.search(answer)
         or _UNSUPPORTED_METRIC.search(answer)
         or _CROSS_SCOPE.search(answer)
@@ -517,10 +640,21 @@ def _dates_are_supported(answer: str, evidence: Sequence[GroundedEvidence]) -> b
 def _quantities_are_supported(answer: str, evidence: Sequence[GroundedEvidence]) -> bool:
     facts_by_unit: dict[str, set[Decimal]] = {}
     for bundle in evidence:
+        if isinstance(bundle, EvidenceCalculationGrounding):
+            if bundle.unit is not None and bundle.exact_result is not None:
+                facts_by_unit.setdefault(bundle.unit, set()).add(bundle.exact_result)
+            continue
         facts_by_unit.setdefault(bundle.unit, set()).update(_numeric_values(bundle.result))
 
     for clause in _clauses(answer):
+        derived_unit_spans = [
+            match.span()
+            for pattern in _DERIVED_MONEY_PATTERNS
+            for match in pattern.finditer(clause)
+        ]
         for match in _MONEY.finditer(clause):
+            if any(_overlaps(match.span(), span) for span in derived_unit_spans):
+                continue
             value = _decimal(match.group(1))
             currency = match.group(2).casefold()
             if value is None or currency not in {"欧元", "eur", "€"}:
@@ -533,6 +667,11 @@ def _quantities_are_supported(answer: str, evidence: Sequence[GroundedEvidence])
             )
             if value not in supported_values:
                 return False
+        for unit, pattern in _DERIVED_EXACT_UNIT_PATTERNS.items():
+            for match in pattern.finditer(clause):
+                value = _decimal(match.group(1))
+                if value is None or value not in facts_by_unit.get(unit, set()):
+                    return False
     calendar_date_spans = [
         match.span() for pattern in (_ISO_DATE, _CHINESE_DATE) for match in pattern.finditer(answer)
     ]
@@ -544,6 +683,10 @@ def _quantities_are_supported(answer: str, evidence: Sequence[GroundedEvidence])
             return False
     supported_percentages: set[Decimal] = set()
     for bundle in evidence:
+        if isinstance(bundle, EvidenceCalculationGrounding):
+            if bundle.unit == "percent" and bundle.exact_result is not None:
+                supported_percentages.add(abs(bundle.exact_result))
+            continue
         comparison = getattr(bundle, "comparison", None)
         if (
             comparison is not None
@@ -578,11 +721,16 @@ def _values_for_field(
 ) -> set[Decimal]:
     values: set[Decimal] = set()
     for bundle in evidence:
-        result = (
-            bundle.result.model_dump(mode="python")
-            if hasattr(bundle.result, "model_dump")
-            else bundle.result
-        )
+        if isinstance(bundle, EvidenceCalculationGrounding):
+            if (
+                field == EvidenceCalculationClaimMetric.EVIDENCE_CALCULATION
+                and bundle.exact_result is not None
+            ):
+                values.add(bundle.exact_result)
+            continue
+        if isinstance(bundle, ExternalEvidenceBundle):
+            continue
+        result = bundle.result.model_dump(mode="python")
         if isinstance(bundle, SettlementDetailsEvidenceBundle):
             if field == SettlementClaimMetric.PENDING_AMOUNT:
                 values.update(_settlement_amounts(result, status="pending"))
@@ -590,6 +738,12 @@ def _values_for_field(
             if field == EvidenceMetric.CONFIRMED_SETTLEMENT_INCOME:
                 values.update(_settlement_amounts(result, status="confirmed"))
                 continue
+        elif (
+            bundle.metric == EvidenceMetric.DAILY_LEDGER
+            and field == EvidenceMetric.DAILY_LEDGER_REVENUE
+        ):
+            values.update(_field_values(result, "daily_revenue"))
+            continue
         values.update(_field_values(result, field))
     return values
 

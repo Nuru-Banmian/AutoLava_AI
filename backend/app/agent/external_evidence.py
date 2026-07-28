@@ -26,7 +26,7 @@ MAX_EXTERNAL_RESPONSE_BYTES = 256_000
 MAX_EXTERNAL_ROWS = 366
 
 
-def country_code_for_timezone(timezone_name: str) -> str | None:
+def country_code_for_timezone(timezone_name: str) -> Literal["IT"] | None:
     """Return a backend-approved country scope without trusting model input."""
 
     return "IT" if timezone_name == "Europe/Rome" else None
