@@ -4,7 +4,7 @@ from datetime import date, datetime, timezone
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.business_evidence import BusinessEvidenceCollector
@@ -79,6 +79,110 @@ class GroundedMonthlyRevenueModel:
         )
 
 
+class PeriodConfirmationModel:
+    def __init__(
+        self,
+        *,
+        current_period: tuple[str, str] = ("2026-07-01", "2026-07-26"),
+    ) -> None:
+        self.calls: list[NativeModelCall] = []
+        self.current_period = current_period
+        self.tool_arguments: list[dict[str, object]] = []
+
+    async def next_turn(self, items, *, tools) -> NativeModelTurn:
+        del tools
+        self.calls.append(NativeModelCall(items=list(items), tools=[]))
+        tool_result = next(
+            (item.tool_result for item in reversed(items) if item.tool_result is not None),
+            None,
+        )
+        if tool_result is None:
+            user_message = next(
+                item.message.content
+                for item in reversed(items)
+                if item.message is not None and item.message.role == "user"
+            )
+            if "6 月 10 日" in user_message:
+                arguments = {
+                    "start": "2026-06-10",
+                    "end": "2026-06-20",
+                }
+            elif "2026-07-03" in user_message:
+                arguments = {
+                    "start": "2026-07-03",
+                    "end": "2026-07-03",
+                }
+            elif "最近" not in user_message and "6 月" not in user_message:
+                arguments = {
+                    "start": self.current_period[0],
+                    "end": self.current_period[1],
+                }
+            else:
+                arguments = {
+                    "year": 2026,
+                    "month": 6 if "6 月" in user_message else 7,
+                }
+            self.tool_arguments.append(arguments)
+            return NativeModelTurn.model_validate(
+                {
+                    "message": {"role": "assistant", "content": "查询月度总收入。"},
+                    "tool_calls": [
+                        {
+                            "id": f"period-{len(self.calls)}",
+                            "name": "monthly_total_revenue",
+                            "arguments": arguments,
+                        }
+                    ],
+                    "usage": {},
+                    "signal": "continue",
+                }
+            )
+        if tool_result.evidence.failure.status == "failed":
+            return NativeModelTurn.model_validate(
+                {
+                    "message": {"role": "assistant", "content": "等待用户确认期间。"},
+                    "usage": {},
+                    "signal": "end",
+                }
+            )
+        revenue = tool_result.evidence.facts["monthly_total_revenue"]
+        period = tool_result.evidence.period
+        statement = f"{period.start.year} 年 {period.start.month} 月月度总收入为 {revenue} 欧元"
+        return NativeModelTurn.model_validate(
+            {
+                "message": {"role": "assistant", "content": f"{statement}。"},
+                "answer_claims": [
+                    {
+                        "statement": statement,
+                        "status": "verified_fact",
+                        "metric": "monthly_total_revenue",
+                        "period": period.model_dump(mode="json"),
+                        "value": revenue,
+                        "unit": "EUR",
+                        "evidence_references": [tool_result.evidence.reference],
+                    }
+                ],
+                "usage": {},
+                "signal": "end",
+            }
+        )
+
+
+class EndingVaguePeriodModel:
+    def __init__(self) -> None:
+        self.calls: list[NativeModelCall] = []
+
+    async def next_turn(self, items, *, tools) -> NativeModelTurn:
+        self.calls.append(NativeModelCall(items=list(items), tools=list(tools)))
+        return NativeModelTurn.model_validate(
+            {
+                "message": {"role": "assistant", "content": "请提供更具体的问题。"},
+                "usage": {},
+                "signal": "end",
+            }
+        )
+
+
 class PersistentInvestigationModel:
     def __init__(self) -> None:
         self.calls: list[NativeModelCall] = []
@@ -97,13 +201,18 @@ class PersistentInvestigationModel:
                 if "每日台账营业额" in user_message
                 else "monthly_total_revenue"
             )
+            arguments = (
+                {"year": 2026, "month": 7}
+                if "2026 年 7 月" in user_message
+                else {"start": "2026-07-01", "end": "2026-07-26"}
+            )
             payload = {
                 "message": {"role": "assistant", "content": "重新查询经营事实。"},
                 "tool_calls": [
                     {
                         "id": f"call-evidence-{len(self.calls)}",
                         "name": tool_name,
-                        "arguments": {"year": 2026, "month": 7},
+                        "arguments": arguments,
                     }
                 ],
                 "usage": {},
@@ -852,6 +961,8 @@ async def test_native_settlement_tool_returns_only_the_current_store_invoice_mon
     assert set(settlement_tool.input_schema["properties"]) == {
         "year",
         "month",
+        "start",
+        "end",
         "status",
         "company_name",
     }
@@ -987,6 +1098,269 @@ async def test_current_investigation_restores_context_and_reacquires_changed_evi
         "月度总收入",
         "每日台账营业额",
     ]
+
+
+@pytest.mark.parametrize(
+    ("reply", "expected_period"),
+    [
+        ("好的，就按这个期间继续", {"start": "2026-07-01", "end": "2026-07-26"}),
+        ("行", {"start": "2026-07-01", "end": "2026-07-26"}),
+        ("嗯", {"start": "2026-07-01", "end": "2026-07-26"}),
+        ("就这样吧", {"start": "2026-07-01", "end": "2026-07-26"}),
+        ("没问题", {"start": "2026-07-01", "end": "2026-07-26"}),
+        ("好啊", {"start": "2026-07-01", "end": "2026-07-26"}),
+        ("改成 2026 年 6 月", {"start": "2026-06-01", "end": "2026-06-30"}),
+        (
+            "改成 2026 年 6 月 10 日至 2026 年 6 月 20 日",
+            {"start": "2026-06-10", "end": "2026-06-20"},
+        ),
+        (
+            "改成 2026 年 6 月 10 日至 20 日",
+            {"start": "2026-06-10", "end": "2026-06-20"},
+        ),
+    ],
+)
+async def test_vague_period_confirmation_resumes_the_original_http_investigation(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+    reply: str,
+    expected_period: dict[str, str],
+) -> None:
+    await user_factory(username="period-agent", password="secret", role="admin")
+    store = await store_factory(name="Roma", timezone="Europe/Rome")
+    db_session.add(AgentSettings(id=1, enabled=True))
+    await db_session.commit()
+    model = PeriodConfirmationModel()
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    client._transport.app.state.agent_service = create_agent_service(
+        Settings(_env_file=None),
+        session_factory,
+        native_model=model,
+        native_now=lambda: datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc),
+        native_evidence_collector=BusinessEvidenceCollector(
+            session_factory,
+            now=lambda _timezone: datetime(2026, 7, 26, 14, 0),
+        ),
+    )
+    await _login(client, "period-agent")
+
+    clarification = await client.post(
+        f"/api/agent/stores/{store.id}/turn",
+        json={"question": "最近的月度总收入怎么样？"},
+    )
+
+    assert clarification.status_code == 200
+    assert clarification.json()["route"] == "clarify"
+    assert clarification.json()["content"] == (
+        "我推定查询期间为 2026 年 7 月（2026-07-01 至 2026-07-26）。请确认是否按此期间继续。"
+    )
+    pending_state = clarification.json()["conversation"]["state"]
+    assert pending_state["investigation_goal"] == "最近的月度总收入怎么样？"
+    assert pending_state["confirmed_period"] is None
+    assert pending_state["pending_period"] == {
+        "start": "2026-07-01",
+        "end": "2026-07-26",
+    }
+    assert await db_session.scalar(select(func.count(AgentEvidence.id))) == 0
+
+    answer = await client.post(
+        f"/api/agent/stores/{store.id}/turn",
+        json={"question": reply},
+    )
+
+    assert answer.status_code == 200
+    assert answer.json()["route"] == "answer", answer.json()
+    assert answer.json()["conversation"]["state"]["investigation_goal"] == (
+        "最近的月度总收入怎么样？"
+    )
+    assert answer.json()["conversation"]["state"]["confirmed_period"] == expected_period
+    assert answer.json()["conversation"]["state"]["pending_period"] is None
+    assert await db_session.scalar(select(func.count(AgentEvidence.id))) == 1
+
+
+async def test_vague_business_period_requires_confirmation_when_model_ends_without_a_tool(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+) -> None:
+    await user_factory(username="ending-period-agent", password="secret", role="admin")
+    store = await store_factory(name="Roma", timezone="Europe/Rome")
+    db_session.add(AgentSettings(id=1, enabled=True))
+    await db_session.commit()
+    model = EndingVaguePeriodModel()
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    client._transport.app.state.agent_service = create_agent_service(
+        Settings(_env_file=None),
+        session_factory,
+        native_model=model,
+        native_now=lambda: datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc),
+        native_evidence_collector=BusinessEvidenceCollector(session_factory),
+    )
+    await _login(client, "ending-period-agent")
+
+    response = await client.post(
+        f"/api/agent/stores/{store.id}/turn",
+        json={"question": "最近的月度总收入怎么样？"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["route"] == "clarify"
+    assert response.json()["conversation"]["state"]["confirmed_period"] is None
+    assert response.json()["conversation"]["state"]["pending_period"] == {
+        "start": "2026-07-01",
+        "end": "2026-07-26",
+    }
+    assert len(model.calls) == 1
+    assert await db_session.scalar(select(func.count(AgentEvidence.id))) == 0
+
+
+@pytest.mark.parametrize(
+    ("question", "expected_period"),
+    [
+        ("查本月的月度总收入", {"start": "2026-07-01", "end": "2026-07-26"}),
+        ("查 2026-07-03 的月度总收入", {"start": "2026-07-03", "end": "2026-07-03"}),
+    ],
+)
+async def test_exact_or_natural_period_bypasses_confirmation_at_the_http_seam(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+    question: str,
+    expected_period: dict[str, str],
+) -> None:
+    await user_factory(username="bounded-period-agent", password="secret", role="admin")
+    store = await store_factory(name="Roma", timezone="Europe/Rome")
+    db_session.add(AgentSettings(id=1, enabled=True))
+    await db_session.commit()
+    model = PeriodConfirmationModel()
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    client._transport.app.state.agent_service = create_agent_service(
+        Settings(_env_file=None),
+        session_factory,
+        native_model=model,
+        native_now=lambda: datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc),
+        native_evidence_collector=BusinessEvidenceCollector(
+            session_factory,
+            now=lambda _timezone: datetime(2026, 7, 26, 14, 0),
+        ),
+    )
+    await _login(client, "bounded-period-agent")
+
+    response = await client.post(
+        f"/api/agent/stores/{store.id}/turn",
+        json={"question": question},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["route"] == "answer"
+    assert response.json()["conversation"]["state"]["confirmed_period"] == expected_period
+    assert response.json()["conversation"]["state"]["pending_period"] is None
+    assert await db_session.scalar(select(func.count(AgentEvidence.id))) == 1
+
+
+async def test_natural_period_uses_the_store_local_date_at_the_http_seam(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+) -> None:
+    await user_factory(username="timezone-period-agent", password="secret", role="admin")
+    store = await store_factory(name="Kiritimati", timezone="Pacific/Kiritimati")
+    db_session.add(AgentSettings(id=1, enabled=True))
+    await db_session.commit()
+    model = PeriodConfirmationModel(current_period=("2026-08-01", "2026-08-01"))
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    client._transport.app.state.agent_service = create_agent_service(
+        Settings(_env_file=None),
+        session_factory,
+        native_model=model,
+        native_now=lambda: datetime(2026, 7, 31, 12, 30, tzinfo=timezone.utc),
+        native_evidence_collector=BusinessEvidenceCollector(
+            session_factory,
+            now=lambda _timezone: datetime(2026, 8, 1, 2, 30),
+        ),
+    )
+    await _login(client, "timezone-period-agent")
+
+    response = await client.post(
+        f"/api/agent/stores/{store.id}/turn",
+        json={"question": "查本月的月度总收入"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["route"] == "answer"
+    assert response.json()["conversation"]["state"]["confirmed_period"] == {
+        "start": "2026-08-01",
+        "end": "2026-08-01",
+    }
+    assert model.tool_arguments[0] == {
+        "start": "2026-08-01",
+        "end": "2026-08-01",
+    }
+
+
+async def test_vague_period_candidate_uses_store_local_date_not_the_model_month(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+) -> None:
+    await user_factory(username="vague-timezone-agent", password="secret", role="admin")
+    store = await store_factory(name="Kiritimati vague", timezone="Pacific/Kiritimati")
+    db_session.add(AgentSettings(id=1, enabled=True))
+    await db_session.commit()
+    model = PeriodConfirmationModel()
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    client._transport.app.state.agent_service = create_agent_service(
+        Settings(_env_file=None),
+        session_factory,
+        native_model=model,
+        native_now=lambda: datetime(2026, 7, 31, 12, 30, tzinfo=timezone.utc),
+        native_evidence_collector=BusinessEvidenceCollector(session_factory),
+    )
+    await _login(client, "vague-timezone-agent")
+
+    response = await client.post(
+        f"/api/agent/stores/{store.id}/turn",
+        json={"question": "最近的月度总收入怎么样？"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["route"] == "clarify"
+    assert response.json()["content"] == (
+        "我推定查询期间为 2026 年 8 月（2026-08-01 至 2026-08-01）。请确认是否按此期间继续。"
+    )
+    assert response.json()["conversation"]["state"]["confirmed_period"] is None
+    assert response.json()["conversation"]["state"]["pending_period"] == {
+        "start": "2026-08-01",
+        "end": "2026-08-01",
+    }
+    assert model.tool_arguments[0] == {"year": 2026, "month": 7}
+    assert await db_session.scalar(select(func.count(AgentEvidence.id))) == 0
 
 
 @pytest.mark.parametrize(

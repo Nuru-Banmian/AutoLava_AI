@@ -27,6 +27,7 @@ from app.agent.conversation import (
     ConversationAnalysisHypothesis,
     ConversationEvidenceReference,
     ConversationState,
+    InferredPeriod,
     InvestigationPartial,
     InvestigationProgress,
 )
@@ -109,8 +110,56 @@ INVESTIGATION_LIMIT_MESSAGE = "调查已达到本轮资源上限；以下结论�
 ANSWER_EVIDENCE_FAILURE_MESSAGE = "回答中的关键经营声明缺少本轮有效证据支持，请缩小范围后重试。"
 EXPLICIT_CALENDAR_MONTH = re.compile(
     r"(?P<year>20\d{2}|21\d{2}|2200)\s*年\s*(?P<month>1[0-2]|0?[1-9])\s*月"
+    r"(?!\s*(?:3[01]|[12]\d|0?[1-9])\s*日)"
 )
-EXACT_MONTH_CLARIFICATION = "请提供要查询的准确自然月，例如“2026 年 7 月”。"
+EXPLICIT_ISO_DATE = re.compile(
+    r"(?P<year>20\d{2}|21\d{2}|2200)-(?P<month>1[0-2]|0[1-9])-"
+    r"(?P<day>3[01]|[12]\d|0[1-9])"
+)
+EXPLICIT_CHINESE_DATE = re.compile(
+    r"(?P<year>20\d{2}|21\d{2}|2200)\s*年\s*"
+    r"(?P<month>1[0-2]|0?[1-9])\s*月\s*"
+    r"(?P<day>3[01]|[12]\d|0?[1-9])\s*日"
+)
+EXPLICIT_SHORT_CHINESE_DATE_RANGE = re.compile(
+    r"(?P<year>20\d{2}|21\d{2}|2200)\s*年\s*"
+    r"(?P<month>1[0-2]|0?[1-9])\s*月\s*"
+    r"(?P<start_day>3[01]|[12]\d|0?[1-9])\s*日\s*"
+    r"(?:至|到|[-—~～])\s*(?P<end_day>3[01]|[12]\d|0?[1-9])\s*日"
+)
+CURRENT_MONTH_PERIOD = re.compile(r"(?<!上)(?:本月|这个月|当月)")
+PREVIOUS_MONTH_PERIOD = re.compile(r"(?:上月|上个月)")
+AFFIRMATIVE_PERIOD_CONFIRMATION = re.compile(
+    r"\s*(?:(?:好(?:的|啊)?|可以|确认|没错|没问题|对|是|行|嗯+)"
+    r"(?:[，,\s]*(?:就)?按(?:这个|该)(?:期间|范围)?(?:继续)?)?"
+    r"|(?:就)?按(?:这个|该)(?:期间|范围)(?:继续)?|继续|就这样(?:吧)?)"
+    r"\s*[。.!！]?\s*"
+)
+VAGUE_PERIOD_TERMS = (
+    "最近",
+    "近期",
+    "近来",
+    "前段时间",
+    "前些日子",
+    "前些时候",
+    "早些时候",
+    "早些日子",
+    "早前",
+    "先前",
+    "此前",
+    "前不久",
+    "前一阵",
+    "前阵子",
+    "过去一段时间",
+    "过去一阵",
+    "这段时间",
+    "这阵子",
+    "这些天",
+    "这几天",
+    "不久前",
+)
+NEGATED_VAGUE_PERIOD_PREFIX = re.compile(r"(?:不要|不用|别|不查|不看|不是|并非)(?:查|看|说|指)?$")
+EXACT_PERIOD_CLARIFICATION = "请提供要查询的准确日期或自然期间，例如“2026-07-03”或“2026 年 7 月”。"
 CAPABILITY_BOUNDARY_MESSAGE = (
     "我专注于 AutoLava 使用、当前门店经营分析和证据支持的经营建议。"
     "你可以问我产品操作或当前门店问题。"
@@ -189,37 +238,65 @@ class NativeToolCall(ClosedModel):
     arguments: dict[str, Any]
 
 
-class MonthlyTotalRevenueArguments(ClosedModel):
+class PeriodScopedArguments(ClosedModel):
+    year: int | None = Field(default=None, ge=2000, le=2200)
+    month: int | None = Field(default=None, ge=1, le=12)
+    start: date | None = None
+    end: date | None = None
+
+    @model_validator(mode="after")
+    def require_one_period_shape(self) -> "PeriodScopedArguments":
+        has_month = self.year is not None or self.month is not None
+        has_range = self.start is not None or self.end is not None
+        if has_month == has_range:
+            raise ValueError("provide exactly one month or exact date range")
+        if has_month and (self.year is None or self.month is None):
+            raise ValueError("calendar month requires year and month")
+        if has_range and (self.start is None or self.end is None):
+            raise ValueError("exact date range requires start and end")
+        if self.start is not None and self.end is not None and self.end < self.start:
+            raise ValueError("exact date range end must not precede start")
+        return self
+
+
+class CalendarMonthArguments(ClosedModel):
     year: int = Field(ge=2000, le=2200)
     month: int = Field(ge=1, le=12)
 
 
-class ComposableBusinessMetricArguments(MonthlyTotalRevenueArguments):
+class ComposableBusinessMetricArguments(PeriodScopedArguments):
     group_by: EvidenceGroup | None = None
     filters: EvidenceFilters | None = None
 
 
-class DailyLedgerRevenueExtremeArguments(MonthlyTotalRevenueArguments):
+class DailyLedgerRevenueExtremeArguments(PeriodScopedArguments):
     extreme: Literal["highest", "lowest"]
     filters: EvidenceFilters | None = None
 
 
-class DailyLedgerDetailsArguments(MonthlyTotalRevenueArguments):
+class DailyLedgerDetailsArguments(PeriodScopedArguments):
     dates: list[date] = Field(
         min_length=1,
         max_length=MAX_DAILY_LEDGER_DRILLDOWN_DATES,
     )
 
     @model_validator(mode="after")
-    def require_unique_dates_in_month(self) -> "DailyLedgerDetailsArguments":
+    def require_unique_dates_in_period(self) -> "DailyLedgerDetailsArguments":
         if len(self.dates) != len(set(self.dates)):
             raise ValueError("daily ledger detail dates must be unique")
-        if any((value.year, value.month) != (self.year, self.month) for value in self.dates):
-            raise ValueError("daily ledger detail dates must stay inside the requested month")
+        if self.year is not None and self.month is not None:
+            outside_period = any(
+                (value.year, value.month) != (self.year, self.month) for value in self.dates
+            )
+        else:
+            assert self.start is not None and self.end is not None
+            outside_period = any(not self.start <= value <= self.end for value in self.dates)
+        if outside_period:
+            raise ValueError("daily ledger detail dates must stay inside the requested period")
         return self
 
 
-class SettlementDetailsArguments(MonthlyTotalRevenueArguments):
+class SettlementDetailsArguments(PeriodScopedArguments):
     status: Literal["pending", "confirmed"] | None = None
     company_name: str | None = Field(default=None, min_length=1, max_length=120)
 
@@ -457,7 +534,7 @@ class NativeToolScopeResolver(Protocol):
 class NativeToolSpec:
     metric: EvidenceMetric | None
     result_types: tuple[type[BaseModel], ...]
-    arguments_type: type[MonthlyTotalRevenueArguments]
+    arguments_type: type[PeriodScopedArguments] | type[CalendarMonthArguments]
     description: str
     sources: tuple[
         Literal[
@@ -494,9 +571,9 @@ NATIVE_TOOLS = {
     MONTHLY_TOTAL_REVENUE_TOOL: NativeToolSpec(
         metric=EvidenceMetric.MONTHLY_TOTAL_REVENUE,
         result_types=(MonthlyTotalRevenueResult,),
-        arguments_type=MonthlyTotalRevenueArguments,
+        arguments_type=PeriodScopedArguments,
         description=(
-            "查询当前受信任门店指定自然月的月度总收入，包括每日台账营业额与已确认公司结算收入。"
+            "查询当前受信任门店指定期间的月度总收入，包括每日台账营业额与已确认公司结算收入。"
         ),
         sources=("store_daily_records", "settlement_records"),
         unit="EUR",
@@ -506,7 +583,7 @@ NATIVE_TOOLS = {
         metric=EvidenceMetric.DAILY_LEDGER_REVENUE,
         result_types=(DailyLedgerRevenueResult, GroupedMetricResult),
         arguments_type=ComposableBusinessMetricArguments,
-        description="查询当前受信任门店指定自然月的每日台账营业额合计。",
+        description="查询当前受信任门店指定期间的每日台账营业额合计。",
         sources=("store_daily_records",),
         unit="EUR",
         calculation_field="daily_ledger_revenue",
@@ -514,8 +591,8 @@ NATIVE_TOOLS = {
     CONFIRMED_SETTLEMENT_INCOME_TOOL: NativeToolSpec(
         metric=EvidenceMetric.CONFIRMED_SETTLEMENT_INCOME,
         result_types=(ConfirmedSettlementIncomeResult,),
-        arguments_type=MonthlyTotalRevenueArguments,
-        description="查询当前受信任门店指定自然月的已确认公司结算收入。",
+        arguments_type=PeriodScopedArguments,
+        description="查询当前受信任门店指定期间的已确认公司结算收入。",
         sources=("settlement_records",),
         unit="EUR",
         calculation_field="confirmed_settlement_income",
@@ -525,7 +602,7 @@ NATIVE_TOOLS = {
         result_types=(SettlementDetailsResult,),
         arguments_type=SettlementDetailsArguments,
         description=(
-            "查询当前受信任门店指定自然月的结算公司、待到账或已确认开票记录；"
+            "查询当前受信任门店指定期间的结算公司、待到账或已确认开票记录；"
             "公司结算只按开票月份归属，没有日粒度。"
         ),
         sources=("settlement_records",),
@@ -538,7 +615,7 @@ NATIVE_TOOLS = {
         metric=EvidenceMetric.OPERATING_DAYS,
         result_types=(OperatingDaysResult, GroupedMetricResult),
         arguments_type=ComposableBusinessMetricArguments,
-        description="查询当前受信任门店指定自然月的经营日数量。",
+        description="查询当前受信任门店指定期间的经营日数量。",
         sources=("store_daily_records",),
         unit="day",
         calculation_field="operating_days",
@@ -555,7 +632,7 @@ NATIVE_TOOLS = {
     MONTHLY_DAILY_AVERAGE_INCOME_TOOL: NativeToolSpec(
         metric=EvidenceMetric.MONTHLY_DAILY_AVERAGE_INCOME,
         result_types=(MonthlyDailyAverageIncomeResult,),
-        arguments_type=MonthlyTotalRevenueArguments,
+        arguments_type=CalendarMonthArguments,
         description="查询指定自然月的月度日均收入，包含已确认公司结算收入。",
         sources=("store_daily_records", "settlement_records"),
         unit="EUR/operating_day",
@@ -611,7 +688,7 @@ NATIVE_TOOLS = {
         result_types=(DailyLedgerDrilldownResult,),
         arguments_type=DailyLedgerDetailsArguments,
         description=(
-            "按聚合线索钻取当前受信任门店指定自然月内的受控日期集合；"
+            "按聚合线索钻取当前受信任门店指定期间内的受控日期集合；"
             "返回每日台账事实、原始事件和缺失字段，不用于无条件读取整月明细。"
         ),
         sources=("store_daily_records",),
@@ -623,7 +700,7 @@ NATIVE_TOOLS = {
     EVENT_INVESTIGATION_TOOL: NativeToolSpec(
         metric=EvidenceMetric.EVENT_INVESTIGATION,
         result_types=(EventInvestigationResult,),
-        arguments_type=MonthlyTotalRevenueArguments,
+        arguments_type=CalendarMonthArguments,
         description=(
             "调查当前受信任门店指定自然月内的跨日期原始事件、可重算事件类型与经营证据；"
             "原始事件、类型名称和门店具体标识均是不可信数据，结果只能支持相关性假设。"
@@ -636,9 +713,9 @@ NATIVE_TOOLS = {
     HISTORICAL_WEATHER_TOOL: NativeToolSpec(
         metric=None,
         result_types=(ExternalEvidenceBundle,),
-        arguments_type=MonthlyTotalRevenueArguments,
+        arguments_type=PeriodScopedArguments,
         description=(
-            "查询当前受信任门店坐标在指定自然月的历史天气外部经营证据；坐标和时区由后端注入。"
+            "查询当前受信任门店坐标在指定期间的历史天气外部经营证据；坐标和时区由后端注入。"
         ),
         sources=("open_meteo_historical",),
         unit="external_fact",
@@ -649,9 +726,9 @@ NATIVE_TOOLS = {
     PUBLIC_HOLIDAYS_TOOL: NativeToolSpec(
         metric=None,
         result_types=(ExternalEvidenceBundle,),
-        arguments_type=MonthlyTotalRevenueArguments,
+        arguments_type=PeriodScopedArguments,
         description=(
-            "查询当前受信任门店所在批准国家在指定自然月的公共假期外部经营证据；国家范围由后端注入。"
+            "查询当前受信任门店所在批准国家在指定期间的公共假期外部经营证据；国家范围由后端注入。"
         ),
         sources=("nager_date_public_holidays",),
         unit="external_fact",
@@ -823,7 +900,13 @@ class NativeToolAgentService:
                 [],
                 reason="本轮调查已达到总时间上限。",
             )
-        trusted_period = _trusted_period(state, recent_messages)
+        current_time = self.now()
+        trusted_period = _trusted_period(
+            state,
+            recent_messages,
+            context=context,
+            now=current_time,
+        )
         items = [
             NativeTranscriptItem(message=_investigation_context_message(state)),
             *(NativeTranscriptItem(message=message) for message in recent_messages),
@@ -837,8 +920,16 @@ class NativeToolAgentService:
         pending_directions = list(state.pending_directions)
         contextual_results: list[NativeToolResult] = []
         selected_action: OpenBusinessRecordsAction | None = None
-        period_confirmation_required = False
-        pending_period_candidate: MonthlyTotalRevenueArguments | None = None
+        pending_period_candidate = _backend_inferred_vague_period(
+            recent_messages,
+            context=context,
+            now=current_time,
+        )
+        period_confirmation_required = bool(
+            trusted_period is None
+            and pending_period_candidate is not None
+            and _has_business_period_context(state, recent_messages)
+        )
         tool_budget = _ToolCallBudget(self.limits.max_tool_calls)
         model_call_count = 0
         total_tokens = 0
@@ -992,7 +1083,7 @@ class NativeToolAgentService:
                     clarification = (
                         _period_confirmation_prompt(pending_period_candidate)
                         if pending_period_candidate is not None
-                        else EXACT_MONTH_CLARIFICATION
+                        else EXACT_PERIOD_CLARIFICATION
                     )
                     return AgentRunResult(
                         turn=TurnResult(
@@ -1002,6 +1093,7 @@ class NativeToolAgentService:
                         state=state.model_copy(
                             update={
                                 "pending_clarifications": [clarification],
+                                "pending_period": pending_period_candidate,
                             }
                         ),
                     )
@@ -1160,9 +1252,9 @@ class NativeToolAgentService:
                     )
                 if tool_result.evidence.failure.category == "period_confirmation_required":
                     period_confirmation_required = True
-                    candidate = MonthlyTotalRevenueArguments(
-                        year=tool_result.evidence.period.start.year,
-                        month=tool_result.evidence.period.start.month,
+                    candidate = InferredPeriod(
+                        start=tool_result.evidence.period.start,
+                        end=tool_result.evidence.period.end,
                     )
                     if pending_period_candidate is None:
                         pending_period_candidate = candidate
@@ -1267,7 +1359,7 @@ class NativeToolAgentService:
         call: NativeToolCall,
         context: RuntimeContext,
         *,
-        trusted_period: MonthlyTotalRevenueArguments | None,
+        trusted_period: InferredPeriod | None,
         recent_messages: Sequence[ModelMessage],
         calculation_inputs: dict[str, EvidenceCalculationInput],
         tool_budget: _ToolCallBudget,
@@ -1317,12 +1409,8 @@ class NativeToolAgentService:
                 request=calculation_request,
                 context=fresh_context,
                 period=EvidencePeriodResult(
-                    start=date(trusted_period.year, trusted_period.month, 1),
-                    end=date(
-                        trusted_period.year,
-                        trusted_period.month,
-                        monthrange(trusted_period.year, trusted_period.month)[1],
-                    ),
+                    start=trusted_period.start,
+                    end=trusted_period.end,
                 ),
                 available_evidence=calculation_inputs,
                 calculated_at=calculated_at,
@@ -1340,14 +1428,50 @@ class NativeToolAgentService:
         tool_spec = NATIVE_TOOLS.get(call.name)
         if tool_spec is None:
             raise NativeToolAccessDenied("native tool call is not authorized")
-        arguments, fresh_context = await _validated_context_arguments(
+        validated_arguments, fresh_context = await _validated_context_arguments(
             call,
             context,
             self.tool_registry,
             tool_spec.arguments_type,
             self.scope_resolver,
         )
+        arguments = (
+            PeriodScopedArguments(
+                year=validated_arguments.year,
+                month=validated_arguments.month,
+            )
+            if isinstance(validated_arguments, CalendarMonthArguments)
+            else validated_arguments
+        )
         if trusted_period is None:
+            queried_at = self.now()
+            inferred_period = _backend_inferred_vague_period(
+                recent_messages,
+                context=fresh_context,
+                now=queried_at,
+            )
+            return (
+                _failed_tool_result(
+                    call,
+                    fresh_context,
+                    arguments,
+                    queried_at,
+                    tool_spec=tool_spec,
+                    category="period_confirmation_required",
+                    message=EXACT_PERIOD_CLARIFICATION,
+                    period=inferred_period,
+                ),
+                None,
+                None,
+                False,
+            )
+        argument_period = _trusted_argument_period(
+            arguments,
+            trusted_period=trusted_period,
+            context=fresh_context,
+            now=self.now(),
+        )
+        if argument_period != trusted_period:
             return (
                 _failed_tool_result(
                     call,
@@ -1355,34 +1479,16 @@ class NativeToolAgentService:
                     arguments,
                     self.now(),
                     tool_spec=tool_spec,
-                    category="period_confirmation_required",
-                    message=EXACT_MONTH_CLARIFICATION,
-                ),
-                None,
-                None,
-                False,
-            )
-        if arguments.year != trusted_period.year or arguments.month != trusted_period.month:
-            return (
-                _failed_tool_result(
-                    call,
-                    fresh_context,
-                    trusted_period,
-                    self.now(),
-                    tool_spec=tool_spec,
                     category="period_scope_mismatch",
-                    message="工具期间与用户确认的自然月不一致",
+                    message="工具期间与用户确认的准确日期范围不一致",
+                    period=trusted_period,
                 ),
                 None,
                 None,
                 False,
             )
-        start = date(arguments.year, arguments.month, 1)
-        end = date(
-            arguments.year,
-            arguments.month,
-            monthrange(arguments.year, arguments.month)[1],
-        )
+        start = argument_period.start
+        end = argument_period.end
         if tool_spec.external_evidence_type is not None:
             if self.external_evidence_collector is None:
                 return (
@@ -1394,6 +1500,7 @@ class NativeToolAgentService:
                         tool_spec=tool_spec,
                         category="external_provider_unavailable",
                         message="外部证据供应方暂时不可用",
+                        period=argument_period,
                     ),
                     None,
                     None,
@@ -1422,11 +1529,18 @@ class NativeToolAgentService:
             )
         request: dict[str, Any] = {"kind": tool_spec.request_kind}
         if tool_spec.include_period:
-            request["period"] = {
-                "kind": "calendar_month",
-                "year": arguments.year,
-                "month": arguments.month,
-            }
+            if arguments.year is not None and arguments.month is not None:
+                request["period"] = {
+                    "kind": "calendar_month",
+                    "year": arguments.year,
+                    "month": arguments.month,
+                }
+            else:
+                request["period"] = {
+                    "kind": "custom_date_range",
+                    "start": start,
+                    "end": end,
+                }
         if tool_spec.request_kind == "business_metrics" and tool_spec.metric is not None:
             request["metric"] = tool_spec.metric
         for field in ("group_by", "filters", "extreme", "status", "company_name", "dates"):
@@ -1467,6 +1581,7 @@ class NativeToolAgentService:
                         tool_spec=tool_spec,
                         category="tool_unavailable",
                         message="经营查询暂时不可用",
+                        period=argument_period,
                     ),
                     None,
                     None,
@@ -1480,6 +1595,7 @@ class NativeToolAgentService:
                         arguments,
                         self.now(),
                         tool_spec=tool_spec,
+                        period=argument_period,
                     ),
                     None,
                     None,
@@ -1490,6 +1606,7 @@ class NativeToolAgentService:
             business_evidence,
             tool_spec,
             arguments,
+            expected_period=argument_period,
             store_id=fresh_context.store_id,
         ):
             return (
@@ -1499,6 +1616,7 @@ class NativeToolAgentService:
                     arguments,
                     self.now(),
                     tool_spec=tool_spec,
+                    period=argument_period,
                 ),
                 None,
                 None,
@@ -1891,15 +2009,21 @@ def _calculation_envelope(
 def _failed_tool_result(
     call: NativeToolCall,
     context: RuntimeContext,
-    arguments: MonthlyTotalRevenueArguments,
+    arguments: PeriodScopedArguments,
     queried_at: datetime,
     *,
     tool_spec: NativeToolSpec | None,
     category: str = "business_query_unavailable",
     message: str = "经营查询暂时不可用",
+    period: InferredPeriod | None = None,
 ) -> NativeToolResult:
-    start = date(arguments.year, arguments.month, 1)
-    end = date(arguments.year, arguments.month, monthrange(arguments.year, arguments.month)[1])
+    resolved_period = period or _inferred_argument_period(
+        arguments,
+        context=context,
+        now=queried_at,
+    )
+    start = resolved_period.start
+    end = resolved_period.end
     digest = hashlib.sha256(
         f"{context.store_id}:{start.isoformat()}:{end.isoformat()}:failed".encode()
     ).hexdigest()
@@ -2021,6 +2145,7 @@ def _agent_result(
                 "pending_directions": list(resolved_pending_directions),
                 "metrics": metric_labels,
                 "pending_clarifications": [],
+                "pending_period": None,
             }
         ),
         evidence=last_evidence,
@@ -2148,8 +2273,9 @@ def _model_failure_result(
 def _evidence_matches_tool(
     evidence: object,
     tool_spec: NativeToolSpec,
-    arguments: MonthlyTotalRevenueArguments,
+    arguments: PeriodScopedArguments,
     *,
+    expected_period: InferredPeriod,
     store_id: int,
 ) -> bool:
     if not isinstance(evidence, (EvidenceBundle, SettlementDetailsEvidenceBundle)):
@@ -2164,14 +2290,20 @@ def _evidence_matches_tool(
             and evidence.period.start == min(arguments.dates)
             and evidence.period.end == max(arguments.dates)
         )
-    if (
-        evidence.current_store.id != store_id
-        or evidence.period.start.day != 1
-        or (evidence.period.start.year, evidence.period.start.month)
-        != (arguments.year, arguments.month)
-        or (evidence.period.end.year, evidence.period.end.month)
-        != (arguments.year, arguments.month)
-    ):
+    if arguments.year is not None and arguments.month is not None:
+        period_matches = bool(
+            evidence.period.start.day == 1
+            and (evidence.period.start.year, evidence.period.start.month)
+            == (arguments.year, arguments.month)
+            and (evidence.period.end.year, evidence.period.end.month)
+            == (arguments.year, arguments.month)
+        )
+    else:
+        period_matches = bool(
+            evidence.period.start == expected_period.start
+            and evidence.period.end == expected_period.end
+        )
+    if evidence.current_store.id != store_id or not period_matches:
         return False
     if isinstance(evidence, SettlementDetailsEvidenceBundle):
         if (
@@ -2221,46 +2353,98 @@ def _evidence_label(evidence: NativeCollectedEvidence) -> str:
     return EVIDENCE_METRIC_LABELS[evidence.metric]
 
 
-def _explicit_calendar_month(
-    messages: Sequence[ModelMessage],
-    state: ConversationState,
-) -> MonthlyTotalRevenueArguments | None:
-    user_message = next(
+def _latest_user_message(messages: Sequence[ModelMessage]) -> str:
+    return next(
         (message.content for message in reversed(messages) if message.role == "user"),
         "",
     )
+
+
+def _validated_explicit_dates(user_message: str) -> list[tuple[int, date]]:
+    matches = sorted(
+        [
+            *(match for match in EXPLICIT_ISO_DATE.finditer(user_message)),
+            *(match for match in EXPLICIT_CHINESE_DATE.finditer(user_message)),
+        ],
+        key=lambda match: match.start(),
+    )
+    values: list[tuple[int, date]] = []
+    for match in matches:
+        try:
+            value = date(
+                int(match.group("year")),
+                int(match.group("month")),
+                int(match.group("day")),
+            )
+        except ValueError:
+            continue
+        values.append((match.start(), value))
+    return values
+
+
+def _explicit_period(
+    messages: Sequence[ModelMessage],
+    *,
+    context: RuntimeContext,
+    now: datetime,
+) -> InferredPeriod | None:
+    user_message = _latest_user_message(messages)
+    short_range = EXPLICIT_SHORT_CHINESE_DATE_RANGE.search(user_message)
+    if short_range is not None:
+        try:
+            start = date(
+                int(short_range.group("year")),
+                int(short_range.group("month")),
+                int(short_range.group("start_day")),
+            )
+            end = date(
+                int(short_range.group("year")),
+                int(short_range.group("month")),
+                int(short_range.group("end_day")),
+            )
+        except ValueError:
+            return None
+        return InferredPeriod(start=start, end=end) if start <= end else None
+    explicit_dates = _validated_explicit_dates(user_message)
+    if len(explicit_dates) >= 2:
+        start = explicit_dates[0][1]
+        end = explicit_dates[1][1]
+        return InferredPeriod(start=start, end=end) if start <= end else None
+    if explicit_dates:
+        value = explicit_dates[0][1]
+        return InferredPeriod(start=value, end=value)
     match = EXPLICIT_CALENDAR_MONTH.search(user_message)
-    if (
-        match is None
-        and re.fullmatch(r"\s*(?:确认|是|对|可以|继续|没错|好的|好)\s*[。.!！]?\s*", user_message)
-        and state.pending_clarifications
-    ):
-        match = next(
-            (
-                candidate
-                for clarification in reversed(state.pending_clarifications)
-                if (candidate := EXPLICIT_CALENDAR_MONTH.search(clarification)) is not None
+    if match is not None:
+        return _inferred_argument_period(
+            PeriodScopedArguments(
+                year=int(match.group("year")),
+                month=int(match.group("month")),
             ),
-            None,
+            context=context,
+            now=now,
         )
-    if match is None:
-        return None
-    return MonthlyTotalRevenueArguments(
-        year=int(match.group("year")),
-        month=int(match.group("month")),
-    )
+    local_today = now.astimezone(ZoneInfo(context.store_timezone)).date()
+    if PREVIOUS_MONTH_PERIOD.search(user_message):
+        previous_month_end = date.fromordinal(local_today.replace(day=1).toordinal() - 1)
+        return _period_from_argument_values(
+            PeriodScopedArguments(
+                year=previous_month_end.year,
+                month=previous_month_end.month,
+            )
+        )
+    if CURRENT_MONTH_PERIOD.search(user_message):
+        return InferredPeriod(
+            start=local_today.replace(day=1),
+            end=local_today,
+        )
+    return None
 
 
-def _period_confirmation_prompt(arguments: MonthlyTotalRevenueArguments) -> str:
-    start = date(arguments.year, arguments.month, 1)
-    end = date(
-        arguments.year,
-        arguments.month,
-        monthrange(arguments.year, arguments.month)[1],
-    )
+def _period_confirmation_prompt(period: InferredPeriod) -> str:
     return (
-        f"我推定查询期间为 {arguments.year} 年 {arguments.month} 月"
-        f"（{start.isoformat()} 至 {end.isoformat()}）。请确认是否按此期间继续。"
+        f"我推定查询期间为 {period.start.year} 年 {period.start.month} 月"
+        f"（{period.start.isoformat()} 至 {period.end.isoformat()}）。"
+        "请确认是否按此期间继续。"
     )
 
 
@@ -2271,10 +2455,7 @@ def _navigation_action_is_authorized(
     messages: Sequence[ModelMessage],
     action: OpenBusinessRecordsAction,
 ) -> bool:
-    user_message = next(
-        (message.content for message in reversed(messages) if message.role == "user"),
-        "",
-    )
+    user_message = _latest_user_message(messages)
     return bool(
         _NAVIGATION_INTENT.search(user_message)
         and _month_is_visible(user_message, action.start_month)
@@ -2322,18 +2503,114 @@ def _approved_knowledge_answer(
 def _trusted_period(
     state: ConversationState,
     messages: Sequence[ModelMessage],
-) -> MonthlyTotalRevenueArguments | None:
-    explicit = _explicit_calendar_month(messages, state)
+    *,
+    context: RuntimeContext,
+    now: datetime,
+) -> InferredPeriod | None:
+    explicit = _explicit_period(messages, context=context, now=now)
     if explicit is not None:
         return explicit
-    period = state.confirmed_period
-    if (
-        period is None
-        or period.start.day != 1
-        or (period.start.year, period.start.month) != (period.end.year, period.end.month)
-    ):
+    user_message = _latest_user_message(messages)
+    if state.pending_period is not None and AFFIRMATIVE_PERIOD_CONFIRMATION.fullmatch(user_message):
+        return state.pending_period
+    if _has_unresolved_vague_period(user_message):
         return None
-    return MonthlyTotalRevenueArguments(year=period.start.year, month=period.start.month)
+    period = state.confirmed_period
+    if period is None:
+        return None
+    return InferredPeriod(start=period.start, end=period.end)
+
+
+def _has_unresolved_vague_period(user_message: str) -> bool:
+    for term in VAGUE_PERIOD_TERMS:
+        for match in re.finditer(re.escape(term), user_message):
+            prefix = user_message[max(0, match.start() - 8) : match.start()]
+            if not NEGATED_VAGUE_PERIOD_PREFIX.search(prefix):
+                return True
+    return False
+
+
+def _has_business_period_context(
+    state: ConversationState,
+    messages: Sequence[ModelMessage],
+) -> bool:
+    context_text = " ".join(
+        (
+            _latest_user_message(messages),
+            state.investigation_goal or "",
+            *state.confirmed_objects,
+        )
+    )
+    terms = (
+        *EVIDENCE_METRIC_LABELS.values(),
+        SETTLEMENT_DETAILS_LABEL,
+        "收入",
+        "营业额",
+        "经营",
+        "结算",
+        "台账",
+        "洗车",
+        "事件",
+        "天气",
+        "节假日",
+    )
+    return any(term in context_text for term in terms)
+
+
+def _backend_inferred_vague_period(
+    messages: Sequence[ModelMessage],
+    *,
+    context: RuntimeContext,
+    now: datetime,
+) -> InferredPeriod | None:
+    if not _has_unresolved_vague_period(_latest_user_message(messages)):
+        return None
+    local_today = now.astimezone(ZoneInfo(context.store_timezone)).date()
+    return InferredPeriod(start=local_today.replace(day=1), end=local_today)
+
+
+def _period_from_argument_values(
+    arguments: PeriodScopedArguments,
+) -> InferredPeriod:
+    if arguments.start is not None and arguments.end is not None:
+        return InferredPeriod(start=arguments.start, end=arguments.end)
+    assert arguments.year is not None and arguments.month is not None
+    start = date(arguments.year, arguments.month, 1)
+    end = date(
+        arguments.year,
+        arguments.month,
+        monthrange(arguments.year, arguments.month)[1],
+    )
+    return InferredPeriod(start=start, end=end)
+
+
+def _inferred_argument_period(
+    arguments: PeriodScopedArguments,
+    *,
+    context: RuntimeContext,
+    now: datetime,
+) -> InferredPeriod:
+    period = _period_from_argument_values(arguments)
+    if arguments.start is not None:
+        return period
+    local_today = now.astimezone(ZoneInfo(context.store_timezone)).date()
+    if period.start <= local_today <= period.end:
+        return period.model_copy(update={"end": local_today})
+    return period
+
+
+def _trusted_argument_period(
+    arguments: PeriodScopedArguments,
+    *,
+    trusted_period: InferredPeriod,
+    context: RuntimeContext,
+    now: datetime,
+) -> InferredPeriod:
+    period = _period_from_argument_values(arguments)
+    if arguments.start is not None:
+        return period
+    locally_resolved = _inferred_argument_period(arguments, context=context, now=now)
+    return locally_resolved if locally_resolved == trusted_period else period
 
 
 def _investigation_context_message(state: ConversationState) -> ModelMessage:
@@ -2342,6 +2619,11 @@ def _investigation_context_message(state: ConversationState) -> ModelMessage:
         "confirmed_period": (
             state.confirmed_period.model_dump(mode="json")
             if state.confirmed_period is not None
+            else None
+        ),
+        "pending_period": (
+            state.pending_period.model_dump(mode="json")
+            if state.pending_period is not None
             else None
         ),
         "confirmed_objects": state.confirmed_objects,

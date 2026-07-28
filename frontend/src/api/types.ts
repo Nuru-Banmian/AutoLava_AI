@@ -186,6 +186,7 @@ export interface OpenBusinessRecordsAction {
 }
 export interface AgentConversationState {
   confirmed_period: { start: string; end: string } | null;
+  pending_period: { start: string; end: string } | null;
   metrics: string[];
   filters: Record<string, string[]>;
   comparison: {

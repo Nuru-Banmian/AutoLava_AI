@@ -27,6 +27,11 @@ class ConfirmedPeriod(ClosedModel):
     end: date
 
 
+class InferredPeriod(ClosedModel):
+    start: date
+    end: date
+
+
 class ConversationComparison(ClosedModel):
     period: ConfirmedPeriod
     label: str = Field(min_length=1, max_length=120)
@@ -72,6 +77,7 @@ class ConversationAnalysisHypothesis(ClosedModel):
 class ConversationState(ClosedModel):
     investigation_goal: str | None = Field(default=None, min_length=1, max_length=2_000)
     confirmed_period: ConfirmedPeriod | None = None
+    pending_period: InferredPeriod | None = None
     confirmed_objects: list[str] = Field(default_factory=list, max_length=20)
     evidence_references: list[ConversationEvidenceReference] = Field(
         default_factory=list,
