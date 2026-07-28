@@ -66,7 +66,7 @@ REQUIRED_FRONTEND_COVERAGE = {
 }
 EXPECTED_FRONTEND_TEST_TITLES = {
     "admin-complete-agent-flow": [
-        "administrator restores, switches, and permanently resets per-store conversations"
+        "administrator restores, switches, and permanently clears a current investigation"
     ],
     "business-records-action": [
         "desktop business records action is user-triggered, prefills months, and does not overflow",

@@ -126,10 +126,10 @@ export function AgentPanel({ storeId, timezone = "UTC" }: { storeId: number; tim
     return <p className="text-sm text-muted-foreground">Agent 当前未启用</p>;
   }
   if (currentConversation.isPending) {
-    return <p role="status">正在恢复当前对话…</p>;
+    return <p role="status">正在恢复当前调查…</p>;
   }
   if (currentConversation.isError) {
-    return <p role="alert">当前对话暂时无法恢复</p>;
+    return <p role="alert">当前调查暂时无法恢复</p>;
   }
 
   const messages = currentConversation.data.messages;
@@ -156,20 +156,20 @@ export function AgentPanel({ storeId, timezone = "UTC" }: { storeId: number; tim
           <AlertDialog>
             <AlertDialogTrigger asChild>
               <Button disabled={turn.isPending || reset.isPending} variant="outline">
-                重置对话
+                开始新调查
               </Button>
             </AlertDialogTrigger>
             <AlertDialogContent>
               <AlertDialogHeader>
-                <AlertDialogTitle>永久重置当前对话？</AlertDialogTitle>
+                <AlertDialogTitle>永久删除当前调查？</AlertDialogTitle>
                 <AlertDialogDescription>
-                  此操作不可恢复。当前门店的全部消息、结构化状态和关联经营证据都会永久删除。
+                  此操作不可恢复。当前门店的全部消息、回答、工具证据、证据引用、分析假设和结构化调查上下文都会永久删除，不会保留历史调查。
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
                 <AlertDialogCancel>取消</AlertDialogCancel>
                 <AlertDialogAction onClick={() => reset.mutate(storeId)}>
-                  确认永久重置
+                  永久删除并开始新调查
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
@@ -177,9 +177,9 @@ export function AgentPanel({ storeId, timezone = "UTC" }: { storeId: number; tim
         )}
       </div>
       {messages.length === 0 && visiblePendingQuestion === null ? (
-        <p className="mt-4 text-sm text-muted-foreground">当前对话为空</p>
+        <p className="mt-4 text-sm text-muted-foreground">当前调查为空</p>
       ) : (
-        <ol className="mt-4 space-y-3" aria-label="当前对话">
+        <ol className="mt-4 space-y-3" aria-label="当前调查">
           {messages.map((message) => {
             const action = validatedBusinessRecordsAction(
               message.action,
