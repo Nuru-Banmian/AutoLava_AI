@@ -506,9 +506,8 @@ async def _fixed_get_json(
     try:
         if client is not None:
             return await _read_bounded_json(client, url, params=params)
-        else:
-            async with httpx.AsyncClient() as owned_client:
-                return await _read_bounded_json(owned_client, url, params=params)
+        async with httpx.AsyncClient() as owned_client:
+            return await _read_bounded_json(owned_client, url, params=params)
     except httpx.TimeoutException as error:
         raise ExternalProviderFailure("timeout") from error
     except httpx.RequestError as error:
