@@ -168,6 +168,21 @@ class PeriodConfirmationModel:
         )
 
 
+class EndingVaguePeriodModel:
+    def __init__(self) -> None:
+        self.calls: list[NativeModelCall] = []
+
+    async def next_turn(self, items, *, tools) -> NativeModelTurn:
+        self.calls.append(NativeModelCall(items=list(items), tools=list(tools)))
+        return NativeModelTurn.model_validate(
+            {
+                "message": {"role": "assistant", "content": "请提供更具体的问题。"},
+                "usage": {},
+                "signal": "end",
+            }
+        )
+
+
 class PersistentInvestigationModel:
     def __init__(self) -> None:
         self.calls: list[NativeModelCall] = []
@@ -1092,9 +1107,15 @@ async def test_current_investigation_restores_context_and_reacquires_changed_evi
         ("行", {"start": "2026-07-01", "end": "2026-07-26"}),
         ("嗯", {"start": "2026-07-01", "end": "2026-07-26"}),
         ("就这样吧", {"start": "2026-07-01", "end": "2026-07-26"}),
+        ("没问题", {"start": "2026-07-01", "end": "2026-07-26"}),
+        ("好啊", {"start": "2026-07-01", "end": "2026-07-26"}),
         ("改成 2026 年 6 月", {"start": "2026-06-01", "end": "2026-06-30"}),
         (
             "改成 2026 年 6 月 10 日至 2026 年 6 月 20 日",
+            {"start": "2026-06-10", "end": "2026-06-20"},
+        ),
+        (
+            "改成 2026 年 6 月 10 日至 20 日",
             {"start": "2026-06-10", "end": "2026-06-20"},
         ),
     ],
@@ -1161,6 +1182,47 @@ async def test_vague_period_confirmation_resumes_the_original_http_investigation
     assert answer.json()["conversation"]["state"]["confirmed_period"] == expected_period
     assert answer.json()["conversation"]["state"]["pending_period"] is None
     assert await db_session.scalar(select(func.count(AgentEvidence.id))) == 1
+
+
+async def test_vague_business_period_requires_confirmation_when_model_ends_without_a_tool(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+) -> None:
+    await user_factory(username="ending-period-agent", password="secret", role="admin")
+    store = await store_factory(name="Roma", timezone="Europe/Rome")
+    db_session.add(AgentSettings(id=1, enabled=True))
+    await db_session.commit()
+    model = EndingVaguePeriodModel()
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    client._transport.app.state.agent_service = create_agent_service(
+        Settings(_env_file=None),
+        session_factory,
+        native_model=model,
+        native_now=lambda: datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc),
+        native_evidence_collector=BusinessEvidenceCollector(session_factory),
+    )
+    await _login(client, "ending-period-agent")
+
+    response = await client.post(
+        f"/api/agent/stores/{store.id}/turn",
+        json={"question": "最近的月度总收入怎么样？"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["route"] == "clarify"
+    assert response.json()["conversation"]["state"]["confirmed_period"] is None
+    assert response.json()["conversation"]["state"]["pending_period"] == {
+        "start": "2026-07-01",
+        "end": "2026-07-26",
+    }
+    assert len(model.calls) == 1
+    assert await db_session.scalar(select(func.count(AgentEvidence.id))) == 0
 
 
 @pytest.mark.parametrize(

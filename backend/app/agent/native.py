@@ -121,10 +121,16 @@ EXPLICIT_CHINESE_DATE = re.compile(
     r"(?P<month>1[0-2]|0?[1-9])\s*月\s*"
     r"(?P<day>3[01]|[12]\d|0?[1-9])\s*日"
 )
+EXPLICIT_SHORT_CHINESE_DATE_RANGE = re.compile(
+    r"(?P<year>20\d{2}|21\d{2}|2200)\s*年\s*"
+    r"(?P<month>1[0-2]|0?[1-9])\s*月\s*"
+    r"(?P<start_day>3[01]|[12]\d|0?[1-9])\s*日\s*"
+    r"(?:至|到|[-—~～])\s*(?P<end_day>3[01]|[12]\d|0?[1-9])\s*日"
+)
 CURRENT_MONTH_PERIOD = re.compile(r"(?<!上)(?:本月|这个月|当月)")
 PREVIOUS_MONTH_PERIOD = re.compile(r"(?:上月|上个月)")
 AFFIRMATIVE_PERIOD_CONFIRMATION = re.compile(
-    r"\s*(?:(?:好的?|可以|确认|没错|对|是|行|嗯+)"
+    r"\s*(?:(?:好(?:的|啊)?|可以|确认|没错|没问题|对|是|行|嗯+)"
     r"(?:[，,\s]*(?:就)?按(?:这个|该)(?:期间|范围)?(?:继续)?)?"
     r"|(?:就)?按(?:这个|该)(?:期间|范围)(?:继续)?|继续|就这样(?:吧)?)"
     r"\s*[。.!！]?\s*"
@@ -894,11 +900,12 @@ class NativeToolAgentService:
                 [],
                 reason="本轮调查已达到总时间上限。",
             )
+        current_time = self.now()
         trusted_period = _trusted_period(
             state,
             recent_messages,
             context=context,
-            now=self.now(),
+            now=current_time,
         )
         items = [
             NativeTranscriptItem(message=_investigation_context_message(state)),
@@ -913,8 +920,16 @@ class NativeToolAgentService:
         pending_directions = list(state.pending_directions)
         contextual_results: list[NativeToolResult] = []
         selected_action: OpenBusinessRecordsAction | None = None
-        period_confirmation_required = False
-        pending_period_candidate: InferredPeriod | None = None
+        pending_period_candidate = _backend_inferred_vague_period(
+            recent_messages,
+            context=context,
+            now=current_time,
+        )
+        period_confirmation_required = bool(
+            trusted_period is None
+            and pending_period_candidate is not None
+            and _has_business_period_context(state, recent_messages)
+        )
         tool_budget = _ToolCallBudget(self.limits.max_tool_calls)
         model_call_count = 0
         total_tokens = 0
@@ -2374,6 +2389,22 @@ def _explicit_period(
     now: datetime,
 ) -> InferredPeriod | None:
     user_message = _latest_user_message(messages)
+    short_range = EXPLICIT_SHORT_CHINESE_DATE_RANGE.search(user_message)
+    if short_range is not None:
+        try:
+            start = date(
+                int(short_range.group("year")),
+                int(short_range.group("month")),
+                int(short_range.group("start_day")),
+            )
+            end = date(
+                int(short_range.group("year")),
+                int(short_range.group("month")),
+                int(short_range.group("end_day")),
+            )
+        except ValueError:
+            return None
+        return InferredPeriod(start=start, end=end) if start <= end else None
     explicit_dates = _validated_explicit_dates(user_message)
     if len(explicit_dates) >= 2:
         start = explicit_dates[0][1]
@@ -2497,6 +2528,33 @@ def _has_unresolved_vague_period(user_message: str) -> bool:
             if not NEGATED_VAGUE_PERIOD_PREFIX.search(prefix):
                 return True
     return False
+
+
+def _has_business_period_context(
+    state: ConversationState,
+    messages: Sequence[ModelMessage],
+) -> bool:
+    context_text = " ".join(
+        (
+            _latest_user_message(messages),
+            state.investigation_goal or "",
+            *state.confirmed_objects,
+        )
+    )
+    terms = (
+        *EVIDENCE_METRIC_LABELS.values(),
+        SETTLEMENT_DETAILS_LABEL,
+        "收入",
+        "营业额",
+        "经营",
+        "结算",
+        "台账",
+        "洗车",
+        "事件",
+        "天气",
+        "节假日",
+    )
+    return any(term in context_text for term in terms)
 
 
 def _backend_inferred_vague_period(
