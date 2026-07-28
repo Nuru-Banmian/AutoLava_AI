@@ -58,11 +58,13 @@ the Compose network's fixed `172.30.0.1` gateway. Production requires
 `AUTOLAVA_COOKIE_SECURE=false` may be used; never use it for an internet-accessible deployment.
 
 The Agent model transport is selected with `AUTOLAVA_MODEL_ADAPTER`. CI uses the deterministic
-`fake` adapter and never calls a provider. A production `openai_compatible` profile requires
-`AUTOLAVA_MODEL_BASE_URL`, `AUTOLAVA_MODEL_ID`, `AUTOLAVA_MODEL_STRUCTURED_OUTPUT_METHOD`, and
-`AUTOLAVA_MODEL_API_KEY`; no provider or model identifier is hard-coded in business code. Keep the
-API key only in the ignored root `.env` or an injected deployment Secret, and never place it in
-logs, error responses, frontend assets, or committed example values.
+`fake` adapter and never calls a provider. A production `openai_compatible` profile uses the
+provider's native tool-calling interface and requires `AUTOLAVA_MODEL_BASE_URL`,
+`AUTOLAVA_MODEL_ID`, and `AUTOLAVA_MODEL_API_KEY`; no provider or model identifier is hard-coded
+in the Agent domain protocol. Keep the API key only in the ignored root `.env` or an injected
+deployment Secret, and never place it in logs, error responses, frontend assets, or committed
+example values. Validate each candidate profile with the disposable procedure in
+`docs/release/native-model-adapter-probe.md`.
 
 An optional fallback profile uses the corresponding `AUTOLAVA_FALLBACK_MODEL_*` fields. The API
 retries only transient network, timeout, rate-limit, and provider 5xx failures once on the primary

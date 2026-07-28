@@ -193,7 +193,7 @@ class OpenAICompatibleModelAdapter:
             _observe_failure(observer, self.profile, "plan", started, error)
             raise error from None
         except Exception as error:
-            failure = _classified_error(error)
+            failure = classify_model_error(error)
             _observe_failure(observer, self.profile, "plan", started, failure)
             raise failure from error
 
@@ -222,7 +222,7 @@ class OpenAICompatibleModelAdapter:
             _observe_success(observer, self.profile, "answer", started, result)
             return content
         except Exception as error:
-            failure = _classified_error(error)
+            failure = classify_model_error(error)
             _observe_failure(observer, self.profile, "answer", started, failure)
             raise failure from error
 
@@ -264,7 +264,7 @@ class FakeModelAdapter:
         self.plan_calls += 1
         scripted = _pop_scripted(self._plans)
         if isinstance(scripted, Exception):
-            failure = _classified_error(scripted)
+            failure = classify_model_error(scripted)
             _observe_fake_failure(observer, self, "plan", started, failure)
             raise failure from scripted
         try:
@@ -290,7 +290,7 @@ class FakeModelAdapter:
         self.answer_calls += 1
         scripted = _pop_scripted(self._answers)
         if isinstance(scripted, Exception):
-            failure = _classified_error(scripted)
+            failure = classify_model_error(scripted)
             _observe_fake_failure(observer, self, "answer", started, failure)
             raise failure from scripted
         if not isinstance(scripted, str) or not scripted.strip():
@@ -481,7 +481,7 @@ def _raw_model_payload(raw: object) -> object:
     return raw
 
 
-def _classified_error(error: Exception) -> ModelAdapterError:
+def classify_model_error(error: Exception) -> ModelAdapterError:
     if isinstance(error, ModelAdapterError):
         return error
     status = getattr(error, "status_code", None)
@@ -522,12 +522,12 @@ def _raw_message(result: Any) -> AIMessage | None:
     return result if isinstance(result, AIMessage) else None
 
 
-def _usage(message: AIMessage | None) -> tuple[int | None, int | None]:
+def model_usage(message: AIMessage | None) -> tuple[int | None, int | None]:
     metadata = getattr(message, "usage_metadata", None) or {}
     return metadata.get("input_tokens"), metadata.get("output_tokens")
 
 
-def _estimated_cost(
+def estimated_model_cost(
     profile: OpenAICompatibleProfile,
     input_tokens: int | None,
     output_tokens: int | None,
@@ -549,7 +549,7 @@ def _observe_success(
 ) -> None:
     if observer is None:
         return
-    input_tokens, output_tokens = _usage(message)
+    input_tokens, output_tokens = model_usage(message)
     observer(
         ModelAttempt(
             stage=stage,
@@ -560,7 +560,7 @@ def _observe_success(
             latency_ms=max(0, round((perf_counter() - started) * 1000)),
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            estimated_cost=_estimated_cost(profile, input_tokens, output_tokens),
+            estimated_cost=estimated_model_cost(profile, input_tokens, output_tokens),
         )
     )
 
@@ -611,7 +611,7 @@ def _observe_fake_failure(
     started: float,
     error: Exception,
 ) -> None:
-    failure = _classified_error(error)
+    failure = classify_model_error(error)
     if observer is not None:
         observer(
             ModelAttempt(
