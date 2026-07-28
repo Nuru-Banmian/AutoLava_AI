@@ -27,9 +27,7 @@ APPROVED_SYSTEM_KNOWLEDGE: tuple[SystemKnowledgeEntry, ...] = (
             "记录天气和事件。营业状态只能是营业、休息或提前休息。"
         ),
         keywords=("每日台账", "记账", "营业状态", "洗车数量", "记录天气", "事件"),
-        why_patterns=(
-            r"(?:要)?记录(?:营业状态|经营金额|洗车数量|天气|事件)",
-        ),
+        why_patterns=(r"(?:要)?记录(?:营业状态|经营金额|洗车数量|天气|事件)",),
     ),
     SystemKnowledgeEntry(
         id="product.business-records",

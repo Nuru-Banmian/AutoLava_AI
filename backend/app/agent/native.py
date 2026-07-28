@@ -633,10 +633,7 @@ class NativeToolAgentService:
             ):
                 selected_action = round_actions[0]
             for tool_result, new_evidence, action in outcomes:
-                if (
-                    tool_result.evidence.failure.category
-                    == "period_confirmation_required"
-                ):
+                if tool_result.evidence.failure.category == "period_confirmation_required":
                     period_confirmation_required = True
                     candidate = MonthlyTotalRevenueArguments(
                         year=tool_result.evidence.period.start.year,
@@ -649,9 +646,8 @@ class NativeToolAgentService:
                 if new_evidence is not None:
                     collected.append(new_evidence)
                     evidence_by_reference[tool_result.evidence.reference] = new_evidence
-                elif (
-                    tool_result.evidence.failure.status == "none"
-                    and (action is None or action == selected_action)
+                elif tool_result.evidence.failure.status == "none" and (
+                    action is None or action == selected_action
                 ):
                     contextual_results.append(tool_result)
                 items.append(NativeTranscriptItem(tool_result=tool_result))
@@ -798,17 +794,11 @@ class NativeToolAgentService:
         )
         assert isinstance(arguments, SearchSystemKnowledgeArguments)
         user_question = next(
-            (
-                message.content
-                for message in reversed(recent_messages)
-                if message.role == "user"
-            ),
+            (message.content for message in reversed(recent_messages) if message.role == "user"),
             "",
         )
         matches = (
-            search_system_knowledge(user_question)
-            if is_system_help_request(user_question)
-            else []
+            search_system_knowledge(user_question) if is_system_help_request(user_question) else []
         )
         facts = {
             "matches": [
@@ -893,9 +883,7 @@ async def _validated_context_arguments(
     arguments_type: type[ContextArguments],
     scope_resolver: NativeToolScopeResolver,
 ) -> tuple[ContextArguments, RuntimeContext]:
-    if call.name not in {
-        tool.name for tool in _available_tools(context, registrations)
-    }:
+    if call.name not in {tool.name for tool in _available_tools(context, registrations)}:
         raise NativeToolAccessDenied("native tool call is not authorized")
     try:
         arguments = arguments_type.model_validate(call.arguments)
@@ -905,8 +893,7 @@ async def _validated_context_arguments(
     if (
         fresh_context.user_id != context.user_id
         or fresh_context.store_id != context.store_id
-        or call.name
-        not in {tool.name for tool in _available_tools(fresh_context, registrations)}
+        or call.name not in {tool.name for tool in _available_tools(fresh_context, registrations)}
     ):
         raise NativeToolAccessDenied("native tool call is not authorized")
     return arguments, fresh_context
@@ -1253,17 +1240,12 @@ def _month_is_visible(message: str, month: str) -> bool:
             rf"{re.escape(year)}\s*年\s*0?{int(month_number)}\s*月",
             message,
         )
-        or (
-            year in message
-            and re.search(rf"(?<!\d)0?{int(month_number)}\s*月", message)
-        )
+        or (year in message and re.search(rf"(?<!\d)0?{int(month_number)}\s*月", message))
     )
 
 
 def _navigation_confirmation(action: OpenBusinessRecordsAction) -> str:
-    return (
-        f"已准备打开 {action.start_month} 至 {action.end_month} 的营业记录筛选视图。"
-    )
+    return f"已准备打开 {action.start_month} 至 {action.end_month} 的营业记录筛选视图。"
 
 
 def _approved_knowledge_answer(
@@ -1281,10 +1263,6 @@ def _approved_knowledge_answer(
     if not matches:
         return None
     contents = list(
-        dict.fromkeys(
-            match["content"]
-            for match in matches
-            if isinstance(match["content"], str)
-        )
+        dict.fromkeys(match["content"] for match in matches if isinstance(match["content"], str))
     )
     return "\n".join(contents)
