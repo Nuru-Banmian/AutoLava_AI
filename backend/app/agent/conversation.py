@@ -96,8 +96,21 @@ class ConversationResponse(ClosedModel):
     updated_at: datetime | None
 
 
+class InvestigationProgress(ClosedModel):
+    status: Literal["investigating", "waiting", "partial"]
+    message: str = Field(min_length=1, max_length=160)
+
+
+class InvestigationPartial(ClosedModel):
+    verified_facts: list[str] = Field(default_factory=list, max_length=20)
+    incomplete_directions: list[str] = Field(min_length=1, max_length=20)
+    unknowns: list[str] = Field(min_length=1, max_length=20)
+
+
 class AgentTurnResponse(TurnResult):
     conversation: ConversationResponse
+    progress: list[InvestigationProgress] = Field(default_factory=list, max_length=20)
+    partial: InvestigationPartial | None = None
 
 
 class AgentRunResult(ClosedModel):
@@ -105,6 +118,8 @@ class AgentRunResult(ClosedModel):
     state: ConversationState
     evidence: CollectedEvidence | None = None
     attempts: list[ModelAttempt] = Field(default_factory=list)
+    progress: list[InvestigationProgress] = Field(default_factory=list, max_length=20)
+    partial: InvestigationPartial | None = None
 
 
 def empty_conversation_response() -> ConversationResponse:

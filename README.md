@@ -77,6 +77,14 @@ Production Agent access also requires a passing, redacted 2 GB release report at
 fallback order, `AUTOLAVA_MODEL_TIMEOUT_SECONDS`, `AUTOLAVA_MODEL_MAX_OUTPUT_TOKENS`,
 and `AUTOLAVA_AGENT_EVIDENCE_BATCH_LIMIT` (one normal batch, optionally one targeted supplemental
 batch), plus the immutable deployed image digest in `AUTOLAVA_AGENT_RUNTIME_IMAGE_DIGEST`.
+Autonomous investigations are independently bounded by
+`AUTOLAVA_AGENT_INVESTIGATION_MAX_MODEL_CALLS`,
+`AUTOLAVA_AGENT_INVESTIGATION_MAX_TOOL_CALLS`,
+`AUTOLAVA_AGENT_INVESTIGATION_TIMEOUT_SECONDS`,
+`AUTOLAVA_AGENT_INVESTIGATION_MAX_TOKENS`,
+`AUTOLAVA_AGENT_INVESTIGATION_MAX_COST_EUR`, and
+`AUTOLAVA_AGENT_INVESTIGATION_RETRY_ATTEMPTS`. These safety valves limit resource use without
+fixing a tool order or investigation path.
 The report and its three verified evidence artifacts must share one directory. A missing, failed,
 malformed, artifact-mismatched, image-mismatched, or profile-mismatched report keeps the Agent
 globally disabled.
