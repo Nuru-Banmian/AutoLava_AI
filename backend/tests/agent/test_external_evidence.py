@@ -671,7 +671,7 @@ async def test_native_catalog_exposes_bounded_external_tools_with_external_envel
     catalog = {tool.name: tool for tool in model.calls[0].tools}
     for tool_name in ("historical_weather", "public_holidays"):
         schema = catalog[tool_name].input_schema
-        assert set(schema["properties"]) == {"year", "month"}
+        assert set(schema["properties"]) == {"year", "month", "start", "end"}
         assert schema["additionalProperties"] is False
         assert all(
             forbidden not in schema["properties"]

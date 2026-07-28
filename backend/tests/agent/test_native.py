@@ -385,7 +385,7 @@ class EvidenceCalculationModel:
                         "statement": "证据计算结果为 60 欧元",
                         "status": "verified_fact",
                         "metric": "evidence_calculation",
-                        "period": {"start": "2026-07-01", "end": "2026-07-31"},
+                        "period": {"start": "2026-07-01", "end": "2026-07-28"},
                         "value": 60,
                         "unit": "EUR",
                         "evidence_references": [calculation.evidence.reference],
@@ -2283,7 +2283,10 @@ async def test_native_loop_does_not_let_the_model_guess_an_unconfirmed_month() -
                     {
                         "id": "confirmed-period",
                         "name": "monthly_total_revenue",
-                        "arguments": {"year": 2026, "month": 7},
+                        "arguments": {
+                            "start": "2026-07-01",
+                            "end": "2026-07-26",
+                        },
                     }
                 ],
                 "signal": "continue",
@@ -3075,6 +3078,50 @@ async def test_semantic_metric_tools_keep_the_authoritative_result_unit(
     tool_result = model.calls[1].items[-1].tool_result
     assert tool_result is not None
     assert tool_result.evidence.unit == expected_unit
+
+
+async def test_monthly_daily_average_resolves_current_month_in_the_store_timezone() -> None:
+    model = FakeNativeToolModel(
+        turns=[
+            {
+                "message": {"role": "assistant", "content": "查询本月。"},
+                "tool_calls": [
+                    {
+                        "id": "current-month-average",
+                        "name": "monthly_daily_average_income",
+                        "arguments": {"year": 2026, "month": 7},
+                    }
+                ],
+                "signal": "continue",
+            },
+            {
+                "message": {"role": "assistant", "content": "调查完成。"},
+                "signal": "end",
+            },
+        ]
+    )
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=SemanticToolEvidenceCollector(),
+        scope_resolver=PassthroughScopeResolver(),
+        now=lambda: datetime(2026, 7, 26, 22, 30, tzinfo=timezone.utc),
+    )
+
+    await service.run(
+        _runtime_context(store_timezone="Europe/Rome"),
+        ConversationState(),
+        [ModelMessage(role="user", content="查本月的月度日均收入。")],
+    )
+
+    tool = next(
+        definition
+        for definition in model.calls[0].tools
+        if definition.name == "monthly_daily_average_income"
+    )
+    assert set(tool.input_schema["properties"]) == {"year", "month"}
+    tool_result = model.calls[1].items[-1].tool_result
+    assert tool_result is not None
+    assert tool_result.evidence.failure.status == "none"
 
 
 async def test_grouped_tool_evidence_preserves_query_scope_and_versions_filters_separately() -> (
