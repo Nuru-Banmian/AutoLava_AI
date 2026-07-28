@@ -9,7 +9,8 @@ only synthetic data and validates the configured model's real native-tool behavi
 - the model ends with a natural answer;
 - Token counts, total latency, and configured estimated cost are available.
 
-Configure `AUTOLAVA_MODEL_*` in the ignored root `.env` or injected environment, then run:
+Configure `AUTOLAVA_MODEL_*`, including both per-million Token cost rates, in the ignored root
+`.env` or injected environment, then run:
 
 ```powershell
 cd backend

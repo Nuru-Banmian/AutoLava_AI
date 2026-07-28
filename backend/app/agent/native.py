@@ -776,15 +776,11 @@ class NativeToolAgentService:
         recovery_status = result.turn.recovery_status
         if any(attempt.is_fallback for attempt in attempts):
             recovery_status = "fallback"
-        elif recovery_status == "none" and any(
-            attempt.result == "failure" for attempt in attempts
-        ):
+        elif recovery_status == "none" and any(attempt.result == "failure" for attempt in attempts):
             recovery_status = "retried"
         return result.model_copy(
             update={
-                "turn": result.turn.model_copy(
-                    update={"recovery_status": recovery_status}
-                ),
+                "turn": result.turn.model_copy(update={"recovery_status": recovery_status}),
                 "attempts": attempts,
             }
         )

@@ -10,7 +10,7 @@ from app.agent.contracts import (
     ModelMessage,
 )
 from app.agent.factory import configured_openai_profiles
-from app.agent.model import ModelAdapterError, ModelAttempt
+from app.agent.model import ModelAdapterError, ModelAttempt, ModelErrorCategory
 from app.agent.native import (
     NativeEvidenceEnvelope,
     NativeEvidenceFailure,
@@ -49,6 +49,14 @@ PROBE_TOOLS = (
 async def probe() -> dict[str, object]:
     settings = get_settings()
     primary_profile, _ = configured_openai_profiles(settings)
+    if (
+        primary_profile.input_cost_per_million is None
+        or primary_profile.output_cost_per_million is None
+    ):
+        raise ModelAdapterError(
+            "native model probe requires configured input and output cost rates",
+            category=ModelErrorCategory.INVALID_REQUEST,
+        )
     adapter = OpenAICompatibleNativeToolModel(primary_profile)
     attempts: list[ModelAttempt] = []
     first = await adapter.next_turn(

@@ -304,12 +304,19 @@ def _native_usage(
     input_tokens, output_tokens = model_usage(message)
     if input_tokens is None or output_tokens is None:
         token_usage = message.response_metadata.get("token_usage", {})
-        input_tokens = input_tokens if input_tokens is not None else token_usage.get("prompt_tokens")
+        input_tokens = (
+            input_tokens if input_tokens is not None else token_usage.get("prompt_tokens")
+        )
         output_tokens = (
             output_tokens if output_tokens is not None else token_usage.get("completion_tokens")
         )
-    input_count = input_tokens or 0
-    output_count = output_tokens or 0
+    if input_tokens is None or output_tokens is None:
+        raise ModelAdapterError(
+            "provider request failed",
+            category=ModelErrorCategory.INVALID_OUTPUT,
+        )
+    input_count = input_tokens
+    output_count = output_tokens
     return NativeModelUsage(
         input_tokens=input_count,
         output_tokens=output_count,

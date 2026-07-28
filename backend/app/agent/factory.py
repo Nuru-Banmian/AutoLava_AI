@@ -60,9 +60,7 @@ def create_model_adapter(settings: Settings) -> ModelAdapter:
 def create_native_model_adapter(settings: Settings) -> ResilientNativeToolModel:
     primary_profile, fallback_profile = configured_openai_profiles(settings)
     fallback = (
-        OpenAICompatibleNativeToolModel(fallback_profile)
-        if fallback_profile is not None
-        else None
+        OpenAICompatibleNativeToolModel(fallback_profile) if fallback_profile is not None else None
     )
     return ResilientNativeToolModel(
         OpenAICompatibleNativeToolModel(primary_profile),

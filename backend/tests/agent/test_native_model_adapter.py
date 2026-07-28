@@ -26,6 +26,7 @@ from app.agent.native_model import (
     ResilientNativeToolModel,
 )
 from app.agent.runtime import RuntimeContext, RuntimeFeatureFlags
+from app.scripts import probe_native_model_adapter
 
 
 TOOLS = [
@@ -170,7 +171,18 @@ async def test_production_native_adapter_continues_tool_results_and_ends_natural
             }
         ],
     }
-    client = ScriptedNativeClient([AIMessage(content=json.dumps(final_payload))])
+    client = ScriptedNativeClient(
+        [
+            AIMessage(
+                content=json.dumps(final_payload),
+                usage_metadata={
+                    "input_tokens": 120,
+                    "output_tokens": 40,
+                    "total_tokens": 160,
+                },
+            )
+        ]
+    )
     adapter = OpenAICompatibleNativeToolModel(_profile(), client=client)
     call = NativeToolCall(
         id="revenue",
@@ -232,9 +244,18 @@ async def test_production_native_adapter_continues_tool_results_and_ends_natural
     ("failure", "category"),
     [
         (TimeoutError("secret timeout detail"), ModelErrorCategory.TIMEOUT),
-        (type("RateLimitError", (RuntimeError,), {"status_code": 429})("secret"), ModelErrorCategory.RATE_LIMIT),
-        (type("ProviderError", (RuntimeError,), {"status_code": 503})("secret"), ModelErrorCategory.PROVIDER_5XX),
-        (type("AuthError", (RuntimeError,), {"status_code": 401})("secret"), ModelErrorCategory.INVALID_API_KEY),
+        (
+            type("RateLimitError", (RuntimeError,), {"status_code": 429})("secret"),
+            ModelErrorCategory.RATE_LIMIT,
+        ),
+        (
+            type("ProviderError", (RuntimeError,), {"status_code": 503})("secret"),
+            ModelErrorCategory.PROVIDER_5XX,
+        ),
+        (
+            type("AuthError", (RuntimeError,), {"status_code": 401})("secret"),
+            ModelErrorCategory.INVALID_API_KEY,
+        ),
         (ValueError("malformed provider payload"), ModelErrorCategory.INVALID_OUTPUT),
     ],
 )
@@ -256,6 +277,39 @@ async def test_production_native_adapter_maps_failures_without_leaking_payload(
     assert attempts[0].error_category == category
 
 
+async def test_production_native_adapter_rejects_missing_token_usage() -> None:
+    adapter = OpenAICompatibleNativeToolModel(
+        _profile(),
+        client=ScriptedNativeClient([AIMessage(content="自然结束回答。")]),
+    )
+
+    with pytest.raises(ModelAdapterError) as raised:
+        await adapter.next_turn([], tools=TOOLS)
+
+    assert raised.value.category == ModelErrorCategory.INVALID_OUTPUT
+    assert str(raised.value) == "provider request failed"
+
+
+async def test_native_probe_requires_configured_cost_rates(monkeypatch) -> None:
+    profile = _profile().model_copy(
+        update={
+            "input_cost_per_million": None,
+            "output_cost_per_million": None,
+        }
+    )
+    monkeypatch.setattr(probe_native_model_adapter, "get_settings", object)
+    monkeypatch.setattr(
+        probe_native_model_adapter,
+        "configured_openai_profiles",
+        lambda settings: (profile, None),
+    )
+
+    with pytest.raises(ModelAdapterError) as raised:
+        await probe_native_model_adapter.probe()
+
+    assert raised.value.category == ModelErrorCategory.INVALID_REQUEST
+
+
 async def test_resilient_native_adapter_retries_primary_then_uses_fallback() -> None:
     transient = type("ProviderError", (RuntimeError,), {"status_code": 503})
     primary = OpenAICompatibleNativeToolModel(
@@ -266,7 +320,18 @@ async def test_resilient_native_adapter_retries_primary_then_uses_fallback() -> 
     )
     fallback = OpenAICompatibleNativeToolModel(
         _profile(provider="backup", model_id="backup-model"),
-        client=ScriptedNativeClient([AIMessage(content="这是自然结束回答。")]),
+        client=ScriptedNativeClient(
+            [
+                AIMessage(
+                    content="这是自然结束回答。",
+                    usage_metadata={
+                        "input_tokens": 10,
+                        "output_tokens": 5,
+                        "total_tokens": 15,
+                    },
+                )
+            ]
+        ),
     )
     attempts = []
     adapter = ResilientNativeToolModel(
