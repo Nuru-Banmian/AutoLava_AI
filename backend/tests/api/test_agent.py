@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 import pytest
 from httpx import AsyncClient
@@ -226,7 +226,12 @@ async def test_agent_route_builds_trusted_runtime_context_for_current_store(
     assert len(agent_service.calls) == 1
     context, state, recent_messages = agent_service.calls[0]
     assert state.model_dump(mode="json") == {
+        "investigation_goal": "你能做什么？",
         "confirmed_period": None,
+        "confirmed_objects": [],
+        "evidence_references": [],
+        "analysis_hypotheses": [],
+        "pending_directions": [],
         "metrics": [],
         "filters": {},
         "comparison": None,
@@ -346,6 +351,7 @@ async def test_agent_http_turn_returns_direct_answers_and_ends_on_clarification(
         plans=[
             {"route": "direct_answer", "answer": "我可以回答一般问题。"},
             {"route": "clarify", "question": "你想了解哪个时间范围？"},
+            {"route": "direct_answer", "answer": "已了解。"},
         ]
     )
     client._transport.app.state.agent_service = AgentService(
@@ -364,6 +370,10 @@ async def test_agent_http_turn_returns_direct_answers_and_ends_on_clarification(
         f"/api/agent/stores/{store_id}/turn",
         json={"question": "帮我看看"},
     )
+    resolved = await client.post(
+        f"/api/agent/stores/{store_id}/turn",
+        json={"question": "暂时不用调查了"},
+    )
 
     assert direct.status_code == 200
     assert {key: direct.json()[key] for key in ("route", "content")} == {
@@ -378,7 +388,11 @@ async def test_agent_http_turn_returns_direct_answers_and_ends_on_clarification(
     assert clarification.json()["conversation"]["state"]["pending_clarifications"] == [
         "你想了解哪个时间范围？"
     ]
-    assert model.plan_calls == 2
+    assert clarification.json()["conversation"]["state"]["pending_directions"] == [
+        "你想了解哪个时间范围？"
+    ]
+    assert resolved.json()["conversation"]["state"]["pending_directions"] == []
+    assert model.plan_calls == 3
     assert model.answer_calls == 0
 
 
@@ -483,7 +497,8 @@ async def test_monthly_total_revenue_http_gold_path_persists_raw_evidence_safely
                 session_factory,
                 now=lambda _timezone: datetime(2026, 7, 26, 12, 0),
             ),
-        )
+        ),
+        now=lambda: datetime(2026, 7, 26, 10, 0, tzinfo=timezone.utc),
     )
     await _login(client, "admin")
 
@@ -503,6 +518,12 @@ async def test_monthly_total_revenue_http_gold_path_persists_raw_evidence_safely
         "end": "2026-07-26",
     }
     assert payload["conversation"]["state"]["metrics"] == ["月度总收入"]
+    assert payload["conversation"]["state"]["confirmed_objects"] == ["月度总收入"]
+    reference = payload["conversation"]["state"]["evidence_references"][0]
+    assert reference["source"] == ["store_daily_records", "settlement_records"]
+    assert reference["queried_at"] == "2026-07-26T10:00:00Z"
+    assert reference["data_version"].startswith("sha256:")
+    assert reference["use_as_current_fact"] is False
     evidence = await db_session.scalar(select(AgentEvidence))
     assert evidence is not None
     assert evidence.payload["result"] == {
@@ -947,6 +968,9 @@ async def test_core_business_metric_http_gold_paths_use_historical_snapshots_and
         "start": "2026-07-01",
         "end": "2026-07-26",
     }
+    if metric == "confirmed_settlement_income":
+        reference = response.json()["conversation"]["state"]["evidence_references"][0]
+        assert reference["source"] == ["settlement_records"]
     evidence = await db_session.scalar(select(AgentEvidence).order_by(AgentEvidence.id.desc()))
     assert evidence is not None
     resolved_expected = expected_result
@@ -1559,7 +1583,12 @@ async def test_current_conversation_restores_full_messages_and_structured_state(
         ("assistant", "这是完整回答。"),
     ]
     assert payload["state"] == {
+        "investigation_goal": "保留完整问题，包括 €123 和全部细节。",
         "confirmed_period": None,
+        "confirmed_objects": [],
+        "evidence_references": [],
+        "analysis_hypotheses": [],
+        "pending_directions": [],
         "metrics": [],
         "filters": {},
         "comparison": None,
@@ -1663,6 +1692,9 @@ async def test_current_conversations_are_isolated_by_user_and_store(
         "first-Milano",
         "这是完整回答。",
     ]
+    assert second_roma["state"]["investigation_goal"] == "second-Roma"
+    assert first_roma["state"]["investigation_goal"] == "first-Roma"
+    assert first_milano["state"]["investigation_goal"] == "first-Milano"
     assert len({second_roma["id"], first_roma["id"], first_milano["id"]}) == 3
 
 
@@ -1720,7 +1752,12 @@ async def test_reset_requires_confirmation_and_permanently_deletes_current_conve
     await db_session.commit()
     await _login(client, "admin")
     expected_state = {
+        "investigation_goal": None,
         "confirmed_period": {"start": "2026-07-01", "end": "2026-07-26"},
+        "confirmed_objects": [],
+        "evidence_references": [],
+        "analysis_hypotheses": [],
+        "pending_directions": [],
         "metrics": ["月度总收入"],
         "filters": {"记录天气": ["晴"]},
         "comparison": {
@@ -1772,7 +1809,12 @@ async def test_reset_requires_confirmation_and_permanently_deletes_current_conve
         "id": None,
         "messages": [],
         "state": {
+            "investigation_goal": None,
             "confirmed_period": None,
+            "confirmed_objects": [],
+            "evidence_references": [],
+            "analysis_hypotheses": [],
+            "pending_directions": [],
             "metrics": [],
             "filters": {},
             "comparison": None,

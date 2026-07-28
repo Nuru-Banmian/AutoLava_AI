@@ -1,7 +1,7 @@
 from datetime import date, datetime, timezone
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,8 +31,49 @@ class ConversationComparison(ClosedModel):
     label: str = Field(min_length=1, max_length=120)
 
 
+EvidenceReferenceId = Annotated[
+    str,
+    StringConstraints(pattern=r"^ev_[0-9a-f]{24}$"),
+]
+
+
+class ConversationEvidenceReference(ClosedModel):
+    reference: EvidenceReferenceId
+    source: list[Literal["store_daily_records", "settlement_records"]] = Field(
+        min_length=1,
+        max_length=2,
+    )
+    queried_at: datetime
+    data_version: str = Field(min_length=1, max_length=100)
+    period: ConfirmedPeriod
+    use_as_current_fact: Literal[False] = False
+
+
+class ConversationAnalysisHypothesis(ClosedModel):
+    statement: str = Field(min_length=1, max_length=500)
+    status: Literal["proposed", "testing", "supported", "refuted", "unresolved"]
+    evidence_references: list[EvidenceReferenceId] = Field(default_factory=list, max_length=20)
+
+    @model_validator(mode="after")
+    def require_supported_evidence(self) -> "ConversationAnalysisHypothesis":
+        if self.status in {"supported", "refuted"} and not self.evidence_references:
+            raise ValueError("supported or refuted hypotheses require evidence")
+        return self
+
+
 class ConversationState(ClosedModel):
+    investigation_goal: str | None = Field(default=None, min_length=1, max_length=2_000)
     confirmed_period: ConfirmedPeriod | None = None
+    confirmed_objects: list[str] = Field(default_factory=list, max_length=20)
+    evidence_references: list[ConversationEvidenceReference] = Field(
+        default_factory=list,
+        max_length=50,
+    )
+    analysis_hypotheses: list[ConversationAnalysisHypothesis] = Field(
+        default_factory=list,
+        max_length=8,
+    )
+    pending_directions: list[str] = Field(default_factory=list, max_length=8)
     metrics: list[str] = Field(default_factory=list, max_length=20)
     filters: dict[str, list[str]] = Field(default_factory=dict)
     comparison: ConversationComparison | None = None
