@@ -1794,6 +1794,30 @@ async def test_native_tool_catalog_rejects_a_disabled_runtime_before_model_execu
         ),
         ("monthly_total_revenue", {"year": 2026, "month": 13}),
         ("monthly_total_revenue", {"year": 2201, "month": 7}),
+        (
+            "daily_ledger_details",
+            {
+                "year": 2026,
+                "month": 7,
+                "dates": ["2026-07-05", "2026-08-01"],
+            },
+        ),
+        (
+            "daily_ledger_details",
+            {
+                "year": 2026,
+                "month": 7,
+                "dates": ["2026-07-05", "2026-07-05"],
+            },
+        ),
+        (
+            "daily_ledger_details",
+            {
+                "year": 2026,
+                "month": 7,
+                "dates": [f"2026-07-{day:02d}" for day in range(1, 32)] + ["2026-07-31"],
+            },
+        ),
     ],
 )
 async def test_native_tool_contract_fails_closed_for_unpublished_or_unbounded_calls(
@@ -1967,6 +1991,7 @@ async def test_monthly_revenue_policy_stays_available_when_optional_store_featur
         "income_category_amount",
         "other_data_amount",
         "daily_ledger_revenue_extreme",
+        "daily_ledger_details",
         EVIDENCE_CALCULATION_TOOL,
     ]
     if feature == "company_settlement_enabled":
@@ -2219,6 +2244,131 @@ async def test_semantic_wash_count_tool_returns_missing_dates_without_treating_t
     assert tool_result.evidence.completeness.wash_count_missing_dates == [date(2026, 7, 2)]
     assert tool_result.evidence.completeness.wash_count_coverage_percent == 50
     assert tool_result.evidence.truncated is False
+
+
+async def test_daily_ledger_drilldown_maps_a_controlled_date_set_after_aggregate_evidence() -> None:
+    model = FakeNativeToolModel(
+        turns=[
+            {
+                "message": {"role": "assistant", "content": "先查看异常日期。"},
+                "tool_calls": [
+                    {
+                        "id": "extreme",
+                        "name": "daily_ledger_revenue_extreme",
+                        "arguments": {
+                            "year": 2026,
+                            "month": 7,
+                            "extreme": "lowest",
+                        },
+                    }
+                ],
+                "signal": "continue",
+            },
+            {
+                "message": {"role": "assistant", "content": "钻取相关每日台账。"},
+                "tool_calls": [
+                    {
+                        "id": "drilldown",
+                        "name": "daily_ledger_details",
+                        "arguments": {
+                            "year": 2026,
+                            "month": 7,
+                            "dates": ["2026-07-05", "2026-07-19"],
+                        },
+                    }
+                ],
+                "signal": "continue",
+            },
+            {
+                "message": {"role": "assistant", "content": "目前无法继续。"},
+                "signal": "end",
+            },
+        ]
+    )
+    collector = RecordingEvidenceCollector()
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=collector,
+        scope_resolver=PassthroughScopeResolver(),
+    )
+
+    await service.run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="调查 2026 年 7 月的异常经营日。")],
+    )
+
+    request = collector.calls[1][0].requests[0]
+    assert request.kind == "daily_ledger_drilldown"
+    assert request.dates == [date(2026, 7, 5), date(2026, 7, 19)]
+
+
+def test_daily_ledger_drilldown_claim_binds_revenue_to_the_claimed_date() -> None:
+    evidence = EvidenceBundle.model_validate(
+        {
+            "status": "ok",
+            "current_store": {"id": 2},
+            "period": {"start": "2026-07-05", "end": "2026-07-19"},
+            "metric": "daily_ledger",
+            "selected_dates": ["2026-07-05", "2026-07-19"],
+            "unit": "mixed",
+            "calculation_version": "daily_ledger_drilldown.v1",
+            "result": {
+                "detail_status": "details",
+                "records": [
+                    {
+                        "facts": {
+                            "date": "2026-07-05",
+                            "daily_revenue": 40,
+                            "income_mode": "总额记账",
+                            "operating_status": "提前休息",
+                        }
+                    },
+                    {
+                        "facts": {
+                            "date": "2026-07-19",
+                            "daily_revenue": 180,
+                            "income_mode": "总额记账",
+                            "operating_status": "营业",
+                        }
+                    },
+                ],
+                "unrecorded_dates": [],
+                "matched_records": 2,
+            },
+            "coverage": {"calendar_dates": 2, "recorded_dates": 2},
+            "summary": "已按线索钻取 2 个日期。",
+        }
+    )
+    reference = "ev_1234567890abcdef12345678"
+    correct = NativeAnswerClaim(
+        statement="2026-07-05 的每日台账营业额为 40 欧元",
+        status="verified_fact",
+        evidence_references=[reference],
+        metric="daily_ledger_revenue",
+        period={"start": "2026-07-05", "end": "2026-07-05"},
+        value=40,
+        unit="EUR",
+    )
+    wrong_date_value = correct.model_copy(
+        update={
+            "statement": "2026-07-05 的每日台账营业额为 180 欧元",
+            "value": 180,
+        }
+    )
+
+    assert answer_is_grounded(
+        f"{correct.statement}。",
+        [evidence],
+        [correct],
+        {reference: evidence},
+    )
+    assert not answer_is_grounded(
+        f"{wrong_date_value.statement}。",
+        [evidence],
+        [wrong_date_value],
+        {reference: evidence},
+    )
 
 
 @pytest.mark.parametrize(

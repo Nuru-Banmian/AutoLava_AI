@@ -272,7 +272,7 @@ def _claims_are_grounded(
             return False
         if not any(
             bundle is not None
-            and bundle.period == claim.period
+            and _claim_period_is_supported(claim, bundle)
             and _claim_value_is_supported(claim, bundle)
             and _claim_literals_match_metadata(claim)
             for bundle in referenced
@@ -301,6 +301,11 @@ def _claim_value_is_supported(
         if claim.metric == EvidenceMetric.CONFIRMED_SETTLEMENT_INCOME:
             return _settlement_claim_value_is_supported(claim, bundle, status="confirmed")
         return False
+    if (
+        bundle.metric == EvidenceMetric.DAILY_LEDGER
+        and claim.metric == EvidenceMetric.DAILY_LEDGER_REVENUE
+    ):
+        return _daily_ledger_revenue_claim_is_supported(claim, bundle)
     if bundle.metric != claim.metric:
         return False
     if claim.unit == "percent":
@@ -318,6 +323,45 @@ def _claim_value_is_supported(
             bundle.result.model_dump(mode="python"),
             _metric_value(claim.metric),
         )
+    )
+
+
+def _claim_period_is_supported(
+    claim: NativeAnswerClaim,
+    bundle: GroundedEvidence,
+) -> bool:
+    if claim.period is None:
+        return False
+    if bundle.period == claim.period:
+        return True
+    return bool(
+        isinstance(bundle, EvidenceBundle)
+        and bundle.metric == EvidenceMetric.DAILY_LEDGER
+        and claim.period.start == claim.period.end
+        and bundle.selected_dates is not None
+        and claim.period.start in bundle.selected_dates
+    )
+
+
+def _daily_ledger_revenue_claim_is_supported(
+    claim: NativeAnswerClaim,
+    bundle: EvidenceBundle,
+) -> bool:
+    if (
+        claim.unit != "EUR"
+        or claim.period is None
+        or claim.period.start != claim.period.end
+        or claim.value is None
+    ):
+        return False
+    result = bundle.result.model_dump(mode="python")
+    candidates = result.get("records", [result])
+    return any(
+        isinstance(candidate, dict)
+        and isinstance(candidate.get("facts"), dict)
+        and candidate["facts"].get("date") == claim.period.start
+        and Decimal(candidate["facts"].get("daily_revenue")) == claim.value
+        for candidate in candidates
     )
 
 
@@ -625,6 +669,12 @@ def _values_for_field(
             if field == EvidenceMetric.CONFIRMED_SETTLEMENT_INCOME:
                 values.update(_settlement_amounts(result, status="confirmed"))
                 continue
+        elif (
+            bundle.metric == EvidenceMetric.DAILY_LEDGER
+            and field == EvidenceMetric.DAILY_LEDGER_REVENUE
+        ):
+            values.update(_field_values(result, "daily_revenue"))
+            continue
         values.update(_field_values(result, field))
     return values
 
