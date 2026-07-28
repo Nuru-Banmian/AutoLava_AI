@@ -1,4 +1,5 @@
 from datetime import datetime
+from uuid import uuid4
 
 from sqlalchemy import (
     JSON,
@@ -61,6 +62,7 @@ class AgentRunStat(Base):
     __tablename__ = "agent_run_stats"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(36), default=lambda: str(uuid4()), index=True)
     user_id: Mapped[int] = mapped_column()
     store_id: Mapped[int] = mapped_column()
     role: Mapped[str] = mapped_column(String(16))
@@ -86,6 +88,8 @@ class AgentAlert(Base):
     model: Mapped[str] = mapped_column(String(120))
     error_category: Mapped[str] = mapped_column(String(40))
     message: Mapped[str] = mapped_column(String(240))
+    occurrence_count: Mapped[int] = mapped_column(default=1, server_default="1")
     is_resolved: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    last_seen_at: Mapped[datetime] = mapped_column(server_default=func.now())
     resolved_at: Mapped[datetime | None]

@@ -73,6 +73,16 @@ def test_blank_sqlite_file_migrates_to_final_schema(tmp_path: Path) -> None:
             row[1]: row for row in connection.execute("PRAGMA table_info('agent_messages')")
         }
         assert message_columns["action"][3] == 0
+        run_columns = {
+            row[1]: row for row in connection.execute("PRAGMA table_info('agent_run_stats')")
+        }
+        assert run_columns["run_id"][3] == 1
+        alert_columns = {
+            row[1]: row for row in connection.execute("PRAGMA table_info('agent_alerts')")
+        }
+        assert alert_columns["occurrence_count"][3] == 1
+        assert alert_columns["occurrence_count"][4].strip("'") == "1"
+        assert alert_columns["last_seen_at"][3] == 1
 
         index_names = {
             name
@@ -272,8 +282,78 @@ def test_applied_revision_0004_upgrades_without_losing_existing_data(tmp_path: P
     )
 
     with closing(sqlite3.connect(database_path)) as connection:
-        assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == ("0009",)
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == ("0010",)
         assert (
             connection.execute("SELECT enabled FROM agent_settings WHERE id = 1").fetchone() is None
         )
         assert connection.execute("SELECT username FROM users").fetchall() == [("existing-admin",)]
+
+
+def test_applied_revision_0009_preserves_existing_agent_observability(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "existing-agent-observability.sqlite3"
+    environment = os.environ | {"AUTOLAVA_DATABASE_PATH": str(database_path)}
+    backend = Path(__file__).parents[1]
+
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "0009"],
+        cwd=backend,
+        env=environment,
+        check=True,
+    )
+    with closing(sqlite3.connect(database_path)) as connection:
+        connection.execute(
+            """
+            INSERT INTO agent_run_stats (
+                user_id, store_id, role, stage, provider, model, input_tokens,
+                output_tokens, result, error_category, latency_ms, estimated_cost, is_fallback
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                7,
+                9,
+                "final_admin",
+                "answer",
+                "provider",
+                "model",
+                120,
+                30,
+                "success",
+                None,
+                80,
+                0.01,
+                0,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO agent_alerts (
+                alert_type, provider, model, error_category, message, is_resolved
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            ("service", "provider", "model", "provider_5xx", "脱敏告警", 0),
+        )
+        connection.commit()
+
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=backend,
+        env=environment,
+        check=True,
+    )
+
+    with closing(sqlite3.connect(database_path)) as connection:
+        assert connection.execute(
+            """
+            SELECT run_id, user_id, store_id, stage, provider, model, result
+            FROM agent_run_stats
+            """
+        ).fetchone() == ("legacy-1", 7, 9, "answer", "provider", "model", "success")
+        assert connection.execute(
+            """
+            SELECT alert_type, occurrence_count, last_seen_at = created_at, is_resolved
+            FROM agent_alerts
+            """
+        ).fetchone() == ("service", 1, 1, 0)
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == ("0010",)

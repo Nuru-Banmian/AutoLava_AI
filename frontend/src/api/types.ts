@@ -179,6 +179,35 @@ export interface AgentStatus {
   enabled: boolean;
   release_approved?: boolean;
 }
+export interface AgentRunStat {
+  id: number;
+  run_id: string;
+  role: string;
+  stage: string;
+  provider: string;
+  model: string;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  result: string;
+  error_category: string | null;
+  latency_ms: number;
+  estimated_cost: number | null;
+  is_fallback: boolean;
+  created_at: string;
+}
+export interface AgentAlert {
+  id: number;
+  alert_type: string;
+  provider: string;
+  model: string;
+  error_category: string;
+  message: string;
+  occurrence_count: number;
+  is_resolved: boolean;
+  created_at: string;
+  last_seen_at: string;
+  resolved_at: string | null;
+}
 export interface OpenBusinessRecordsAction {
   type: "open_business_records";
   start_month: string;

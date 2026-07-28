@@ -316,7 +316,7 @@ test("owner configures shared-store income, a user membership, and a mapped stor
   await expect(page).toHaveURL(/\/admin\?tab=users$/);
   await page.getByRole("tab", { name: "系统状态" }).click();
   await expect(page).toHaveURL(/\/admin\?tab=status$/);
-  await expect(page.getByText("运行状态")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "运行状态" })).toBeVisible();
   await page.getByRole("tab", { name: "门店与收入" }).click();
   await expect(page).toHaveURL(/\/admin$/);
   await page.setViewportSize({ width: 390, height: 844 });

@@ -18,6 +18,8 @@ const emptyLists = [
   http.get("/api/admin/alerts", () => HttpResponse.json([])),
   http.get("/api/admin/task-logs", () => HttpResponse.json([])),
   http.get("/api/admin/agent-settings", () => HttpResponse.json({ enabled: false })),
+  http.get("/api/admin/agent-observability/runs", () => HttpResponse.json([])),
+  http.get("/api/admin/agent-observability/alerts", () => HttpResponse.json([])),
 ];
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
@@ -92,6 +94,7 @@ describe("AdminPage", () => {
     server.use(...emptyLists);
     const owner = renderAdmin("/admin?tab=status");
     expect(await screen.findByRole("button", { name: "下载数据库备份" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Agent 运行健康" })).toBeInTheDocument();
     owner.unmount();
 
     vi.mocked(useAuth).mockReturnValue({
@@ -107,5 +110,6 @@ describe("AdminPage", () => {
     renderAdmin("/admin?tab=status");
 
     expect(screen.queryByRole("button", { name: "下载数据库备份" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Agent 运行健康" })).not.toBeInTheDocument();
   });
 });
