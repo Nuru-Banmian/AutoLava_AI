@@ -1,8 +1,140 @@
+import { FormEvent, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { friendlyApiError } from "@/api/client";
-import { useAgentCurrentStore } from "@/lib/agent";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import {
+  useAgentConversation,
+  useAgentCurrentStore,
+  useResetAgentConversation,
+  useSendAgentMessage,
+} from "@/lib/agent";
 import { useStore } from "@/stores/StoreProvider";
+
+function AgentConversationPanel({ storeId }: { storeId: number }) {
+  const [draft, setDraft] = useState("");
+  const [resetOpen, setResetOpen] = useState(false);
+  const conversation = useAgentConversation(storeId);
+  const send = useSendAgentMessage(storeId);
+  const reset = useResetAgentConversation(storeId);
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    const content = draft.trim();
+    if (!content) return;
+    send.mutate(content, {
+      onSuccess: () => setDraft(""),
+    });
+  }
+
+  if (conversation.isPending) {
+    return <p role="status">正在恢复 Agent 会话…</p>;
+  }
+  if (conversation.isError) {
+    return (
+      <p className="text-destructive" role="alert">
+        {friendlyApiError(conversation.error, "Agent 会话加载失败，请重试")}
+      </p>
+    );
+  }
+
+  return (
+    <div className="grid gap-4">
+      <div
+        aria-label="Agent 会话"
+        className="grid min-h-48 gap-3 rounded-lg border bg-background p-4"
+      >
+        {conversation.data.messages.length === 0
+          ? (
+              <p className="text-sm text-muted-foreground">
+                还没有消息，可以从当前门店的经营问题开始。
+              </p>
+            )
+          : conversation.data.messages.map((message) => (
+              <article
+                className={message.role === "user"
+                  ? "ml-auto max-w-[85%] rounded-lg bg-primary px-3 py-2 text-primary-foreground"
+                  : "mr-auto max-w-[85%] rounded-lg bg-muted px-3 py-2"}
+                key={message.id}
+              >
+                <p className="mb-1 text-xs font-medium">
+                  {message.role === "user" ? "你" : "Agent"}
+                </p>
+                <p className="whitespace-pre-wrap text-sm">{message.content}</p>
+              </article>
+            ))}
+      </div>
+
+      <form className="grid gap-2" onSubmit={submit}>
+        <label className="text-sm font-medium" htmlFor="agent-message">
+          向 Agent 提问
+        </label>
+        <textarea
+          aria-label="向 Agent 提问"
+          className="min-h-24 rounded-md border bg-background px-3 py-2 text-sm"
+          id="agent-message"
+          maxLength={4000}
+          onChange={(event) => setDraft(event.target.value)}
+          placeholder="例如：上个月的经营情况怎么样？"
+          value={draft}
+        />
+        {(send.isError || reset.isError) && (
+          <p className="text-sm text-destructive" role="alert">
+            {friendlyApiError(
+              send.error ?? reset.error,
+              send.isError ? "消息发送失败，请重试" : "会话重置失败，请重试",
+            )}
+          </p>
+        )}
+        <div className="flex flex-wrap gap-2">
+          <Button disabled={!draft.trim() || send.isPending} type="submit">
+            {send.isPending ? "正在回答…" : "发送"}
+          </Button>
+          <Button
+            disabled={reset.isPending}
+            onClick={() => setResetOpen(true)}
+            type="button"
+            variant="outline"
+          >
+            重置会话
+          </Button>
+        </div>
+      </form>
+      <AlertDialog open={resetOpen} onOpenChange={setResetOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认重置 Agent 会话？</AlertDialogTitle>
+            <AlertDialogDescription>
+              当前门店的 Agent 消息和派生资料会被删除，门店业务记录不会改变。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={reset.isPending}>取消</AlertDialogCancel>
+            <Button
+              disabled={reset.isPending}
+              onClick={() => reset.mutate(undefined, {
+                onSuccess: () => setResetOpen(false),
+              })}
+              type="button"
+              variant="destructive"
+            >
+              {reset.isPending ? "正在重置…" : "确认重置"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
 
 export function AgentPage() {
   const { selected } = useStore();
@@ -32,13 +164,13 @@ export function AgentPage() {
   }
 
   return (
-    <section className="space-y-3">
-      <h1 className="text-2xl font-semibold">数据分析 Agent</h1>
-      <p className="text-sm text-muted-foreground">Agent 当前门店</p>
-      <p className="text-lg font-medium">{access.data.store_name}</p>
-      <p className="text-sm text-muted-foreground">
-        分析对话能力将在后续纵向切片中交付。
-      </p>
+    <section className="mx-auto max-w-3xl space-y-4">
+      <div>
+        <h1 className="text-2xl font-semibold">数据分析 Agent</h1>
+        <p className="mt-2 text-sm text-muted-foreground">Agent 当前门店</p>
+        <p className="text-lg font-medium">{access.data.store_name}</p>
+      </div>
+      <AgentConversationPanel storeId={access.data.store_id} />
     </section>
   );
 }

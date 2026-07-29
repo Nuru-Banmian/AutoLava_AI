@@ -20,6 +20,20 @@ export interface AgentCurrentStore {
   store_name: string;
 }
 
+export interface AgentMessage {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+}
+
+export interface AgentConversation {
+  conversation_id: number;
+  store_id: number;
+  store_name: string;
+  messages: AgentMessage[];
+}
+
 export interface AdminUser extends User {
   is_active: boolean;
   store_ids: number[];

@@ -24,6 +24,12 @@ const server = setupServer(
     { detail: "数据分析 Agent 未启用" },
     { status: 403 },
   )),
+  http.get("/api/agent/stores/:storeId/conversation", ({ params }) => HttpResponse.json({
+    conversation_id: 1,
+    store_id: Number(params.storeId),
+    store_name: "总店",
+    messages: [],
+  })),
   http.get("/api/dashboard/:storeId", () => HttpResponse.json([])),
   http.get("/api/settlements/:storeId/months/:month", ({ params }) => HttpResponse.json({
     opening_month: params.month,
@@ -198,6 +204,50 @@ describe("App", () => {
     expect(await screen.findByRole("heading", { name: "数据分析 Agent" })).toBeInTheDocument();
     const currentStoreLabel = await screen.findByText("Agent 当前门店");
     expect(currentStoreLabel.nextElementSibling).toHaveTextContent("总店");
+  });
+
+  it("restores, sends, and resets the current store Agent conversation", async () => {
+    const savedMessages = [
+      { id: 1, role: "user", content: "上个月经营怎么样？", created_at: "2026-07-29T08:00:00" },
+      { id: 2, role: "assistant", content: "上个月营业额保持稳定。", created_at: "2026-07-29T08:00:01" },
+    ];
+    server.use(
+      http.get("/api/agent/stores/1", () => HttpResponse.json({
+        store_id: 1,
+        store_name: "总店",
+      })),
+      http.get("/api/agent/stores/1/conversation", () => HttpResponse.json({
+        conversation_id: 9,
+        store_id: 1,
+        store_name: "总店",
+        messages: savedMessages,
+      })),
+      http.post("/api/agent/stores/1/messages", async ({ request }) => {
+        const body = await request.json() as { content: string };
+        return HttpResponse.json({
+          conversation_id: 9,
+          store_id: 1,
+          store_name: "总店",
+          messages: [
+            ...savedMessages,
+            { id: 3, role: "user", content: body.content, created_at: "2026-07-29T09:00:00" },
+            { id: 4, role: "assistant", content: "本月目前有 12 个经营日。", created_at: "2026-07-29T09:00:01" },
+          ],
+        });
+      }),
+      http.delete("/api/agent/stores/1/conversation", () => new HttpResponse(null, { status: 204 })),
+    );
+    renderApplication("/agent", "administrator");
+
+    expect(await screen.findByText("上个月营业额保持稳定。")).toBeInTheDocument();
+    await userEvent.type(screen.getByRole("textbox", { name: "向 Agent 提问" }), "本月有几个经营日？");
+    await userEvent.click(screen.getByRole("button", { name: "发送" }));
+    expect(await screen.findByText("本月目前有 12 个经营日。")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "重置会话" }));
+    await userEvent.click(screen.getByRole("button", { name: "确认重置" }));
+    await waitFor(() => expect(screen.queryByText("上个月营业额保持稳定。")).not.toBeInTheDocument());
+    expect(screen.getByText("还没有消息，可以从当前门店的经营问题开始。")).toBeInTheDocument();
   });
 
   it("does not mount the Agent page for an ordinary store user", async () => {

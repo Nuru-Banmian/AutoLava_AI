@@ -11,6 +11,8 @@ import app.models.settlement  # noqa: F401
 def test_final_tables_are_registered() -> None:
     assert set(Base.metadata.tables) == {
         "agent_system_settings",
+        "agent_conversations",
+        "agent_messages",
         "users",
         "stores",
         "store_members",
@@ -27,6 +29,10 @@ def test_final_tables_are_registered() -> None:
 
 
 def test_business_unique_constraints_exist() -> None:
+    assert {
+        c.name
+        for c in Base.metadata.tables["agent_conversations"].constraints
+    } >= {"uq_agent_conversations_user_store"}
     assert {c.name for c in Base.metadata.tables["store_members"].constraints} >= {
         "uq_store_members_store_user"
     }

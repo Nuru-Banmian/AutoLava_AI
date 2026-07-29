@@ -15,6 +15,7 @@ from app.services.scheduler import (
     make_sqlite_maintenance_callback,
 )
 from app.services.sqlite_backup import has_valid_backup
+from app.services.agent_model import BailianOpenAIModelAdapter
 from app.services.weather import OpenMeteoProvider, WeatherService
 
 
@@ -59,6 +60,7 @@ def create_app() -> FastAPI:
     app.state.weather_service = weather_service
     app.state.dashboard_refresh_limiter = RefreshLimiter()
     app.state.background_refresh_scheduler = scheduler
+    app.state.agent_model_adapter = BailianOpenAIModelAdapter(settings)
     if maintenance_scheduler is not None:
         # Retention is chained after every backup attempt, so both names expose
         # the same single 03:00 lifecycle owner.

@@ -10,6 +10,8 @@ import pytest
 
 EXPECTED_TABLES = {
     "agent_system_settings",
+    "agent_conversations",
+    "agent_messages",
     "users",
     "stores",
     "store_members",
@@ -249,7 +251,7 @@ def test_applied_revision_0004_upgrades_without_losing_existing_data(tmp_path: P
 
     with closing(sqlite3.connect(database_path)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0010",
+            "0011",
         )
         assert connection.execute("SELECT username FROM users").fetchall() == [
             ("existing-admin",)
@@ -322,13 +324,18 @@ def test_legacy_agent_data_is_deleted_without_touching_business_data(tmp_path: P
         assert not tables.intersection(
             {
                 "agent_settings",
-                "agent_conversations",
-                "agent_messages",
                 "agent_evidence",
                 "agent_run_stats",
                 "agent_alerts",
             }
         )
+        assert {"agent_conversations", "agent_messages"} <= tables
+        assert connection.execute(
+            "SELECT COUNT(*) FROM agent_conversations"
+        ).fetchone() == (0,)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM agent_messages"
+        ).fetchone() == (0,)
         assert connection.execute("SELECT username FROM users").fetchall() == [
             ("existing-admin",)
         ]
