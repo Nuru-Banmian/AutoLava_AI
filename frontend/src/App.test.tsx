@@ -20,6 +20,10 @@ const server = setupServer(
     { id: 2, name: "二店", timezone: "Europe/Berlin" },
   ])),
   http.get("/api/admin/stores", () => HttpResponse.json([])),
+  http.get("/api/agent/stores/:storeId", () => HttpResponse.json(
+    { detail: "数据分析 Agent 未启用" },
+    { status: 403 },
+  )),
   http.get("/api/dashboard/:storeId", () => HttpResponse.json([])),
   http.get("/api/settlements/:storeId/months/:month", ({ params }) => HttpResponse.json({
     opening_month: params.month,
@@ -171,6 +175,36 @@ describe("App", () => {
       "营业记录",
       "管理中心",
     ]);
+  });
+
+  it("shows the Agent entry only when the current store backend gate allows it", async () => {
+    server.use(http.get("/api/agent/stores/1", () => HttpResponse.json({
+      store_id: 1,
+      store_name: "总店",
+    })));
+    renderApplication("/", "administrator");
+
+    const desktop = await screen.findByRole("navigation", { name: "主导航" });
+    expect(await within(desktop).findByRole("link", { name: "数据分析 Agent" })).toHaveAttribute("href", "/agent");
+  });
+
+  it("opens the enabled Agent page for the selected store", async () => {
+    server.use(http.get("/api/agent/stores/1", () => HttpResponse.json({
+      store_id: 1,
+      store_name: "总店",
+    })));
+    renderApplication("/agent", "administrator");
+
+    expect(await screen.findByRole("heading", { name: "数据分析 Agent" })).toBeInTheDocument();
+    const currentStoreLabel = await screen.findByText("Agent 当前门店");
+    expect(currentStoreLabel.nextElementSibling).toHaveTextContent("总店");
+  });
+
+  it("does not mount the Agent page for an ordinary store user", async () => {
+    renderApplication("/agent", "regular-user");
+
+    await waitFor(() => expect(screen.getByRole("heading", { name: "仪表盘" })).toBeInTheDocument());
+    expect(screen.queryByRole("heading", { name: "数据分析 Agent" })).not.toBeInTheDocument();
   });
 
   it("shows company settlement in the enabled store only and keeps mobile bottom navigation stable", async () => {

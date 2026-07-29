@@ -21,6 +21,23 @@ class Settings(BaseSettings):
     bootstrap_username: str = ""
     cookie_secure: bool = False
     cors_origins: list[str] = ["http://localhost:5173"]
+    agent_model_endpoint: str = ""
+    agent_model_region: str = ""
+    agent_model_id: str = ""
+    agent_model_api_key: SecretStr = SecretStr("")
+
+    @property
+    def agent_model_config_ready(self) -> bool:
+        return all(
+            value.strip()
+            for value in (
+                self.agent_model_endpoint,
+                self.agent_model_region,
+                self.agent_model_id,
+                self.agent_model_api_key.get_secret_value(),
+            )
+        )
+
     @model_validator(mode="after")
     def validate_production_settings(self) -> "Settings":
         if self.environment.lower() != "production":

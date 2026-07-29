@@ -1,4 +1,4 @@
-import { BookOpen, Building2, Database, Home, LogOut, Menu, Settings } from "lucide-react";
+import { BookOpen, Bot, Building2, Database, Home, LogOut, Menu, Settings } from "lucide-react";
 import type { ComponentType, SVGProps } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 
@@ -6,6 +6,7 @@ import { useAuth } from "@/auth/AuthProvider";
 import { StorePicker } from "@/components/StorePicker";
 import { Button } from "@/components/ui/button";
 import { navigationFor } from "@/navigation/modules";
+import { useAgentCurrentStore } from "@/lib/agent";
 import { useStore } from "@/stores/StoreProvider";
 import { UnsavedRouteGuard } from "@/navigation/UnsavedChanges";
 
@@ -17,16 +18,21 @@ const icons: Record<string, Icon> = {
   "/settlements": Building2,
   "/database": Database,
   "/admin": Settings,
+  "/agent": Bot,
   "/more": Menu,
 };
 
 function Navigation({ surface }: { surface: "desktop" | "mobile" }) {
   const { user } = useAuth();
   const { selected } = useStore();
+  const agentStore = useAgentCurrentStore(
+    selected?.id,
+    user?.role === "admin",
+  );
   if (!user) return null;
 
   return <>
-    {navigationFor(user.role, surface, selected?.company_settlement_enabled).map(({ to, label, end }) => {
+    {navigationFor(user.role, surface, selected?.company_settlement_enabled, agentStore.isSuccess).map(({ to, label, end }) => {
       const Icon = icons[to];
       return <NavLink
         key={to}

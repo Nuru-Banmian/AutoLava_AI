@@ -10,6 +10,16 @@ export interface AuthenticatedUser extends User {
   is_owner: boolean;
 }
 
+export interface AgentSettings {
+  enabled: boolean;
+  model_config_ready: boolean;
+}
+
+export interface AgentCurrentStore {
+  store_id: number;
+  store_name: string;
+}
+
 export interface AdminUser extends User {
   is_active: boolean;
   store_ids: number[];

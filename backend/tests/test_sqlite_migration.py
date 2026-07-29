@@ -9,6 +9,7 @@ import pytest
 
 
 EXPECTED_TABLES = {
+    "agent_system_settings",
     "users",
     "stores",
     "store_members",
@@ -248,7 +249,7 @@ def test_applied_revision_0004_upgrades_without_losing_existing_data(tmp_path: P
 
     with closing(sqlite3.connect(database_path)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0009",
+            "0010",
         )
         assert connection.execute("SELECT username FROM users").fetchall() == [
             ("existing-admin",)

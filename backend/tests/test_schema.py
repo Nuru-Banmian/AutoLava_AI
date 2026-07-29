@@ -1,6 +1,7 @@
 from sqlalchemy.dialects import sqlite
 
 from app.models.base import Base
+import app.models.agent  # noqa: F401
 import app.models.identity  # noqa: F401
 import app.models.ledger  # noqa: F401
 import app.models.operations  # noqa: F401
@@ -9,6 +10,7 @@ import app.models.settlement  # noqa: F401
 
 def test_final_tables_are_registered() -> None:
     assert set(Base.metadata.tables) == {
+        "agent_system_settings",
         "users",
         "stores",
         "store_members",

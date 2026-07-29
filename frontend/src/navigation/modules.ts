@@ -21,9 +21,13 @@ const desktopModules = [
 ] as const;
 
 const adminModule = { to: "/admin", label: "管理中心" } as const;
+const agentModule = { to: "/agent", label: "数据分析 Agent" } as const;
 
-export function navigationFor(role: UserRole, surface: "desktop" | "mobile", companySettlementEnabled = false): readonly NavigationModule[] {
+export function navigationFor(role: UserRole, surface: "desktop" | "mobile", companySettlementEnabled = false, agentEnabled = false): readonly NavigationModule[] {
   if (surface === "mobile") return mobileModules;
   const availableModules = desktopModules.filter((module) => !("capability" in module) || companySettlementEnabled);
-  return role === "admin" ? [...availableModules, adminModule] : availableModules;
+  if (role !== "admin") return availableModules;
+  return agentEnabled
+    ? [...availableModules, agentModule, adminModule]
+    : [...availableModules, adminModule];
 }
