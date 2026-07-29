@@ -54,21 +54,34 @@ export function LedgerForm({ categories, config, record, weather, onSave, onDirt
     items: categories.map((category) => ({ ...category, store_id: record?.store_id ?? 0, archived_at: null })),
   }), [categories, config, record]);
   const composed = record ? record.income_mode === "composed" : resolvedConfig.enabled;
-  const active = useMemo(() => {
+  const effectiveCategories = useMemo(() => {
     if (record && composed) {
-      return record.items.map((item) => ({
+      const recorded = record.items.map((item) => ({
         id: item.category_id,
         name: item.category_name,
         include_in_total: item.include_in_total,
         is_active: true,
         sort_order: item.sort_order,
-      })).sort((left, right) => left.sort_order - right.sort_order || left.id - right.id);
+      }));
+      const recordedIds = new Set(recorded.map((item) => item.id));
+      const newlyEnabled = resolvedConfig.items
+        .filter((item) => item.is_active && !recordedIds.has(item.id))
+        .map((item) => ({
+          id: item.id,
+          name: item.name,
+          include_in_total: item.include_in_total,
+          is_active: true,
+          sort_order: item.sort_order,
+        }));
+      return [...recorded, ...newlyEnabled].sort(
+        (left, right) => left.sort_order - right.sort_order || left.id - right.id,
+      );
     }
     const configured = resolvedConfig.items
       .filter((item) => item.is_active)
       .map((item) => ({ id: item.id, name: item.name, include_in_total: item.include_in_total, is_active: item.is_active, sort_order: item.sort_order }));
     return configured.sort((left, right) => left.sort_order - right.sort_order || left.id - right.id);
-  }, [categories, composed, resolvedConfig.items, record]);
+  }, [composed, resolvedConfig.items, record]);
   const loadedWash = record?.wash_count == null ? "" : String(record.wash_count);
   const [status, setStatus] = useState<LedgerStatus>(record?.is_open ?? "营业");
   const [wash, setWash] = useState(loadedWash);
@@ -77,7 +90,10 @@ export function LedgerForm({ categories, config, record, weather, onSave, onDirt
   const [activity, setActivity] = useState(record?.activity ?? "");
   const loadedDirectTotal = record ? String(record.daily_revenue) : "";
   const [directTotal, setDirectTotal] = useState(loadedDirectTotal);
-  const loadedAmounts = useMemo(() => Object.fromEntries(active.map((category) => [category.id, record ? String(record.items.find((item) => item.category_id === category.id)?.amount ?? 0) : ""])), [active, record]);
+  const loadedAmounts = useMemo(() => Object.fromEntries(effectiveCategories.map((category) => {
+    const recordedItem = record?.items.find((item) => item.category_id === category.id);
+    return [category.id, record ? (recordedItem ? String(recordedItem.amount) : "") : ""];
+  })), [effectiveCategories, record]);
   const [amounts, setAmounts] = useState<Record<number, string>>(loadedAmounts);
   const isLegacyEmptyWash = (value: string) => Boolean(record && record.wash_count == null && value === "");
   const legacyEmptyWash = isLegacyEmptyWash(wash);
@@ -100,7 +116,7 @@ export function LedgerForm({ categories, config, record, weather, onSave, onDirt
     weather: values.weatherValue || null,
     weather_edited: values.weatherEdited,
     activity: normalizedActivity(values.activity),
-    items: composed ? active.map((category) => [category.id, semanticAmount(values.amounts[category.id] ?? "0")]) : [],
+    items: composed ? effectiveCategories.map((category) => [category.id, semanticAmount(values.amounts[category.id] ?? "0")]) : [],
   });
   const submittedSignature = (body: LedgerBody) => JSON.stringify({
     is_open: body.is_open,
@@ -132,7 +148,7 @@ export function LedgerForm({ categories, config, record, weather, onSave, onDirt
     if (canonicalSavedRecordReady) setConsumedSubmissionRevision(pendingSavedSubmission!.revision);
   }, [appliedIncomingSignature, canonicalSavedRecordReady, currentSignature, effectiveBaselineSignature, incomingSignature, loadedAmounts, loadedDirectTotal, loadedSemanticSignature, loadedWash, pendingSavedSubmission, record, weather?.weather]);
   useEffect(() => { onDirtyChange?.(currentSignature !== effectiveBaselineSignature); }, [currentSignature, effectiveBaselineSignature, onDirtyChange]);
-  const amountResults = active.map((category) => {
+  const amountResults = effectiveCategories.map((category) => {
     const value = amounts[category.id] ?? "";
     return { category, result: parseBlankAmountAsZero(value) };
   });
@@ -172,12 +188,12 @@ export function LedgerForm({ categories, config, record, weather, onSave, onDirt
     setStatus(next);
     if (next === "休息" && wash !== "") setWash("0");
   }
-  return <form className="grid min-w-0 gap-5" onSubmit={(event) => { event.preventDefault(); if (validationError) return; const items = amountResults.map(({ category, result }) => ({ category_id: category.id, amount: status === "休息" ? 0 : (result as { value: number }).value })); if (composed) setAmounts(Object.fromEntries(active.map((category) => [category.id, amounts[category.id] || "0"]))); else if (directTotal === "") setDirectTotal("0"); if (!record && wash === "") setWash("0"); onSave({ is_open: status, daily_revenue: composed ? null : status === "休息" ? 0 : (directResult as { value: number }).value, wash_count: normalizedFormWashCount(status, wash), weather: weatherValue || null, weather_edited: weatherEdited, activity: normalizedActivity(activity), items: composed ? items : [] }); }}>
+  return <form className="grid min-w-0 gap-5" onSubmit={(event) => { event.preventDefault(); if (validationError) return; const items = amountResults.map(({ category, result }) => ({ category_id: category.id, amount: status === "休息" ? 0 : (result as { value: number }).value })); if (composed) setAmounts(Object.fromEntries(effectiveCategories.map((category) => [category.id, amounts[category.id] || "0"]))); else if (directTotal === "") setDirectTotal("0"); if (!record && wash === "") setWash("0"); onSave({ is_open: status, daily_revenue: composed ? null : status === "休息" ? 0 : (directResult as { value: number }).value, wash_count: normalizedFormWashCount(status, wash), weather: weatherValue || null, weather_edited: weatherEdited, activity: normalizedActivity(activity), items: composed ? items : [] }); }}>
     <section role="group" aria-label="状态与天气" className="grid min-w-0 gap-4 md:grid-cols-2">
       <label className="grid min-w-0 gap-1.5 font-medium">状态<select aria-label="状态" value={status} onChange={(event) => changeStatus(event.target.value as LedgerStatus)} className={LEDGER_FIELD_CLASS}><option>营业</option><option>休息</option><option>提前休息</option></select></label>
       <div className="grid min-w-0 gap-1.5"><span className="font-medium">天气</span><Select value={weatherValue} onValueChange={(value) => { setWeatherValue(value); setWeatherEdited(true); }}><SelectTrigger aria-label="天气" className="h-11 text-base"><SelectValue placeholder="请选择天气">{weatherValue || undefined}</SelectValue></SelectTrigger><SelectContent>{MANUAL_RECORD_WEATHER_OPTIONS.map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectContent></Select></div>
     </section>
-    {composed ? <fieldset aria-label="收入项目" disabled={status === "休息"} className="grid min-w-0 gap-3"><legend className="font-semibold">收入项目</legend><div className="grid min-w-0 gap-4 md:grid-cols-2">{active.map((category) => <label className="grid min-w-0 gap-1.5 font-medium" key={category.id}>{category.name}<input aria-label={category.name} inputMode="numeric" type="text" value={amounts[category.id] ?? ""} onChange={(event) => setAmounts((old) => ({ ...old, [category.id]: event.target.value }))} className={LEDGER_FIELD_CLASS} /></label>)}</div></fieldset> : <label className="grid min-w-0 gap-1.5 font-medium">当日营业额<input aria-label="当日营业额" inputMode="numeric" type="text" disabled={status === "休息"} value={directTotal} onChange={(event) => setDirectTotal(event.target.value)} className={LEDGER_FIELD_CLASS} /></label>}
+    {composed ? <fieldset aria-label="收入项目" disabled={status === "休息"} className="grid min-w-0 gap-3"><legend className="font-semibold">收入项目</legend><div className="grid min-w-0 gap-4 md:grid-cols-2">{effectiveCategories.map((category) => <label className="grid min-w-0 gap-1.5 font-medium" key={category.id}>{category.name}<input aria-label={category.name} inputMode="numeric" type="text" value={amounts[category.id] ?? ""} onChange={(event) => setAmounts((old) => ({ ...old, [category.id]: event.target.value }))} className={LEDGER_FIELD_CLASS} /></label>)}</div></fieldset> : <label className="grid min-w-0 gap-1.5 font-medium">当日营业额<input aria-label="当日营业额" inputMode="numeric" type="text" disabled={status === "休息"} value={directTotal} onChange={(event) => setDirectTotal(event.target.value)} className={LEDGER_FIELD_CLASS} /></label>}
     <section className={`grid min-w-0 gap-4 rounded-lg border bg-background p-4 ${washCountEnabled ? "md:grid-cols-2" : ""}`}>
       {washCountEnabled && <label className="grid min-w-0 gap-1.5 font-medium">洗车数量<input aria-label="洗车数量" inputMode="numeric" type="text" disabled={status === "休息"} value={wash} onChange={(event) => setWash(event.target.value)} className={LEDGER_FIELD_CLASS} /></label>}
       <label className="grid min-w-0 gap-1.5 font-medium">事件<textarea aria-label="事件" placeholder="记录可能影响经营的特殊情况，如当地活动、泥雨等（选填）" value={activity} onChange={(event) => setActivity(event.target.value)} className={`${LEDGER_FIELD_CLASS} resize-y`} /></label>

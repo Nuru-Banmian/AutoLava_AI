@@ -184,6 +184,54 @@ async def test_record_snapshot_is_retained_after_current_category_edits(
     ] == [("Cash", True, 0), ("Excluded", False, 1)]
 
 
+async def test_existing_record_accepts_a_newly_enabled_income_category(
+    auth_client: AsyncClient,
+    assigned_store: AssignedStore,
+    ledger_payload: dict,
+    db_session: AsyncSession,
+) -> None:
+    path = f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}"
+    assert (await auth_client.put(path, json=ledger_payload)).status_code == 201
+    added = IncomeCategory(
+        store_id=assigned_store.id,
+        name="Added later",
+        include_in_total=True,
+        is_active=True,
+        sort_order=2,
+    )
+    db_session.add(added)
+    await db_session.flush()
+    added_id = added.id
+    await db_session.commit()
+
+    form_config = await auth_client.get(f"{path}/form-config")
+    assert [item["category_id"] for item in form_config.json()["items"]] == [
+        assigned_store.cash_id,
+        assigned_store.excluded_id,
+        added_id,
+    ]
+
+    updated = await auth_client.put(
+        path,
+        json=ledger_payload
+        | {
+            "items": [
+                *ledger_payload["items"],
+                {"category_id": added_id, "amount": 30},
+            ]
+        },
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["daily_revenue"] == 230
+    fetched = await auth_client.get(path)
+    assert [(item["category_id"], item["amount"]) for item in fetched.json()["items"]] == [
+        (assigned_store.cash_id, 200),
+        (assigned_store.excluded_id, 80),
+        (added_id, 30),
+    ]
+
+
 async def test_put_and_get_return_integer_money(
     auth_client: AsyncClient, assigned_store: AssignedStore, ledger_payload: dict
 ) -> None:
