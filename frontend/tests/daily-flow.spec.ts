@@ -264,13 +264,13 @@ test("disabled wash count stays hidden and historical values return after re-ena
   await expect(page.getByLabel("洗车数量")).toHaveValue("7");
 });
 
-test("direct-total accounting starts at zero and writes only after save", async ({ page }) => {
+test("总额记账初始留空，仅在保存后写入", async ({ page }) => {
   await page.clock.install({ time: new Date(`${today}T12:00:00Z`) });
   const flow = await mockMergedFlow(page, { incomeMode: "direct" });
   await page.goto(`/ledger?date=${today}`);
 
   const total = page.getByLabel("当日营业额", { exact: true });
-  await expect(total).toHaveValue("0");
+  await expect(total).toHaveValue("");
   expect(flow.ledgerWrites).toHaveLength(0);
 
   await total.fill("42");
@@ -357,7 +357,7 @@ for (const viewport of [
     const event = page.getByLabel("事件", { exact: true });
     await expect(card).toBeVisible();
     await expect(page.getByRole("heading", { name: "记账" })).toBeVisible();
-    await expect(washCount).toHaveValue("0");
+    await expect(washCount).toHaveValue("");
     await expect(washCount).toHaveAttribute("type", "text");
     await expect(washCount).toHaveAttribute("inputmode", "numeric");
     await expect(event).toHaveAttribute("placeholder", "记录可能影响经营的特殊情况，如当地活动、泥雨等（选填）");

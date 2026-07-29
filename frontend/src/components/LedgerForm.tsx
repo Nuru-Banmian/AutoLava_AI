@@ -21,12 +21,17 @@ export interface LedgerFormProps {
   washCountEnabled?: boolean;
 }
 
+function parseBlankAmountAsZero(value: string) {
+  return parseWholeAmount(value === "" ? "0" : value);
+}
+
 function semanticAmount(value: string) {
-  const result = parseWholeAmount(value);
+  const result = parseBlankAmountAsZero(value);
   return "value" in result ? result.value : `invalid:${value}`;
 }
 
 function parseWashCount(value: string): { value: number } | { error: string } {
+  if (value === "") return { value: 0 };
   if (!/^(0|[1-9]\d*)$/.test(value)) return { error: "洗车数量必须是大于等于 0 的整数" };
   const parsed = Number(value);
   return Number.isSafeInteger(parsed)
@@ -64,16 +69,23 @@ export function LedgerForm({ categories, config, record, weather, onSave, onDirt
       .map((item) => ({ id: item.id, name: item.name, include_in_total: item.include_in_total, is_active: item.is_active, sort_order: item.sort_order }));
     return configured.sort((left, right) => left.sort_order - right.sort_order || left.id - right.id);
   }, [categories, composed, resolvedConfig.items, record]);
-  const loadedWash = record?.wash_count == null ? (record ? "" : washCountEnabled ? "0" : "") : String(record.wash_count);
+  const loadedWash = record?.wash_count == null ? "" : String(record.wash_count);
   const [status, setStatus] = useState<LedgerStatus>(record?.is_open ?? "营业");
   const [wash, setWash] = useState(loadedWash);
   const [weatherValue, setWeatherValue] = useState(record?.weather ?? weather?.weather ?? "");
   const [weatherEdited, setWeatherEdited] = useState(record?.weather_edited ?? false);
   const [activity, setActivity] = useState(record?.activity ?? "");
-  const loadedDirectTotal = record ? String(record.daily_revenue) : "0";
+  const loadedDirectTotal = record ? String(record.daily_revenue) : "";
   const [directTotal, setDirectTotal] = useState(loadedDirectTotal);
-  const loadedAmounts = useMemo(() => Object.fromEntries(active.map((category) => [category.id, record ? String(record.items.find((item) => item.category_id === category.id)?.amount ?? 0) : "0"])), [active, record]);
+  const loadedAmounts = useMemo(() => Object.fromEntries(active.map((category) => [category.id, record ? String(record.items.find((item) => item.category_id === category.id)?.amount ?? 0) : ""])), [active, record]);
   const [amounts, setAmounts] = useState<Record<number, string>>(loadedAmounts);
+  const isLegacyEmptyWash = (value: string) => Boolean(record && record.wash_count == null && value === "");
+  const legacyEmptyWash = isLegacyEmptyWash(wash);
+  const normalizedFormWashCount = (nextStatus: LedgerStatus, value: string) => (
+    isLegacyEmptyWash(value) && nextStatus !== "休息"
+      ? null
+      : normalizedWashCount(washCountEnabled, nextStatus, value)
+  );
   const incomingSignature = JSON.stringify({ record, recordRevision, loadedAmounts, automaticWeather: record ? null : weather?.weather ?? null });
   const normalizedActivity = (value: string) => {
     const trimmed = value.trim();
@@ -84,7 +96,7 @@ export function LedgerForm({ categories, config, record, weather, onSave, onDirt
   const semanticSignature = (values: { status: LedgerStatus; wash: string; weatherValue: string; weatherEdited: boolean; activity: string; directTotal: string; amounts: Record<number, string> }) => JSON.stringify({
     is_open: values.status,
     daily_revenue: composed ? null : semanticAmount(values.directTotal),
-    wash_count: normalizedWashCount(washCountEnabled, values.status, values.wash),
+    wash_count: normalizedFormWashCount(values.status, values.wash),
     weather: values.weatherValue || null,
     weather_edited: values.weatherEdited,
     activity: normalizedActivity(values.activity),
@@ -120,7 +132,10 @@ export function LedgerForm({ categories, config, record, weather, onSave, onDirt
     if (canonicalSavedRecordReady) setConsumedSubmissionRevision(pendingSavedSubmission!.revision);
   }, [appliedIncomingSignature, canonicalSavedRecordReady, currentSignature, effectiveBaselineSignature, incomingSignature, loadedAmounts, loadedDirectTotal, loadedSemanticSignature, loadedWash, pendingSavedSubmission, record, weather?.weather]);
   useEffect(() => { onDirtyChange?.(currentSignature !== effectiveBaselineSignature); }, [currentSignature, effectiveBaselineSignature, onDirtyChange]);
-  const amountResults = active.map((category) => ({ category, result: parseWholeAmount(amounts[category.id] ?? "0") }));
+  const amountResults = active.map((category) => {
+    const value = amounts[category.id] ?? "";
+    return { category, result: parseBlankAmountAsZero(value) };
+  });
   const includedAmounts = amountResults.filter(({ category }) => category.include_in_total).map(({ result }) => result);
   const calculatedTotal = includedAmounts.every((result): result is { value: number } => "value" in result)
     ? includedAmounts.reduce<number | null>((sum, result) => {
@@ -133,7 +148,7 @@ export function LedgerForm({ categories, config, record, weather, onSave, onDirt
   useEffect(() => {
     if (calculatedTotal !== null) setLatestValidTotal(calculatedTotal);
   }, [calculatedTotal]);
-  const directResult = parseWholeAmount(directTotal);
+  const directResult = parseBlankAmountAsZero(directTotal);
   const invalidAmount = status === "休息"
     ? undefined
     : composed
@@ -149,16 +164,15 @@ export function LedgerForm({ categories, config, record, weather, onSave, onDirt
     ? "合计金额超出可安全计算范围"
     : "";
   const washResult = parseWashCount(wash);
-  const legacyEmptyWash = Boolean(record && record.wash_count == null && wash === "");
   const washError = washCountEnabled && status !== "休息" && !legacyEmptyWash && "error" in washResult
     ? washResult.error
     : "";
   const validationError = amountError || totalError || washError;
   function changeStatus(next: LedgerStatus) {
     setStatus(next);
-    if (next === "休息") setWash("0");
+    if (next === "休息" && wash !== "") setWash("0");
   }
-  return <form className="grid min-w-0 gap-5" onSubmit={(event) => { event.preventDefault(); if (validationError) return; const items = amountResults.map(({ category, result }) => ({ category_id: category.id, amount: status === "休息" ? 0 : (result as { value: number }).value })); onSave({ is_open: status, daily_revenue: composed ? null : status === "休息" ? 0 : (directResult as { value: number }).value, wash_count: legacyEmptyWash && status !== "休息" ? null : normalizedWashCount(washCountEnabled, status, wash), weather: weatherValue || null, weather_edited: weatherEdited, activity: normalizedActivity(activity), items: composed ? items : [] }); }}>
+  return <form className="grid min-w-0 gap-5" onSubmit={(event) => { event.preventDefault(); if (validationError) return; const items = amountResults.map(({ category, result }) => ({ category_id: category.id, amount: status === "休息" ? 0 : (result as { value: number }).value })); if (composed) setAmounts(Object.fromEntries(active.map((category) => [category.id, amounts[category.id] || "0"]))); else if (directTotal === "") setDirectTotal("0"); if (!record && wash === "") setWash("0"); onSave({ is_open: status, daily_revenue: composed ? null : status === "休息" ? 0 : (directResult as { value: number }).value, wash_count: normalizedFormWashCount(status, wash), weather: weatherValue || null, weather_edited: weatherEdited, activity: normalizedActivity(activity), items: composed ? items : [] }); }}>
     <section role="group" aria-label="状态与天气" className="grid min-w-0 gap-4 md:grid-cols-2">
       <label className="grid min-w-0 gap-1.5 font-medium">状态<select aria-label="状态" value={status} onChange={(event) => changeStatus(event.target.value as LedgerStatus)} className={LEDGER_FIELD_CLASS}><option>营业</option><option>休息</option><option>提前休息</option></select></label>
       <div className="grid min-w-0 gap-1.5"><span className="font-medium">天气</span><Select value={weatherValue} onValueChange={(value) => { setWeatherValue(value); setWeatherEdited(true); }}><SelectTrigger aria-label="天气" className="h-11 text-base"><SelectValue placeholder="请选择天气">{weatherValue || undefined}</SelectValue></SelectTrigger><SelectContent>{MANUAL_RECORD_WEATHER_OPTIONS.map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectContent></Select></div>
