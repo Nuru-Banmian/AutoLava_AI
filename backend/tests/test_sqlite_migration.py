@@ -253,11 +253,18 @@ def test_applied_revision_0004_upgrades_without_losing_existing_data(tmp_path: P
 
     with closing(sqlite3.connect(database_path)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0013",
+            "0014",
         )
         assert connection.execute("SELECT username FROM users").fetchall() == [
             ("existing-admin",)
         ]
+        investigation_columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(agent_investigation_cards)"
+            )
+        }
+        assert "error_category" in investigation_columns
 
 
 def test_legacy_agent_data_is_deleted_without_touching_business_data(tmp_path: Path) -> None:

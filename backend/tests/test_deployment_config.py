@@ -72,6 +72,21 @@ def test_compose_contains_exactly_api_and_web_with_persistent_sqlite_data() -> N
         "AUTOLAVA_AGENT_MODEL_ID": "${AUTOLAVA_AGENT_MODEL_ID:-}",
         "AUTOLAVA_AGENT_MODEL_API_KEY": "${AUTOLAVA_AGENT_MODEL_API_KEY:-}",
         "AUTOLAVA_AGENT_TURN_TIMEOUT_SECONDS": "${AUTOLAVA_AGENT_TURN_TIMEOUT_SECONDS:-120}",
+        "AUTOLAVA_AGENT_STOP_NEW_TOOLS_SECONDS": (
+            "${AUTOLAVA_AGENT_STOP_NEW_TOOLS_SECONDS:-90}"
+        ),
+        "AUTOLAVA_AGENT_MODEL_ROUND_LIMIT": (
+            "${AUTOLAVA_AGENT_MODEL_ROUND_LIMIT:-8}"
+        ),
+        "AUTOLAVA_AGENT_DATA_TOOL_CALL_LIMIT": (
+            "${AUTOLAVA_AGENT_DATA_TOOL_CALL_LIMIT:-12}"
+        ),
+        "AUTOLAVA_AGENT_DATA_TOOL_TIMEOUT_SECONDS": (
+            "${AUTOLAVA_AGENT_DATA_TOOL_TIMEOUT_SECONDS:-10}"
+        ),
+        "AUTOLAVA_AGENT_TRANSIENT_RETRY_LIMIT": (
+            "${AUTOLAVA_AGENT_TRANSIENT_RETRY_LIMIT:-1}"
+        ),
     }
     assert api["volumes"] == ["autolava_data:/data"]
     assert "ports" not in api
@@ -329,6 +344,16 @@ def test_development_defaults_remain_available() -> None:
     settings = Settings(_env_file=None)
     assert settings.environment == "development"
     assert settings.agent_turn_timeout_seconds == 120
+    assert settings.agent_stop_new_tools_seconds == 90
+    assert settings.agent_model_round_limit == 8
+    assert settings.agent_data_tool_call_limit == 12
+    assert settings.agent_data_tool_timeout_seconds == 10
+    assert settings.agent_transient_retry_limit == 1
+
+
+def test_transient_retry_configuration_cannot_exceed_one() -> None:
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, agent_transient_retry_limit=2)
 
 
 def test_nginx_enforces_a_bounded_login_rate_limit() -> None:

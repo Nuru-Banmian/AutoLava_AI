@@ -69,6 +69,11 @@ def create_app() -> FastAPI:
         lambda: app.state.agent_session_factory(),
         lambda: app.state.agent_model_adapter,
         turn_timeout_seconds=settings.agent_turn_timeout_seconds,
+        stop_new_tools_seconds=settings.agent_stop_new_tools_seconds,
+        model_round_limit=settings.agent_model_round_limit,
+        data_tool_call_limit=settings.agent_data_tool_call_limit,
+        data_tool_timeout_seconds=settings.agent_data_tool_timeout_seconds,
+        transient_retry_limit=settings.agent_transient_retry_limit,
     )
     if maintenance_scheduler is not None:
         # Retention is chained after every backup attempt, so both names expose

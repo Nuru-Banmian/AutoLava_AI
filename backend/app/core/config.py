@@ -26,6 +26,19 @@ class Settings(BaseSettings):
     agent_model_id: str = ""
     agent_model_api_key: SecretStr = SecretStr("")
     agent_turn_timeout_seconds: float = Field(default=120, gt=0, le=3600)
+    agent_stop_new_tools_seconds: float = Field(
+        default=90,
+        gt=0,
+        le=3600,
+    )
+    agent_model_round_limit: int = Field(default=8, ge=1, le=100)
+    agent_data_tool_call_limit: int = Field(default=12, ge=1, le=1000)
+    agent_data_tool_timeout_seconds: float = Field(
+        default=10,
+        gt=0,
+        le=300,
+    )
+    agent_transient_retry_limit: int = Field(default=1, ge=0, le=1)
 
     @property
     def agent_model_config_ready(self) -> bool:
@@ -41,6 +54,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_settings(self) -> "Settings":
+        if self.agent_stop_new_tools_seconds > self.agent_turn_timeout_seconds:
+            raise ValueError(
+                "agent tool-start deadline cannot exceed turn timeout"
+            )
         if self.environment.lower() != "production":
             return self
         secret = self.jwt_secret.get_secret_value().strip()

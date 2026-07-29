@@ -167,6 +167,14 @@ def _validate_settlement_calculation(plan: object) -> None:
     for item in plan:
         if not isinstance(item, dict):
             continue
+        for operand_name in ("left", "right"):
+            operand = item.get(operand_name)
+            if (
+                isinstance(operand, dict)
+                and "literal" in operand
+                and operand.get("source") != "user"
+            ):
+                raise ValueError("派生计算字面量必须来自用户明确提供的数值")
         kinds = _calculation_operand_kinds(
             item.get("left"),
             step_kinds,
@@ -403,6 +411,43 @@ def _submitted_capability_answer(
     return capability_gap_answer(missing_capabilities, accepted)
 
 
+def _trusted_limit_answer(
+    results: dict[str, dict[str, Any]],
+    limitation: str,
+) -> str:
+    evidence: list[dict[str, object]] = []
+    for result_id, result in results.items():
+        fields: list[str] = []
+        for field in (
+            *_CAPABILITY_FIELD_PRESENTATION,
+            *_CAPABILITY_LIST_PRESENTATION,
+        ):
+            current: object = result
+            for part in field.split("."):
+                if not isinstance(current, dict) or part not in current:
+                    break
+                current = current[part]
+            else:
+                fields.append(field)
+        if fields:
+            evidence.append({"result_id": result_id, "fields": fields})
+    if not evidence:
+        return (
+            "本轮尚未取得可安全展示的业务结果，无法提供未经验证的数值或判断。"
+            f"\n\n限制说明：本轮已达到{limitation}。"
+        )
+    answer = _submitted_capability_answer(
+        {"evidence": evidence},
+        results=results,
+        missing_capabilities=(limitation,),
+    )
+    supported, _, _boundary = answer.partition("\n\n能力边界：")
+    return (
+        f"{supported}\n\n限制说明：本轮已达到{limitation}，"
+        "回答仅包含当前已取得的可信结果。"
+    )
+
+
 @dataclass
 class _ActiveTurn:
     turn_id: int
@@ -437,11 +482,22 @@ class AgentTurnRuntime:
         adapter_factory: AdapterFactory,
         *,
         turn_timeout_seconds: float = 120,
+        stop_new_tools_seconds: float = 90,
+        model_round_limit: int = 8,
+        data_tool_call_limit: int = 12,
+        data_tool_timeout_seconds: float = 10,
+        transient_retry_limit: int = 1,
+        data_tools: AgentDataToolRegistry | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._adapter_factory = adapter_factory
         self._turn_timeout_seconds = turn_timeout_seconds
-        self._data_tools = AgentDataToolRegistry(session_factory)
+        self._stop_new_tools_seconds = stop_new_tools_seconds
+        self._model_round_limit = model_round_limit
+        self._data_tool_call_limit = data_tool_call_limit
+        self._data_tool_timeout_seconds = data_tool_timeout_seconds
+        self._transient_retry_limit = transient_retry_limit
+        self._data_tools = data_tools or AgentDataToolRegistry(session_factory)
         self._skills = SkillCatalog(self._data_tools.names)
         self._active: dict[tuple[int, int], _ActiveTurn] = {}
         self._starting: set[tuple[int, int]] = set()
@@ -468,10 +524,9 @@ class AgentTurnRuntime:
         content: str,
     ) -> AsyncIterator[bytes]:
         key = (user_id, store_id)
-        deadline = (
-            asyncio.get_running_loop().time()
-            + self._turn_timeout_seconds
-        )
+        started_at = asyncio.get_running_loop().time()
+        deadline = started_at + self._turn_timeout_seconds
+        tool_start_deadline = started_at + self._stop_new_tools_seconds
         async with self._lock:
             if key in self._active or key in self._starting:
                 raise ActiveAgentTurnError
@@ -503,6 +558,7 @@ class AgentTurnRuntime:
                         direct_answer=direct_answer,
                         missing_capabilities=missing_capabilities,
                         deadline=deadline,
+                        tool_start_deadline=tool_start_deadline,
                     )
                 )
         except TimeoutError as exc:
@@ -617,8 +673,11 @@ class AgentTurnRuntime:
         direct_answer: str | None,
         missing_capabilities: tuple[str, ...],
         deadline: float,
+        tool_start_deadline: float,
     ) -> None:
         chunks: list[str] = []
+        cards: list[dict[str, Any]] = []
+        trusted_results: dict[str, dict[str, Any]] = {}
         try:
             async with asyncio.timeout_at(deadline):
                 await active.events.put(
@@ -649,7 +708,6 @@ class AgentTurnRuntime:
                         }
                     )
                     adapter = self._adapter_factory()
-                    cards: list[dict[str, Any]] = []
                     if callable(getattr(adapter, "respond", None)):
                         answer, cards = await self._run_tool_loop(
                             adapter=adapter,
@@ -658,6 +716,9 @@ class AgentTurnRuntime:
                             user_id=key[0],
                             store_id=key[1],
                             missing_capabilities=missing_capabilities,
+                            tool_start_deadline=tool_start_deadline,
+                            results=trusted_results,
+                            cards=cards,
                         )
                         chunks.append(answer)
                     else:
@@ -707,7 +768,12 @@ class AgentTurnRuntime:
                 {"type": "completed", "turn_id": active.turn_id}
             )
         except TimeoutError:
-            await self._finish_timed_out_turn(active, chunks)
+            await self._finish_timed_out_turn(
+                active,
+                chunks,
+                results=trusted_results,
+                cards=cards,
+            )
         except asyncio.CancelledError:
             await self._persist_failure_bounded(
                 active.turn_id,
@@ -1045,15 +1111,18 @@ class AgentTurnRuntime:
         user_id: int,
         store_id: int,
         missing_capabilities: tuple[str, ...],
+        tool_start_deadline: float,
+        results: dict[str, dict[str, Any]],
+        cards: list[dict[str, Any]],
     ) -> tuple[str, list[dict[str, Any]]]:
         messages = list(model_messages)
         loaded_skills = {}
-        results: dict[str, dict[str, Any]] = {}
-        cards: list[dict[str, Any]] = []
         result_number = 0
-        for _round in range(8):
+        data_tool_calls = 0
+        for _round in range(self._model_round_limit):
             messages = fit_model_context(messages)
-            response: ModelResponse = await adapter.respond(
+            response = await self._respond_with_retry(
+                adapter,
                 messages,
                 self._model_tools(),
             )
@@ -1068,21 +1137,7 @@ class AgentTurnRuntime:
                     loaded_skills=loaded_skills,
                     results=results,
                 )
-                for phase in ("processing_data", "preparing_answer"):
-                    await active.events.put(
-                        {
-                            "type": "phase",
-                            "turn_id": active.turn_id,
-                            "phase": phase,
-                        }
-                    )
-                await active.events.put(
-                    {
-                        "type": "answer_delta",
-                        "turn_id": active.turn_id,
-                        "delta": answer,
-                    }
-                )
+                await self._emit_trusted_answer(active, answer)
                 return answer, cards
 
             submit_calls = [
@@ -1110,21 +1165,7 @@ class AgentTurnRuntime:
                     loaded_skills=loaded_skills,
                     results=results,
                 )
-                for phase in ("processing_data", "preparing_answer"):
-                    await active.events.put(
-                        {
-                            "type": "phase",
-                            "turn_id": active.turn_id,
-                            "phase": phase,
-                        }
-                    )
-                await active.events.put(
-                    {
-                        "type": "answer_delta",
-                        "turn_id": active.turn_id,
-                        "delta": answer,
-                    }
-                )
+                await self._emit_trusted_answer(active, answer)
                 return answer, cards
 
             messages.append(
@@ -1149,6 +1190,16 @@ class AgentTurnRuntime:
                 }
             )
             for call in response.tool_calls:
+                if (
+                    asyncio.get_running_loop().time()
+                    >= tool_start_deadline
+                ):
+                    answer = _trusted_limit_answer(
+                        results,
+                        "停止发起新工具时限",
+                    )
+                    await self._emit_trusted_answer(active, answer)
+                    return answer, cards
                 if call.name == "load_skill":
                     if set(call.arguments) != {"name"}:
                         raise ValueError("数据 Skill 加载参数无效")
@@ -1162,28 +1213,48 @@ class AgentTurnRuntime:
                         ),
                     }
                 elif call.name in self._data_tools.names:
+                    if data_tool_calls >= self._data_tool_call_limit:
+                        answer = _trusted_limit_answer(
+                            results,
+                            "数据工具次数上限",
+                        )
+                        await self._emit_trusted_answer(active, answer)
+                        return answer, cards
                     if not any(
                         call.name in skill.allowed_data_tools
                         for skill in loaded_skills.values()
                     ):
                         raise ValueError("数据工具未获得已加载 Skill 授权")
+                    data_tool_calls += 1
                     result_number += 1
                     result_id = f"result-{result_number}"
-                    tool_result = await self._data_tools.execute(
-                        call.name,
-                        call.arguments,
-                        context=DataToolContext(
-                            user_id=user_id,
-                            store_id=store_id,
-                        ),
-                        result_id=result_id,
-                    )
-                    results[result_id] = tool_result
-                    card = self._data_tools.investigation_card(
-                        call.name,
-                        call.arguments,
-                        tool_result,
-                    )
+                    try:
+                        tool_result = await self._execute_data_tool_with_retry(
+                            call.name,
+                            call.arguments,
+                            context=DataToolContext(
+                                user_id=user_id,
+                                store_id=store_id,
+                            ),
+                            result_id=result_id,
+                        )
+                    except Exception as exc:
+                        error_category = self._safe_tool_error_category(exc)
+                        tool_result = {
+                            "status": "failed",
+                            "error_category": error_category,
+                        }
+                        card = self._data_tools.investigation_failure_card(
+                            call.name,
+                            error_category,
+                        )
+                    else:
+                        results[result_id] = tool_result
+                        card = self._data_tools.investigation_card(
+                            call.name,
+                            call.arguments,
+                            tool_result,
+                        )
                     cards.append(card)
                     await active.events.put(
                         {
@@ -1209,13 +1280,22 @@ class AgentTurnRuntime:
                         **calculation,
                     }
                     results[result_id] = tool_result
+                    calculation_unavailable = bool(
+                        calculation["unavailable"]
+                    )
                     card = {
                         "operation": "完成派生计算",
                         "range_start": None,
                         "range_end": None,
                         "filters": [],
-                        "status": "completed",
+                        "status": (
+                            "unavailable"
+                            if calculation_unavailable
+                            else "completed"
+                        ),
                     }
+                    if calculation_unavailable:
+                        card["error_category"] = "expected_unavailable"
                     cards.append(card)
                     await active.events.put(
                         {
@@ -1246,30 +1326,69 @@ class AgentTurnRuntime:
                         ),
                     }
                 )
-        raise ValueError("Agent model loop exceeded its round limit")
+        answer = _trusted_limit_answer(results, "模型轮数上限")
+        await self._emit_trusted_answer(active, answer)
+        return answer, cards
+
+    @staticmethod
+    async def _emit_trusted_answer(
+        active: _ActiveTurn,
+        answer: str,
+    ) -> None:
+        for phase in ("processing_data", "preparing_answer"):
+            await active.events.put(
+                {
+                    "type": "phase",
+                    "turn_id": active.turn_id,
+                    "phase": phase,
+                }
+            )
+        await active.events.put(
+            {
+                "type": "answer_delta",
+                "turn_id": active.turn_id,
+                "delta": answer,
+            }
+        )
 
     async def _finish_timed_out_turn(
         self,
         active: _ActiveTurn,
         chunks: list[str],
+        *,
+        results: dict[str, dict[str, Any]],
+        cards: list[dict[str, Any]],
     ) -> None:
-        if chunks:
-            timeout_note = (
-                "\n\n（本轮已达到处理时限，以上为当前可用结果。）"
+        if not chunks:
+            chunks.append(
+                _trusted_limit_answer(results, "总轮次处理时限")
             )
-            chunks.append(timeout_note)
             await active.events.put(
                 {
                     "type": "answer_delta",
                     "turn_id": active.turn_id,
-                    "delta": timeout_note,
+                    "delta": chunks[-1],
                 }
             )
+        if chunks:
+            if "总轮次处理时限" not in chunks[-1]:
+                timeout_note = (
+                    "\n\n（本轮已达到处理时限，以上为当前可用结果。）"
+                )
+                chunks.append(timeout_note)
+                await active.events.put(
+                    {
+                        "type": "answer_delta",
+                        "turn_id": active.turn_id,
+                        "delta": timeout_note,
+                    }
+                )
             try:
                 async with asyncio.timeout(self._cleanup_timeout_seconds):
                     await self._persist_completion(
                         active.turn_id,
                         "".join(chunks).strip(),
+                        cards=cards,
                     )
             except Exception:
                 await self._emit_failed_turn(active)
@@ -1325,7 +1444,7 @@ class AgentTurnRuntime:
         model_messages: Sequence[ModelMessage],
     ) -> AsyncIterator[str]:
         fitted_messages = fit_model_context(model_messages)
-        for attempt in range(2):
+        for attempt in range(self._transient_retry_limit + 1):
             emitted = False
             try:
                 stream = getattr(adapter, "stream", None)
@@ -1340,12 +1459,68 @@ class AgentTurnRuntime:
                 return
             except Exception as exc:
                 if (
-                    attempt == 0
+                    attempt < self._transient_retry_limit
                     and not emitted
                     and self._is_transient_model_error(exc)
                 ):
                     continue
                 raise
+
+    async def _respond_with_retry(
+        self,
+        adapter: AgentModelAdapter,
+        messages: Sequence[ModelMessage],
+        tools: Sequence[ModelTool],
+    ) -> ModelResponse:
+        for attempt in range(self._transient_retry_limit + 1):
+            try:
+                return await adapter.respond(messages, tools)
+            except Exception as exc:
+                if (
+                    attempt >= self._transient_retry_limit
+                    or not self._is_transient_model_error(exc)
+                ):
+                    raise
+        raise RuntimeError("unreachable model retry state")
+
+    async def _execute_data_tool_with_retry(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        context: DataToolContext,
+        result_id: str,
+    ) -> dict[str, Any]:
+        for attempt in range(self._transient_retry_limit + 1):
+            try:
+                async with asyncio.timeout(
+                    self._data_tool_timeout_seconds
+                ):
+                    return await self._data_tools.execute(
+                        name,
+                        arguments,
+                        context=context,
+                        result_id=result_id,
+                    )
+            except Exception as exc:
+                if (
+                    attempt >= self._transient_retry_limit
+                    or not self._is_transient_model_error(exc)
+                ):
+                    raise
+        raise RuntimeError("unreachable data-tool retry state")
+
+    @classmethod
+    def _safe_tool_error_category(cls, exc: Exception) -> str:
+        if isinstance(exc, TimeoutError):
+            return "timeout"
+        if cls._is_transient_model_error(exc):
+            return "temporary"
+        if isinstance(exc, PermissionError):
+            return "permission"
+        if isinstance(exc, ValueError):
+            return "validation"
+        return "tool_failure"
 
     @staticmethod
     def _is_transient_model_error(exc: Exception) -> bool:
@@ -1389,6 +1564,7 @@ class AgentTurnRuntime:
                                 separators=(",", ":"),
                             ),
                             status=card["status"],
+                            error_category=card.get("error_category"),
                         )
                     )
                 turn.assistant_message_id = assistant_message.id

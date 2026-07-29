@@ -23,6 +23,18 @@ import {
 } from "@/lib/agent";
 import { useStore } from "@/stores/StoreProvider";
 
+const SAFE_INVESTIGATION_MESSAGES: Record<
+  NonNullable<AgentInvestigationCard["error_category"]>,
+  string
+> = {
+  timeout: "数据工具处理超时",
+  temporary: "数据工具暂时不可用",
+  permission: "当前权限不足",
+  validation: "参数或业务规则不符合要求",
+  tool_failure: "数据工具处理失败",
+  expected_unavailable: "计算结果预期不可用",
+};
+
 function AgentConversationPanel({ storeId }: { storeId: number }) {
   const [draft, setDraft] = useState("");
   const [resetOpen, setResetOpen] = useState(false);
@@ -148,10 +160,16 @@ function AgentConversationPanel({ storeId }: { storeId: number }) {
                   card.range_start,
                   card.range_end,
                   ...card.filters,
+                  card.error_category,
                   index,
                 ].join("|")}
               >
                 <p className="text-sm font-medium">{card.operation}</p>
+                {card.error_category && (
+                  <p className="text-xs text-muted-foreground">
+                    {SAFE_INVESTIGATION_MESSAGES[card.error_category]}
+                  </p>
+                )}
                 {card.range_start && card.range_end && (
                   <p className="text-xs text-muted-foreground">
                     {card.range_start} 至 {card.range_end}

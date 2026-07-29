@@ -526,6 +526,20 @@ class AgentDataToolRegistry:
             "status": "empty" if result["status"] == "empty" else "completed",
         }
 
+    def investigation_failure_card(
+        self,
+        name: str,
+        error_category: str,
+    ) -> dict[str, Any]:
+        return {
+            "operation": self._definitions[name].operation,
+            "range_start": None,
+            "range_end": None,
+            "filters": [],
+            "status": "failed",
+            "error_category": error_category,
+        }
+
     @staticmethod
     async def _records(
         session: AsyncSession,

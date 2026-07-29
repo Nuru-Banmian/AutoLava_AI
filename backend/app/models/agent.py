@@ -132,6 +132,10 @@ class AgentInvestigationCard(Base):
         server_default="[]",
     )
     status: Mapped[str] = mapped_column(String(16))
+    error_category: Mapped[str | None] = mapped_column(
+        String(32),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     __table_args__ = (

@@ -35,6 +35,7 @@ export interface AgentInvestigationCard {
   range_end: string | null;
   filters: string[];
   status: "completed" | "empty" | "unavailable" | "failed";
+  error_category?: "timeout" | "temporary" | "permission" | "validation" | "tool_failure" | "expected_unavailable" | null;
 }
 
 export interface AgentTurn {

@@ -50,6 +50,7 @@ beforeEach(() => {
             range_end: "2026-07-09",
             filters: ["分组维度：记录天气"],
             status: "completed",
+            error_category: null,
           },
         ],
       },
@@ -95,6 +96,7 @@ it("shows investigation cards received during the live turn", () => {
           range_end: "2026-07-31",
           filters: ["仅有事件"],
           status: "completed",
+          error_category: null,
         },
       });
     }),
@@ -111,4 +113,50 @@ it("shows investigation cards received during the live turn", () => {
   expect(within(cards).getByText("2026-07-01 至 2026-07-31"))
     .toBeInTheDocument();
   expect(within(cards).getByText("仅有事件")).toBeInTheDocument();
+});
+
+it("shows safe failure categories without internal error details", () => {
+  vi.mocked(useAgentConversation).mockReturnValue({
+    data: {
+      conversation_id: 3,
+      store_id: 7,
+      store_name: "经营背景门店",
+      messages: [],
+      latest_turn: {
+        id: 10,
+        status: "completed",
+        error_message: null,
+        started_at: "2026-07-30T10:00:00",
+        finished_at: "2026-07-30T10:00:01",
+        investigation_cards: [
+          {
+            operation: "汇总经营表现",
+            range_start: null,
+            range_end: null,
+            filters: [],
+            status: "failed",
+            error_category: "timeout",
+          },
+          {
+            operation: "完成派生计算",
+            range_start: null,
+            range_end: null,
+            filters: [],
+            status: "unavailable",
+            error_category: "expected_unavailable",
+          },
+        ],
+      },
+    },
+    isPending: false,
+    isError: false,
+  } as unknown as ReturnType<typeof useAgentConversation>);
+
+  render(<AgentPage />);
+
+  const cards = screen.getByRole("region", { name: "调查过程" });
+  expect(within(cards).getByText("数据工具处理超时")).toBeInTheDocument();
+  expect(within(cards).getByText("计算结果预期不可用")).toBeInTheDocument();
+  expect(within(cards).queryByText(/secret|exception|参数值/))
+    .not.toBeInTheDocument();
 });

@@ -1,7 +1,7 @@
 from datetime import datetime
 import json
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_serializer
 
 
 class AgentSettingsPatch(BaseModel):
@@ -25,6 +25,14 @@ class AgentInvestigationCardResponse(BaseModel):
     range_end: str | None
     filters: list[str]
     status: str
+    error_category: str | None
+
+    @model_serializer(mode="wrap")
+    def serialize(self, handler):
+        payload = handler(self)
+        if self.error_category is None:
+            payload.pop("error_category", None)
+        return payload
 
     @classmethod
     def from_record(cls, record) -> "AgentInvestigationCardResponse":
@@ -34,6 +42,7 @@ class AgentInvestigationCardResponse(BaseModel):
             range_end=record.range_end,
             filters=json.loads(record.filters_json),
             status=record.status,
+            error_category=record.error_category,
         )
 
 
