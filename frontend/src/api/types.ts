@@ -229,6 +229,9 @@ export interface AgentConversationState {
     queried_at: string;
     data_version: string;
     period: { start: string; end: string };
+    facts?: string[];
+    coverage?: { calendar_dates: number; recorded_dates: number } | null;
+    limitations?: string[];
     use_as_current_fact: false;
   }>;
   analysis_hypotheses?: Array<{

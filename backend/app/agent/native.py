@@ -1292,6 +1292,14 @@ class NativeToolAgentService:
                                 start=tool_result.evidence.period.start,
                                 end=tool_result.evidence.period.end,
                             ),
+                            facts=_readable_evidence_facts(
+                                tool_result.name,
+                                tool_result.evidence,
+                            ),
+                            coverage=tool_result.evidence.coverage,
+                            limitations=[
+                                limitation[:500] for limitation in tool_result.evidence.limitations
+                            ],
                         )
                     )
                     evidence_references = evidence_references[-50:]
@@ -2457,6 +2465,66 @@ def _evidence_label(evidence: NativeCollectedEvidence) -> str:
     return EVIDENCE_METRIC_LABELS[evidence.metric]
 
 
+def _readable_evidence_facts(
+    tool_name: str,
+    evidence: NativeEvidenceEnvelope,
+) -> list[str]:
+    tool_spec = NATIVE_TOOLS.get(tool_name)
+    facts = evidence.facts
+    summaries: list[str] = []
+
+    if tool_spec is not None and tool_spec.calculation_field is not None:
+        value = facts.get(tool_spec.calculation_field)
+        if isinstance(value, (int, float, Decimal)) and not isinstance(value, bool):
+            label = (
+                EVIDENCE_METRIC_LABELS[tool_spec.metric]
+                if tool_spec.metric is not None
+                else tool_name
+            )
+            summaries.append(f"{label}：{value} {_readable_evidence_unit(evidence.unit)}")
+
+    rows = facts.get("rows")
+    if not summaries and isinstance(rows, list):
+        summaries.append(f"分组结果：{len(rows)} 组")
+    elif tool_name == SETTLEMENT_DETAILS_TOOL:
+        pending_amount = facts.get("pending_amount")
+        confirmed_amount = facts.get("confirmed_amount")
+        if isinstance(pending_amount, int) and isinstance(confirmed_amount, int):
+            summaries.extend(
+                [
+                    f"待到账金额：{pending_amount} EUR",
+                    f"已确认金额：{confirmed_amount} EUR",
+                ]
+            )
+    elif tool_name == DAILY_LEDGER_DETAILS_TOOL:
+        matched_records = facts.get("matched_records")
+        if isinstance(matched_records, int):
+            summaries.append(f"匹配每日台账：{matched_records} 条")
+    elif tool_name == EVENT_INVESTIGATION_TOOL:
+        observations = facts.get("observations")
+        if isinstance(observations, list):
+            summaries.append(f"有事件观察的日期：{len(observations)} 个")
+    elif tool_name == HISTORICAL_WEATHER_TOOL:
+        days = facts.get("days")
+        if isinstance(days, list):
+            summaries.append(f"历史天气覆盖：{len(days)} 个日期")
+    elif tool_name == PUBLIC_HOLIDAYS_TOOL:
+        holidays = facts.get("holidays")
+        if isinstance(holidays, list):
+            summaries.append(f"公共假期：{len(holidays)} 个")
+
+    return [summary[:300] for summary in summaries[:20]]
+
+
+def _readable_evidence_unit(unit: str) -> str:
+    return {
+        "day": "天",
+        "car": "辆",
+        "EUR/car": "EUR/车",
+        "EUR/operating_day": "EUR/经营日",
+    }.get(unit, unit)
+
+
 def _latest_user_message(messages: Sequence[ModelMessage]) -> str:
     return next(
         (message.content for message in reversed(messages) if message.role == "user"),
@@ -2746,7 +2814,11 @@ def _investigation_context_message(state: ConversationState) -> ModelMessage:
         ],
         "pending_directions": state.pending_directions,
         "historical_evidence_references": [
-            reference.model_dump(mode="json") for reference in state.evidence_references
+            reference.model_dump(
+                mode="json",
+                exclude={"facts", "coverage", "limitations"},
+            )
+            for reference in state.evidence_references
         ],
     }
     return ModelMessage(

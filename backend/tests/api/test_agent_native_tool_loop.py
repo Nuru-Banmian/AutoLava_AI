@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 from contextlib import asynccontextmanager
+from copy import deepcopy
 from datetime import date, datetime, timezone
 
 import pytest
@@ -20,7 +21,7 @@ from app.agent.native import (
 from app.agent.service import create_agent_service
 from app.core.config import Settings, get_settings
 from app.core.database import end_read_transaction
-from app.models.agent import AgentEvidence
+from app.models.agent import AgentConversation, AgentEvidence
 from app.models.identity import Store, User
 from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
 from app.models.operations import AgentSettings
@@ -1648,7 +1649,35 @@ async def test_current_investigation_restores_context_and_reacquires_changed_evi
     assert reference["source"] == ["store_daily_records", "settlement_records"]
     assert reference["queried_at"] == "2026-07-26T12:00:00Z"
     assert reference["data_version"].startswith("sha256:")
+    assert reference["facts"] == ["月度总收入：240 EUR"]
+    assert reference["coverage"] == {"calendar_dates": 26, "recorded_dates": 1}
+    assert reference["limitations"] == [
+        "所选期间有 25 个日期没有每日台账；这只表示没有记录，不表示门店本应营业，也不推断记录起始日期。",
+        "25 个日期没有每日台账记录",
+    ]
     assert reference["use_as_current_fact"] is False
+
+    legacy_state = deepcopy(state)
+    legacy_reference = legacy_state["evidence_references"][0]
+    legacy_reference.pop("facts")
+    legacy_reference.pop("coverage")
+    legacy_reference.pop("limitations")
+    conversation = await db_session.scalar(
+        select(AgentConversation).where(
+            AgentConversation.user_id == user.id,
+            AgentConversation.store_id == store.id,
+        )
+    )
+    assert conversation is not None
+    conversation.state = legacy_state
+    await db_session.commit()
+    legacy_restored = await client.get(f"/api/agent/stores/{store.id}/conversation")
+    assert legacy_restored.status_code == 200
+    restored_legacy_reference = legacy_restored.json()["state"]["evidence_references"][0]
+    assert restored_legacy_reference["facts"] == []
+    assert restored_legacy_reference["coverage"] is None
+    assert restored_legacy_reference["limitations"] == []
+    assert restored_legacy_reference["use_as_current_fact"] is False
 
     record.daily_revenue = 360
     await db_session.commit()

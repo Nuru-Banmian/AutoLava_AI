@@ -626,6 +626,36 @@ export function AgentPanel({
                     <dd>
                       {new Date(item.queried_at).toLocaleString("zh-CN", { timeZone: timezone })}
                     </dd>
+                    <dt className="text-muted-foreground">事实</dt>
+                    <dd>
+                      {item.facts && item.facts.length > 0 ? (
+                        <ul className="list-disc space-y-1 pl-5">
+                          {item.facts.map((fact) => (
+                            <li key={fact}>{fact}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        "当前证据没有可展示的事实摘要"
+                      )}
+                    </dd>
+                    <dt className="text-muted-foreground">覆盖</dt>
+                    <dd>
+                      {item.coverage
+                        ? `已记录 ${item.coverage.recorded_dates} / ${item.coverage.calendar_dates} 个日期`
+                        : "未提供日期覆盖摘要"}
+                    </dd>
+                    <dt className="text-muted-foreground">限制</dt>
+                    <dd>
+                      {item.limitations && item.limitations.length > 0 ? (
+                        <ul className="list-disc space-y-1 pl-5">
+                          {item.limitations.map((limitation) => (
+                            <li key={limitation}>{limitation}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        "未发现额外限制"
+                      )}
+                    </dd>
                   </dl>
                   <p className="mt-3 text-xs text-muted-foreground">
                     该证据用于核对本轮回答；后续需要新事实时会重新取证。
