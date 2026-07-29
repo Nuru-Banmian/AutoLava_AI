@@ -450,6 +450,29 @@ class AgentTurnRuntime:
             {
                 "type": "function",
                 "function": {
+                    "name": "business_context_group",
+                    "description": (
+                        "按星期或记录天气分组返回 Agent 当前门店经营日的"
+                        "台账营业额和经营日均台账营业额。"
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "start": {"type": "string", "format": "date"},
+                            "end": {"type": "string", "format": "date"},
+                            "dimension": {
+                                "type": "string",
+                                "enum": ["weekday", "recorded_weather"],
+                            },
+                        },
+                        "required": ["start", "end", "dimension"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "calculate",
                     "description": "引用本轮结果或标明来源的字面量执行受限十进制计算。",
                     "parameters": {

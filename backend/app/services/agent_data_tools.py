@@ -15,6 +15,8 @@ from app.models.ledger import StoreDailyRecord
 from app.services.access import require_fresh_store_access
 from app.services.owner import is_administrator
 
+_LEGACY_MISSING_RECORDED_WEATHER = frozenset({"", "天气暂时不可用"})
+
 
 class DataToolValidationError(ValueError):
     pass
@@ -121,6 +123,21 @@ def _validate_trend(arguments: dict[str, Any]) -> ToolRequest:
     return request
 
 
+def _validate_context_group(arguments: dict[str, Any]) -> ToolRequest:
+    request = _validated_range(
+        arguments,
+        allowed={"start", "end", "dimension"},
+        exact=True,
+    )
+    dimension = arguments["dimension"]
+    if dimension not in {"weekday", "recorded_weather"}:
+        raise DataToolValidationError(
+            "经营背景分组维度必须是 weekday 或 recorded_weather"
+        )
+    request["dimension"] = dimension
+    return request
+
+
 def _validate_detail(arguments: dict[str, Any]) -> ToolRequest:
     request = _validated_range(
         arguments,
@@ -207,7 +224,7 @@ def _detail_filters(arguments: dict[str, Any]) -> list[str]:
     if arguments.get("events_only") is True:
         filters.append("仅有事件")
     if arguments.get("event_keyword"):
-        filters.append(f"事件关键词：{arguments['event_keyword']}")
+        filters.append("已应用事件关键词筛选")
     if "missing_wash_count" in arguments:
         filters.append(
             "洗车数量：缺失"
@@ -215,6 +232,14 @@ def _detail_filters(arguments: dict[str, Any]) -> list[str]:
             else "洗车数量：已记录"
         )
     return filters
+
+
+def _context_group_filters(arguments: dict[str, Any]) -> list[str]:
+    return [
+        "分组维度：星期"
+        if arguments["dimension"] == "weekday"
+        else "分组维度：记录天气"
+    ]
 
 
 class AgentDataToolRegistry:
@@ -241,6 +266,12 @@ class AgentDataToolRegistry:
                 validate=_validate_detail,
                 execute=self._execute_detail,
                 format_filters=_detail_filters,
+            ),
+            "business_context_group": DataToolDefinition(
+                operation="按经营背景分组",
+                validate=_validate_context_group,
+                execute=self._execute_context_group,
+                format_filters=_context_group_filters,
             ),
         }
         self.names = frozenset(self._definitions)
@@ -639,5 +670,84 @@ class AgentDataToolRegistry:
                 "missing_wash_count_days": missing_wash_count_days,
                 "truncated": next_offset is not None,
                 "next_offset": next_offset,
+            },
+        }
+
+    async def _execute_context_group(
+        self,
+        session: AsyncSession,
+        _store: Store,
+        context: DataToolContext,
+        result_id: str,
+        request: ToolRequest,
+    ) -> ToolResult:
+        records = await self._records(session, context, request)
+        operating = [
+            record
+            for record in records
+            if record.is_open in {"营业", "提前休息"}
+        ]
+        grouped: dict[str, list[StoreDailyRecord]] = defaultdict(list)
+        missing_dimension_days = 0
+        for record in operating:
+            if request["dimension"] == "weekday":
+                key = str(record.date.isoweekday())
+            else:
+                key = record.weather
+                if (
+                    key is None
+                    or key.strip() in _LEGACY_MISSING_RECORDED_WEATHER
+                ):
+                    missing_dimension_days += 1
+                    continue
+            grouped[key].append(record)
+
+        weekday_labels = {
+            "1": "星期一",
+            "2": "星期二",
+            "3": "星期三",
+            "4": "星期四",
+            "5": "星期五",
+            "6": "星期六",
+            "7": "星期日",
+        }
+        groups = []
+        for key in sorted(
+            grouped,
+            key=int if request["dimension"] == "weekday" else str,
+        ):
+            group_records = grouped[key]
+            revenue = sum(record.daily_revenue for record in group_records)
+            groups.append(
+                {
+                    "key": key,
+                    "label": (
+                        weekday_labels[key]
+                        if request["dimension"] == "weekday"
+                        else key
+                    ),
+                    "operating_days": len(group_records),
+                    "ledger_revenue": str(revenue),
+                    "operating_day_average_ledger_revenue": (
+                        _whole_euro_average(revenue, len(group_records))
+                    ),
+                }
+            )
+
+        return {
+            "result_id": result_id,
+            "status": "success" if groups else "empty",
+            "data": {
+                "dimension": request["dimension"],
+                "groups": groups,
+            },
+            "coverage": {
+                **_range_coverage(
+                    request["start"],
+                    request["end"],
+                    records,
+                ),
+                "missing_dimension_days": missing_dimension_days,
+                "truncated": False,
             },
         }

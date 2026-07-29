@@ -514,7 +514,7 @@ async def test_agent_filters_and_bounds_daily_ledger_detail(
         "营业状态：营业",
         "记录天气：晴",
         "仅有事件",
-        "事件关键词：施工",
+        "已应用事件关键词筛选",
         "洗车数量：缺失",
     ]
     assert all(

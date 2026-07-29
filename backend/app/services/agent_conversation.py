@@ -43,6 +43,7 @@ _BUSINESS_SCOPE_MARKERS = (
     "结算公司",
     "记录天气",
     "事件",
+    "经营背景",
 )
 _BUSINESS_QUERY_LANGUAGE = tuple(
     sorted(
@@ -66,6 +67,7 @@ _BUSINESS_QUERY_LANGUAGE = tuple(
             "汇总",
             "展示",
             "查询",
+            "调查",
             "了解",
             "判断",
             "当前",
@@ -114,6 +116,7 @@ _BUSINESS_QUERY_LANGUAGE = tuple(
             "整体",
             "主要",
             "相关",
+            "关联",
             "影响",
             "欧元",
             "目标",

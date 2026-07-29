@@ -1,7 +1,8 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { friendlyApiError } from "@/api/client";
+import type { AgentInvestigationCard } from "@/api/types";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -27,9 +28,17 @@ function AgentConversationPanel({ storeId }: { storeId: number }) {
   const [resetOpen, setResetOpen] = useState(false);
   const [liveAnswer, setLiveAnswer] = useState("");
   const [livePhase, setLivePhase] = useState<string | null>(null);
+  const [liveCards, setLiveCards] = useState<AgentInvestigationCard[]>([]);
   const conversation = useAgentConversation(storeId);
   const send = useSendAgentMessage(storeId);
   const reset = useResetAgentConversation(storeId);
+
+  useEffect(() => {
+    setDraft("");
+    setLiveAnswer("");
+    setLivePhase(null);
+    setLiveCards([]);
+  }, [storeId]);
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -37,6 +46,7 @@ function AgentConversationPanel({ storeId }: { storeId: number }) {
     if (!content) return;
     setLiveAnswer("");
     setLivePhase("正在开始本轮分析…");
+    setLiveCards([]);
     send.mutate({
       content,
       onEvent: (streamEvent: AgentTurnEvent) => {
@@ -52,6 +62,7 @@ function AgentConversationPanel({ storeId }: { storeId: number }) {
           setLiveAnswer((current) => current + streamEvent.delta);
         } else if (streamEvent.type === "investigation_card") {
           setLivePhase(streamEvent.card.operation);
+          setLiveCards((current) => [...current, streamEvent.card]);
         } else if (streamEvent.type === "completed") {
           setLivePhase("回答已完成");
         } else {
@@ -85,6 +96,9 @@ function AgentConversationPanel({ storeId }: { storeId: number }) {
     && ["failed", "interrupted"].includes(conversation.data.latest_turn.status)
     ? conversation.data.latest_turn.error_message
     : null;
+  const investigationCards = liveCards.length > 0
+    ? liveCards
+    : (conversation.data.latest_turn?.investigation_cards ?? []);
 
   return (
     <div className="grid gap-4">
@@ -118,6 +132,48 @@ function AgentConversationPanel({ storeId }: { storeId: number }) {
           </article>
         )}
       </div>
+
+      {investigationCards.length > 0 && (
+        <section
+          aria-label="调查过程"
+          className="grid gap-2 rounded-lg border bg-muted/30 p-4"
+        >
+          <h2 className="text-sm font-semibold">调查过程</h2>
+          <ol className="grid gap-2">
+            {investigationCards.map((card, index) => (
+              <li
+                className="rounded-md border bg-background px-3 py-2"
+                key={[
+                  card.operation,
+                  card.range_start,
+                  card.range_end,
+                  ...card.filters,
+                  index,
+                ].join("|")}
+              >
+                <p className="text-sm font-medium">{card.operation}</p>
+                {card.range_start && card.range_end && (
+                  <p className="text-xs text-muted-foreground">
+                    {card.range_start} 至 {card.range_end}
+                  </p>
+                )}
+                {card.filters.length > 0 && (
+                  <ul className="mt-1 flex flex-wrap gap-1">
+                    {card.filters.map((filter) => (
+                      <li
+                        className="rounded bg-muted px-2 py-0.5 text-xs"
+                        key={filter}
+                      >
+                        {filter}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
 
       {(running || send.isPending) && (
         <p className="text-sm text-muted-foreground" role="status">
@@ -177,7 +233,10 @@ function AgentConversationPanel({ storeId }: { storeId: number }) {
             <Button
               disabled={reset.isPending}
               onClick={() => reset.mutate(undefined, {
-                onSuccess: () => setResetOpen(false),
+                onSuccess: () => {
+                  setLiveCards([]);
+                  setResetOpen(false);
+                },
               })}
               type="button"
               variant="destructive"

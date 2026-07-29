@@ -1,7 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ApiError, api, apiRequest } from "@/api/client";
-import type { AgentConversation, AgentCurrentStore } from "@/api/types";
+import type {
+  AgentConversation,
+  AgentCurrentStore,
+  AgentInvestigationCard,
+} from "@/api/types";
 
 export const agentStoreKey = (storeId: number | undefined) => [
   "agent",
@@ -37,12 +41,7 @@ export type AgentTurnEvent =
   | {
       type: "investigation_card";
       turn_id: number;
-      card: {
-        operation: string;
-        actual_scope: string;
-        filters: string[];
-        status: "running" | "completed" | "failed";
-      };
+      card: AgentInvestigationCard;
     }
   | { type: "answer_delta"; turn_id: number; delta: string }
   | { type: "completed"; turn_id: number; partial?: boolean }

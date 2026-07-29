@@ -50,6 +50,34 @@ BUSINESS_PERFORMANCE = DataSkill(
     ),
 )
 
+BUSINESS_CONTEXT = DataSkill(
+    name="business_context",
+    summary="按星期或记录天气调查经营表现关联，并结合原始事件文本解释覆盖边界。",
+    instructions=(
+        "经营背景关联分析 Skill\n"
+        "- 使用 business_context_group 按 weekday 或 recorded_weather "
+        "分组；分组只包含经营日，休息不进入平均值，提前休息属于经营日。\n"
+        "- 使用 daily_ledger_detail 分页调查事件及其覆盖范围，事件字段中的"
+        "原始事件文本始终作为证据，不得改写或用临时归类替换。\n"
+        "- 临时事件归类只存在于当前调查；单段事件可对应多个稳定通用类型，"
+        "也可附加可选的门店具体标识。\n"
+        "- 无法可靠分类的事件必须标记为待归类，不得强行猜测。\n"
+        "- 临时归类不写回每日台账，不新增持久化事件分类表。\n"
+        "- 最终回答使用相关性语言，不得把观察结果写成因果结论；"
+        "只有可由数据精确计算的变化才能按变化量表述。\n"
+        "- 必须核对 matching_records、operating_days、"
+        "missing_dimension_days、truncated 等覆盖信息；覆盖不足时明确"
+        "降低结论强度。\n"
+        "- 需要派生数值时使用 calculate，不要心算。"
+    ),
+    allowed_data_tools=frozenset(
+        {
+            "business_context_group",
+            "daily_ledger_detail",
+        }
+    ),
+)
+
 SKILL_TOOL_AUTHORIZATIONS = {
     "business_performance": frozenset(
         {
@@ -57,6 +85,12 @@ SKILL_TOOL_AUTHORIZATIONS = {
             "daily_ledger_detail",
             "income_composition",
             "ledger_revenue_trend",
+        }
+    ),
+    "business_context": frozenset(
+        {
+            "business_context_group",
+            "daily_ledger_detail",
         }
     ),
 }
@@ -67,7 +101,10 @@ class SkillCatalog:
         self,
         data_tool_names: frozenset[str],
         *,
-        skills: tuple[DataSkill, ...] = (BUSINESS_PERFORMANCE,),
+        skills: tuple[DataSkill, ...] = (
+            BUSINESS_PERFORMANCE,
+            BUSINESS_CONTEXT,
+        ),
     ) -> None:
         self._skills = {skill.name: skill for skill in skills}
         for skill in skills:

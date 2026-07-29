@@ -29,12 +29,21 @@ export interface AgentMessage {
 
 export type AgentTurnStatus = "running" | "completed" | "failed" | "interrupted";
 
+export interface AgentInvestigationCard {
+  operation: string;
+  range_start: string | null;
+  range_end: string | null;
+  filters: string[];
+  status: "completed" | "empty" | "unavailable" | "failed";
+}
+
 export interface AgentTurn {
   id: number;
   status: AgentTurnStatus;
   error_message: string | null;
   started_at: string;
   finished_at: string | null;
+  investigation_cards: AgentInvestigationCard[];
 }
 
 export interface AgentConversation {
