@@ -29,6 +29,12 @@ BUSINESS_PERFORMANCE = DataSkill(
     allowed_data_tools=frozenset({"business_performance_summary"}),
 )
 
+SKILL_TOOL_AUTHORIZATIONS = {
+    "business_performance": frozenset(
+        {"business_performance_summary"}
+    ),
+}
+
 
 class SkillCatalog:
     def __init__(
@@ -44,6 +50,16 @@ class SkillCatalog:
                 names = ", ".join(sorted(unknown))
                 raise InvalidSkillCatalogError(
                     f"Skill {skill.name} references unknown data tools: {names}"
+                )
+            unauthorized = (
+                skill.allowed_data_tools
+                - SKILL_TOOL_AUTHORIZATIONS.get(skill.name, frozenset())
+            )
+            if unauthorized:
+                names = ", ".join(sorted(unauthorized))
+                raise InvalidSkillCatalogError(
+                    f"Skill {skill.name} references unauthorized data tools: "
+                    f"{names}"
                 )
 
     def summaries(self) -> str:
