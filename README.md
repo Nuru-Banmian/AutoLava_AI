@@ -76,9 +76,10 @@ fallback equivalents) to estimate cost in conversation-free run statistics.
 
 Production Agent access also requires a passing, redacted 2 GB release report at
 `AUTOLAVA_AGENT_RELEASE_REPORT_PATH`. The report is evaluated against the exact provider, model,
-fallback order, `AUTOLAVA_MODEL_TIMEOUT_SECONDS`, `AUTOLAVA_MODEL_MAX_OUTPUT_TOKENS`,
-and `AUTOLAVA_AGENT_EVIDENCE_BATCH_LIMIT` (one normal batch, optionally one targeted supplemental
-batch), plus the immutable deployed image digest in `AUTOLAVA_AGENT_RUNTIME_IMAGE_DIGEST`.
+fallback order, `AUTOLAVA_MODEL_TIMEOUT_SECONDS`, and `AUTOLAVA_MODEL_MAX_OUTPUT_TOKENS`, plus the
+immutable deployed image digest in `AUTOLAVA_AGENT_RUNTIME_IMAGE_DIGEST`. Schema v2 also binds the
+measured topology to one application container, one application process, one application worker,
+and SQLite.
 Autonomous investigations are independently bounded by
 `AUTOLAVA_AGENT_INVESTIGATION_MAX_MODEL_CALLS`,
 `AUTOLAVA_AGENT_INVESTIGATION_MAX_TOOL_CALLS`,
@@ -87,6 +88,17 @@ Autonomous investigations are independently bounded by
 `AUTOLAVA_AGENT_INVESTIGATION_MAX_COST_EUR`, and
 `AUTOLAVA_AGENT_INVESTIGATION_RETRY_ATTEMPTS`. These safety valves limit resource use without
 fixing a tool order or investigation path.
+Each of the 20 serial target-environment samples records actual model-stage and tool-call counts,
+Agent-request concurrency, input/output and total Tokens, estimated cost, latency, memory, and
+SQLite timing. The report is rejected when measured calls, Tokens, cost, or serial concurrency
+violate the runtime profile. Its real-provider evidence must also include successful native tool
+calling, parallel calls, tool-result continuation, a natural answer, and complete usage metrics.
+The disposable Adapter probe separately requires real controlled timeout, rate-limit, 5xx,
+authentication, balance, and invalid-output failures to map to the approved provider-neutral
+categories; Fake or operator-asserted booleans are not release evidence.
+The release suite additionally registers ten high-level Agent HTTP acceptance scenarios and the
+1440×1000 desktop / 390×844 mobile Playwright flows for question-and-evidence, full-screen use,
+refresh and store-switch restoration, permanent clearing, and ordinary-user invisibility.
 The report and its three verified evidence artifacts must share one directory. A missing, failed,
 malformed, artifact-mismatched, image-mismatched, or profile-mismatched report keeps the Agent
 globally disabled.
@@ -94,6 +106,10 @@ Each approved report has its own activation identity, so a newly approved or cha
 off until the final administrator explicitly enables that exact release. See
 `docs/release/agent-release-evaluation.md` for the reproducible measurement method and current
 release decision.
+
+The repository does not claim that this production gate currently passes. Without a real candidate
+provider probe and measurements from the exact 2 GB target topology, production approval remains
+false and the final administrator cannot enable the Agent.
 
 The API container runs Alembic before starting. On an empty volume it then creates the schema, and
 the administrator bootstrap command is idempotent:

@@ -312,26 +312,28 @@ async def test_native_probe_requires_configured_cost_rates(monkeypatch) -> None:
 
 async def test_resilient_native_adapter_retries_primary_then_uses_fallback() -> None:
     transient = type("ProviderError", (RuntimeError,), {"status_code": 503})
+    primary_client = ScriptedNativeClient(
+        [transient("first private payload"), transient("second private payload")]
+    )
     primary = OpenAICompatibleNativeToolModel(
         _profile(),
-        client=ScriptedNativeClient(
-            [transient("first private payload"), transient("second private payload")]
-        ),
+        client=primary_client,
+    )
+    fallback_client = ScriptedNativeClient(
+        [
+            AIMessage(
+                content="这是自然结束回答。",
+                usage_metadata={
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "total_tokens": 15,
+                },
+            )
+        ]
     )
     fallback = OpenAICompatibleNativeToolModel(
         _profile(provider="backup", model_id="backup-model"),
-        client=ScriptedNativeClient(
-            [
-                AIMessage(
-                    content="这是自然结束回答。",
-                    usage_metadata={
-                        "input_tokens": 10,
-                        "output_tokens": 5,
-                        "total_tokens": 15,
-                    },
-                )
-            ]
-        ),
+        client=fallback_client,
     )
     attempts = []
     adapter = ResilientNativeToolModel(
@@ -339,13 +341,24 @@ async def test_resilient_native_adapter_retries_primary_then_uses_fallback() -> 
         fallback=fallback,
         retry_attempts=1,
     )
+    items = [
+        NativeTranscriptItem(
+            message=ModelMessage(
+                role="system",
+                content="Trusted current-store scope remains server-owned.",
+            )
+        ),
+        NativeTranscriptItem(message=ModelMessage(role="user", content="调查 2026 年 7 月。")),
+    ]
 
-    turn = await adapter.next_turn([], tools=TOOLS, observer=attempts.append)
+    turn = await adapter.next_turn(items, tools=TOOLS, observer=attempts.append)
 
     assert turn.signal == "end"
     assert turn.message.content == "这是自然结束回答。"
     assert [attempt.result for attempt in attempts] == ["failure", "failure", "success"]
     assert [attempt.is_fallback for attempt in attempts] == [False, False, True]
+    assert primary_client.calls[0] == primary_client.calls[1] == fallback_client.calls[0]
+    assert primary_client.bound_tools[0] == fallback_client.bound_tools[0]
 
 
 async def test_resilient_native_adapter_reports_all_providers_unavailable() -> None:

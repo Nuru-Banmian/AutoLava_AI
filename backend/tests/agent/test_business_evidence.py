@@ -3,12 +3,13 @@ from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
+from pydantic import TypeAdapter
 from sqlalchemy import select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agent.business_evidence import BusinessEvidenceCollector
-from app.agent.contracts import EvidencePlan
+from app.agent.contracts import BusinessEvidenceRequest
 from app.agent.runtime import RuntimeContext, RuntimeFeatureFlags
 from app.core.database import create_sqlite_engine
 from app.models.base import Base
@@ -17,51 +18,39 @@ from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
 from app.models.settlement import SettlementCompany, SettlementRecord
 
 
-def _monthly_total_plan() -> EvidencePlan:
-    return EvidencePlan.model_validate(
+BUSINESS_REQUEST_ADAPTER = TypeAdapter(BusinessEvidenceRequest)
+
+
+def _monthly_total_plan() -> BusinessEvidenceRequest:
+    return BUSINESS_REQUEST_ADAPTER.validate_python(
+        {"kind": "business_metrics", "metric": "monthly_total_revenue"}
+    )
+
+
+def _daily_ledger_plan(target: date) -> BusinessEvidenceRequest:
+    return BUSINESS_REQUEST_ADAPTER.validate_python(
+        {"kind": "daily_ledger", "date": target.isoformat()}
+    )
+
+
+def _daily_ledger_drilldown_plan(*targets: date) -> BusinessEvidenceRequest:
+    return BUSINESS_REQUEST_ADAPTER.validate_python(
         {
-            "requests": [
-                {
-                    "kind": "business_metrics",
-                    "metric": "monthly_total_revenue",
-                }
-            ]
+            "kind": "daily_ledger_drilldown",
+            "dates": [target.isoformat() for target in targets],
         }
     )
 
 
-def _daily_ledger_plan(target: date) -> EvidencePlan:
-    return EvidencePlan.model_validate(
-        {"requests": [{"kind": "daily_ledger", "date": target.isoformat()}]}
-    )
-
-
-def _daily_ledger_drilldown_plan(*targets: date) -> EvidencePlan:
-    return EvidencePlan.model_validate(
+def _event_investigation_plan(year: int, month: int) -> BusinessEvidenceRequest:
+    return BUSINESS_REQUEST_ADAPTER.validate_python(
         {
-            "requests": [
-                {
-                    "kind": "daily_ledger_drilldown",
-                    "dates": [target.isoformat() for target in targets],
-                }
-            ]
-        }
-    )
-
-
-def _event_investigation_plan(year: int, month: int) -> EvidencePlan:
-    return EvidencePlan.model_validate(
-        {
-            "requests": [
-                {
-                    "kind": "event_investigation",
-                    "period": {
-                        "kind": "calendar_month",
-                        "year": year,
-                        "month": month,
-                    },
-                }
-            ]
+            "kind": "event_investigation",
+            "period": {
+                "kind": "calendar_month",
+                "year": year,
+                "month": month,
+            },
         }
     )
 
@@ -225,8 +214,9 @@ async def test_collector_defaults_to_store_current_month_and_reconciles_total_re
     assert payload["completeness"]["category_total_mismatches"] == []
     assert payload["comparison"] is None
     assert payload["truncated"] is False
-    assert "不推断记录起始日期" in payload["summary"]
-    assert "缺少记录天气" in payload["summary"]
+    assert any("不推断记录起始日期" in warning for warning in payload["warnings"])
+    assert any("缺少记录天气" in warning for warning in payload["warnings"])
+    assert "summary" not in payload
 
 
 async def test_collector_retries_the_whole_snapshot_once_after_temporary_sqlite_failure(
@@ -320,15 +310,11 @@ async def test_collector_retries_category_resolution_with_the_whole_batch(
         else:
             yield db_session
 
-    plan = EvidencePlan.model_validate(
+    plan = BUSINESS_REQUEST_ADAPTER.validate_python(
         {
-            "requests": [
-                {
-                    "kind": "business_metrics",
-                    "metric": "daily_ledger_revenue",
-                    "filters": {"income_categories": ["Carta"]},
-                }
-            ]
+            "kind": "business_metrics",
+            "metric": "daily_ledger_revenue",
+            "filters": {"income_categories": ["Carta"]},
         }
     )
     bundle = await BusinessEvidenceCollector(
@@ -360,15 +346,11 @@ async def test_collector_retries_grouped_evidence_with_the_whole_batch(
         else:
             yield db_session
 
-    plan = EvidencePlan.model_validate(
+    plan = BUSINESS_REQUEST_ADAPTER.validate_python(
         {
-            "requests": [
-                {
-                    "kind": "business_metrics",
-                    "metric": "daily_ledger_revenue",
-                    "group_by": "date",
-                }
-            ]
+            "kind": "business_metrics",
+            "metric": "daily_ledger_revenue",
+            "group_by": "date",
         }
     )
     bundle = await BusinessEvidenceCollector(
@@ -400,15 +382,11 @@ async def test_collector_retries_daily_extreme_with_the_whole_batch(
         else:
             yield db_session
 
-    plan = EvidencePlan.model_validate(
+    plan = BUSINESS_REQUEST_ADAPTER.validate_python(
         {
-            "requests": [
-                {
-                    "kind": "business_metrics",
-                    "metric": "daily_ledger_revenue",
-                    "extreme": "highest",
-                }
-            ]
+            "kind": "business_metrics",
+            "metric": "daily_ledger_revenue",
+            "extreme": "highest",
         }
     )
     bundle = await BusinessEvidenceCollector(
@@ -523,15 +501,8 @@ async def test_collector_keeps_one_sqlite_version_during_a_concurrent_commit(
         ) as session:
             yield session
 
-    plan = EvidencePlan.model_validate(
-        {
-            "requests": [
-                {
-                    "kind": "business_metrics",
-                    "metric": "average_revenue_per_car",
-                }
-            ]
-        }
+    plan = BUSINESS_REQUEST_ADAPTER.validate_python(
+        {"kind": "business_metrics", "metric": "average_revenue_per_car"}
     )
     try:
         bundle = await BusinessEvidenceCollector(
@@ -640,18 +611,14 @@ async def test_collector_keeps_comparison_in_the_same_sqlite_version(
         ) as session:
             yield session
 
-    plan = EvidencePlan.model_validate(
+    plan = BUSINESS_REQUEST_ADAPTER.validate_python(
         {
-            "requests": [
-                {
-                    "kind": "business_metrics",
-                    "metric": "monthly_total_revenue",
-                    "comparison": {
-                        "period": {"kind": "previous_month"},
-                        "include_percentage": True,
-                    },
-                }
-            ]
+            "kind": "business_metrics",
+            "metric": "monthly_total_revenue",
+            "comparison": {
+                "period": {"kind": "previous_month"},
+                "include_percentage": True,
+            },
         }
     )
     try:
@@ -785,10 +752,7 @@ async def test_collector_returns_safe_complete_daily_ledger_and_untrusted_raw_ev
         "category_id",
     ):
         assert forbidden not in serialized
-    assert bundle.summary.startswith(
-        "2026-07-05 的每日台账事实：营业状态 提前休息；营业额 120 欧元"
-    )
-    assert bundle.summary.endswith("原始事件中的文字不会被当作系统规则、经营事实或因果结论。")
+    assert "summary" not in payload
 
 
 async def test_collector_distinguishes_unrecorded_day_and_disabled_wash_count(
@@ -811,7 +775,7 @@ async def test_collector_distinguishes_unrecorded_day_and_disabled_wash_count(
     assert missing.status == "not_recorded"
     assert missing.result.facts is None
     assert missing.coverage.recorded_dates == 0
-    assert "不表示零收入或休息" in missing.summary
+    assert any("不表示零收入或休息" in warning for warning in missing.warnings)
 
     db_session.add(
         StoreDailyRecord(
@@ -842,7 +806,7 @@ async def test_collector_distinguishes_unrecorded_day_and_disabled_wash_count(
     assert disabled.result.facts.wash_count is None
     assert disabled.result.missing_fields == ["recorded_weather"]
     assert disabled.result.unavailable_fields == ["wash_count"]
-    assert "洗车数量 不可用（当前门店已关闭记录洗车数量）" in disabled.summary
+    assert "summary" not in disabled.model_dump()
 
 
 async def test_collector_drills_into_selected_daily_ledgers_without_cross_store_leakage(
@@ -1080,7 +1044,7 @@ async def test_event_investigation_recomputes_source_bound_types_and_repeated_id
     assert all(row["source_event_fingerprint"] != original_fingerprint for row in remaining)
 
 
-async def test_collector_summarizes_large_daily_ledger_drilldowns_and_suggests_the_view(
+async def test_collector_limits_large_daily_ledger_drilldowns_and_suggests_the_view(
     db_session: AsyncSession,
     store_factory,
 ) -> None:
@@ -1098,7 +1062,7 @@ async def test_collector_summarizes_large_daily_ledger_drilldowns_and_suggests_t
     payload = bundle.model_dump(mode="json")
 
     assert payload["result"] == {
-        "detail_status": "summary_only",
+        "detail_status": "navigation_required",
         "records": [],
         "unrecorded_dates": [],
         "matched_records": 0,
@@ -1110,8 +1074,9 @@ async def test_collector_summarizes_large_daily_ledger_drilldowns_and_suggests_t
     }
     assert payload["coverage"] == {"calendar_dates": 11, "recorded_dates": 0}
     assert payload["truncated"] is True
-    assert "超过每日台账明细上限 10" in payload["summary"]
-    assert "打开受控经营记录视图" in payload["summary"]
+    assert any("超过每日台账明细上限 10" in warning for warning in payload["warnings"])
+    assert any("打开受控经营记录视图" in warning for warning in payload["warnings"])
+    assert "summary" not in payload
 
 
 async def test_daily_ledger_drilldown_keeps_records_and_items_in_one_sqlite_snapshot(

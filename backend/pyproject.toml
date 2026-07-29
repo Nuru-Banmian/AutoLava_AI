@@ -15,7 +15,6 @@ dependencies = [
   "httpx",
   "langchain>=1,<2",
   "langchain-openai>=1,<2",
-  "langgraph>=1,<2",
   "openpyxl",
   "pydantic-settings",
   "pyjwt",
@@ -64,7 +63,6 @@ module = [
   "app.agent.business_evidence",
   "app.agent.model",
   "app.agent.release",
-  "app.agent.workflow",
 ]
 ignore_errors = true
 

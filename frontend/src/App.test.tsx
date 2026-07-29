@@ -104,6 +104,42 @@ describe("App", () => {
     expect(await screen.findByText("AutoLava AI")).toBeInTheDocument();
   });
 
+  it("opens the administrator Agent route as a dedicated full-screen workspace", async () => {
+    server.use(
+      http.get("/api/agent/status", () => HttpResponse.json({ enabled: true })),
+      http.get("/api/agent/stores/1/conversation", () =>
+        HttpResponse.json({
+          id: 8,
+          messages: [
+            {
+              id: 31,
+              role: "user",
+              content: "继续同一个调查",
+              created_at: "2026-07-28T12:00:00Z",
+            },
+          ],
+          state: {
+            investigation_goal: "调查最近营业额变化",
+            confirmed_period: null,
+            pending_period: null,
+            metrics: [],
+            filters: {},
+            comparison: null,
+            pending_clarifications: [],
+          },
+          created_at: "2026-07-28T12:00:00Z",
+          updated_at: "2026-07-28T12:00:00Z",
+        }),
+      ),
+    );
+    renderApplication("/agent", "administrator");
+
+    expect(await screen.findByRole("heading", { name: "当前调查" })).toBeInTheDocument();
+    expect(await screen.findByText("继续同一个调查")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "门店 Agent" })).toHaveClass("h-full");
+    expect(screen.queryByRole("navigation", { name: "移动导航" })).not.toBeInTheDocument();
+  });
+
   it("keeps the retired charts route unmatched without mounting either legacy page", () => {
     const router = createAppRouter(["/charts"]);
 

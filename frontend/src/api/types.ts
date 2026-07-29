@@ -214,8 +214,32 @@ export interface OpenBusinessRecordsAction {
   end_month: string;
 }
 export interface AgentConversationState {
+  investigation_goal?: string | null;
   confirmed_period: { start: string; end: string } | null;
   pending_period: { start: string; end: string } | null;
+  confirmed_objects?: string[];
+  evidence_references?: Array<{
+    reference: string;
+    source: Array<
+      | "store_daily_records"
+      | "settlement_records"
+      | "open_meteo_historical"
+      | "nager_date_public_holidays"
+    >;
+    queried_at: string;
+    data_version: string;
+    period: { start: string; end: string };
+    facts?: string[];
+    coverage?: { calendar_dates: number; recorded_dates: number } | null;
+    limitations?: string[];
+    use_as_current_fact: false;
+  }>;
+  analysis_hypotheses?: Array<{
+    statement: string;
+    status: "proposed" | "testing" | "supported" | "refuted" | "unresolved";
+    evidence_references: string[];
+  }>;
+  pending_directions?: string[];
   metrics: string[];
   filters: Record<string, string[]>;
   comparison: {

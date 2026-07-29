@@ -5,14 +5,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.conversation import AgentRunResult
 from app.agent.contracts import TurnResult
 from app.agent.model import (
-    FakeModelAdapter,
     ModelAttempt,
-    ModelAdapterError,
     ModelErrorCategory,
-    ResilientModelAdapter,
 )
-from app.agent.service import AgentService
-from app.agent.workflow import AgentTurnWorkflow
 from app.core.config import get_settings
 from app.models.agent import AgentAlert
 from app.models.operations import AgentSettings
@@ -26,10 +21,28 @@ async def _login(client: AsyncClient, username: str) -> None:
     assert response.status_code == 200
 
 
-class NoEvidenceCollector:
-    async def collect(self, plan, context):
-        del plan, context
-        raise AssertionError("configuration failure must not collect evidence")
+class FailingNativeAgentRun:
+    def __init__(self, attempts_by_run: list[list[ModelErrorCategory]]) -> None:
+        self.attempts_by_run = list(attempts_by_run)
+
+    async def run(self, context, state, recent_messages):
+        del context, recent_messages
+        categories = self.attempts_by_run.pop(0)
+        return AgentRunResult(
+            turn=TurnResult(route="safe_failure", content="当前无法安全完成调查。"),
+            state=state,
+            attempts=[
+                ModelAttempt(
+                    stage="answer",
+                    provider="configured-provider",
+                    model="configured-model",
+                    result="failure",
+                    error_category=category,
+                    latency_ms=0,
+                )
+                for category in categories
+            ],
+        )
 
 
 async def _setup_owner_agent(
@@ -56,21 +69,8 @@ async def test_final_admin_can_read_sanitized_runs_and_alerts_after_reset(
 ) -> None:
     store = await _setup_owner_agent(db_session, user_factory, store_factory, monkeypatch)
     store_id = store.id
-    primary = FakeModelAdapter(
-        plans=[
-            ModelAdapterError(
-                "api-key=must-not-leak",
-                category=ModelErrorCategory.INVALID_API_KEY,
-            )
-        ],
-        provider="configured-provider",
-        model="configured-model",
-    )
-    client._transport.app.state.agent_service = AgentService(
-        AgentTurnWorkflow(
-            model=ResilientModelAdapter(primary),
-            evidence_collector=NoEvidenceCollector(),
-        )
+    client._transport.app.state.agent_service = FailingNativeAgentRun(
+        [[ModelErrorCategory.INVALID_API_KEY]]
     )
     await _login(client, "owner")
 
@@ -97,7 +97,7 @@ async def test_final_admin_can_read_sanitized_runs_and_alerts_after_reset(
     run = runs.json()[0]
     assert run["run_id"]
     assert run["role"] == "final_admin"
-    assert run["stage"] == "plan"
+    assert run["stage"] == "answer"
     assert run["provider"] == "configured-provider"
     assert run["model"] == "configured-model"
     assert run["input_tokens"] is None
@@ -154,25 +154,11 @@ async def test_repeated_alerts_are_deduplicated_and_final_admin_can_resolve_them
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = await _setup_owner_agent(db_session, user_factory, store_factory, monkeypatch)
-    primary = FakeModelAdapter(
-        plans=[
-            ModelAdapterError(
-                "api-key=first-secret",
-                category=ModelErrorCategory.INVALID_API_KEY,
-            ),
-            ModelAdapterError(
-                "api-key=second-secret",
-                category=ModelErrorCategory.INVALID_API_KEY,
-            ),
-        ],
-        provider="configured-provider",
-        model="configured-model",
-    )
-    client._transport.app.state.agent_service = AgentService(
-        AgentTurnWorkflow(
-            model=ResilientModelAdapter(primary),
-            evidence_collector=NoEvidenceCollector(),
-        )
+    client._transport.app.state.agent_service = FailingNativeAgentRun(
+        [
+            [ModelErrorCategory.INVALID_API_KEY],
+            [ModelErrorCategory.INVALID_API_KEY],
+        ]
     )
     await _login(client, "owner")
 
@@ -208,25 +194,8 @@ async def test_unrecovered_provider_outage_creates_one_sanitized_service_alert(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = await _setup_owner_agent(db_session, user_factory, store_factory, monkeypatch)
-    primary = FakeModelAdapter(
-        plans=[
-            ModelAdapterError(
-                "upstream=https://secret-provider.example",
-                category=ModelErrorCategory.PROVIDER_5XX,
-            ),
-            ModelAdapterError(
-                "upstream=https://secret-provider.example",
-                category=ModelErrorCategory.PROVIDER_5XX,
-            ),
-        ],
-        provider="configured-provider",
-        model="configured-model",
-    )
-    client._transport.app.state.agent_service = AgentService(
-        AgentTurnWorkflow(
-            model=ResilientModelAdapter(primary),
-            evidence_collector=NoEvidenceCollector(),
-        )
+    client._transport.app.state.agent_service = FailingNativeAgentRun(
+        [[ModelErrorCategory.PROVIDER_5XX, ModelErrorCategory.PROVIDER_5XX]]
     )
     await _login(client, "owner")
 
@@ -358,21 +327,8 @@ async def test_insufficient_balance_alert_does_not_expose_provider_failure_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = await _setup_owner_agent(db_session, user_factory, store_factory, monkeypatch)
-    primary = FakeModelAdapter(
-        plans=[
-            ModelAdapterError(
-                "provider-billing-detail=must-not-leak",
-                category=ModelErrorCategory.INSUFFICIENT_BALANCE,
-            )
-        ],
-        provider="configured-provider",
-        model="configured-model",
-    )
-    client._transport.app.state.agent_service = AgentService(
-        AgentTurnWorkflow(
-            model=ResilientModelAdapter(primary),
-            evidence_collector=NoEvidenceCollector(),
-        )
+    client._transport.app.state.agent_service = FailingNativeAgentRun(
+        [[ModelErrorCategory.INSUFFICIENT_BALANCE]]
     )
     await _login(client, "owner")
 

@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 from datetime import date, datetime, timezone
 from hashlib import sha256
@@ -44,11 +45,28 @@ PROBE_TOOLS = (
         },
     ),
 )
+PROBE_PROMPT = (
+    "This is a synthetic capability probe. Call probe_alpha and probe_beta "
+    "in one parallel tool-call turn, then use both results to finish naturally."
+)
+ERROR_RELEASE_CASES = {
+    ModelErrorCategory.TIMEOUT: "timeout",
+    ModelErrorCategory.RATE_LIMIT: "rate_limit",
+    ModelErrorCategory.PROVIDER_5XX: "server_error",
+    ModelErrorCategory.INVALID_API_KEY: "authentication",
+    ModelErrorCategory.INSUFFICIENT_BALANCE: "balance",
+    ModelErrorCategory.INVALID_OUTPUT: "invalid_output",
+}
+
+
+def _configured_adapter():
+    settings = get_settings()
+    primary_profile, _ = configured_openai_profiles(settings)
+    return primary_profile, OpenAICompatibleNativeToolModel(primary_profile)
 
 
 async def probe() -> dict[str, object]:
-    settings = get_settings()
-    primary_profile, _ = configured_openai_profiles(settings)
+    primary_profile, adapter = _configured_adapter()
     if (
         primary_profile.input_cost_per_million is None
         or primary_profile.output_cost_per_million is None
@@ -57,17 +75,13 @@ async def probe() -> dict[str, object]:
             "native model probe requires configured input and output cost rates",
             category=ModelErrorCategory.INVALID_REQUEST,
         )
-    adapter = OpenAICompatibleNativeToolModel(primary_profile)
     attempts: list[ModelAttempt] = []
     first = await adapter.next_turn(
         [
             NativeTranscriptItem(
                 message=ModelMessage(
                     role="user",
-                    content=(
-                        "This is a synthetic capability probe. Call probe_alpha and probe_beta "
-                        "in one parallel tool-call turn, then use both results to finish naturally."
-                    ),
+                    content=PROBE_PROMPT,
                 )
             )
         ],
@@ -83,10 +97,7 @@ async def probe() -> dict[str, object]:
         NativeTranscriptItem(
             message=ModelMessage(
                 role="user",
-                content=(
-                    "This is a synthetic capability probe. Call probe_alpha and probe_beta "
-                    "in one parallel tool-call turn, then use both results to finish naturally."
-                ),
+                content=PROBE_PROMPT,
             )
         ),
         NativeTranscriptItem(message=first.message, tool_calls=first.tool_calls),
@@ -102,6 +113,26 @@ async def probe() -> dict[str, object]:
     )
     if final.signal != "end":
         raise ModelAdapterError("native tool result continuation did not end naturally")
+    if not attempts or any(
+        attempt.input_tokens is None
+        or attempt.output_tokens is None
+        or attempt.estimated_cost is None
+        for attempt in attempts
+    ):
+        raise ModelAdapterError(
+            "native model probe did not receive complete usage metrics",
+            category=ModelErrorCategory.INVALID_OUTPUT,
+        )
+    release_cases = [
+        {"case": case, "passed": True}
+        for case in (
+            "native_tool_calling",
+            "parallel_tool_calls",
+            "tool_result_continuation",
+            "natural_answer",
+            "usage_metrics",
+        )
+    ]
     return {
         "status": "passed",
         "provider": primary_profile.provider,
@@ -110,10 +141,58 @@ async def probe() -> dict[str, object]:
         "tool_result_continuation": True,
         "natural_end": True,
         "attempts": len(attempts),
-        "input_tokens": sum(attempt.input_tokens or 0 for attempt in attempts),
-        "output_tokens": sum(attempt.output_tokens or 0 for attempt in attempts),
+        "input_tokens": sum(attempt.input_tokens for attempt in attempts),
+        "output_tokens": sum(attempt.output_tokens for attempt in attempts),
         "latency_ms": sum(attempt.latency_ms for attempt in attempts),
-        "estimated_cost_eur": sum(attempt.estimated_cost or 0 for attempt in attempts),
+        "estimated_cost_eur": sum(attempt.estimated_cost for attempt in attempts),
+        "release_cases": release_cases,
+    }
+
+
+async def probe_expected_error(
+    expected_category: ModelErrorCategory,
+) -> dict[str, object]:
+    if expected_category not in ERROR_RELEASE_CASES:
+        raise ModelAdapterError(
+            "unsupported native model error probe category",
+            category=ModelErrorCategory.INVALID_REQUEST,
+        )
+    primary_profile, adapter = _configured_adapter()
+    observed_category = None
+    try:
+        await adapter.next_turn(
+            [
+                NativeTranscriptItem(
+                    message=ModelMessage(
+                        role="user",
+                        content=(
+                            "This is a synthetic error-mapping probe. "
+                            "Return a short natural answer."
+                        ),
+                    )
+                )
+            ],
+            tools=(),
+        )
+    except ModelAdapterError as error:
+        observed_category = error.category
+    if observed_category != expected_category:
+        raise ModelAdapterError(
+            "native model error probe did not observe the expected category",
+            category=ModelErrorCategory.INVALID_OUTPUT,
+        )
+    return {
+        "status": "passed",
+        "provider": primary_profile.provider,
+        "model": primary_profile.model_id,
+        "expected_error_category": expected_category.value,
+        "observed_error_category": observed_category.value,
+        "release_cases": [
+            {
+                "case": ERROR_RELEASE_CASES[expected_category],
+                "passed": True,
+            }
+        ],
     }
 
 
@@ -140,8 +219,21 @@ def _synthetic_result(call_id: str, name: str) -> NativeToolResult:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Probe a real native model Adapter with synthetic, non-business data."
+    )
+    parser.add_argument(
+        "--expect-error",
+        choices=[category.value for category in ERROR_RELEASE_CASES],
+        help="Require one real provider failure to map to this provider-neutral category.",
+    )
+    arguments = parser.parse_args()
     try:
-        report = asyncio.run(probe())
+        report = asyncio.run(
+            probe_expected_error(ModelErrorCategory(arguments.expect_error))
+            if arguments.expect_error
+            else probe()
+        )
     except ModelAdapterError as error:
         report = {
             "status": "failed",

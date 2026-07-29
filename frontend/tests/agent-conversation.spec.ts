@@ -21,39 +21,91 @@ const emptyState = {
   pending_clarifications: [],
 };
 
-async function mockAgentApi(page: Page, role: "admin" | "user" = "admin") {
-  let nextMessageId = 10;
+const workspaceState = {
+  ...emptyState,
+  investigation_goal: "调查最近营业额变化",
+  pending_period: { start: "2026-07-01", end: "2026-07-14" },
+  confirmed_objects: [],
+  evidence_references: [
+    {
+      reference: "ev_0123456789abcdef01234567",
+      source: ["store_daily_records"],
+      queried_at: "2026-07-14T10:30:00Z",
+      data_version: "private-version-token",
+      period: { start: "2026-06-01", end: "2026-06-30" },
+      use_as_current_fact: false,
+    },
+  ],
+  analysis_hypotheses: [
+    {
+      statement: "工作日变化可能与营业额变化同时出现",
+      status: "testing",
+      evidence_references: [],
+    },
+  ],
+  pending_directions: ["确认期间后检查每日台账营业额"],
+};
+
+async function mockAgentApi(
+  page: Page,
+  role: "admin" | "user" = "admin",
+  options: { enabled?: boolean; workspace?: boolean; empty?: boolean; holdTurn?: boolean } = {},
+) {
+  let releaseTurn: () => void = () => undefined;
+  const turnGate = options.holdTurn
+    ? new Promise<void>((resolve) => {
+        releaseTurn = resolve;
+      })
+    : Promise.resolve();
+  let nextMessageId = options.workspace ? 100 : 10;
+  const longConversation = Array.from(
+    { length: 30 },
+    (_, index): Message => ({
+      id: index + 1,
+      role: index % 2 === 0 ? "user" : "assistant",
+      content: `调查消息 ${index + 1}：${"经营证据内容 ".repeat(4)}`,
+      created_at: `2026-07-26T12:${String(index).padStart(2, "0")}:00Z`,
+    }),
+  );
   const messages = new Map<number, Message[]>([
     [
       1,
-      [
-        {
-          id: 1,
-          role: "user",
-          content: "之前的问题",
-          created_at: "2026-07-26T12:00:00Z",
-        },
-        {
-          id: 2,
-          role: "assistant",
-          content: "之前保存的完整回答",
-          action: {
-            type: "open_business_records",
-            start_month: "2025-01",
-            end_month: "2025-12",
-          },
-          created_at: "2026-07-26T12:00:01Z",
-        },
-      ],
+      options.empty
+        ? []
+        : options.workspace
+          ? longConversation
+          : [
+              {
+                id: 1,
+                role: "user",
+                content: "之前的问题",
+                created_at: "2026-07-26T12:00:00Z",
+              },
+              {
+                id: 2,
+                role: "assistant",
+                content: "之前保存的完整回答",
+                action: {
+                  type: "open_business_records",
+                  start_month: "2025-01",
+                  end_month: "2025-12",
+                },
+                created_at: "2026-07-26T12:00:01Z",
+              },
+            ],
     ],
     [2, []],
+  ]);
+  const states = new Map<number, typeof emptyState | typeof workspaceState>([
+    [1, options.workspace && !options.empty ? workspaceState : emptyState],
+    [2, emptyState],
   ]);
   const snapshot = (storeId: number) => {
     const current = messages.get(storeId) ?? [];
     return {
       id: current.length ? storeId : null,
       messages: current,
-      state: emptyState,
+      state: states.get(storeId) ?? emptyState,
       created_at: current.length ? "2026-07-26T12:00:00Z" : null,
       updated_at: current.length ? "2026-07-26T12:00:01Z" : null,
     };
@@ -79,7 +131,7 @@ async function mockAgentApi(page: Page, role: "admin" | "user" = "admin") {
         { id: 2, name: "Milano", timezone: "Europe/Rome" },
       ]);
     }
-    if (path === "/api/agent/status") return json({ enabled: true });
+    if (path === "/api/agent/status") return json({ enabled: options.enabled ?? true });
     if (/^\/api\/dashboard\/\d+$/.test(path)) return json([]);
     if (/^\/api\/database\/\d+\/records$/.test(path)) {
       return json({
@@ -128,6 +180,7 @@ async function mockAgentApi(page: Page, role: "admin" | "user" = "admin") {
       if (request.method() === "GET") return json(snapshot(storeId));
       if (request.method() === "DELETE") {
         messages.set(storeId, []);
+        states.set(storeId, emptyState);
         return route.fulfill({ status: 204 });
       }
     }
@@ -135,6 +188,7 @@ async function mockAgentApi(page: Page, role: "admin" | "user" = "admin") {
     if (turnMatch && request.method() === "POST") {
       const storeId = Number(turnMatch[1]);
       const body = request.postDataJSON() as { question: string };
+      await turnGate;
       const current = messages.get(storeId) ?? [];
       current.push(
         {
@@ -146,19 +200,31 @@ async function mockAgentApi(page: Page, role: "admin" | "user" = "admin") {
         {
           id: nextMessageId++,
           role: "assistant",
-          content: `${storeId}号门店的完整回答`,
+          content:
+            body.question === "确认" ? "已按确认期间完成调查。" : `${storeId}号门店的完整回答`,
           created_at: "2026-07-26T12:01:01Z",
         },
       );
       messages.set(storeId, current);
+      if (body.question === "确认") {
+        states.set(storeId, {
+          ...workspaceState,
+          pending_period: null,
+          pending_directions: [],
+        });
+      }
       return json({
         route: "answer",
-        content: `${storeId}号门店的完整回答`,
+        content: body.question === "确认" ? "已按确认期间完成调查。" : `${storeId}号门店的完整回答`,
+        recovery_status: "none",
+        progress: [{ status: "investigating", message: "已核对经营证据" }],
+        partial: null,
         conversation: snapshot(storeId),
       });
     }
     return json({ detail: `unmocked ${request.method()} ${path}` }, 500);
   });
+  return { releaseTurn };
 }
 
 test("ordinary users cannot see or invoke the Agent", async ({ page }) => {
@@ -167,6 +233,131 @@ test("ordinary users cannot see or invoke the Agent", async ({ page }) => {
 
   await expect(page.getByRole("region", { name: "门店 Agent" })).toHaveCount(0);
   await expect(page.getByRole("textbox", { name: "向 Agent 提问" })).toHaveCount(0);
+});
+
+test("desktop Agent workspace keeps the investigation usable and accessible", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await mockAgentApi(page, "admin", { workspace: true });
+  await page.goto("/");
+
+  const agent = page.getByRole("region", { name: "门店 Agent" });
+  const briefing = page.getByRole("complementary", { name: "经营简报" });
+  await expect(agent).toBeVisible();
+  await expect(briefing).toBeVisible();
+  await expect
+    .poll(async () => {
+      const [agentBox, briefingBox] = await Promise.all([
+        agent.boundingBox(),
+        briefing.boundingBox(),
+      ]);
+      return Boolean(
+        agentBox && briefingBox && agentBox.x < briefingBox.x && agentBox.width > briefingBox.width,
+      );
+    })
+    .toBe(true);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    ),
+  ).toBe(false);
+
+  const conversation = page.getByRole("list", { name: "当前调查" });
+  const scroller = conversation.locator("xpath=..");
+  expect(await scroller.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(
+    true,
+  );
+  await expect(page.getByRole("textbox", { name: "向 Agent 提问" })).toBeInViewport();
+
+  const confirmPeriod = page.getByRole("button", { name: "确认这个期间" });
+  await confirmPeriod.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("已按确认期间完成调查。")).toBeVisible();
+  await expect(page.getByRole("status")).toContainText("已核对经营证据");
+
+  const evidenceSummary = page.getByText("经营数据 · 2026-06-01 至 2026-06-30");
+  await evidenceSummary.focus();
+  await page.keyboard.press("Enter");
+  const evidence = page.getByRole("group", { name: "调查证据" });
+  await expect(evidence).toContainText("每日台账");
+  await expect(evidence).not.toContainText("ev_0123456789abcdef01234567");
+  await expect(evidence).not.toContainText("private-version-token");
+
+  const newInvestigation = page.getByRole("button", { name: "开始新调查" });
+  await newInvestigation.click();
+  const dialog = page.getByRole("alertdialog");
+  await dialog.getByRole("button", { name: "取消" }).click();
+  await expect(newInvestigation).toBeFocused();
+
+  await newInvestigation.click();
+  await dialog.getByRole("button", { name: "永久删除并开始新调查" }).click();
+  await expect(page.getByText("当前调查为空")).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "向 Agent 提问" })).toBeFocused();
+});
+
+test("mobile home keeps a current investigation compact and continues it full-screen", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockAgentApi(page, "admin", { workspace: true });
+  await page.goto("/");
+
+  const entry = page.getByRole("region", { name: "移动 Agent 入口" });
+  await expect(entry).toContainText("调查最近营业额变化");
+  await expect(entry.getByRole("link", { name: "继续当前调查" })).toBeVisible();
+  await expect(page.getByRole("list", { name: "当前调查" })).toBeHidden();
+
+  await entry.getByRole("link", { name: "继续当前调查" }).click();
+  await expect(page).toHaveURL("/agent");
+  await expect(page.getByRole("list", { name: "当前调查" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "移动导航" })).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "向 Agent 提问" })).toBeInViewport();
+
+  const evidenceSummary = page.getByText("经营数据 · 2026-06-01 至 2026-06-30");
+  await evidenceSummary.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("group", { name: "调查证据" })).toContainText("每日台账");
+  await expect(page.getByRole("textbox", { name: "向 Agent 提问" })).toBeInViewport();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    ),
+  ).toBe(false);
+});
+
+test("mobile home starts an empty investigation and opens its full-screen result", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const { releaseTurn } = await mockAgentApi(page, "admin", { empty: true, holdTurn: true });
+  await page.goto("/");
+
+  const entry = page.getByRole("region", { name: "移动 Agent 入口" });
+  await entry.getByRole("textbox", { name: "向 Agent 提问" }).fill("最近营业额怎么样？");
+  await entry.getByRole("button", { name: "发送并打开调查" }).click();
+
+  await expect(page).toHaveURL("/agent");
+  await expect(page.getByRole("status")).toContainText("正在理解问题");
+  await expect(page.getByText("1号门店的完整回答")).toHaveCount(0);
+  releaseTurn();
+  await expect(page.getByText("1号门店的完整回答")).toBeVisible();
+  await expect(page.getByRole("status")).toContainText("已核对经营证据");
+  await expect(page.getByRole("textbox", { name: "向 Agent 提问" })).toBeInViewport();
+  await expect(page.getByRole("navigation", { name: "移动导航" })).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    ),
+  ).toBe(false);
+});
+
+test("disabled Agent stays explicit without exposing configuration details", async ({ page }) => {
+  await mockAgentApi(page, "admin", { enabled: false });
+  await page.goto("/");
+
+  const agent = page.getByRole("region", { name: "门店 Agent" });
+  await expect(agent).toContainText("Agent 当前未启用");
+  await expect(agent.getByRole("textbox")).toHaveCount(0);
+  await expect(agent).not.toContainText(/provider|模型|密钥|配置/i);
 });
 
 test("administrator restores, switches, and permanently clears a current investigation", async ({
@@ -216,9 +407,13 @@ for (const viewport of [
     await mockAgentApi(page);
     await page.goto("/");
 
+    if (viewport.keyboard) {
+      await page.getByRole("link", { name: "继续当前调查" }).click();
+      await expect(page).toHaveURL("/agent");
+    }
     const action = page.getByRole("button", { name: "查看营业记录" });
     await expect(action).toBeVisible();
-    await expect(page).toHaveURL("/");
+    await expect(page).toHaveURL(viewport.keyboard ? "/agent" : "/");
     if (viewport.keyboard) {
       await action.focus();
       await page.keyboard.press("Enter");

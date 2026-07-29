@@ -23,8 +23,11 @@ def write_release_artifacts(report_path) -> dict[str, str]:
                     "agent_peak_memory_mb": 1320,
                     "request_ms": 9000,
                     "model_stage_count": 2,
+                    "tool_call_count": 3,
+                    "agent_request_concurrency": 1,
                     "input_tokens": 4500,
                     "output_tokens": 900,
+                    "total_tokens": 5400,
                     "estimated_cost_eur": 0.02,
                     "sqlite_snapshot_ms": 120,
                     "short_write_baseline_ms": 35,
@@ -43,6 +46,11 @@ def write_release_artifacts(report_path) -> dict[str, str]:
                 {"case": name, "passed": True}
                 for name in (
                     "structured_output",
+                    "native_tool_calling",
+                    "parallel_tool_calls",
+                    "tool_result_continuation",
+                    "natural_answer",
+                    "usage_metrics",
                     "timeout",
                     "rate_limit",
                     "server_error",
@@ -102,10 +110,13 @@ def approved_report(settings: Settings) -> dict[str, object]:
         )
     }
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "target": {
             "memory_limit_mb": 2048,
             "single_container": True,
+            "application_processes": 1,
+            "application_workers": 1,
+            "database_engine": "sqlite",
         },
         "profile": {
             "provider": "candidate",
@@ -116,12 +127,16 @@ def approved_report(settings: Settings) -> dict[str, object]:
             "max_output_tokens": 2000,
             "input_cost_per_million": 1,
             "output_cost_per_million": 2,
-            "evidence_batch_limit": 1,
+            "max_model_calls": 4,
+            "max_tool_calls": 8,
+            "max_total_tokens": 50000,
+            "max_cost_eur": 0.5,
+            "retry_attempts": 1,
             "adapter_config_sha256": agent_adapter_config_sha256(settings),
         },
         "evidence": {
             "collected_at": "2026-07-27T12:00:00Z",
-            "collector_version": "agent-release-v1",
+            "collector_version": "agent-release-v2",
             "container_image_digest": IMAGE_DIGEST,
             "measurement_artifact_sha256": artifact_hashes["samples.jsonl"],
             "adapter_cases_artifact_sha256": artifact_hashes["adapter-cases.json"],
@@ -134,8 +149,11 @@ def approved_report(settings: Settings) -> dict[str, object]:
             "agent_peak_memory_mb": 1320,
             "request_p95_ms": 9000,
             "model_stage_count_max": 2,
+            "tool_call_count_max": 3,
+            "agent_request_concurrency_max": 1,
             "input_tokens_max": 4500,
             "output_tokens_max": 900,
+            "total_tokens_max": 5400,
             "estimated_cost_eur_max": 0.02,
             "sqlite_snapshot_p95_ms": 120,
             "short_write_baseline_p95_ms": 35,
@@ -145,6 +163,7 @@ def approved_report(settings: Settings) -> dict[str, object]:
         "checks": {
             "language_quality": True,
             "structured_output": True,
+            "native_adapter_probe": True,
             "failure_semantics": True,
             "model_calls_outside_sqlite_transactions": True,
             "safety_release_gate": True,
@@ -264,6 +283,65 @@ def test_release_report_requires_auditable_evidence_artifacts(tmp_path) -> None:
     assert status.blockers == ["release report is invalid"]
 
 
+def test_release_report_requires_the_measured_single_worker_sqlite_topology(tmp_path) -> None:
+    report_path = tmp_path / "agent-release.json"
+    settings = production_settings(report_path)
+    report = approved_report(settings)
+    report["target"]["application_workers"] = 2
+    report["target"]["database_engine"] = "postgresql"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    status = agent_release_status(settings)
+
+    assert status.approved is False
+    assert "release target does not use one application worker" in status.blockers
+    assert "release target does not use SQLite" in status.blockers
+
+
+def test_release_report_binds_runtime_investigation_limits_and_measured_tool_usage(
+    tmp_path,
+) -> None:
+    report_path = tmp_path / "agent-release.json"
+    measured = production_settings(report_path)
+    report_path.write_text(json.dumps(approved_report(measured)), encoding="utf-8")
+
+    changed_runtime = agent_release_status(
+        measured.model_copy(update={"agent_investigation_max_tool_calls": 9})
+    )
+
+    assert changed_runtime.approved is False
+    assert changed_runtime.blockers == [
+        "runtime model profile does not match the evaluated profile"
+    ]
+
+    report = approved_report(measured)
+    report["measurements"]["tool_call_count_max"] = 9
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    excessive_tools = agent_release_status(measured)
+
+    assert excessive_tools.approved is False
+    assert "measured tool calls exceed the configured limit" in excessive_tools.blockers
+
+
+def test_release_report_requires_a_real_native_adapter_probe(tmp_path) -> None:
+    report_path = tmp_path / "agent-release.json"
+    settings = production_settings(report_path)
+    adapter_path = tmp_path / "adapter-cases.json"
+    artifact = json.loads(adapter_path.read_text(encoding="utf-8"))
+    next(case for case in artifact["cases"] if case["case"] == "parallel_tool_calls")["passed"] = (
+        False
+    )
+    adapter_path.write_text(json.dumps(artifact, separators=(",", ":")), encoding="utf-8")
+    report = approved_report(settings)
+    report["checks"]["native_adapter_probe"] = False
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    status = agent_release_status(settings)
+
+    assert status.approved is False
+    assert "native model Adapter capability probe failed" in status.blockers
+
+
 def test_release_report_verifies_artifact_hashes_and_runtime_image(tmp_path) -> None:
     report_path = tmp_path / "agent-release.json"
     settings = production_settings(report_path)
@@ -323,8 +401,11 @@ def test_release_sample_summary_uses_nearest_rank_p95_and_preserves_maxima() -> 
             agent_peak_memory_mb=1000 + index,
             request_ms=1000 + index,
             model_stage_count=index % 2 + 1,
+            tool_call_count=index % 3 + 1,
+            agent_request_concurrency=1,
             input_tokens=200 + index,
             output_tokens=100 + index,
+            total_tokens=300 + (2 * index),
             estimated_cost_eur=index / 1000,
             sqlite_snapshot_ms=20 + index,
             short_write_baseline_ms=10 + index,
@@ -339,7 +420,10 @@ def test_release_sample_summary_uses_nearest_rank_p95_and_preserves_maxima() -> 
     assert measurements.serial_sample_count == 20
     assert measurements.request_p95_ms == 1019
     assert measurements.model_stage_count_max == 2
+    assert measurements.tool_call_count_max == 3
+    assert measurements.agent_request_concurrency_max == 1
     assert measurements.input_tokens_max == 220
+    assert measurements.total_tokens_max == 340
     assert measurements.language_quality_pass_rate == 0.95
 
 

@@ -105,9 +105,11 @@ function TomorrowCard({ card }: { card?: CardFor<"tomorrow"> }) {
 export function BriefingCards({
   cards,
   yesterdayHref,
+  compact = false,
 }: {
   cards: BriefingCard[];
   yesterdayHref: string;
+  compact?: boolean;
 }) {
   const yesterday = cards.find(
     (card): card is CardFor<"yesterday"> => card.card_type === "yesterday",
@@ -115,7 +117,7 @@ export function BriefingCards({
   const today = cards.find((card): card is CardFor<"today"> => card.card_type === "today");
   const tomorrow = cards.find((card): card is CardFor<"tomorrow"> => card.card_type === "tomorrow");
   return (
-    <div className="grid gap-4 md:grid-cols-3">
+    <div className={compact ? "grid gap-3" : "grid gap-4 md:grid-cols-3"}>
       <YesterdayCard card={yesterday} backfillHref={yesterdayHref} />
       <TodayCard card={today} />
       <TomorrowCard card={tomorrow} />
