@@ -67,27 +67,50 @@ describe("LedgerForm", () => {
     expect(screen.queryByRole("group", { name: "收入项目" })).not.toBeInTheDocument();
   });
 
-  it("starts new ledger values at zero without marking the form dirty", () => {
+  it("新建总额记账默认留空，并在保存时将空数值补为零", () => {
+    const onSave = vi.fn<(body: LedgerBody) => void>();
     const directDirty = vi.fn();
-    const direct = render(<LedgerForm categories={[]} config={directConfig} onDirtyChange={directDirty} onSave={vi.fn()} />);
+    render(<LedgerForm categories={[]} config={directConfig} onDirtyChange={directDirty} onSave={onSave} />);
+
+    expect(screen.getByLabelText("当日营业额")).toHaveValue("");
+    expect(screen.getByLabelText("洗车数量")).toHaveValue("");
+    expect(directDirty).toHaveBeenLastCalledWith(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      daily_revenue: 0,
+      wash_count: 0,
+      items: [],
+    }));
     expect(screen.getByLabelText("当日营业额")).toHaveValue("0");
     expect(screen.getByLabelText("洗车数量")).toHaveValue("0");
-    expect(directDirty).toHaveBeenLastCalledWith(false);
-    direct.unmount();
+  });
 
-    const composedDirty = vi.fn();
-    render(<LedgerForm categories={[]} config={composedConfig} onDirtyChange={composedDirty} onSave={vi.fn()} />);
-    expect(screen.getByLabelText("现金")).toHaveValue("0");
-    expect(screen.getByLabelText("不计入")).toHaveValue("0");
+  it("新建分类记账在提前休息时保持空白，并在保存时将空值补零", () => {
+    const onSave = vi.fn<(body: LedgerBody) => void>();
+    const onDirtyChange = vi.fn();
+    render(<LedgerForm categories={[]} config={composedConfig} onDirtyChange={onDirtyChange} onSave={onSave} />);
+
+    expect(screen.getByLabelText("现金")).toHaveValue("");
+    expect(screen.getByLabelText("不计入")).toHaveValue("");
+    expect(screen.getByLabelText("洗车数量")).toHaveValue("");
     expect(screen.getByText("合计金额 €0")).toBeInTheDocument();
-    expect(composedDirty).toHaveBeenLastCalledWith(false);
-    fireEvent.change(screen.getByLabelText("状态"), { target: { value: "提前休息" } });
-    expect(screen.getByLabelText("现金")).toHaveValue("0");
-    expect(screen.getByLabelText("不计入")).toHaveValue("0");
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+
     fireEvent.change(screen.getByLabelText("状态"), { target: { value: "休息" } });
-    fireEvent.change(screen.getByLabelText("状态"), { target: { value: "营业" } });
+    fireEvent.change(screen.getByLabelText("状态"), { target: { value: "提前休息" } });
+    expect(screen.getByLabelText("洗车数量")).toHaveValue("");
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      is_open: "提前休息",
+      wash_count: 0,
+      items: [{ category_id: 5, amount: 0 }, { category_id: 6, amount: 0 }],
+    }));
     expect(screen.getByLabelText("现金")).toHaveValue("0");
     expect(screen.getByLabelText("不计入")).toHaveValue("0");
+    expect(screen.getByLabelText("洗车数量")).toHaveValue("0");
   });
 
   it("submits early-close operating values without normalizing them", () => {
@@ -111,7 +134,7 @@ describe("LedgerForm", () => {
     const onSave = vi.fn();
     render(<LedgerForm categories={[]} config={directConfig} onSave={onSave} />);
 
-    for (const value of ["", "-1", "1.2", "1e2", " 1", "1 "]) {
+    for (const value of ["-1", "1.2", "1e2", " 1", "1 "]) {
       fireEvent.change(screen.getByLabelText("当日营业额"), { target: { value } });
       fireEvent.click(screen.getByRole("button", { name: "保存" }));
       expect(screen.getByRole("alert")).toHaveTextContent("金额必须是大于等于 0 的整数");
@@ -260,6 +283,32 @@ describe("LedgerForm", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ is_open: "休息", wash_count: 0 }));
+  });
+
+  it("已有每日台账的空洗车数量保存后仍保持为已保存状态", async () => {
+    const record = savedRecord({ wash_count: null });
+    const onDirtyChange = vi.fn();
+    const onSave = vi.fn<(body: LedgerBody) => void>();
+    const view = render(<LedgerForm
+      categories={[]}
+      config={composedConfig}
+      record={record}
+      onDirtyChange={onDirtyChange}
+      onSave={onSave}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    const body = onSave.mock.calls[0][0];
+    view.rerender(<LedgerForm
+      categories={[]}
+      config={composedConfig}
+      record={record}
+      savedSubmission={{ revision: 1, body }}
+      onDirtyChange={onDirtyChange}
+      onSave={onSave}
+    />);
+
+    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(false));
   });
 
   it("preserves unchanged historical event text exactly", () => {
