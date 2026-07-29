@@ -78,6 +78,44 @@ BUSINESS_CONTEXT = DataSkill(
     ),
 )
 
+COMPANY_SETTLEMENT = DataSkill(
+    name="company_settlement",
+    summary=(
+        "按开票月份或结算公司分析已确认公司结算收入、当前待到账应收款、"
+        "受限开票明细和结算公司目录。"
+    ),
+    instructions=(
+        "公司结算与应收分析 Skill\n"
+        "- 使用 company_settlement_summary 按 opening_month 或 company 分组；"
+        "已确认公司结算收入和当前待到账应收款必须始终分别呈现。\n"
+        "- 当前待到账应收款不计入营业额或月度总收入，也不能与已确认公司"
+        "结算收入相加成收入指标。\n"
+        "- 使用 company_settlement_detail 按开票月份、结算公司和当前状态"
+        "筛选；明细必须分页并说明截断状态。\n"
+        "- 使用 settlement_company_directory 查看当前门店使用中或已归档的"
+        "结算公司；目录包括没有开票记录的公司。\n"
+        "- 待到账是当前状态，不是历史快照；系统没有保存历史应收快照，"
+        "不得描述过去某日的待到账状态。\n"
+        "- 公司结算按开票月份归属，不按到账日期分析；已确认公司结算收入"
+        "没有日粒度，不得分配到日粒度。\n"
+        "- 需要月度总收入时，可加载 business_performance 并组合"
+        " business_performance_summary 的台账营业额与已确认公司结算收入；"
+        "不得加入待到账应收款。\n"
+        "- 功能关闭时，既有已确认收入、当前待到账记录和结算公司仍是"
+        "用户可见历史事实，应按同一业务口径解释，但不得执行写操作。\n"
+        "- 最终回答必须分别命名已确认公司结算收入和当前待到账应收款，"
+        "并说明适用的当前状态、开票月份和覆盖限制。"
+    ),
+    allowed_data_tools=frozenset(
+        {
+            "business_performance_summary",
+            "company_settlement_detail",
+            "company_settlement_summary",
+            "settlement_company_directory",
+        }
+    ),
+)
+
 SKILL_TOOL_AUTHORIZATIONS = {
     "business_performance": frozenset(
         {
@@ -93,6 +131,14 @@ SKILL_TOOL_AUTHORIZATIONS = {
             "daily_ledger_detail",
         }
     ),
+    "company_settlement": frozenset(
+        {
+            "business_performance_summary",
+            "company_settlement_detail",
+            "company_settlement_summary",
+            "settlement_company_directory",
+        }
+    ),
 }
 
 
@@ -104,6 +150,7 @@ class SkillCatalog:
         skills: tuple[DataSkill, ...] = (
             BUSINESS_PERFORMANCE,
             BUSINESS_CONTEXT,
+            COMPANY_SETTLEMENT,
         ),
     ) -> None:
         self._skills = {skill.name: skill for skill in skills}

@@ -3,8 +3,10 @@ from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 import json
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -39,6 +41,22 @@ TURN_INTERRUPTED_MESSAGE = "后端进程已重新启动，本轮未自动继续"
 _END = object()
 logger = logging.getLogger(__name__)
 
+_REVENUE_FIELDS = frozenset(
+    {
+        "confirmed_settlement_income",
+        "ledger_revenue",
+        "monthly_total_income",
+        "total_income",
+    }
+)
+_PENDING_FIELD = "current_pending_receivables"
+_PENDING_EXCLUSION_PHRASES = (
+    "不计入营业额",
+    "不计入月度总收入",
+    "不属于营业额",
+    "不属于收入",
+)
+
 SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 AdapterFactory = Callable[[], AgentModelAdapter]
 TurnEvent = dict[str, Any]
@@ -50,6 +68,155 @@ class ActiveAgentTurnError(RuntimeError):
 
 class AgentTurnStartTimeoutError(RuntimeError):
     pass
+
+
+def _calculation_operand_kinds(
+    operand: object,
+    step_kinds: dict[str, frozenset[str]],
+) -> frozenset[str]:
+    if not isinstance(operand, dict):
+        return frozenset()
+    field = str(operand.get("field", ""))
+    field_name = field.rsplit(".", 1)[-1]
+    if field_name == _PENDING_FIELD:
+        return frozenset({"pending"})
+    if field_name in _REVENUE_FIELDS:
+        return frozenset({"revenue"})
+    source = str(operand.get("source", "")).casefold()
+    if any(
+        marker in source
+        for marker in (
+            "营业额",
+            "收入",
+            "confirmed_settlement_income",
+            "ledger_revenue",
+            "total_income",
+        )
+    ):
+        return frozenset({"revenue"})
+    step = str(operand.get("step", ""))
+    return step_kinds.get(step, frozenset())
+
+
+def _validate_settlement_calculation(plan: object) -> None:
+    if not isinstance(plan, list):
+        return
+    step_kinds: dict[str, frozenset[str]] = {}
+    for item in plan:
+        if not isinstance(item, dict):
+            continue
+        kinds = _calculation_operand_kinds(
+            item.get("left"),
+            step_kinds,
+        ) | _calculation_operand_kinds(
+            item.get("right"),
+            step_kinds,
+        )
+        if (
+            item.get("operation") == "add"
+            and {"pending", "revenue"} <= kinds
+        ):
+            raise ValueError("待到账应收款不能与营业额指标合并计算")
+        name = str(item.get("name", "")).strip()
+        if name:
+            step_kinds[name] = kinds
+
+
+def _validate_settlement_answer(
+    answer: str,
+    *,
+    loaded_skills: dict[str, Any],
+    results: dict[str, dict[str, Any]],
+) -> None:
+    if "company_settlement" not in loaded_skills:
+        return
+    summaries = [
+        result
+        for result in results.values()
+        if {
+            "confirmed_settlement_income",
+            "current_pending_receivables",
+        }
+        <= set(result.get("data", {}))
+    ]
+    if not summaries:
+        return
+    if (
+        "已确认公司结算收入" not in answer
+        or "当前待到账应收款" not in answer
+        or not any(phrase in answer for phrase in _PENDING_EXCLUSION_PHRASES)
+    ):
+        raise ValueError("公司结算最终回答未分离收入与当前待到账应收款")
+    risky_inclusion = re.search(
+        r"(?:当前)?待到账应收款.{0,20}(?:计入|纳入|包含在|构成)"
+        r".{0,15}(?:营业额|月度总收入|收入)",
+        answer,
+    )
+    if risky_inclusion and "不" not in risky_inclusion.group(0):
+        raise ValueError("公司结算最终回答错误计入待到账应收款")
+    if re.search(
+        r"(?:两项|二者|上述两类|合并|加总).{0,12}(?:收入|营业额)",
+        answer,
+    ) or re.search(
+        r"(?:公司结算|已确认).{0,12}(?:和|与|加上).{0,12}"
+        r"(?:应收|待到账).{0,12}(?:合计|总计|收入|营业额)",
+        answer,
+    ):
+        raise ValueError("公司结算最终回答合并了收入与当前待到账应收款")
+
+    claimed_monthly_totals = re.findall(
+        r"月度总收入[^0-9。\n]{0,30}([0-9][0-9,.]*)\s*欧元",
+        answer,
+    )
+    if not claimed_monthly_totals:
+        return
+    permitted_totals: set[Decimal] = set()
+    performance_results = [
+        result
+        for result in results.values()
+        if "ledger_revenue" in result.get("data", {})
+    ]
+    for settlement in summaries:
+        for performance in performance_results:
+            settlement_start = str(
+                settlement.get("coverage", {}).get("range_start", "")
+            )
+            settlement_end = str(
+                settlement.get("coverage", {}).get("range_end", "")
+            )
+            performance_start = str(
+                performance.get("coverage", {}).get("range_start", "")
+            )
+            performance_end = str(
+                performance.get("coverage", {}).get("range_end", "")
+            )
+            if (
+                settlement_start[:7] != performance_start[:7]
+                or settlement_end[:7] != performance_end[:7]
+            ):
+                continue
+            try:
+                permitted_totals.add(
+                    Decimal(
+                        performance["data"]["ledger_revenue"]
+                    )
+                    + Decimal(
+                        settlement["data"][
+                            "confirmed_settlement_income"
+                        ]
+                    )
+                )
+            except (InvalidOperation, KeyError, TypeError):
+                continue
+    try:
+        parsed_claims = {
+            Decimal(value.replace(",", ""))
+            for value in claimed_monthly_totals
+        }
+    except InvalidOperation as exc:
+        raise ValueError("月度总收入金额格式无效") from exc
+    if not parsed_claims <= permitted_totals:
+        raise ValueError("月度总收入必须由同期间台账营业额和已确认公司结算收入组成")
 
 
 @dataclass
@@ -473,6 +640,123 @@ class AgentTurnRuntime:
             {
                 "type": "function",
                 "function": {
+                    "name": "company_settlement_summary",
+                    "description": (
+                        "按开票月份或结算公司分别汇总已确认公司结算收入和"
+                        "当前待到账应收款。"
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "start_month": {
+                                "type": "string",
+                                "pattern": r"^\d{4}-(0[1-9]|1[0-2])$",
+                            },
+                            "end_month": {
+                                "type": "string",
+                                "pattern": r"^\d{4}-(0[1-9]|1[0-2])$",
+                            },
+                            "group_by": {
+                                "type": "string",
+                                "enum": ["opening_month", "company"],
+                            },
+                        },
+                        "required": [
+                            "start_month",
+                            "end_month",
+                            "group_by",
+                        ],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "company_settlement_detail",
+                    "description": (
+                        "按开票月份、结算公司和当前状态返回有界、可分页的"
+                        "公司结算明细。"
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "start_month": {
+                                "type": "string",
+                                "pattern": r"^\d{4}-(0[1-9]|1[0-2])$",
+                            },
+                            "end_month": {
+                                "type": "string",
+                                "pattern": r"^\d{4}-(0[1-9]|1[0-2])$",
+                            },
+                            "company_id": {
+                                "type": "integer",
+                                "minimum": 1,
+                            },
+                            "statuses": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string",
+                                    "enum": ["pending", "confirmed"],
+                                },
+                                "minItems": 1,
+                                "maxItems": 2,
+                                "uniqueItems": True,
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 50,
+                            },
+                            "offset": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 10000,
+                            },
+                        },
+                        "required": ["start_month", "end_month"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "settlement_company_directory",
+                    "description": (
+                        "返回 Agent 当前门店使用中或已归档的结算公司目录。"
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "statuses": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string",
+                                    "enum": ["active", "archived"],
+                                },
+                                "minItems": 1,
+                                "maxItems": 2,
+                                "uniqueItems": True,
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 50,
+                            },
+                            "offset": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 10000,
+                            },
+                        },
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "calculate",
                     "description": "引用本轮结果或标明来源的字面量执行受限十进制计算。",
                     "parameters": {
@@ -513,6 +797,11 @@ class AgentTurnRuntime:
                 answer = (response.content or "").strip()
                 if not answer:
                     raise ValueError("Agent model returned an empty answer")
+                _validate_settlement_answer(
+                    answer,
+                    loaded_skills=loaded_skills,
+                    results=results,
+                )
                 for phase in ("processing_data", "preparing_answer"):
                     await active.events.put(
                         {
@@ -598,6 +887,9 @@ class AgentTurnRuntime:
                 elif call.name == "calculate":
                     if set(call.arguments) != {"steps"}:
                         raise ValueError("派生计算参数无效")
+                    _validate_settlement_calculation(
+                        call.arguments["steps"]
+                    )
                     tool_result = calculate(
                         call.arguments["steps"],
                         results=results,

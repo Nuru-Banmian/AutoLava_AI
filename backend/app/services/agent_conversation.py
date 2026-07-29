@@ -37,6 +37,9 @@ _BUSINESS_SCOPE_MARKERS = (
     "平均每车收入",
     "分类记账",
     "公司结算",
+    "公司结算收入",
+    "已确认公司结算收入",
+    "月度总收入",
     "待到账",
     "应收款",
     "开票记录",
@@ -163,7 +166,7 @@ def is_business_scope_question(content: str) -> bool:
     ):
         remaining = remaining.replace(fragment, "")
     remaining = re.sub(
-        r"[\s\d０-９年月日号.,，。！？?!…:：;；()（）/\\\-到至]+",
+        r"[\s\d０-９年月日号.,，、。！？?!…:：;；()（）/\\\-到至]+",
         "",
         remaining,
     )
