@@ -131,6 +131,9 @@ function investigationState() {
         queried_at: "2026-07-14T10:30:00Z",
         data_version: "private-version-token",
         period: { start: "2026-06-01", end: "2026-06-30" },
+        facts: ["月度总收入：1,500 EUR"],
+        coverage: { calendar_dates: 30, recorded_dates: 28 },
+        limitations: ["2 个日期没有每日台账记录"],
         use_as_current_fact: false,
       },
     ],
@@ -344,6 +347,9 @@ it("expands readable evidence without exposing internal references or versions",
   fireEvent.click(within(evidence).getByText("经营数据 · 2026-06-01 至 2026-06-30"));
   expect(evidence).toHaveTextContent("查询时间");
   expect(evidence).toHaveTextContent("每日台账");
+  expect(evidence).toHaveTextContent("月度总收入：1,500 EUR");
+  expect(evidence).toHaveTextContent("已记录 28 / 30 个日期");
+  expect(evidence).toHaveTextContent("2 个日期没有每日台账记录");
   expect(evidence).not.toHaveTextContent("ev_0123456789abcdef01234567");
   expect(evidence).not.toHaveTextContent("private-version-token");
 });

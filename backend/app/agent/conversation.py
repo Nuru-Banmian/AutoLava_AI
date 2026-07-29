@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.contracts import (
     CollectedEvidence,
+    EvidenceCoverage,
     MessageRole,
     ModelMessage,
     OpenBusinessRecordsAction,
@@ -41,6 +42,8 @@ EvidenceReferenceId = Annotated[
     str,
     StringConstraints(pattern=r"^ev_[0-9a-f]{24}$"),
 ]
+ReadableEvidenceFact = Annotated[str, StringConstraints(min_length=1, max_length=300)]
+ReadableEvidenceLimitation = Annotated[str, StringConstraints(min_length=1, max_length=500)]
 
 
 class ConversationEvidenceReference(ClosedModel):
@@ -59,6 +62,9 @@ class ConversationEvidenceReference(ClosedModel):
     queried_at: datetime
     data_version: str = Field(min_length=1, max_length=100)
     period: ConfirmedPeriod
+    facts: list[ReadableEvidenceFact] = Field(default_factory=list, max_length=20)
+    coverage: EvidenceCoverage | None = None
+    limitations: list[ReadableEvidenceLimitation] = Field(default_factory=list, max_length=20)
     use_as_current_fact: Literal[False] = False
 
 
