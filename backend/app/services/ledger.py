@@ -54,20 +54,6 @@ class LedgerService:
             .execution_options(populate_existing=True)
         )
 
-    async def _active_categories(self, *, store_id: int) -> list[IncomeCategory]:
-        return list(
-            await self.session.scalars(
-                select(IncomeCategory)
-                .where(
-                    IncomeCategory.store_id == store_id,
-                    IncomeCategory.archived_at.is_(None),
-                    IncomeCategory.is_active.is_(True),
-                )
-                .order_by(IncomeCategory.sort_order, IncomeCategory.id)
-                .execution_options(populate_existing=True)
-            )
-        )
-
     async def get(self, *, store: Store, record_date: date) -> StoreDailyRecord:
         record = await self._find_record(store_id=store.id, record_date=record_date)
         if record is None:
@@ -92,32 +78,19 @@ class LedgerService:
     async def form_config(self, *, store: Store, record_date: date) -> dict[str, Any]:
         record = await self._find_record(store_id=store.id, record_date=record_date)
         if record is not None:
-            items = [
-                {
-                    "category_id": item.category_id,
-                    "name": item.category_name,
-                    "include_in_total": item.include_in_total,
-                    "is_active": True,
-                    "sort_order": item.sort_order,
-                }
-                for item in record.items
-            ]
-            recorded_ids = {item["category_id"] for item in items}
-            items.extend(
-                {
-                    "category_id": category.id,
-                    "name": category.name,
-                    "include_in_total": category.include_in_total,
-                    "is_active": True,
-                    "sort_order": category.sort_order,
-                }
-                for category in await self._active_categories(store_id=store.id)
-                if category.id not in recorded_ids
-            )
             return {
                 "store_id": store.id,
                 "enabled": record.income_mode == "composed",
-                "items": sorted(items, key=lambda item: (item["sort_order"], item["category_id"])),
+                "items": [
+                    {
+                        "category_id": item.category_id,
+                        "name": item.category_name,
+                        "include_in_total": item.include_in_total,
+                        "is_active": True,
+                        "sort_order": item.sort_order,
+                    }
+                    for item in sorted(record.items, key=lambda item: (item.sort_order, item.id))
+                ],
             }
         categories = list(
             await self.session.scalars(
@@ -185,7 +158,18 @@ class LedgerService:
             if payload.get("daily_revenue") is not None:
                 raise HTTPException(422, "Composed revenue mode does not accept daily revenue")
             if record is None:
-                categories = await self._active_categories(store_id=store.id)
+                categories = list(
+                    await self.session.scalars(
+                        select(IncomeCategory)
+                        .where(
+                            IncomeCategory.store_id == store.id,
+                            IncomeCategory.archived_at.is_(None),
+                            IncomeCategory.is_active.is_(True),
+                        )
+                        .order_by(IncomeCategory.sort_order, IncomeCategory.id)
+                        .execution_options(populate_existing=True)
+                    )
+                )
                 snapshots = {
                     category.id: _IncomeItemSnapshot(
                         category_name=category.name,
@@ -203,15 +187,6 @@ class LedgerService:
                     )
                     for item in record.items
                 }
-                for category in await self._active_categories(store_id=store.id):
-                    snapshots.setdefault(
-                        category.id,
-                        _IncomeItemSnapshot(
-                            category_name=category.name,
-                            include_in_total=category.include_in_total,
-                            sort_order=category.sort_order,
-                        ),
-                    )
             if set(category_ids) != set(snapshots) or len(items) != len(snapshots):
                 raise HTTPException(422, "Every active income item must be provided exactly once")
             item_values = [

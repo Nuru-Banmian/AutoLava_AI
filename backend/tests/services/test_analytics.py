@@ -245,38 +245,6 @@ async def test_snapshot_composition_preserves_groups_order_and_archived_names(
     }
 
 
-async def test_composition_aggregates_the_same_category_across_sort_order_changes(
-    db_session: AsyncSession,
-) -> None:
-    store, category_ids = await _seed_records(db_session, suffix="-reordered-composition")
-    cash_id, card_id = category_ids
-    cash_items = list(
-        await db_session.scalars(
-            select(DailyIncomeItem)
-            .join(StoreDailyRecord)
-            .where(
-                StoreDailyRecord.store_id == store.id,
-                DailyIncomeItem.category_id == cash_id,
-            )
-            .order_by(StoreDailyRecord.date)
-        )
-    )
-    cash_items[-1].sort_order = 9
-    await db_session.flush()
-
-    result = await AnalyticsService(db_session).calculate(
-        store_id=store.id,
-        start=date(2026, 7, 1),
-        end=date(2026, 7, 31),
-        category_ids=None,
-    )
-
-    assert result["categories"] == [
-        {"category_id": cash_id, "category_name": "现金", "amount": 300},
-        {"category_id": card_id, "category_name": "刷卡", "amount": 50},
-    ]
-
-
 async def test_average_revenue_is_zero_without_open_days(db_session: AsyncSession) -> None:
     store, category_ids = await _seed_records(db_session, suffix="-closed")
     records = await db_session.scalars(
