@@ -15,6 +15,7 @@ from app.agent.contracts import (
     CategoryAmountResult,
     ConfirmedSettlementIncomeResult,
     CurrentStoreScope,
+    DailyLedgerExtremeResult,
     DailyLedgerRevenueResult,
     EVIDENCE_METRIC_LABELS,
     EvidenceBundle,
@@ -24,6 +25,7 @@ from app.agent.contracts import (
     EvidenceGroupRow,
     EvidenceMetric,
     EvidencePeriodResult,
+    ExternalEvidenceBundle,
     GroupedMetricResult,
     ModelMessage,
     MonthlyDailyAverageIncomeResult,
@@ -48,6 +50,7 @@ from app.agent.native import (
     NativeToolCall,
     NativeToolError,
     NativeTranscriptItem,
+    _partial_verified_facts,
 )
 from app.agent.runtime import RuntimeContext, RuntimeFeatureFlags
 
@@ -55,8 +58,8 @@ from app.agent.runtime import RuntimeContext, RuntimeFeatureFlags
 class FailingEvidenceCollector:
     calls = 0
 
-    async def collect(self, plan, context):
-        del plan, context
+    async def collect(self, request, context):
+        del request, context
         self.calls += 1
         raise RuntimeError("database details must not reach the model")
 
@@ -65,8 +68,8 @@ class RecordingEvidenceCollector:
     def __init__(self) -> None:
         self.calls = []
 
-    async def collect(self, plan, context):
-        self.calls.append((plan, context))
+    async def collect(self, request, context):
+        self.calls.append((request, context))
         raise AssertionError("unauthorized tool calls must not reach business evidence")
 
 
@@ -207,7 +210,6 @@ def _evidence(metric: EvidenceMetric, value: int) -> EvidenceBundle:
             if metric == EvidenceMetric.WASH_COUNT
             else None
         ),
-        summary=f"{metric.value}={value}",
     )
 
 
@@ -255,7 +257,6 @@ def _settlement_evidence(
             "confirmed_records": 1,
         },
         warnings=["公司结算金额按开票月份归属，没有日粒度。"],
-        summary="公司结算事实已核对。",
     )
 
 
@@ -263,9 +264,8 @@ class SettlementEvidenceCollector:
     def __init__(self) -> None:
         self.requests = []
 
-    async def collect(self, plan, context):
+    async def collect(self, request, context):
         del context
-        request = plan.requests[0]
         self.requests.append(request)
         return _settlement_evidence(
             query_company_name=request.company_name,
@@ -278,9 +278,9 @@ class MetricEvidenceCollector:
         self.daily_revenue = daily_revenue
         self.metrics: list[EvidenceMetric] = []
 
-    async def collect(self, plan, context):
+    async def collect(self, request, context):
         del context
-        metric = plan.requests[0].metric
+        metric = request.metric
         self.metrics.append(metric)
         values = {
             EvidenceMetric.DAILY_LEDGER_REVENUE: self.daily_revenue,
@@ -295,16 +295,14 @@ class SemanticToolEvidenceCollector:
     def __init__(self) -> None:
         self.requests = []
 
-    async def collect(self, plan, context):
+    async def collect(self, request, context):
         del context
-        request = plan.requests[0]
         self.requests.append(request)
         return _evidence(request.metric, 12)
 
 
 class GroupedSemanticToolEvidenceCollector:
-    async def collect(self, plan, context):
-        request = plan.requests[0]
+    async def collect(self, request, context):
         return EvidenceBundle(
             status="ok",
             current_store=CurrentStoreScope(id=context.store_id),
@@ -319,13 +317,12 @@ class GroupedSemanticToolEvidenceCollector:
                 rows=[EvidenceGroupRow(key="group", label="分组", value=12)],
             ),
             coverage=EvidenceCoverage(calendar_dates=31, recorded_dates=2),
-            summary="分组金额 12 欧元。",
         )
 
 
 class MismatchedGroupedSemanticToolEvidenceCollector(GroupedSemanticToolEvidenceCollector):
-    async def collect(self, plan, context):
-        evidence = await super().collect(plan, context)
+    async def collect(self, request, context):
+        evidence = await super().collect(request, context)
         return evidence.model_copy(update={"filters": None})
 
 
@@ -547,7 +544,7 @@ class ConcurrentEvidenceCollector(MetricEvidenceCollector):
         self.started = 0
         self.both_started = asyncio.Event()
 
-    async def collect(self, plan, context):
+    async def collect(self, request, context):
         self.active += 1
         self.started += 1
         self.max_active = max(self.max_active, self.active)
@@ -555,7 +552,7 @@ class ConcurrentEvidenceCollector(MetricEvidenceCollector):
             self.both_started.set()
         await self.both_started.wait()
         try:
-            return await super().collect(plan, context)
+            return await super().collect(request, context)
         finally:
             self.active -= 1
 
@@ -1659,13 +1656,162 @@ async def test_native_investigation_preserves_verified_facts_at_the_model_call_l
     assert len(model.calls) == 1
     assert result.turn.route == "answer"
     assert result.partial is not None
-    assert result.partial.verified_facts == ["daily_ledger_revenue=1200"]
+    assert result.partial.verified_facts == ["2026-07-01 至 2026-07-31 每日台账营业额：1200 EUR"]
     assert "已确认事实：" not in result.turn.content
     assert result.partial is not None
     assert result.partial.unknowns
     assert result.evidence is not None
+    assert len(result.state.evidence_references) == 1
     assert result.progress[0].status == "partial"
     assert result.progress[0].message == "本轮调查已达到模型调用上限。"
+
+
+async def test_native_partial_result_preserves_all_current_turn_evidence_references() -> None:
+    model = FakeNativeToolModel(
+        turns=[
+            {
+                "message": {"role": "assistant", "content": "并行核对两项事实。"},
+                "tool_calls": [
+                    {
+                        "id": "verified-revenue",
+                        "name": "daily_ledger_revenue",
+                        "arguments": {"year": 2026, "month": 7},
+                    },
+                    {
+                        "id": "verified-days",
+                        "name": "operating_days",
+                        "arguments": {"year": 2026, "month": 7},
+                    },
+                ],
+                "signal": "continue",
+            }
+        ]
+    )
+    service = NativeToolAgentService(
+        model=model,
+        evidence_collector=MetricEvidenceCollector(daily_revenue=1_200),
+        scope_resolver=PassthroughScopeResolver(),
+        limits=NativeInvestigationLimits(max_model_calls=1),
+    )
+
+    result = await service.run(
+        _runtime_context(),
+        ConversationState(),
+        [ModelMessage(role="user", content="深入调查 2026 年 7 月。")],
+    )
+
+    assert result.partial is not None
+    assert result.partial.verified_facts == [
+        "2026-07-01 至 2026-07-31 每日台账营业额：1200 EUR",
+        "2026-07-01 至 2026-07-31 经营日：20 day",
+    ]
+    assert len(result.state.evidence_references) == 2
+    assert len({item.reference for item in result.state.evidence_references}) == 2
+
+
+def test_native_partial_facts_keep_group_extreme_and_external_values() -> None:
+    period = EvidencePeriodResult(start=date(2026, 7, 1), end=date(2026, 7, 31))
+    grouped = EvidenceBundle(
+        status="ok",
+        current_store=CurrentStoreScope(id=2),
+        period=period,
+        metric=EvidenceMetric.DAILY_LEDGER_REVENUE,
+        group_by="weekday",
+        unit="EUR",
+        calculation_version="grouped_business_metric.v1",
+        result=GroupedMetricResult(
+            group_by="weekday",
+            rows=[EvidenceGroupRow(key="1", label="星期一", value=320)],
+        ),
+        coverage=EvidenceCoverage(calendar_dates=31, recorded_dates=1),
+    )
+    extreme = EvidenceBundle(
+        status="ok",
+        current_store=CurrentStoreScope(id=2),
+        period=period,
+        metric=EvidenceMetric.DAILY_LEDGER_REVENUE,
+        extreme="highest",
+        unit="EUR",
+        calculation_version="daily_ledger_extreme.v1",
+        result=DailyLedgerExtremeResult(
+            extreme="highest",
+            daily_ledger_revenue=500,
+            dates=[date(2026, 7, 9)],
+        ),
+        coverage=EvidenceCoverage(calendar_dates=31, recorded_dates=1),
+    )
+    category_amount = EvidenceBundle(
+        status="ok",
+        current_store=CurrentStoreScope(id=2),
+        period=period,
+        metric=EvidenceMetric.INCOME_CATEGORY_AMOUNT,
+        unit="EUR",
+        calculation_version="income_category_amount.v1",
+        result=CategoryAmountResult(amount=75, categories=[]),
+        coverage=EvidenceCoverage(calendar_dates=31, recorded_dates=1),
+    )
+    external = ExternalEvidenceBundle.model_validate(
+        {
+            "status": "ok",
+            "current_store": {"id": 2},
+            "period": {"start": "2026-07-09", "end": "2026-07-09"},
+            "evidence_type": "historical_weather",
+            "source": "open_meteo_historical",
+            "queried_at": "2026-07-28T10:00:00Z",
+            "geographic_scope": {
+                "kind": "coordinates",
+                "latitude": 45.4642,
+                "longitude": 9.19,
+                "timezone": "Europe/Rome",
+                "country_code": "IT",
+            },
+            "coverage": {
+                "calendar_dates": 1,
+                "recorded_dates": 1,
+                "missing_dates": [],
+            },
+            "freshness": {
+                "status": "fresh",
+                "as_of": "2026-07-28T10:00:00Z",
+                "max_age_seconds": 86400,
+                "cache_status": "miss",
+                "refresh_failure": None,
+            },
+            "failure": {"status": "none"},
+            "result": {"days": [{"date": "2026-07-09", "weather": "多云"}]},
+        }
+    )
+
+    assert _partial_verified_facts(grouped) == [
+        "2026-07-01 至 2026-07-31 每日台账营业额（星期一）：320 EUR"
+    ]
+    assert _partial_verified_facts(extreme) == ["2026-07-09 最高每日台账营业额：500 EUR"]
+    assert _partial_verified_facts(category_amount) == [
+        "2026-07-01 至 2026-07-31 收入分类金额：75 EUR"
+    ]
+    assert _partial_verified_facts(external) == [
+        "2026-07-09 历史天气外部经营证据：多云（来源：open_meteo_historical）"
+    ]
+
+
+def test_native_partial_facts_do_not_turn_an_unknown_settlement_company_into_zero() -> None:
+    evidence = SettlementDetailsEvidenceBundle(
+        status="ok",
+        current_store=CurrentStoreScope(id=2),
+        period=EvidencePeriodResult(start=date(2026, 7, 1), end=date(2026, 7, 31)),
+        query_scope={"company_name": "Missing"},
+        result={
+            "companies": [],
+            "records": [],
+            "pending_amount": 0,
+            "confirmed_amount": 0,
+            "pending_records": 0,
+            "confirmed_records": 0,
+        },
+        warnings=["当前门店没有名为「Missing」的结算公司。"],
+    )
+
+    assert _partial_verified_facts(evidence) == []
 
 
 @pytest.mark.parametrize(
@@ -1872,14 +2018,14 @@ class ClassifiedFailureEvidenceCollector(MetricEvidenceCollector):
         self.recover_after = recover_after
         self.calls = 0
 
-    async def collect(self, plan, context):
+    async def collect(self, request, context):
         self.calls += 1
         if self.recover_after is None or self.calls <= self.recover_after:
             raise NativeToolError(
                 "tool-private SQL and payload",
                 category=self.category,
             )
-        return await super().collect(plan, context)
+        return await super().collect(request, context)
 
 
 def _tool_retry_model() -> FakeNativeToolModel:
@@ -2031,11 +2177,11 @@ async def test_native_tool_retry_rechecks_current_tool_availability() -> None:
 
 
 class ParallelPartialEvidenceCollector(MetricEvidenceCollector):
-    async def collect(self, plan, context):
-        metric = plan.requests[0].metric
+    async def collect(self, request, context):
+        metric = request.metric
         if metric == EvidenceMetric.OPERATING_DAYS:
             raise NativeToolError("private timeout payload", category="timeout")
-        return await super().collect(plan, context)
+        return await super().collect(request, context)
 
 
 async def test_native_parallel_budget_failure_keeps_already_verified_evidence() -> None:
@@ -2074,7 +2220,7 @@ async def test_native_parallel_budget_failure_keeps_already_verified_evidence() 
 
     assert result.evidence is not None
     assert result.partial is not None
-    assert result.partial.verified_facts == ["daily_ledger_revenue=700"]
+    assert result.partial.verified_facts == ["2026-07-01 至 2026-07-31 每日台账营业额：700 EUR"]
 
 
 async def test_native_answer_must_name_failed_tool_directions_as_unknown() -> None:
@@ -2956,7 +3102,7 @@ async def test_daily_ledger_drilldown_maps_a_controlled_date_set_after_aggregate
         [ModelMessage(role="user", content="调查 2026 年 7 月的异常经营日。")],
     )
 
-    request = collector.calls[1][0].requests[0]
+    request = collector.calls[1][0]
     assert request.kind == "daily_ledger_drilldown"
     assert request.dates == [date(2026, 7, 5), date(2026, 7, 19)]
 
@@ -2995,7 +3141,6 @@ def test_daily_ledger_drilldown_claim_binds_revenue_to_the_claimed_date() -> Non
                 "matched_records": 2,
             },
             "coverage": {"calendar_dates": 2, "recorded_dates": 2},
-            "summary": "已按线索钻取 2 个日期。",
         }
     )
     reference = "ev_1234567890abcdef12345678"
@@ -3316,7 +3461,7 @@ async def test_semantic_tools_map_only_approved_grouping_filters_and_extremes(
         [ModelMessage(role="user", content="调查 2026 年 7 月。")],
     )
 
-    request = collector.calls[0][0].requests[0]
+    request = collector.calls[0][0]
     assert request.metric == metric
     assert request.group_by == group_by
     assert request.extreme == extreme

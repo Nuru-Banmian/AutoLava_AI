@@ -15,7 +15,7 @@ REQUIRED_AREAS = {
     "conversation",
     "permission_attack",
     "prompt_injection",
-    "evidence_plan_attack",
+    "native_tool_contract_attack",
     "answer_validation",
     "sqlite_consistency",
     "model_recovery",
@@ -37,7 +37,7 @@ REQUIRED_PROMPT_SOURCES = {
     "settlement_company_name",
     "business_evidence",
 }
-REQUIRED_PLAN_ATTACKS = {
+REQUIRED_NATIVE_TOOL_ATTACKS = {
     "extra_field",
     "sql",
     "table",
@@ -47,7 +47,7 @@ REQUIRED_PLAN_ATTACKS = {
     "role",
     "timezone",
     "multiple_groups",
-    "excessive_requests",
+    "excessive_tool_calls",
 }
 REQUIRED_ANSWER_ATTACKS = {
     "new_amount",
@@ -79,18 +79,7 @@ EXPECTED_GOLD_AMOUNTS = {
         "daily_ledger_revenue": 240,
         "confirmed_settlement_income": 160,
         "monthly_total_revenue": 400,
-    },
-    "revenue-analysis": {
-        "current_daily_ledger_revenue": 160,
-        "current_confirmed_settlement_income": 0,
-        "current_total_revenue": 160,
-        "comparison_daily_ledger_revenue": 100,
-        "comparison_confirmed_settlement_income": 0,
-        "comparison_total_revenue": 100,
-        "total_revenue_change": 60,
-        "daily_ledger_revenue_change": 60,
-        "confirmed_settlement_income_change": 0,
-    },
+    }
 }
 
 
@@ -112,13 +101,15 @@ def test_release_evaluation_manifest_is_complete_and_points_to_real_tests() -> N
     coverage = {item for case in backend_cases for item in case["covers"]}
     assert REQUIRED_PERIODS <= coverage
     assert REQUIRED_PROMPT_SOURCES <= coverage
-    assert REQUIRED_PLAN_ATTACKS <= coverage
+    assert REQUIRED_NATIVE_TOOL_ATTACKS <= coverage
     assert REQUIRED_ANSWER_ATTACKS <= coverage
     assert {
         "dynamic_income_category",
         "missing_data",
         "company_settlement",
-        "revenue_analysis",
+        "native_multi_tool",
+        "data_dependent_path",
+        "evidence_grounding",
         "conversation_reset",
         "ordinary_user",
         "disabled_user",
@@ -127,10 +118,10 @@ def test_release_evaluation_manifest_is_complete_and_points_to_real_tests() -> N
         "model_store_or_user_identifier",
         "mid_request_authorization_change",
         "single_snapshot",
-        "whole_batch_retry_once",
+        "whole_snapshot_retry_once",
         "second_failure_discards_partial_evidence",
         "fallback_same_evidence_scope",
-        "fake_model_adapter",
+        "fake_native_tool_model",
         "no_real_model_secret",
     } <= coverage
 

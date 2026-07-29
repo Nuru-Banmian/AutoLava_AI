@@ -1,35 +1,26 @@
-"""Bounded model and orchestration seams for AutoLava Agent turns."""
+"""Provider-neutral native tool-loop seams for AutoLava Agent investigations."""
 
 from app.agent.business_evidence import BusinessEvidenceCollector
-from app.agent.contracts import (
-    EvidenceBundle,
-    EvidencePlan,
-    EvidenceRequest,
-    ModelMessage,
-    TurnPlan,
-    TurnResult,
+from app.agent.contracts import EvidenceBundle, EvidenceRequest, ModelMessage, TurnResult
+from app.agent.factory import create_native_model_adapter
+from app.agent.model import OpenAICompatibleProfile
+from app.agent.native import (
+    FakeNativeToolModel,
+    NativeToolAgentService,
+    NativeToolModel,
 )
-from app.agent.factory import create_model_adapter
-from app.agent.model import (
-    FakeModelAdapter,
-    ModelAdapter,
-    OpenAICompatibleModelAdapter,
-    OpenAICompatibleProfile,
-)
-from app.agent.workflow import AgentTurnWorkflow
+from app.agent.native_model import OpenAICompatibleNativeToolModel
 
 __all__ = [
-    "AgentTurnWorkflow",
     "BusinessEvidenceCollector",
     "EvidenceBundle",
-    "EvidencePlan",
     "EvidenceRequest",
-    "FakeModelAdapter",
-    "ModelAdapter",
+    "FakeNativeToolModel",
     "ModelMessage",
-    "OpenAICompatibleModelAdapter",
+    "NativeToolAgentService",
+    "NativeToolModel",
+    "OpenAICompatibleNativeToolModel",
     "OpenAICompatibleProfile",
-    "TurnPlan",
     "TurnResult",
-    "create_model_adapter",
+    "create_native_model_adapter",
 ]

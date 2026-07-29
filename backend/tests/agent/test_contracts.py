@@ -1,84 +1,16 @@
 from datetime import date, timedelta
 
 import pytest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from app.agent.contracts import (
+    BusinessEvidenceRequest,
     DailyLedgerExtremeResult,
-    EvidencePlan,
     EvidenceRequest,
     OpenBusinessRecordsAction,
-    TurnPlan,
 )
 
-
-@pytest.mark.parametrize(
-    "plan",
-    (
-        {"route": "clarify", "question": "请说明要查询的准确日期。"},
-        {"route": "direct_answer", "answer": "我可以帮助查询当前门店的经营数据。"},
-        {
-            "route": "evidence",
-            "evidence_plan": {
-                "requests": [
-                    {
-                        "kind": "business_metrics",
-                        "metric": "monthly_total_revenue",
-                    }
-                ]
-            },
-        },
-        {"route": "safe_failure", "message": "当前无法安全处理该问题。"},
-        {
-            "route": "action",
-            "action": {
-                "type": "open_business_records",
-                "start_month": "2025-01",
-                "end_month": "2025-12",
-            },
-        },
-    ),
-)
-def test_turn_plan_accepts_each_closed_route(plan: dict[str, object]) -> None:
-    assert TurnPlan.model_validate(plan).route == plan["route"]
-
-
-@pytest.mark.parametrize(
-    "plan",
-    (
-        {"route": "unknown", "message": "continue"},
-        {"route": "clarify", "question": "哪一天？", "sql": "select * from users"},
-        {"route": "direct_answer", "question": "wrong field"},
-        {"route": "evidence", "evidence_plan": {"requests": []}},
-        {
-            "route": "evidence",
-            "evidence_plan": {
-                "requests": [
-                    {
-                        "kind": "business_metrics",
-                        "metric": "monthly_total_revenue",
-                        "question": "select * from users",
-                    }
-                ]
-            },
-        },
-    ),
-)
-def test_turn_plan_rejects_unknown_fields_illegal_routes_and_wrong_shapes(
-    plan: dict[str, object],
-) -> None:
-    with pytest.raises(ValidationError):
-        TurnPlan.model_validate(plan)
-
-
-def test_evidence_plan_has_a_bounded_request_count() -> None:
-    request = EvidenceRequest(
-        kind="business_metrics",
-        metric="monthly_total_revenue",
-    )
-
-    with pytest.raises(ValidationError):
-        EvidencePlan(requests=[request] * 2)
+BUSINESS_REQUEST_ADAPTER = TypeAdapter(BusinessEvidenceRequest)
 
 
 def test_evidence_request_has_at_most_one_bounded_group_position() -> None:
@@ -90,15 +22,11 @@ def test_evidence_request_has_at_most_one_bounded_group_position() -> None:
 
     assert request.group_by == "income_category"
     with pytest.raises(ValidationError):
-        EvidencePlan.model_validate(
+        BUSINESS_REQUEST_ADAPTER.validate_python(
             {
-                "requests": [
-                    {
-                        "kind": "business_metrics",
-                        "metric": "income_category_amount",
-                        "group_by": ["income_category", "date"],
-                    }
-                ]
+                "kind": "business_metrics",
+                "metric": "income_category_amount",
+                "group_by": ["income_category", "date"],
             }
         )
 
@@ -234,11 +162,11 @@ def test_evidence_metric_whitelist_fails_closed() -> None:
 
 
 def test_daily_ledger_request_requires_one_exact_date_and_no_metric_or_period() -> None:
-    plan = EvidencePlan.model_validate(
-        {"requests": [{"kind": "daily_ledger", "date": "2026-07-05"}]}
+    request = BUSINESS_REQUEST_ADAPTER.validate_python(
+        {"kind": "daily_ledger", "date": "2026-07-05"}
     )
 
-    assert plan.requests[0].date.isoformat() == "2026-07-05"
+    assert request.date.isoformat() == "2026-07-05"
     for invalid in (
         {"kind": "daily_ledger"},
         {
@@ -254,7 +182,7 @@ def test_daily_ledger_request_requires_one_exact_date_and_no_metric_or_period() 
         {"kind": "business_metrics", "metric": "daily_ledger"},
     ):
         with pytest.raises(ValidationError):
-            EvidencePlan.model_validate({"requests": [invalid]})
+            BUSINESS_REQUEST_ADAPTER.validate_python(invalid)
 
 
 @pytest.mark.parametrize(
@@ -309,7 +237,7 @@ def test_business_record_action_rejects_invalid_or_expanded_parameters(
         "timezone",
     ),
 )
-def test_evidence_plan_rejects_model_owned_scope_and_query_fields(
+def test_business_evidence_request_rejects_model_owned_scope_and_query_fields(
     untrusted_field: str,
 ) -> None:
     request = {
@@ -319,7 +247,7 @@ def test_evidence_plan_rejects_model_owned_scope_and_query_fields(
     }
 
     with pytest.raises(ValidationError):
-        EvidencePlan.model_validate({"requests": [request]})
+        BUSINESS_REQUEST_ADAPTER.validate_python(request)
 
 
 @pytest.mark.parametrize(
@@ -338,18 +266,14 @@ def test_evidence_plan_rejects_model_owned_scope_and_query_fields(
         },
     ),
 )
-def test_evidence_plan_bounds_exact_and_custom_dates(
+def test_business_evidence_request_bounds_exact_and_custom_dates(
     period: dict[str, object],
 ) -> None:
     with pytest.raises(ValidationError):
-        EvidencePlan.model_validate(
+        BUSINESS_REQUEST_ADAPTER.validate_python(
             {
-                "requests": [
-                    {
-                        "kind": "business_metrics",
-                        "metric": "monthly_total_revenue",
-                        "period": period,
-                    }
-                ]
+                "kind": "business_metrics",
+                "metric": "monthly_total_revenue",
+                "period": period,
             }
         )

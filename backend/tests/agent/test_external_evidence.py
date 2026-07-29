@@ -222,7 +222,6 @@ async def test_historical_weather_returns_a_complete_external_evidence_record() 
         },
         "warnings": ["历史天气是再分析数据，不等同于门店现场观测。"],
         "truncated": False,
-        "summary": "历史天气外部证据覆盖 31 个日期中的 1 个日期。",
     }
 
 
@@ -267,7 +266,6 @@ async def test_public_holidays_are_filtered_to_the_approved_country_and_period()
         "地区性假期只适用于供应方列出的行政区。",
         "门店未配置行政区；地区性假期未纳入结果。",
     ]
-    assert evidence.summary == "公共假期外部证据覆盖 2026 年 7 月，共 1 个假期。"
 
 
 class FailingWeatherProvider:

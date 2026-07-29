@@ -116,7 +116,6 @@ def approved_report(settings: Settings) -> dict[str, object]:
             "max_output_tokens": 2000,
             "input_cost_per_million": 1,
             "output_cost_per_million": 2,
-            "evidence_batch_limit": 1,
             "adapter_config_sha256": agent_adapter_config_sha256(settings),
         },
         "evidence": {

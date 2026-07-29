@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import date as CalendarDate, datetime
-from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated, Any, Literal
 
@@ -311,34 +310,14 @@ class EventInvestigationRequest(ClosedModel):
     period: CalendarMonthPeriod
 
 
-class RevenueAnalysisRequest(ClosedModel):
-    kind: Literal["revenue_analysis"] = "revenue_analysis"
-    period: EvidencePeriod | None = None
-    comparison_period: EvidencePeriod | None = None
-    include_percentage: bool = False
-
-
-EvidenceRequestUnion = Annotated[
+BusinessEvidenceRequest = Annotated[
     EvidenceRequest
     | SettlementDetailsRequest
     | DailyLedgerRequest
     | DailyLedgerDrilldownRequest
-    | EventInvestigationRequest
-    | RevenueAnalysisRequest,
+    | EventInvestigationRequest,
     Field(discriminator="kind"),
 ]
-
-
-class EvidencePlan(ClosedModel):
-    requests: list[EvidenceRequestUnion] = Field(min_length=1, max_length=1)
-
-
-class TurnRoute(StrEnum):
-    CLARIFY = "clarify"
-    DIRECT_ANSWER = "direct_answer"
-    EVIDENCE = "evidence"
-    ACTION = "action"
-    SAFE_FAILURE = "safe_failure"
 
 
 class OpenBusinessRecordsAction(ClosedModel):
@@ -354,44 +333,6 @@ class OpenBusinessRecordsAction(ClosedModel):
             raise ValueError("business record months must be between 2000 and 2200")
         if start > end:
             raise ValueError("start_month must be on or before end_month")
-        return self
-
-
-class TurnPlan(ClosedModel):
-    route: TurnRoute
-    question: str | None = Field(default=None, min_length=1, max_length=2_000)
-    answer: str | None = Field(default=None, min_length=1, max_length=10_000)
-    evidence_plan: EvidencePlan | None = None
-    supplemental_evidence_plan: EvidencePlan | None = None
-    action: OpenBusinessRecordsAction | None = None
-    message: str | None = Field(default=None, min_length=1, max_length=2_000)
-
-    @model_validator(mode="after")
-    def require_only_the_route_payload(self) -> "TurnPlan":
-        expected = {
-            TurnRoute.CLARIFY: "question",
-            TurnRoute.DIRECT_ANSWER: "answer",
-            TurnRoute.EVIDENCE: "evidence_plan",
-            TurnRoute.ACTION: "action",
-            TurnRoute.SAFE_FAILURE: "message",
-        }[self.route]
-        primary_payloads = {
-            "question": self.question,
-            "answer": self.answer,
-            "evidence_plan": self.evidence_plan,
-            "action": self.action,
-            "message": self.message,
-        }
-        if primary_payloads[expected] is None or any(
-            value is not None for name, value in primary_payloads.items() if name != expected
-        ):
-            raise ValueError(f"{self.route.value} requires only {expected}")
-        if self.route != TurnRoute.EVIDENCE and self.supplemental_evidence_plan is not None:
-            raise ValueError("only evidence turns may request supplemental evidence")
-        if self.supplemental_evidence_plan is not None:
-            supplemental_request = self.supplemental_evidence_plan.requests[0]
-            if not isinstance(supplemental_request, EvidenceRequest):
-                raise ValueError("supplemental evidence is limited to one business metric request")
         return self
 
 
@@ -503,7 +444,7 @@ class DailyLedgerResult(ClosedModel):
 
 
 class DailyLedgerDrilldownResult(ClosedModel):
-    detail_status: Literal["details", "summary_only"]
+    detail_status: Literal["details", "navigation_required"]
     records: list[DailyLedgerResult] = Field(
         default_factory=list,
         max_length=MAX_DAILY_LEDGER_DETAIL_ROWS,
@@ -521,7 +462,7 @@ class DailyLedgerDrilldownResult(ClosedModel):
             if self.matched_records != len(self.records) or self.suggested_action is not None:
                 raise ValueError("daily ledger details require every matched record")
         elif self.records or self.suggested_action is None:
-            raise ValueError("summary-only daily ledger results require a navigation suggestion")
+            raise ValueError("truncated daily ledger results require a navigation suggestion")
         return self
 
 
@@ -730,7 +671,6 @@ class ExternalEvidenceBundle(ClosedModel):
     result: dict[str, Any]
     warnings: list[str] = Field(default_factory=list, max_length=20)
     truncated: bool = False
-    summary: str = Field(min_length=1, max_length=20_000)
 
     @model_validator(mode="after")
     def require_external_evidence_shape(self) -> "ExternalEvidenceBundle":
@@ -795,7 +735,6 @@ class EvidenceBundle(ClosedModel):
     comparison: EvidenceComparisonResult | None = None
     warnings: list[str] = Field(default_factory=list, max_length=20)
     truncated: bool = False
-    summary: str = Field(min_length=1, max_length=20_000)
 
     @model_validator(mode="after")
     def require_consistent_evidence_shape(self) -> "EvidenceBundle":
@@ -895,103 +834,6 @@ class EvidenceBundle(ClosedModel):
         return self
 
 
-class RevenueAnalysisPeriodMetrics(ClosedModel):
-    period: EvidencePeriodResult
-    daily_ledger_revenue: int = Field(ge=0)
-    confirmed_settlement_income: int = Field(ge=0)
-    total_revenue: int = Field(ge=0)
-    operating_days: int = Field(ge=0)
-    operating_day_average_ledger_revenue: Decimal | None = Field(default=None, ge=0)
-
-
-class DailyLedgerDecomposition(ClosedModel):
-    status: Literal["available", "unavailable"]
-    operating_days_contribution: Decimal | None = None
-    operating_day_average_contribution: Decimal | None = None
-    unavailable_reasons: list[str] = Field(default_factory=list, max_length=10)
-
-    @model_validator(mode="after")
-    def require_status_payload(self) -> "DailyLedgerDecomposition":
-        contributions = (
-            self.operating_days_contribution,
-            self.operating_day_average_contribution,
-        )
-        if self.status == "available":
-            if any(value is None for value in contributions) or self.unavailable_reasons:
-                raise ValueError("available decomposition requires both contributions")
-        elif any(value is not None for value in contributions) or not self.unavailable_reasons:
-            raise ValueError("unavailable decomposition requires reasons only")
-        return self
-
-
-class RevenueCategoryChange(ClosedModel):
-    category_id: int = Field(gt=0)
-    category_name: str = Field(min_length=1, max_length=100)
-    current_amount: int = Field(ge=0)
-    comparison_amount: int = Field(ge=0)
-    amount_change: int
-
-
-class RevenueAnalysisResult(ClosedModel):
-    current: RevenueAnalysisPeriodMetrics
-    comparison: RevenueAnalysisPeriodMetrics | None
-    total_revenue_change: int | None
-    daily_ledger_revenue_change: int | None
-    confirmed_settlement_income_change: int | None
-    daily_ledger_decomposition: DailyLedgerDecomposition | None
-    income_category_changes: list[RevenueCategoryChange] = Field(
-        default_factory=list,
-        max_length=200,
-    )
-    other_data_changes: list[RevenueCategoryChange] = Field(
-        default_factory=list,
-        max_length=200,
-    )
-    percentage_change: Decimal | None
-    percentage_status: Literal[
-        "not_requested",
-        "available",
-        "unavailable_zero_baseline",
-        "unavailable_no_history",
-    ]
-
-
-class RevenueAnalysisSufficiency(ClosedModel):
-    critical_data_complete: bool
-    largest_verified_contribution: (
-        Literal[
-            "operating_days",
-            "operating_day_average",
-            "confirmed_settlement_income",
-        ]
-        | None
-    )
-    largest_absolute_share: Decimal | None = Field(default=None, ge=0, le=1)
-    major_driver_threshold: Decimal = Field(ge=0, le=1)
-    allows_mainly_from: bool
-
-
-class RevenueAnalysisFindings(ClosedModel):
-    verified: list[str] = Field(default_factory=list, max_length=20)
-    correlated_phenomena: list[str] = Field(default_factory=list, max_length=20)
-    unexplained_amount: Decimal
-    unexplained: list[str] = Field(default_factory=list, max_length=20)
-
-
-class RevenueAnalysisEvidenceBundle(ClosedModel):
-    status: Literal["ok", "current_only"]
-    current_store: CurrentStoreScope
-    period: EvidencePeriodResult
-    comparison_period: EvidencePeriodResult | None
-    calculation_version: Literal["revenue_analysis.v1"] = "revenue_analysis.v1"
-    result: RevenueAnalysisResult
-    evidence_sufficiency: RevenueAnalysisSufficiency
-    findings: RevenueAnalysisFindings
-    supplemental_evidence: EvidenceBundle | None = None
-    warnings: list[str] = Field(default_factory=list, max_length=20)
-    summary: str = Field(min_length=1, max_length=20_000)
-
-
 class SettlementCompanyEvidence(ClosedModel):
     name: str = Field(min_length=1, max_length=120)
     is_active: bool
@@ -1032,15 +874,9 @@ class SettlementDetailsEvidenceBundle(ClosedModel):
     result: SettlementDetailsResult
     warnings: list[str] = Field(default_factory=list, max_length=20)
     truncated: bool = False
-    summary: str = Field(min_length=1, max_length=20_000)
 
 
-CollectedEvidence = (
-    EvidenceBundle
-    | SettlementDetailsEvidenceBundle
-    | RevenueAnalysisEvidenceBundle
-    | ExternalEvidenceBundle
-)
+CollectedEvidence = EvidenceBundle | SettlementDetailsEvidenceBundle | ExternalEvidenceBundle
 
 
 class TurnResult(ClosedModel):
@@ -1054,8 +890,3 @@ class TurnResult(ClosedModel):
         if self.action is not None and self.route != "answer":
             raise ValueError("actions require an answer")
         return self
-
-
-class WorkflowResult(ClosedModel):
-    turn: TurnResult
-    evidence: CollectedEvidence | None = None
