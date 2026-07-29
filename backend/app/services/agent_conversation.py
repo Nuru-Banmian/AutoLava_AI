@@ -101,6 +101,7 @@ _BUSINESS_QUERY_LANGUAGE = tuple(
             "变化",
             "趋势",
             "构成",
+            "明细",
             "占比",
             "平均",
             "增长",
@@ -152,7 +153,11 @@ def is_business_scope_question(content: str) -> bool:
     if not any(marker in normalized for marker in _BUSINESS_SCOPE_MARKERS):
         return False
     remaining = normalized
-    for fragment in (*_BUSINESS_SCOPE_MARKERS, *_BUSINESS_QUERY_LANGUAGE):
+    for fragment in sorted(
+        (*_BUSINESS_SCOPE_MARKERS, *_BUSINESS_QUERY_LANGUAGE),
+        key=len,
+        reverse=True,
+    ):
         remaining = remaining.replace(fragment, "")
     remaining = re.sub(
         r"[\s\d０-９年月日号.,，。！？?!…:：;；()（）/\\\-到至]+",

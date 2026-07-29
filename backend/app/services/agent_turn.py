@@ -376,6 +376,80 @@ class AgentTurnRuntime:
             {
                 "type": "function",
                 "function": {
+                    "name": "ledger_revenue_trend",
+                    "description": "按日或按月返回 Agent 当前门店的台账营业额趋势。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "start": {"type": "string", "format": "date"},
+                            "end": {"type": "string", "format": "date"},
+                            "bucket": {
+                                "type": "string",
+                                "enum": ["day", "month"],
+                            },
+                        },
+                        "required": ["start", "end", "bucket"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "income_composition",
+                    "description": "返回收入分类和其他数据的历史构成。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "start": {"type": "string", "format": "date"},
+                            "end": {"type": "string", "format": "date"},
+                        },
+                        "required": ["start", "end"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "daily_ledger_detail",
+                    "description": "按业务筛选返回有界、可分页的每日台账明细。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "start": {"type": "string", "format": "date"},
+                            "end": {"type": "string", "format": "date"},
+                            "operating_statuses": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string",
+                                    "enum": ["营业", "休息", "提前休息"],
+                                },
+                                "maxItems": 3,
+                            },
+                            "recorded_weather": {"type": "string"},
+                            "events_only": {"type": "boolean"},
+                            "event_keyword": {"type": "string"},
+                            "missing_wash_count": {"type": "boolean"},
+                            "limit": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 50,
+                            },
+                            "offset": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 10000,
+                            },
+                        },
+                        "required": ["start", "end"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "calculate",
                     "description": "引用本轮结果或标明来源的字面量执行受限十进制计算。",
                     "parameters": {
@@ -485,17 +559,11 @@ class AgentTurnRuntime:
                         result_id=result_id,
                     )
                     results[result_id] = tool_result
-                    card = {
-                        "operation": "汇总经营表现",
-                        "range_start": tool_result["coverage"]["range_start"],
-                        "range_end": tool_result["coverage"]["range_end"],
-                        "filters": [],
-                        "status": (
-                            "empty"
-                            if tool_result["status"] == "empty"
-                            else "completed"
-                        ),
-                    }
+                    card = self._data_tools.investigation_card(
+                        call.name,
+                        call.arguments,
+                        tool_result,
+                    )
                     cards.append(card)
                     await active.events.put(
                         {
