@@ -8,6 +8,7 @@ import json
 import logging
 import re
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 from sqlalchemy import select, update
@@ -19,9 +20,16 @@ from app.models.identity import Store
 from app.services.agent_calculation import calculate
 from app.services.agent_conversation import (
     AGENT_SCOPE_EXPLANATION,
+    bounded_model_context,
+    capability_gap_answer,
+    capability_gap_guidance,
+    capability_gap_terms,
     conversation_messages,
+    fit_model_context,
     get_or_create_conversation,
     is_business_scope_question,
+    interpret_time_scope,
+    refresh_context_summary,
     trusted_store_context,
 )
 from app.services.agent_data_tools import (
@@ -56,6 +64,60 @@ _PENDING_EXCLUSION_PHRASES = (
     "不属于营业额",
     "不属于收入",
 )
+_CAPABILITY_FIELD_PRESENTATION = {
+    "data.ledger_revenue": ("台账营业额", "欧元"),
+    "data.operating_days": ("经营日", "天"),
+    "data.operating_day_average_ledger_revenue": (
+        "经营日均台账营业额",
+        "欧元",
+    ),
+    "data.wash_count": ("洗车数量", "辆"),
+    "data.average_revenue_per_wash": ("平均每车收入", "欧元"),
+    "data.classified_ledger_revenue": ("分类记账营业额", "欧元"),
+    "data.other_data_total": ("其他数据合计", "欧元"),
+    "data.confirmed_settlement_income": ("已确认公司结算收入", "欧元"),
+    "data.current_pending_receivables": ("当前待到账应收款", "欧元"),
+    "coverage.range_start": ("数据覆盖开始日期", ""),
+    "coverage.range_end": ("数据覆盖结束日期", ""),
+    "coverage.matching_records": ("匹配记录", "条"),
+    "coverage.operating_days": ("数据覆盖经营日", "天"),
+    "coverage.truncated": ("数据是否截断", ""),
+}
+_CAPABILITY_LIST_PRESENTATION = {
+    "data.points": "台账营业额趋势",
+    "data.groups": "分组结果",
+    "data.income_categories": "收入分类",
+    "data.other_data": "其他数据",
+    "data.records": "明细",
+    "data.companies": "结算公司目录",
+}
+_CAPABILITY_ROW_FIELD_PRESENTATION = {
+    "period": ("期间", ""),
+    "date": ("日期", ""),
+    "label": ("分组", ""),
+    "category_name": ("分类名称", ""),
+    "company_name": ("结算公司", ""),
+    "opening_month": ("开票月份", ""),
+    "status": ("状态", ""),
+    "operating_status": ("营业状态", ""),
+    "recorded_weather": ("记录天气", ""),
+    "weather": ("记录天气", ""),
+    "event": ("事件", ""),
+    "events": ("事件", ""),
+    "ledger_revenue": ("台账营业额", "欧元"),
+    "daily_revenue": ("台账营业额", "欧元"),
+    "amount": ("金额", "欧元"),
+    "confirmed_settlement_income": ("已确认公司结算收入", "欧元"),
+    "current_pending_receivables": ("当前待到账应收款", "欧元"),
+    "operating_days": ("经营日", "天"),
+    "operating_day_average_ledger_revenue": (
+        "经营日均台账营业额",
+        "欧元",
+    ),
+    "wash_count": ("洗车数量", "辆"),
+    "proportion": ("占比", "%"),
+    "include_in_ledger_revenue": ("是否计入营业额", ""),
+}
 
 SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 AdapterFactory = Callable[[], AgentModelAdapter]
@@ -219,6 +281,128 @@ def _validate_settlement_answer(
         raise ValueError("月度总收入必须由同期间台账营业额和已确认公司结算收入组成")
 
 
+def _submitted_capability_answer(
+    arguments: object,
+    *,
+    results: dict[str, dict[str, Any]],
+    missing_capabilities: tuple[str, ...],
+) -> str:
+    if not isinstance(arguments, dict) or set(arguments) != {"evidence"}:
+        raise ValueError("能力缺口回答提交参数无效")
+    evidence = arguments["evidence"]
+    if not isinstance(evidence, list) or len(evidence) > 20:
+        raise ValueError("能力缺口回答证据无效")
+    accepted: list[str] = []
+    submitted_fields: set[str] = set()
+    settlement_fields = {
+        "data.confirmed_settlement_income",
+        "data.current_pending_receivables",
+    }
+    for item in evidence:
+        if (
+            not isinstance(item, dict)
+            or set(item) != {"result_id", "fields"}
+        ):
+            raise ValueError("能力缺口回答证据无效")
+        result_id = item["result_id"]
+        fields = item["fields"]
+        if (
+            not isinstance(result_id, str)
+            or result_id not in results
+            or not isinstance(fields, list)
+            or not fields
+            or len(fields) > 20
+        ):
+            raise ValueError("能力缺口回答引用了无效的本轮结果编号")
+        fields = list(fields)
+        result_data = results[result_id].get("data")
+        if (
+            isinstance(result_data, dict)
+            and {
+                "confirmed_settlement_income",
+                "current_pending_receivables",
+            }
+            <= result_data.keys()
+        ):
+            for settlement_field in settlement_fields:
+                if settlement_field not in fields:
+                    fields.append(settlement_field)
+        rendered_fields: list[str] = []
+        for field in fields:
+            if not isinstance(field, str) or not field.strip():
+                raise ValueError("能力缺口回答字段路径无效")
+            current: object = results[result_id]
+            for part in field.split("."):
+                if not isinstance(current, dict) or part not in current:
+                    raise ValueError("能力缺口回答引用的字段不存在")
+                current = current[part]
+            presentation = _CAPABILITY_FIELD_PRESENTATION.get(field)
+            if presentation is None and field.startswith("values."):
+                presentation = ("派生计算结果", "")
+            if isinstance(current, list):
+                list_label = _CAPABILITY_LIST_PRESENTATION.get(field)
+                if list_label is None:
+                    raise ValueError("能力缺口回答列表字段不允许直接展示")
+                rows: list[str] = []
+                for row in current:
+                    if not isinstance(row, dict):
+                        raise ValueError("能力缺口回答列表结构无效")
+                    values: list[str] = []
+                    for key, value in row.items():
+                        row_presentation = (
+                            _CAPABILITY_ROW_FIELD_PRESENTATION.get(key)
+                        )
+                        if row_presentation is None or isinstance(
+                            value, (dict, list)
+                        ):
+                            continue
+                        row_label, row_unit = row_presentation
+                        if value is None:
+                            rendered = "不可用"
+                            row_unit = ""
+                        elif key == "status":
+                            rendered = {
+                                "active": "使用中",
+                                "archived": "已归档",
+                                "pending": "待到账",
+                                "confirmed": "已确认",
+                            }.get(str(value), str(value))
+                        elif isinstance(value, bool):
+                            rendered = "是" if value else "否"
+                        else:
+                            rendered = str(value)
+                        values.append(
+                            f"{row_label}为 {rendered}{row_unit}"
+                        )
+                    if values:
+                        rows.append("、".join(values))
+                rendered_fields.append(
+                    f"{list_label}："
+                    + ("；".join(rows) if rows else "没有匹配结果")
+                )
+            else:
+                if presentation is None or isinstance(current, dict):
+                    raise ValueError("能力缺口回答字段不允许直接展示")
+                label, unit = presentation
+                if current is None:
+                    rendered = "不可用"
+                    unit = ""
+                elif isinstance(current, bool):
+                    rendered = "是" if current else "否"
+                else:
+                    rendered = str(current)
+                rendered_fields.append(f"{label}为 {rendered}{unit}")
+            submitted_fields.add(field)
+        accepted.append(
+            f"根据本轮结果编号 {result_id}，可确认："
+            + "；".join(rendered_fields)
+            + "。"
+        )
+    if settlement_fields <= submitted_fields:
+        accepted.append("当前待到账应收款不计入营业额或月度总收入。")
+    return capability_gap_answer(missing_capabilities, accepted)
+
+
 @dataclass
 class _ActiveTurn:
     turn_id: int
@@ -228,6 +412,10 @@ class _ActiveTurn:
 
 def _finished_now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
+
+
+async def _one_chunk(value: str) -> AsyncIterator[str]:
+    yield value
 
 
 async def latest_conversation_turn(
@@ -291,7 +479,12 @@ class AgentTurnRuntime:
 
         try:
             async with asyncio.timeout_at(deadline):
-                turn_id, model_messages, direct_answer = (
+                (
+                    turn_id,
+                    model_messages,
+                    direct_answer,
+                    missing_capabilities,
+                ) = (
                     await self._persist_start(
                         user_id=user_id,
                         store_id=store_id,
@@ -308,6 +501,7 @@ class AgentTurnRuntime:
                         active=active,
                         model_messages=model_messages,
                         direct_answer=direct_answer,
+                        missing_capabilities=missing_capabilities,
                         deadline=deadline,
                     )
                 )
@@ -340,11 +534,19 @@ class AgentTurnRuntime:
         user_id: int,
         store_id: int,
         content: str,
-    ) -> tuple[int, list[ModelMessage], str | None]:
+    ) -> tuple[
+        int,
+        list[ModelMessage],
+        str | None,
+        tuple[str, ...],
+    ]:
         async with self._session_factory() as session:
             store = await session.get(Store, store_id)
             if store is None:
                 raise RuntimeError("Agent current store disappeared")
+            store_local_date = datetime.now(
+                ZoneInfo(store.timezone)
+            ).date()
             system_context = trusted_store_context(store)
             system_context["content"] += (
                 "\n\n可按需加载的数据 Skill：\n"
@@ -358,16 +560,28 @@ class AgentTurnRuntime:
             )
             conversation_id = conversation.id
             history = await conversation_messages(session, conversation_id)
-            model_messages: list[ModelMessage] = [
-                system_context,
-                *(
-                    {"role": message.role, "content": message.content}
-                    for message in history
-                ),
-                {"role": "user", "content": content},
-            ]
+            time_scope = interpret_time_scope(
+                content,
+                local_date=store_local_date,
+            )
+            missing_capabilities = capability_gap_terms(content)
+            additional_context = list(time_scope.guidance)
+            gap_guidance = capability_gap_guidance(missing_capabilities)
+            if gap_guidance is not None:
+                additional_context.append(gap_guidance)
+            model_messages = bounded_model_context(
+                system_context=system_context,
+                summary=conversation.context_summary,
+                history=history,
+                content=content,
+                additional_system_context=additional_context,
+            )
             direct_answer = (
-                None
+                (
+                    time_scope.direct_answer
+                    if time_scope.direct_answer is not None
+                    else None
+                )
                 if is_business_scope_question(content)
                 else AGENT_SCOPE_EXPLANATION
             )
@@ -387,7 +601,12 @@ class AgentTurnRuntime:
                 session.add(turn)
                 await session.flush()
                 turn_id = turn.id
-        return turn_id, model_messages, direct_answer
+        return (
+            turn_id,
+            model_messages,
+            direct_answer,
+            missing_capabilities,
+        )
 
     async def _run(
         self,
@@ -396,6 +615,7 @@ class AgentTurnRuntime:
         active: _ActiveTurn,
         model_messages: Sequence[ModelMessage],
         direct_answer: str | None,
+        missing_capabilities: tuple[str, ...],
         deadline: float,
     ) -> None:
         chunks: list[str] = []
@@ -437,14 +657,21 @@ class AgentTurnRuntime:
                             model_messages=model_messages,
                             user_id=key[0],
                             store_id=key[1],
+                            missing_capabilities=missing_capabilities,
                         )
                         chunks.append(answer)
                     else:
                         emitted_answer_phase = False
-                        async for chunk in self._model_chunks(
-                            adapter,
-                            model_messages,
-                        ):
+                        if missing_capabilities:
+                            model_chunks = _one_chunk(
+                                capability_gap_answer(missing_capabilities)
+                            )
+                        else:
+                            model_chunks = self._model_chunks(
+                                adapter,
+                                model_messages,
+                            )
+                        async for chunk in model_chunks:
                             if not chunk:
                                 continue
                             if not emitted_answer_phase:
@@ -511,6 +738,41 @@ class AgentTurnRuntime:
     @staticmethod
     def _model_tools() -> tuple[ModelTool, ...]:
         return (
+            {
+                "type": "function",
+                "function": {
+                    "name": "submit_answer",
+                    "description": (
+                        "能力缺口问题的最终回答提交。选择本轮结果编号及其中"
+                        "要展示的字段；后端生成可信段落并追加能力缺口说明。"
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "evidence": {
+                                "type": "array",
+                                "maxItems": 20,
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "result_id": {"type": "string"},
+                                        "fields": {
+                                            "type": "array",
+                                            "minItems": 1,
+                                            "maxItems": 20,
+                                            "items": {"type": "string"},
+                                        },
+                                    },
+                                    "required": ["result_id", "fields"],
+                                    "additionalProperties": False,
+                                },
+                            }
+                        },
+                        "required": ["evidence"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
             {
                 "type": "function",
                 "function": {
@@ -782,6 +1044,7 @@ class AgentTurnRuntime:
         model_messages: Sequence[ModelMessage],
         user_id: int,
         store_id: int,
+        missing_capabilities: tuple[str, ...],
     ) -> tuple[str, list[dict[str, Any]]]:
         messages = list(model_messages)
         loaded_skills = {}
@@ -789,6 +1052,7 @@ class AgentTurnRuntime:
         cards: list[dict[str, Any]] = []
         result_number = 0
         for _round in range(8):
+            messages = fit_model_context(messages)
             response: ModelResponse = await adapter.respond(
                 messages,
                 self._model_tools(),
@@ -797,6 +1061,50 @@ class AgentTurnRuntime:
                 answer = (response.content or "").strip()
                 if not answer:
                     raise ValueError("Agent model returned an empty answer")
+                if missing_capabilities:
+                    answer = capability_gap_answer(missing_capabilities)
+                _validate_settlement_answer(
+                    answer,
+                    loaded_skills=loaded_skills,
+                    results=results,
+                )
+                for phase in ("processing_data", "preparing_answer"):
+                    await active.events.put(
+                        {
+                            "type": "phase",
+                            "turn_id": active.turn_id,
+                            "phase": phase,
+                        }
+                    )
+                await active.events.put(
+                    {
+                        "type": "answer_delta",
+                        "turn_id": active.turn_id,
+                        "delta": answer,
+                    }
+                )
+                return answer, cards
+
+            submit_calls = [
+                call
+                for call in response.tool_calls
+                if call.name == "submit_answer"
+            ]
+            if submit_calls:
+                if (
+                    not missing_capabilities
+                    or len(response.tool_calls) != 1
+                    or len(submit_calls) != 1
+                ):
+                    raise ValueError("submit_answer 只能单独用于能力缺口最终回答")
+                try:
+                    answer = _submitted_capability_answer(
+                        submit_calls[0].arguments,
+                        results=results,
+                        missing_capabilities=missing_capabilities,
+                    )
+                except ValueError:
+                    answer = capability_gap_answer(missing_capabilities)
                 _validate_settlement_answer(
                     answer,
                     loaded_skills=loaded_skills,
@@ -890,10 +1198,17 @@ class AgentTurnRuntime:
                     _validate_settlement_calculation(
                         call.arguments["steps"]
                     )
-                    tool_result = calculate(
+                    result_number += 1
+                    result_id = f"result-{result_number}"
+                    calculation = calculate(
                         call.arguments["steps"],
                         results=results,
                     )
+                    tool_result = {
+                        "result_id": result_id,
+                        **calculation,
+                    }
+                    results[result_id] = tool_result
                     card = {
                         "operation": "完成派生计算",
                         "range_start": None,
@@ -910,7 +1225,16 @@ class AgentTurnRuntime:
                         }
                     )
                 else:
-                    raise ValueError("模型调用了未知工具")
+                    if not missing_capabilities:
+                        raise ValueError("模型调用了未知工具")
+                    tool_result = {
+                        "status": "unavailable",
+                        "reason": (
+                            "该能力不在当前数据 Skill 和数据工具范围内；"
+                            "请使用已有可信结果回答可确认部分并明确说明缺口。"
+                        ),
+                        "requested_tool": call.name,
+                    }
                 messages.append(
                     {
                         "role": "tool",
@@ -1000,16 +1324,17 @@ class AgentTurnRuntime:
         adapter: AgentModelAdapter,
         model_messages: Sequence[ModelMessage],
     ) -> AsyncIterator[str]:
+        fitted_messages = fit_model_context(model_messages)
         for attempt in range(2):
             emitted = False
             try:
                 stream = getattr(adapter, "stream", None)
                 if stream is None:
-                    answer = await adapter.complete(model_messages)
+                    answer = await adapter.complete(fitted_messages)
                     emitted = True
                     yield answer
                 else:
-                    async for chunk in stream(model_messages):
+                    async for chunk in stream(fitted_messages):
                         emitted = True
                         yield chunk
                 return
@@ -1070,6 +1395,7 @@ class AgentTurnRuntime:
                 turn.status = "completed"
                 turn.error_message = None
                 turn.finished_at = _finished_now()
+                await refresh_context_summary(session, conversation_id)
 
     async def _persist_failure(
         self,
