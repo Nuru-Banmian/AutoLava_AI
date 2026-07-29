@@ -16,6 +16,7 @@ from app.services.scheduler import (
 )
 from app.services.sqlite_backup import has_valid_backup
 from app.services.agent_model import BailianOpenAIModelAdapter
+from app.services.agent_turn import AgentTurnRuntime
 from app.services.weather import OpenMeteoProvider, WeatherService
 
 
@@ -45,12 +46,14 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        await app.state.agent_turn_runtime.recover_interrupted_turns()
         scheduler.start()
         if maintenance_scheduler is not None:
             maintenance_scheduler.start()
         try:
             yield
         finally:
+            await app.state.agent_turn_runtime.stop()
             if maintenance_scheduler is not None:
                 await maintenance_scheduler.stop()
             await scheduler.stop()
@@ -61,6 +64,12 @@ def create_app() -> FastAPI:
     app.state.dashboard_refresh_limiter = RefreshLimiter()
     app.state.background_refresh_scheduler = scheduler
     app.state.agent_model_adapter = BailianOpenAIModelAdapter(settings)
+    app.state.agent_session_factory = async_session_factory
+    app.state.agent_turn_runtime = AgentTurnRuntime(
+        lambda: app.state.agent_session_factory(),
+        lambda: app.state.agent_model_adapter,
+        turn_timeout_seconds=settings.agent_turn_timeout_seconds,
+    )
     if maintenance_scheduler is not None:
         # Retention is chained after every backup attempt, so both names expose
         # the same single 03:00 lifecycle owner.

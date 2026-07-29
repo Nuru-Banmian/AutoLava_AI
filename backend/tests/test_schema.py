@@ -13,6 +13,7 @@ def test_final_tables_are_registered() -> None:
         "agent_system_settings",
         "agent_conversations",
         "agent_messages",
+        "agent_turns",
         "users",
         "stores",
         "store_members",

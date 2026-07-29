@@ -13,6 +13,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
+  AgentStreamEndedError,
+  type AgentTurnEvent,
   useAgentConversation,
   useAgentCurrentStore,
   useResetAgentConversation,
@@ -23,6 +25,8 @@ import { useStore } from "@/stores/StoreProvider";
 function AgentConversationPanel({ storeId }: { storeId: number }) {
   const [draft, setDraft] = useState("");
   const [resetOpen, setResetOpen] = useState(false);
+  const [liveAnswer, setLiveAnswer] = useState("");
+  const [livePhase, setLivePhase] = useState<string | null>(null);
   const conversation = useAgentConversation(storeId);
   const send = useSendAgentMessage(storeId);
   const reset = useResetAgentConversation(storeId);
@@ -31,7 +35,30 @@ function AgentConversationPanel({ storeId }: { storeId: number }) {
     event.preventDefault();
     const content = draft.trim();
     if (!content) return;
-    send.mutate(content, {
+    setLiveAnswer("");
+    setLivePhase("正在开始本轮分析…");
+    send.mutate({
+      content,
+      onEvent: (streamEvent: AgentTurnEvent) => {
+        if (streamEvent.type === "started") {
+          setLivePhase("正在查询数据…");
+        } else if (streamEvent.type === "phase") {
+          setLivePhase({
+            querying_data: "正在查询数据…",
+            processing_data: "正在处理数据…",
+            preparing_answer: "正在准备回答…",
+          }[streamEvent.phase]);
+        } else if (streamEvent.type === "answer_delta") {
+          setLiveAnswer((current) => current + streamEvent.delta);
+        } else if (streamEvent.type === "investigation_card") {
+          setLivePhase(streamEvent.card.operation);
+        } else if (streamEvent.type === "completed") {
+          setLivePhase("回答已完成");
+        } else {
+          setLivePhase(null);
+        }
+      },
+    }, {
       onSuccess: () => setDraft(""),
     });
   }
@@ -46,6 +73,18 @@ function AgentConversationPanel({ storeId }: { storeId: number }) {
       </p>
     );
   }
+
+  const running = conversation.data.latest_turn?.status === "running";
+  const latestAnswer = [...conversation.data.messages]
+    .reverse()
+    .find((message) => message.role === "assistant")?.content;
+  const showLiveAnswer = Boolean(
+    liveAnswer && liveAnswer !== latestAnswer && (send.isPending || running),
+  );
+  const persistedFailure = conversation.data.latest_turn
+    && ["failed", "interrupted"].includes(conversation.data.latest_turn.status)
+    ? conversation.data.latest_turn.error_message
+    : null;
 
   return (
     <div className="grid gap-4">
@@ -72,8 +111,19 @@ function AgentConversationPanel({ storeId }: { storeId: number }) {
                 <p className="whitespace-pre-wrap text-sm">{message.content}</p>
               </article>
             ))}
+        {showLiveAnswer && (
+          <article className="mr-auto max-w-[85%] rounded-lg bg-muted px-3 py-2">
+            <p className="mb-1 text-xs font-medium">Agent</p>
+            <p className="whitespace-pre-wrap text-sm">{liveAnswer}</p>
+          </article>
+        )}
       </div>
 
+      {(running || send.isPending) && (
+        <p className="text-sm text-muted-foreground" role="status">
+          {livePhase ?? "后台处理中，正在恢复结果…"}
+        </p>
+      )}
       <form className="grid gap-2" onSubmit={submit}>
         <label className="text-sm font-medium" htmlFor="agent-message">
           向 Agent 提问
@@ -87,17 +137,22 @@ function AgentConversationPanel({ storeId }: { storeId: number }) {
           placeholder="例如：上个月的经营情况怎么样？"
           value={draft}
         />
-        {(send.isError || reset.isError) && (
+        {(send.isError || reset.isError || persistedFailure) && (
           <p className="text-sm text-destructive" role="alert">
-            {friendlyApiError(
-              send.error ?? reset.error,
-              send.isError ? "消息发送失败，请重试" : "会话重置失败，请重试",
-            )}
+            {send.error instanceof AgentStreamEndedError
+              ? "实时连接已断开，后台仍会继续处理；页面正在恢复结果。"
+              : persistedFailure ?? friendlyApiError(
+                send.error ?? reset.error,
+                send.isError ? "消息发送失败，请重试" : "会话重置失败，请重试",
+              )}
           </p>
         )}
         <div className="flex flex-wrap gap-2">
-          <Button disabled={!draft.trim() || send.isPending} type="submit">
-            {send.isPending ? "正在回答…" : "发送"}
+          <Button
+            disabled={!draft.trim() || send.isPending || running}
+            type="submit"
+          >
+            {send.isPending || running ? "正在回答…" : "发送"}
           </Button>
           <Button
             disabled={reset.isPending}

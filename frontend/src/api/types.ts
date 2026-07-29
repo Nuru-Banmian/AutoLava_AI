@@ -27,11 +27,22 @@ export interface AgentMessage {
   created_at: string;
 }
 
+export type AgentTurnStatus = "running" | "completed" | "failed" | "interrupted";
+
+export interface AgentTurn {
+  id: number;
+  status: AgentTurnStatus;
+  error_message: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
 export interface AgentConversation {
   conversation_id: number;
   store_id: number;
   store_name: string;
   messages: AgentMessage[];
+  latest_turn: AgentTurn | null;
 }
 
 export interface AdminUser extends User {

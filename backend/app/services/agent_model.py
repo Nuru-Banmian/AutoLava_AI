@@ -1,4 +1,5 @@
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
+import json
 from typing import Protocol
 
 import httpx
@@ -10,6 +11,11 @@ ModelMessage = dict[str, str]
 
 class AgentModelAdapter(Protocol):
     async def complete(self, messages: Sequence[ModelMessage]) -> str: ...
+
+    def stream(
+        self,
+        messages: Sequence[ModelMessage],
+    ) -> AsyncIterator[str]: ...
 
 
 class BailianOpenAIModelAdapter:
@@ -44,3 +50,51 @@ class BailianOpenAIModelAdapter:
         if not isinstance(content, str) or not content.strip():
             raise ValueError("百炼模型返回了空回答")
         return content.strip()
+
+    async def stream(
+        self,
+        messages: Sequence[ModelMessage],
+    ) -> AsyncIterator[str]:
+        endpoint = self._endpoint
+        if not endpoint.endswith("/chat/completions"):
+            endpoint = f"{endpoint}/chat/completions"
+        received_content = False
+        async with httpx.AsyncClient(timeout=60) as client:
+            async with client.stream(
+                "POST",
+                endpoint,
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "X-DashScope-Region": self._region,
+                },
+                json={
+                    "model": self._model_id,
+                    "messages": list(messages),
+                    "stream": True,
+                },
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    data = line.removeprefix("data:").strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data)["choices"][0]["delta"].get(
+                            "content"
+                        )
+                    except (
+                        json.JSONDecodeError,
+                        KeyError,
+                        IndexError,
+                        TypeError,
+                    ) as exc:
+                        raise ValueError(
+                            "百炼模型返回了无效流式回答"
+                        ) from exc
+                    if isinstance(chunk, str) and chunk:
+                        received_content = True
+                        yield chunk
+        if not received_content:
+            raise ValueError("百炼模型返回了空回答")

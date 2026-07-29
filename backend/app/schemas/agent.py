@@ -18,8 +18,17 @@ class AgentMessageResponse(BaseModel):
     created_at: datetime
 
 
+class AgentTurnResponse(BaseModel):
+    id: int
+    status: str
+    error_message: str | None
+    started_at: datetime
+    finished_at: datetime | None
+
+
 class AgentConversationResponse(BaseModel):
     conversation_id: int
     store_id: int
     store_name: str
     messages: list[AgentMessageResponse]
+    latest_turn: AgentTurnResponse | None

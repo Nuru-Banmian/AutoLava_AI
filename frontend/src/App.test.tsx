@@ -207,7 +207,7 @@ describe("App", () => {
   });
 
   it("restores, sends, and resets the current store Agent conversation", async () => {
-    const savedMessages = [
+    let savedMessages = [
       { id: 1, role: "user", content: "上个月经营怎么样？", created_at: "2026-07-29T08:00:00" },
       { id: 2, role: "assistant", content: "上个月营业额保持稳定。", created_at: "2026-07-29T08:00:01" },
     ];
@@ -221,18 +221,23 @@ describe("App", () => {
         store_id: 1,
         store_name: "总店",
         messages: savedMessages,
+        latest_turn: null,
       })),
       http.post("/api/agent/stores/1/messages", async ({ request }) => {
         const body = await request.json() as { content: string };
-        return HttpResponse.json({
-          conversation_id: 9,
-          store_id: 1,
-          store_name: "总店",
-          messages: [
-            ...savedMessages,
-            { id: 3, role: "user", content: body.content, created_at: "2026-07-29T09:00:00" },
-            { id: 4, role: "assistant", content: "本月目前有 12 个经营日。", created_at: "2026-07-29T09:00:01" },
-          ],
+        savedMessages = [
+          ...savedMessages,
+          { id: 3, role: "user", content: body.content, created_at: "2026-07-29T09:00:00" },
+          { id: 4, role: "assistant", content: "本月目前有 12 个经营日。", created_at: "2026-07-29T09:00:01" },
+        ];
+        return new HttpResponse([
+          '{"type":"started","turn_id":7}',
+          '{"type":"phase","turn_id":7,"phase":"preparing_answer"}',
+          '{"type":"answer_delta","turn_id":7,"delta":"本月目前有 12 个经营日。"}',
+          '{"type":"completed","turn_id":7}',
+          "",
+        ].join("\n"), {
+          headers: { "content-type": "application/x-ndjson" },
         });
       }),
       http.delete("/api/agent/stores/1/conversation", () => new HttpResponse(null, { status: 204 })),
@@ -248,6 +253,78 @@ describe("App", () => {
     await userEvent.click(screen.getByRole("button", { name: "确认重置" }));
     await waitFor(() => expect(screen.queryByText("上个月营业额保持稳定。")).not.toBeInTheDocument());
     expect(screen.getByText("还没有消息，可以从当前门店的经营问题开始。")).toBeInTheDocument();
+  });
+
+  it("polls a running Agent turn after the JSON Lines connection closes early", async () => {
+    let conversationReads = 0;
+    server.use(
+      http.get("/api/agent/stores/1", () => HttpResponse.json({
+        store_id: 1,
+        store_name: "总店",
+      })),
+      http.get("/api/agent/stores/1/conversation", () => {
+        conversationReads += 1;
+        if (conversationReads === 1) {
+          return HttpResponse.json({
+            conversation_id: 9,
+            store_id: 1,
+            store_name: "总店",
+            messages: [],
+            latest_turn: null,
+          });
+        }
+        if (conversationReads === 2) {
+          return HttpResponse.json({
+            conversation_id: 9,
+            store_id: 1,
+            store_name: "总店",
+            messages: [
+              { id: 3, role: "user", content: "分析营业额", created_at: "2026-07-29T09:00:00" },
+            ],
+            latest_turn: {
+              id: 7,
+              status: "running",
+              error_message: null,
+              started_at: "2026-07-29T09:00:00",
+              finished_at: null,
+            },
+          });
+        }
+        return HttpResponse.json({
+          conversation_id: 9,
+          store_id: 1,
+          store_name: "总店",
+          messages: [
+            { id: 3, role: "user", content: "分析营业额", created_at: "2026-07-29T09:00:00" },
+            { id: 4, role: "assistant", content: "后台完成的回答", created_at: "2026-07-29T09:00:02" },
+          ],
+          latest_turn: {
+            id: 7,
+            status: "completed",
+            error_message: null,
+            started_at: "2026-07-29T09:00:00",
+            finished_at: "2026-07-29T09:00:02",
+          },
+        });
+      }),
+      http.post("/api/agent/stores/1/messages", () => new HttpResponse(
+        '{"type":"started","turn_id":7}\n',
+        { headers: { "content-type": "application/x-ndjson" } },
+      )),
+    );
+    renderApplication("/agent", "administrator");
+
+    await userEvent.type(
+      await screen.findByRole("textbox", { name: "向 Agent 提问" }),
+      "分析营业额",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "实时连接已断开，后台仍会继续处理",
+    );
+    expect(await screen.findByText("后台完成的回答", {}, { timeout: 3000 })).toBeInTheDocument();
+    expect(conversationReads).toBeGreaterThanOrEqual(3);
   });
 
   it("does not mount the Agent page for an ordinary store user", async () => {

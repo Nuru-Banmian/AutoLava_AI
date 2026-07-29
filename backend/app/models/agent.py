@@ -3,6 +3,7 @@ from datetime import datetime
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    DateTime,
     ForeignKey,
     String,
     Text,
@@ -79,5 +80,36 @@ class AgentMessage(Base):
         CheckConstraint(
             "role in ('user','assistant')",
             name="role",
+        ),
+    )
+
+
+class AgentTurn(Base):
+    __tablename__ = "agent_turns"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    conversation_id: Mapped[int] = mapped_column(
+        ForeignKey("agent_conversations.id", ondelete="CASCADE"),
+        index=True,
+    )
+    user_message_id: Mapped[int] = mapped_column(
+        ForeignKey("agent_messages.id", ondelete="CASCADE"),
+    )
+    assistant_message_id: Mapped[int | None] = mapped_column(
+        ForeignKey("agent_messages.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    status: Mapped[str] = mapped_column(String(16))
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status in ('running','completed','failed','interrupted')",
+            name="status",
         ),
     )

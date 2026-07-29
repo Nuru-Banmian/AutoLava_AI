@@ -71,6 +71,7 @@ def test_compose_contains_exactly_api_and_web_with_persistent_sqlite_data() -> N
         "AUTOLAVA_AGENT_MODEL_REGION": "${AUTOLAVA_AGENT_MODEL_REGION:-}",
         "AUTOLAVA_AGENT_MODEL_ID": "${AUTOLAVA_AGENT_MODEL_ID:-}",
         "AUTOLAVA_AGENT_MODEL_API_KEY": "${AUTOLAVA_AGENT_MODEL_API_KEY:-}",
+        "AUTOLAVA_AGENT_TURN_TIMEOUT_SECONDS": "${AUTOLAVA_AGENT_TURN_TIMEOUT_SECONDS:-120}",
     }
     assert api["volumes"] == ["autolava_data:/data"]
     assert "ports" not in api
@@ -327,6 +328,7 @@ def test_production_settings_reject_in_memory_database() -> None:
 def test_development_defaults_remain_available() -> None:
     settings = Settings(_env_file=None)
     assert settings.environment == "development"
+    assert settings.agent_turn_timeout_seconds == 120
 
 
 def test_nginx_enforces_a_bounded_login_rate_limit() -> None:

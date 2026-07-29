@@ -2,6 +2,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import delete
+from starlette.responses import StreamingResponse
 
 from app.api.deps import (
     Session,
@@ -23,13 +24,18 @@ from app.schemas.agent import (
     AgentMessageCreate,
     AgentMessageResponse,
     AgentSettingsPatch,
+    AgentTurnResponse,
 )
 from app.services.agent_conversation import (
-    answer_message,
     conversation_messages,
     get_or_create_conversation,
 )
-from app.services.agent_model import AgentModelAdapter
+from app.services.agent_turn import (
+    ActiveAgentTurnError,
+    AgentTurnRuntime,
+    AgentTurnStartTimeoutError,
+    latest_conversation_turn,
+)
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 Administrator = Annotated[User, Depends(require_admin)]
@@ -110,6 +116,7 @@ async def _conversation_payload(
     store_name: str,
 ) -> AgentConversationResponse:
     messages = await conversation_messages(session, conversation.id)
+    latest_turn = await latest_conversation_turn(session, conversation.id)
     return AgentConversationResponse(
         conversation_id=conversation.id,
         store_id=conversation.store_id,
@@ -118,6 +125,11 @@ async def _conversation_payload(
             AgentMessageResponse.model_validate(message, from_attributes=True)
             for message in messages
         ],
+        latest_turn=(
+            AgentTurnResponse.model_validate(latest_turn, from_attributes=True)
+            if latest_turn is not None
+            else None
+        ),
     )
 
 
@@ -146,7 +158,6 @@ async def read_agent_conversation(
 
 @router.post(
     "/stores/{store_id}/messages",
-    response_model=AgentConversationResponse,
 )
 async def send_agent_message(
     store_id: int,
@@ -154,21 +165,32 @@ async def send_agent_message(
     request: Request,
     actor: Administrator,
     session: Session,
-) -> AgentConversationResponse:
+) -> StreamingResponse:
     access = await _current_agent_store(store_id, actor, session)
-    store_name = access.store.name
-    adapter: AgentModelAdapter = request.app.state.agent_model_adapter
-    conversation = await answer_message(
-        session,
-        actor=actor,
-        store=access.store,
-        content=body.content.strip(),
-        adapter=adapter,
-    )
-    return await _conversation_payload(
-        session,
-        conversation,
-        store_name=store_name,
+    runtime: AgentTurnRuntime = request.app.state.agent_turn_runtime
+    try:
+        events = await runtime.start(
+            user_id=actor.id,
+            store_id=access.store.id,
+            content=body.content.strip(),
+        )
+    except ActiveAgentTurnError as exc:
+        raise HTTPException(
+            409,
+            "当前 Agent 会话已有进行中的轮次",
+        ) from exc
+    except AgentTurnStartTimeoutError as exc:
+        raise HTTPException(
+            503,
+            "Agent 本轮启动超时，请稍后重试",
+        ) from exc
+    return StreamingResponse(
+        events,
+        media_type="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 

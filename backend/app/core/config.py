@@ -1,6 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
-from pydantic import SecretStr, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT_ENV_FILE = Path(__file__).resolve().parents[3] / ".env"
@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     agent_model_region: str = ""
     agent_model_id: str = ""
     agent_model_api_key: SecretStr = SecretStr("")
+    agent_turn_timeout_seconds: float = Field(default=120, gt=0, le=3600)
 
     @property
     def agent_model_config_ready(self) -> bool:

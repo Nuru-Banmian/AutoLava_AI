@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 from datetime import date
+import json
 
 from httpx import AsyncClient
 import pytest
@@ -60,11 +61,19 @@ async def test_admin_message_uses_trusted_store_context_and_survives_reload(
     assert empty.status_code == 200
     assert empty.json()["messages"] == []
     assert sent.status_code == 200
-    assert [(message["role"], message["content"]) for message in sent.json()["messages"]] == [
+    assert [json.loads(line)["type"] for line in sent.text.splitlines()] == [
+        "started",
+        "phase",
+        "phase",
+        "phase",
+        "answer_delta",
+        "completed",
+    ]
+    assert [(message["role"], message["content"]) for message in reloaded.json()["messages"]] == [
         ("user", "请介绍一下当前门店的经营情况"),
         ("assistant", "这是当前门店的基础经营回答。"),
     ]
-    assert reloaded.json() == sent.json()
+    assert reloaded.json()["latest_turn"]["status"] == "completed"
     assert await db_session.scalar(select(func.count()).select_from(AgentConversation)) == 1
 
     system_context = adapter.calls[0][0]
@@ -195,12 +204,16 @@ async def test_out_of_scope_question_gets_agent_scope_explanation(
 
     assert response.status_code == 200
     assert adapter.calls == []
-    assert response.json()["messages"][-1] == {
-        "id": response.json()["messages"][-1]["id"],
+    reloaded = await client.get(
+        f"/api/agent/stores/{store_id}/conversation",
+    )
+    assistant = reloaded.json()["messages"][-1]
+    assert assistant == {
+        "id": assistant["id"],
         "role": "assistant",
         "content": (
             "我是 AutoLava 数据分析 Agent，只能帮助你分析 Agent 当前门店的"
             "经营数据，例如营业额、每日台账、洗车数量和公司结算。"
         ),
-        "created_at": response.json()["messages"][-1]["created_at"],
+        "created_at": assistant["created_at"],
     }

@@ -12,6 +12,7 @@ EXPECTED_TABLES = {
     "agent_system_settings",
     "agent_conversations",
     "agent_messages",
+    "agent_turns",
     "users",
     "stores",
     "store_members",
@@ -251,7 +252,7 @@ def test_applied_revision_0004_upgrades_without_losing_existing_data(tmp_path: P
 
     with closing(sqlite3.connect(database_path)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0011",
+            "0012",
         )
         assert connection.execute("SELECT username FROM users").fetchall() == [
             ("existing-admin",)
