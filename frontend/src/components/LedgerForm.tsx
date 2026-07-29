@@ -46,12 +46,17 @@ export interface LedgerFormProps {
   washCountEnabled?: boolean;
 }
 
+function parseBlankAmountAsZero(value: string) {
+  return parseWholeAmount(value === "" ? "0" : value);
+}
+
 function semanticAmount(value: string) {
-  const result = parseWholeAmount(value);
+  const result = parseBlankAmountAsZero(value);
   return "value" in result ? result.value : `invalid:${value}`;
 }
 
 function parseWashCount(value: string): { value: number } | { error: string } {
+  if (value === "") return { value: 0 };
   if (!/^(0|[1-9]\d*)$/.test(value)) return { error: "洗车数量必须是大于等于 0 的整数" };
   const parsed = Number(value);
   return Number.isSafeInteger(parsed)
@@ -98,17 +103,28 @@ export function LedgerForm({
     [categories, config, record],
   );
   const composed = record ? record.income_mode === "composed" : resolvedConfig.enabled;
-  const active = useMemo(() => {
+  const effectiveCategories = useMemo(() => {
     if (record && composed) {
-      return record.items
+      const recorded = record.items.map((item) => ({
+        id: item.category_id,
+        name: item.category_name,
+        include_in_total: item.include_in_total,
+        is_active: true,
+        sort_order: item.sort_order,
+      }));
+      const recordedIds = new Set(recorded.map((item) => item.id));
+      const newlyEnabled = resolvedConfig.items
+        .filter((item) => item.is_active && !recordedIds.has(item.id))
         .map((item) => ({
-          id: item.category_id,
-          name: item.category_name,
+          id: item.id,
+          name: item.name,
           include_in_total: item.include_in_total,
           is_active: true,
           sort_order: item.sort_order,
-        }))
-        .sort((left, right) => left.sort_order - right.sort_order || left.id - right.id);
+        }));
+      return [...recorded, ...newlyEnabled].sort(
+        (left, right) => left.sort_order - right.sort_order || left.id - right.id,
+      );
     }
     const configured = resolvedConfig.items
       .filter((item) => item.is_active)
@@ -122,35 +138,33 @@ export function LedgerForm({
     return configured.sort(
       (left, right) => left.sort_order - right.sort_order || left.id - right.id,
     );
-  }, [categories, composed, resolvedConfig.items, record]);
-  const loadedWash =
-    record?.wash_count == null
-      ? record
-        ? ""
-        : washCountEnabled
-          ? "0"
-          : ""
-      : String(record.wash_count);
+  }, [composed, resolvedConfig.items, record]);
+  const loadedWash = record?.wash_count == null ? "" : String(record.wash_count);
   const [status, setStatus] = useState<LedgerStatus>(record?.is_open ?? "营业");
   const [wash, setWash] = useState(loadedWash);
   const [weatherValue, setWeatherValue] = useState(record?.weather ?? weather?.weather ?? "");
   const [weatherEdited, setWeatherEdited] = useState(record?.weather_edited ?? false);
   const [activity, setActivity] = useState(record?.activity ?? "");
-  const loadedDirectTotal = record ? String(record.daily_revenue) : "0";
+  const loadedDirectTotal = record ? String(record.daily_revenue) : "";
   const [directTotal, setDirectTotal] = useState(loadedDirectTotal);
   const loadedAmounts = useMemo(
     () =>
       Object.fromEntries(
-        active.map((category) => [
-          category.id,
-          record
-            ? String(record.items.find((item) => item.category_id === category.id)?.amount ?? 0)
-            : "0",
-        ]),
+        effectiveCategories.map((category) => {
+          const recordedItem = record?.items.find((item) => item.category_id === category.id);
+          return [category.id, record ? (recordedItem ? String(recordedItem.amount) : "") : ""];
+        }),
       ),
-    [active, record],
+    [effectiveCategories, record],
   );
   const [amounts, setAmounts] = useState<Record<number, string>>(loadedAmounts);
+  const isLegacyEmptyWash = (value: string) =>
+    Boolean(record && record.wash_count == null && value === "");
+  const legacyEmptyWash = isLegacyEmptyWash(wash);
+  const normalizedFormWashCount = (nextStatus: LedgerStatus, value: string) =>
+    isLegacyEmptyWash(value) && nextStatus !== "休息"
+      ? null
+      : normalizedWashCount(washCountEnabled, nextStatus, value);
   const incomingSignature = JSON.stringify({
     record,
     recordRevision,
@@ -175,12 +189,12 @@ export function LedgerForm({
     JSON.stringify({
       is_open: values.status,
       daily_revenue: composed ? null : semanticAmount(values.directTotal),
-      wash_count: normalizedWashCount(washCountEnabled, values.status, values.wash),
+      wash_count: normalizedFormWashCount(values.status, values.wash),
       weather: values.weatherValue || null,
       weather_edited: values.weatherEdited,
       activity: normalizedActivity(values.activity),
       items: composed
-        ? active.map((category) => [
+        ? effectiveCategories.map((category) => [
             category.id,
             semanticAmount(values.amounts[category.id] ?? "0"),
           ])
@@ -254,9 +268,9 @@ export function LedgerForm({
   useEffect(() => {
     onDirtyChange?.(currentSignature !== effectiveBaselineSignature);
   }, [currentSignature, effectiveBaselineSignature, onDirtyChange]);
-  const amountResults = active.map((category) => ({
+  const amountResults = effectiveCategories.map((category) => ({
     category,
-    result: parseWholeAmount(amounts[category.id] ?? "0"),
+    result: parseBlankAmountAsZero(amounts[category.id] ?? ""),
   }));
   const includedAmounts = amountResults
     .filter(({ category }) => category.include_in_total)
@@ -274,7 +288,7 @@ export function LedgerForm({
   useEffect(() => {
     if (calculatedTotal !== null) setLatestValidTotal(calculatedTotal);
   }, [calculatedTotal]);
-  const directResult = parseWholeAmount(directTotal);
+  const directResult = parseBlankAmountAsZero(directTotal);
   const invalidAmount =
     status === "休息"
       ? undefined
@@ -295,7 +309,6 @@ export function LedgerForm({
       ? "合计金额超出可安全计算范围"
       : "";
   const washResult = parseWashCount(wash);
-  const legacyEmptyWash = Boolean(record && record.wash_count == null && wash === "");
   const washError =
     washCountEnabled && status !== "休息" && !legacyEmptyWash && "error" in washResult
       ? washResult.error
@@ -303,7 +316,7 @@ export function LedgerForm({
   const validationError = amountError || totalError || washError;
   function changeStatus(next: LedgerStatus) {
     setStatus(next);
-    if (next === "休息") setWash("0");
+    if (next === "休息" && wash !== "") setWash("0");
   }
   return (
     <form
@@ -315,6 +328,16 @@ export function LedgerForm({
           category_id: category.id,
           amount: status === "休息" ? 0 : (result as { value: number }).value,
         }));
+        if (composed) {
+          setAmounts(
+            Object.fromEntries(
+              effectiveCategories.map((category) => [category.id, amounts[category.id] || "0"]),
+            ),
+          );
+        } else if (directTotal === "") {
+          setDirectTotal("0");
+        }
+        if (!record && wash === "") setWash("0");
         onSave({
           is_open: status,
           daily_revenue: composed
@@ -322,10 +345,7 @@ export function LedgerForm({
             : status === "休息"
               ? 0
               : (directResult as { value: number }).value,
-          wash_count:
-            legacyEmptyWash && status !== "休息"
-              ? null
-              : normalizedWashCount(washCountEnabled, status, wash),
+          wash_count: normalizedFormWashCount(status, wash),
           weather: weatherValue || null,
           weather_edited: weatherEdited,
           activity: normalizedActivity(activity),
@@ -373,7 +393,7 @@ export function LedgerForm({
         <fieldset aria-label="收入项目" disabled={status === "休息"} className="grid min-w-0 gap-3">
           <legend className="font-semibold">收入项目</legend>
           <div className="grid min-w-0 gap-4 md:grid-cols-2">
-            {active.map((category) => (
+            {effectiveCategories.map((category) => (
               <label className="grid min-w-0 gap-1.5 font-medium" key={category.id}>
                 {category.name}
                 <input

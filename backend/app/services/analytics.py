@@ -1,5 +1,5 @@
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Literal
@@ -25,7 +25,7 @@ class CompositionKey:
     category_id: int
     category_name: str
     include_in_total: bool
-    sort_order: int
+    sort_order: int = field(compare=False)
 
 
 def _composition_rows(totals: dict[CompositionKey, int]) -> list[dict]:
