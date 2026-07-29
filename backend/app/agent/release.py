@@ -18,6 +18,9 @@ class ClosedModel(BaseModel):
 class ReleaseTarget(ClosedModel):
     memory_limit_mb: int = Field(gt=0)
     single_container: bool
+    application_processes: int = Field(ge=1)
+    application_workers: int = Field(ge=1)
+    database_engine: str = Field(min_length=1)
 
 
 class ReleaseProfile(ClosedModel):
@@ -29,6 +32,11 @@ class ReleaseProfile(ClosedModel):
     max_output_tokens: int = Field(gt=0)
     input_cost_per_million: float = Field(gt=0)
     output_cost_per_million: float = Field(gt=0)
+    max_model_calls: int = Field(ge=1)
+    max_tool_calls: int = Field(ge=1)
+    max_total_tokens: int = Field(ge=1)
+    max_cost_eur: float = Field(gt=0)
+    retry_attempts: int = Field(ge=0)
     adapter_config_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
     @classmethod
@@ -43,13 +51,18 @@ class ReleaseProfile(ClosedModel):
             max_output_tokens=settings.model_max_output_tokens,
             input_cost_per_million=settings.model_input_cost_per_million,
             output_cost_per_million=settings.model_output_cost_per_million,
+            max_model_calls=settings.agent_investigation_max_model_calls,
+            max_tool_calls=settings.agent_investigation_max_tool_calls,
+            max_total_tokens=settings.agent_investigation_max_tokens,
+            max_cost_eur=settings.agent_investigation_max_cost_eur,
+            retry_attempts=settings.agent_investigation_retry_attempts,
             adapter_config_sha256=agent_adapter_config_sha256(settings),
         )
 
 
 class ReleaseEvidence(ClosedModel):
     collected_at: datetime
-    collector_version: Literal["agent-release-v1"]
+    collector_version: Literal["agent-release-v2"]
     container_image_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     measurement_artifact_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     adapter_cases_artifact_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -63,8 +76,11 @@ class ReleaseMeasurements(ClosedModel):
     agent_peak_memory_mb: float = Field(gt=0)
     request_p95_ms: float = Field(gt=0)
     model_stage_count_max: int = Field(ge=1)
+    tool_call_count_max: int = Field(ge=0)
+    agent_request_concurrency_max: int = Field(ge=1)
     input_tokens_max: int = Field(gt=0)
     output_tokens_max: int = Field(gt=0)
+    total_tokens_max: int = Field(gt=0)
     estimated_cost_eur_max: float = Field(gt=0)
     sqlite_snapshot_p95_ms: float = Field(gt=0)
     short_write_baseline_p95_ms: float = Field(gt=0)
@@ -79,17 +95,31 @@ class ReleaseSample(ClosedModel):
     agent_peak_memory_mb: float = Field(gt=0)
     request_ms: float = Field(gt=0)
     model_stage_count: int = Field(ge=1)
+    tool_call_count: int = Field(ge=0)
+    agent_request_concurrency: int = Field(ge=1)
     input_tokens: int = Field(gt=0)
     output_tokens: int = Field(gt=0)
+    total_tokens: int = Field(gt=0)
     estimated_cost_eur: float = Field(gt=0)
     sqlite_snapshot_ms: float = Field(gt=0)
     short_write_baseline_ms: float = Field(gt=0)
     short_write_with_agent_ms: float = Field(gt=0)
     language_quality_passed: bool
 
+    @model_validator(mode="after")
+    def require_consistent_total_tokens(self) -> "ReleaseSample":
+        if self.total_tokens != self.input_tokens + self.output_tokens:
+            raise ValueError("total tokens must equal input plus output tokens")
+        return self
+
 
 AdapterCaseName = Literal[
     "structured_output",
+    "native_tool_calling",
+    "parallel_tool_calls",
+    "tool_result_continuation",
+    "natural_answer",
+    "usage_metrics",
     "timeout",
     "rate_limit",
     "server_error",
@@ -108,7 +138,7 @@ class AdapterCaseResult(ClosedModel):
 
 
 class AdapterCasesArtifact(ClosedModel):
-    cases: list[AdapterCaseResult] = Field(min_length=10, max_length=10)
+    cases: list[AdapterCaseResult] = Field(min_length=15, max_length=15)
 
 
 class MonotonicInterval(ClosedModel):
@@ -153,6 +183,7 @@ class TransactionTraceSample(ClosedModel):
 class ReleaseChecks(ClosedModel):
     language_quality: bool
     structured_output: bool
+    native_adapter_probe: bool
     failure_semantics: bool
     model_calls_outside_sqlite_transactions: bool
     safety_release_gate: bool
@@ -227,8 +258,11 @@ def summarize_release_samples(samples: list[ReleaseSample]) -> ReleaseMeasuremen
         agent_peak_memory_mb=max(sample.agent_peak_memory_mb for sample in samples),
         request_p95_ms=nearest_rank_p95([sample.request_ms for sample in samples]),
         model_stage_count_max=max(sample.model_stage_count for sample in samples),
+        tool_call_count_max=max(sample.tool_call_count for sample in samples),
+        agent_request_concurrency_max=max(sample.agent_request_concurrency for sample in samples),
         input_tokens_max=max(sample.input_tokens for sample in samples),
         output_tokens_max=max(sample.output_tokens for sample in samples),
+        total_tokens_max=max(sample.total_tokens for sample in samples),
         estimated_cost_eur_max=max(sample.estimated_cost_eur for sample in samples),
         sqlite_snapshot_p95_ms=nearest_rank_p95([sample.sqlite_snapshot_ms for sample in samples]),
         short_write_baseline_p95_ms=nearest_rank_p95(
@@ -247,7 +281,7 @@ def _report_blockers(report: AgentReleaseReport) -> list[str]:
     blockers: list[str] = []
     measurements = report.measurements
     thresholds = report.thresholds
-    if report.schema_version != 1:
+    if report.schema_version != 2:
         blockers.append("unsupported release report schema")
     if thresholds != APPROVED_THRESHOLDS:
         blockers.append("release thresholds do not match the approved policy")
@@ -255,6 +289,12 @@ def _report_blockers(report: AgentReleaseReport) -> list[str]:
         blockers.append("release target is not the production 2 GB environment")
     if not report.target.single_container:
         blockers.append("release target splits the application container")
+    if report.target.application_processes != 1:
+        blockers.append("release target does not use one application process")
+    if report.target.application_workers != 1:
+        blockers.append("release target does not use one application worker")
+    if report.target.database_engine != "sqlite":
+        blockers.append("release target does not use SQLite")
     if measurements.serial_sample_count < thresholds.minimum_serial_samples:
         blockers.append(
             f"release measurements need at least {thresholds.minimum_serial_samples} serial samples"
@@ -270,6 +310,8 @@ def _report_blockers(report: AgentReleaseReport) -> list[str]:
         blockers.append("Agent request latency exceeds the release threshold")
     if measurements.estimated_cost_eur_max > thresholds.estimated_cost_eur_max:
         blockers.append("estimated model cost exceeds the release threshold")
+    if measurements.estimated_cost_eur_max > report.profile.max_cost_eur:
+        blockers.append("measured model cost exceeds the configured investigation limit")
     if measurements.sqlite_snapshot_p95_ms > thresholds.sqlite_snapshot_p95_ms:
         blockers.append("SQLite snapshot duration exceeds the release threshold")
     if measurements.short_write_with_agent_p95_ms > thresholds.short_write_with_agent_p95_ms:
@@ -279,11 +321,20 @@ def _report_blockers(report: AgentReleaseReport) -> list[str]:
         blockers.append("Agent load slows normal short writes beyond the release threshold")
     if measurements.output_tokens_max > report.profile.max_output_tokens:
         blockers.append("measured output tokens exceed the configured limit")
+    if measurements.total_tokens_max > report.profile.max_total_tokens:
+        blockers.append("measured total tokens exceed the configured investigation limit")
+    if measurements.model_stage_count_max > report.profile.max_model_calls:
+        blockers.append("measured model calls exceed the configured limit")
+    if measurements.tool_call_count_max > report.profile.max_tool_calls:
+        blockers.append("measured tool calls exceed the configured limit")
+    if measurements.agent_request_concurrency_max != 1:
+        blockers.append("release measurements are not from serial Agent requests")
     if measurements.language_quality_pass_rate < thresholds.language_quality_pass_rate:
         blockers.append("language quality does not meet the release threshold")
     check_messages = (
         ("language_quality", "language quality validation failed"),
         ("structured_output", "structured output validation failed"),
+        ("native_adapter_probe", "native model Adapter capability probe failed"),
         ("failure_semantics", "provider failure semantics validation failed"),
         (
             "model_calls_outside_sqlite_transactions",
@@ -377,6 +428,16 @@ def _release_artifact_blockers(
     derived_checks = ReleaseChecks(
         language_quality=all(sample.language_quality_passed for sample in samples),
         structured_output=case_results["structured_output"],
+        native_adapter_probe=all(
+            case_results[name]
+            for name in (
+                "native_tool_calling",
+                "parallel_tool_calls",
+                "tool_result_continuation",
+                "natural_answer",
+                "usage_metrics",
+            )
+        ),
         failure_semantics=all(case_results[name] for name in FAILURE_CASES),
         model_calls_outside_sqlite_transactions=True,
         safety_release_gate=case_results["safety_release_gate"],

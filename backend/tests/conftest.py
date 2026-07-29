@@ -35,6 +35,11 @@ AGENT_RELEASE_MANIFEST = Path(__file__).parent / "release" / "agent_release_case
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     manifest = json.loads(AGENT_RELEASE_MANIFEST.read_text(encoding="utf-8"))
     release_nodes = {case["test_node"].replace("\\", "/") for case in manifest["backend_cases"]}
+    release_nodes.update(
+        node.replace("\\", "/")
+        for scenario in manifest["http_acceptance_scenarios"]
+        for node in scenario["test_nodes"]
+    )
     for item in items:
         base_node = item.nodeid.replace("\\", "/").split("[", maxsplit=1)[0]
         if base_node in release_nodes or base_node.startswith("tests/release/"):

@@ -8,9 +8,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.business_evidence import BusinessEvidenceCollector
+from app.agent.model import ModelAdapterError, ModelErrorCategory
 from app.agent.native import (
     NativeModelCall,
     NativeModelTurn,
+    NativeToolError,
     NativeToolDefinition,
     NativeToolResult,
     NativeTranscriptItem,
@@ -172,6 +174,33 @@ class GroundedAdaptiveHttpModel:
         )
 
 
+class TransientFailureThenAnswerHttpModel:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def next_turn(self, items, *, tools) -> NativeModelTurn:
+        del items, tools
+        self.calls += 1
+        if self.calls == 1:
+            raise ModelAdapterError(
+                "provider-private timeout payload",
+                category=ModelErrorCategory.TIMEOUT,
+            )
+        return NativeModelTurn.model_validate(
+            {
+                "message": {"role": "assistant", "content": "当前经营情况仍未知。"},
+                "answer_claims": [
+                    {
+                        "statement": "当前经营情况仍未知",
+                        "status": "unknown",
+                    }
+                ],
+                "usage": {},
+                "signal": "end",
+            }
+        )
+
+
 class QueuedNativeToolModel:
     def __init__(self, calls: Sequence[tuple[str, dict[str, object]]]) -> None:
         self.pending_calls = list(calls)
@@ -293,6 +322,22 @@ class WarningInjectingEvidenceCollector:
     async def collect(self, request, context):
         evidence = await self.delegate.collect(request, context)
         return evidence.model_copy(update={"warnings": [*evidence.warnings, self.warning]})
+
+
+class TransientFailureThenEvidenceCollector:
+    def __init__(self, delegate: BusinessEvidenceCollector) -> None:
+        self.delegate = delegate
+        self.calls = 0
+
+    def with_scope_authorizer(self, authorizer):
+        self.delegate = self.delegate.with_scope_authorizer(authorizer)
+        return self
+
+    async def collect(self, request, context):
+        self.calls += 1
+        if self.calls == 1:
+            raise NativeToolError("private database timeout", category="timeout")
+        return await self.delegate.collect(request, context)
 
 
 def _install_queued_native_service(
@@ -983,6 +1028,190 @@ async def test_native_http_investigation_chooses_follow_up_and_grounds_each_clai
     )
     assert expected_text in response.json()["content"]
     assert len(model.calls) == 3
+
+
+async def test_native_http_recovers_one_transient_model_failure(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+) -> None:
+    await user_factory(username="retry-admin", password="secret", role="admin")
+    store = await store_factory(name="Roma retry", timezone="Europe/Rome")
+    db_session.add(AgentSettings(id=1, enabled=True))
+    await db_session.commit()
+
+    @asynccontextmanager
+    async def session_factory():
+        try:
+            yield db_session
+        finally:
+            await end_read_transaction(db_session)
+
+    model = TransientFailureThenAnswerHttpModel()
+    client._transport.app.state.agent_service = create_agent_service(
+        Settings(_env_file=None),
+        session_factory,
+        native_model=model,
+        native_evidence_collector=BusinessEvidenceCollector(session_factory),
+    )
+    await _login(client, "retry-admin")
+
+    response = await client.post(
+        f"/api/agent/stores/{store.id}/turn",
+        json={"question": "调查本月经营情况。"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["route"] == "answer"
+    assert response.json()["content"] == "当前经营情况仍未知。"
+    assert response.json()["recovery_status"] == "retried"
+    assert response.json()["progress"] == [
+        {
+            "status": "waiting",
+            "message": "模型服务暂时不可用，正在进行有限重试。",
+        }
+    ]
+    assert model.calls == 2
+    assert "provider-private" not in response.text
+
+
+async def test_native_http_recovers_one_transient_business_tool_failure(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+) -> None:
+    user = await user_factory(username="tool-retry-admin", password="secret", role="admin")
+    store = await store_factory(name="Roma tool retry", timezone="Europe/Rome")
+    db_session.add_all(
+        [
+            AgentSettings(id=1, enabled=True),
+            StoreDailyRecord(
+                store_id=store.id,
+                date=date(2026, 7, 5),
+                daily_revenue=700,
+                income_mode="legacy_total",
+                wash_count=4,
+                is_open="营业",
+                weather="晴",
+                created_by=user.id,
+                updated_by=user.id,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    @asynccontextmanager
+    async def session_factory():
+        try:
+            yield db_session
+        finally:
+            await end_read_transaction(db_session)
+
+    model = QueuedNativeToolModel([("daily_ledger_revenue", {"year": 2026, "month": 7})])
+    collector = TransientFailureThenEvidenceCollector(
+        BusinessEvidenceCollector(
+            session_factory,
+            now=lambda _timezone: datetime(2026, 7, 26, 12, 0),
+        )
+    )
+    client._transport.app.state.agent_service = create_agent_service(
+        Settings(_env_file=None),
+        session_factory,
+        native_model=model,
+        native_evidence_collector=collector,
+        native_now=lambda: datetime(2026, 7, 26, 10, 0, tzinfo=timezone.utc),
+    )
+    await _login(client, "tool-retry-admin")
+
+    response = await client.post(
+        f"/api/agent/stores/{store.id}/turn",
+        json={"question": "调查 2026 年 7 月的每日台账营业额。"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["route"] == "answer"
+    assert response.json()["recovery_status"] == "retried"
+    assert response.json()["progress"] == [
+        {
+            "status": "waiting",
+            "message": "经营工具暂时不可用，已完成有限重试。",
+        }
+    ]
+    assert collector.calls == 2
+    assert model.results[0].evidence.facts["daily_ledger_revenue"] == 700
+    assert "private database timeout" not in response.text
+
+
+async def test_native_http_returns_verified_facts_and_unknowns_at_the_model_call_limit(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+) -> None:
+    user = await user_factory(username="limited-admin", password="secret", role="admin")
+    store = await store_factory(name="Roma limited", timezone="Europe/Rome")
+    db_session.add_all(
+        [
+            AgentSettings(id=1, enabled=True),
+            StoreDailyRecord(
+                store_id=store.id,
+                date=date(2026, 7, 5),
+                daily_revenue=700,
+                income_mode="legacy_total",
+                wash_count=4,
+                is_open="营业",
+                weather="晴",
+                created_by=user.id,
+                updated_by=user.id,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    @asynccontextmanager
+    async def session_factory():
+        try:
+            yield db_session
+        finally:
+            await end_read_transaction(db_session)
+
+    model = QueuedNativeToolModel([("daily_ledger_revenue", {"year": 2026, "month": 7})])
+    settings = Settings(_env_file=None).model_copy(
+        update={"agent_investigation_max_model_calls": 1}
+    )
+    client._transport.app.state.agent_service = create_agent_service(
+        settings,
+        session_factory,
+        native_model=model,
+        native_evidence_collector=BusinessEvidenceCollector(
+            session_factory,
+            now=lambda _timezone: datetime(2026, 7, 26, 12, 0),
+        ),
+        native_now=lambda: datetime(2026, 7, 26, 10, 0, tzinfo=timezone.utc),
+    )
+    await _login(client, "limited-admin")
+
+    response = await client.post(
+        f"/api/agent/stores/{store.id}/turn",
+        json={"question": "深入调查 2026 年 7 月的经营情况。"},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["route"] == "answer"
+    assert payload["partial"]["verified_facts"] == [
+        "2026-07-01 至 2026-07-26 每日台账营业额：700 EUR"
+    ]
+    assert payload["partial"]["unknowns"]
+    assert payload["progress"] == [
+        {
+            "status": "partial",
+            "message": "本轮调查已达到模型调用上限。",
+        }
+    ]
+    assert len(model.calls) == 1
 
 
 @pytest.mark.parametrize("lowest_date", [date(2026, 7, 5), date(2026, 7, 19)])

@@ -57,22 +57,39 @@ REQUIRED_ANSWER_ATTACKS = {
     "causal_claim",
 }
 REQUIRED_FRONTEND_COVERAGE = {
-    "administrator_query",
+    "desktop_question_and_evidence",
+    "mobile_full_screen",
     "refresh_restore",
-    "user_triggered_business_records",
-    "prefilled_months",
+    "store_switch_restore",
     "conversation_reset",
     "ordinary_user_hidden",
+    "desktop_1440x1000",
+    "mobile_390x844",
 }
 EXPECTED_FRONTEND_TEST_TITLES = {
-    "admin-complete-agent-flow": [
+    "desktop-question-and-evidence": [
+        "desktop Agent workspace keeps the investigation usable and accessible"
+    ],
+    "mobile-full-screen": [
+        "mobile home keeps a current investigation compact and continues it full-screen",
+        "mobile home starts an empty investigation and opens its full-screen result",
+    ],
+    "refresh-switch-reset": [
         "administrator restores, switches, and permanently clears a current investigation"
     ],
-    "business-records-action": [
-        "desktop business records action is user-triggered, prefills months, and does not overflow",
-        "mobile business records action is user-triggered, prefills months, and does not overflow",
-    ],
     "ordinary-user-agent-hidden": ["ordinary users cannot see or invoke the Agent"],
+}
+EXPECTED_HTTP_ACCEPTANCE_SCENARIO_IDS = {
+    "autonomous_broad_analysis",
+    "data_dependent_path",
+    "period_confirmation",
+    "follow_up_context",
+    "aggregate_drilldown",
+    "prompt_injection",
+    "free_evidence_answer",
+    "honest_partial_result",
+    "system_help_and_navigation",
+    "tool_failure_recovery",
 }
 EXPECTED_GOLD_AMOUNTS = {
     "monthly-total-gold": {
@@ -89,9 +106,10 @@ def _manifest() -> dict:
 
 def test_release_evaluation_manifest_is_complete_and_points_to_real_tests() -> None:
     manifest = _manifest()
-    assert manifest["schema_version"] == 1
+    assert manifest["schema_version"] == 2
     backend_cases = manifest["backend_cases"]
     frontend_cases = manifest["frontend_cases"]
+    http_scenarios = manifest["http_acceptance_scenarios"]
     assert len({case["id"] for case in [*backend_cases, *frontend_cases]}) == (
         len(backend_cases) + len(frontend_cases)
     )
@@ -155,6 +173,23 @@ def test_release_evaluation_manifest_is_complete_and_points_to_real_tests() -> N
     assert {
         case["id"]: case["test_titles"] for case in frontend_cases
     } == EXPECTED_FRONTEND_TEST_TITLES
+
+    assert {scenario["id"] for scenario in http_scenarios} == (
+        EXPECTED_HTTP_ACCEPTANCE_SCENARIO_IDS
+    )
+    assert len(http_scenarios) == 10
+    for scenario in http_scenarios:
+        assert HAN_TEXT.search(scenario["question"])
+        assert scenario["test_nodes"]
+        for test_node in scenario["test_nodes"]:
+            path_text, function_name = test_node.split("::", maxsplit=1)
+            assert path_text.startswith("tests/api/")
+            source_path = BACKEND_ROOT / path_text
+            assert re.search(
+                rf"^async def {re.escape(function_name)}\b",
+                source_path.read_text(encoding="utf-8"),
+                flags=re.MULTILINE,
+            ), scenario["id"]
 
 
 def test_ci_runs_the_fake_only_agent_release_veto_gate() -> None:
