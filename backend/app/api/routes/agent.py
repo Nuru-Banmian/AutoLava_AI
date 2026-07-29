@@ -1,7 +1,7 @@
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from starlette.responses import StreamingResponse
 
 from app.api.deps import (
@@ -16,11 +16,13 @@ from app.core.database import sqlite_short_write
 from app.models.agent import (
     AGENT_SYSTEM_SETTINGS_ID,
     AgentConversation,
+    AgentInvestigationCard,
     AgentSystemSettings,
 )
 from app.models.identity import User
 from app.schemas.agent import (
     AgentConversationResponse,
+    AgentInvestigationCardResponse,
     AgentMessageCreate,
     AgentMessageResponse,
     AgentSettingsPatch,
@@ -117,6 +119,17 @@ async def _conversation_payload(
 ) -> AgentConversationResponse:
     messages = await conversation_messages(session, conversation.id)
     latest_turn = await latest_conversation_turn(session, conversation.id)
+    cards = (
+        list(
+            await session.scalars(
+                select(AgentInvestigationCard)
+                .where(AgentInvestigationCard.turn_id == latest_turn.id)
+                .order_by(AgentInvestigationCard.id)
+            )
+        )
+        if latest_turn is not None
+        else []
+    )
     return AgentConversationResponse(
         conversation_id=conversation.id,
         store_id=conversation.store_id,
@@ -126,7 +139,16 @@ async def _conversation_payload(
             for message in messages
         ],
         latest_turn=(
-            AgentTurnResponse.model_validate(latest_turn, from_attributes=True)
+            AgentTurnResponse(
+                **AgentTurnResponse.model_validate(
+                    latest_turn,
+                    from_attributes=True,
+                ).model_dump(exclude={"investigation_cards"}),
+                investigation_cards=[
+                    AgentInvestigationCardResponse.from_record(card)
+                    for card in cards
+                ],
+            )
             if latest_turn is not None
             else None
         ),

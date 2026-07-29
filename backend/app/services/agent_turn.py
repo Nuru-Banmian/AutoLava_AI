@@ -3,6 +3,8 @@ from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import json
+import logging
 from typing import Any
 
 import httpx
@@ -10,8 +12,9 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import sqlite_short_write
-from app.models.agent import AgentMessage, AgentTurn
+from app.models.agent import AgentInvestigationCard, AgentMessage, AgentTurn
 from app.models.identity import Store
+from app.services.agent_calculation import calculate
 from app.services.agent_conversation import (
     AGENT_SCOPE_EXPLANATION,
     conversation_messages,
@@ -19,11 +22,22 @@ from app.services.agent_conversation import (
     is_business_scope_question,
     trusted_store_context,
 )
-from app.services.agent_model import AgentModelAdapter, ModelMessage
+from app.services.agent_data_tools import (
+    AgentDataToolRegistry,
+    DataToolContext,
+)
+from app.services.agent_model import (
+    AgentModelAdapter,
+    ModelMessage,
+    ModelResponse,
+    ModelTool,
+)
+from app.services.agent_skills import SkillCatalog
 
 TURN_FAILED_MESSAGE = "Agent 本轮处理失败，请稍后重试"
 TURN_INTERRUPTED_MESSAGE = "后端进程已重新启动，本轮未自动继续"
 _END = object()
+logger = logging.getLogger(__name__)
 
 SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 AdapterFactory = Callable[[], AgentModelAdapter]
@@ -72,6 +86,8 @@ class AgentTurnRuntime:
         self._session_factory = session_factory
         self._adapter_factory = adapter_factory
         self._turn_timeout_seconds = turn_timeout_seconds
+        self._data_tools = AgentDataToolRegistry(session_factory)
+        self._skills = SkillCatalog(self._data_tools.names)
         self._active: dict[tuple[int, int], _ActiveTurn] = {}
         self._starting: set[tuple[int, int]] = set()
         self._lock = asyncio.Lock()
@@ -163,6 +179,11 @@ class AgentTurnRuntime:
             if store is None:
                 raise RuntimeError("Agent current store disappeared")
             system_context = trusted_store_context(store)
+            system_context["content"] += (
+                "\n\n可按需加载的数据 Skill：\n"
+                f"{self._skills.summaries()}\n"
+                "先调用 load_skill 获取完整规则，再调用该 Skill 允许的数据工具。"
+            )
             conversation = await get_or_create_conversation(
                 session,
                 user_id=user_id,
@@ -241,38 +262,53 @@ class AgentTurnRuntime:
                         }
                     )
                     adapter = self._adapter_factory()
-                    emitted_answer_phase = False
-                    async for chunk in self._model_chunks(
-                        adapter,
-                        model_messages,
-                    ):
-                        if not chunk:
-                            continue
-                        if not emitted_answer_phase:
-                            for phase in (
-                                "processing_data",
-                                "preparing_answer",
-                            ):
-                                await active.events.put(
-                                    {
-                                        "type": "phase",
-                                        "turn_id": active.turn_id,
-                                        "phase": phase,
-                                    }
-                                )
-                            emitted_answer_phase = True
-                        chunks.append(chunk)
-                        await active.events.put(
-                            {
-                                "type": "answer_delta",
-                                "turn_id": active.turn_id,
-                                "delta": chunk,
-                            }
+                    cards: list[dict[str, Any]] = []
+                    if callable(getattr(adapter, "respond", None)):
+                        answer, cards = await self._run_tool_loop(
+                            adapter=adapter,
+                            active=active,
+                            model_messages=model_messages,
+                            user_id=key[0],
+                            store_id=key[1],
                         )
+                        chunks.append(answer)
+                    else:
+                        emitted_answer_phase = False
+                        async for chunk in self._model_chunks(
+                            adapter,
+                            model_messages,
+                        ):
+                            if not chunk:
+                                continue
+                            if not emitted_answer_phase:
+                                for phase in (
+                                    "processing_data",
+                                    "preparing_answer",
+                                ):
+                                    await active.events.put(
+                                        {
+                                            "type": "phase",
+                                            "turn_id": active.turn_id,
+                                            "phase": phase,
+                                        }
+                                    )
+                                emitted_answer_phase = True
+                            chunks.append(chunk)
+                            await active.events.put(
+                                {
+                                    "type": "answer_delta",
+                                    "turn_id": active.turn_id,
+                                    "delta": chunk,
+                                }
+                            )
                 answer = "".join(chunks).strip()
                 if not answer:
                     raise ValueError("Agent model returned an empty answer")
-                await self._persist_completion(active.turn_id, answer)
+                await self._persist_completion(
+                    active.turn_id,
+                    answer,
+                    cards=cards if direct_answer is None else (),
+                )
             await active.events.put(
                 {"type": "completed", "turn_id": active.turn_id}
             )
@@ -286,6 +322,7 @@ class AgentTurnRuntime:
             )
             raise
         except Exception:
+            logger.exception("Agent turn failed")
             await self._persist_failure_bounded(
                 active.turn_id,
                 status="failed",
@@ -303,6 +340,206 @@ class AgentTurnRuntime:
             async with self._lock:
                 if self._active.get(key) is active:
                     del self._active[key]
+
+    @staticmethod
+    def _model_tools() -> tuple[ModelTool, ...]:
+        return (
+            {
+                "type": "function",
+                "function": {
+                    "name": "load_skill",
+                    "description": "按名称加载一个数据 Skill 的完整规则。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"name": {"type": "string"}},
+                        "required": ["name"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "business_performance_summary",
+                    "description": "汇总 Agent 当前门店指定期间的经营表现。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "start": {"type": "string", "format": "date"},
+                            "end": {"type": "string", "format": "date"},
+                        },
+                        "required": ["start", "end"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "calculate",
+                    "description": "引用本轮结果或标明来源的字面量执行受限十进制计算。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "steps": {
+                                "type": "array",
+                                "items": {"type": "object"},
+                            }
+                        },
+                        "required": ["steps"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+        )
+
+    async def _run_tool_loop(
+        self,
+        *,
+        adapter: AgentModelAdapter,
+        active: _ActiveTurn,
+        model_messages: Sequence[ModelMessage],
+        user_id: int,
+        store_id: int,
+    ) -> tuple[str, list[dict[str, Any]]]:
+        messages = list(model_messages)
+        loaded_skills = {}
+        results: dict[str, dict[str, Any]] = {}
+        cards: list[dict[str, Any]] = []
+        result_number = 0
+        for _round in range(8):
+            response: ModelResponse = await adapter.respond(
+                messages,
+                self._model_tools(),
+            )
+            if not response.tool_calls:
+                answer = (response.content or "").strip()
+                if not answer:
+                    raise ValueError("Agent model returned an empty answer")
+                for phase in ("processing_data", "preparing_answer"):
+                    await active.events.put(
+                        {
+                            "type": "phase",
+                            "turn_id": active.turn_id,
+                            "phase": phase,
+                        }
+                    )
+                await active.events.put(
+                    {
+                        "type": "answer_delta",
+                        "turn_id": active.turn_id,
+                        "delta": answer,
+                    }
+                )
+                return answer, cards
+
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": response.content,
+                    "tool_calls": [
+                        {
+                            "id": call.id,
+                            "type": "function",
+                            "function": {
+                                "name": call.name,
+                                "arguments": json.dumps(
+                                    call.arguments,
+                                    ensure_ascii=False,
+                                    separators=(",", ":"),
+                                ),
+                            },
+                        }
+                        for call in response.tool_calls
+                    ],
+                }
+            )
+            for call in response.tool_calls:
+                if call.name == "load_skill":
+                    if set(call.arguments) != {"name"}:
+                        raise ValueError("数据 Skill 加载参数无效")
+                    skill = self._skills.load(str(call.arguments["name"]))
+                    loaded_skills[skill.name] = skill
+                    tool_result = {
+                        "name": skill.name,
+                        "instructions": skill.instructions,
+                        "allowed_data_tools": sorted(
+                            skill.allowed_data_tools
+                        ),
+                    }
+                elif call.name in self._data_tools.names:
+                    if not any(
+                        call.name in skill.allowed_data_tools
+                        for skill in loaded_skills.values()
+                    ):
+                        raise ValueError("数据工具未获得已加载 Skill 授权")
+                    result_number += 1
+                    result_id = f"result-{result_number}"
+                    tool_result = await self._data_tools.execute(
+                        call.name,
+                        call.arguments,
+                        context=DataToolContext(
+                            user_id=user_id,
+                            store_id=store_id,
+                        ),
+                        result_id=result_id,
+                    )
+                    results[result_id] = tool_result
+                    card = {
+                        "operation": "汇总经营表现",
+                        "range_start": tool_result["coverage"]["range_start"],
+                        "range_end": tool_result["coverage"]["range_end"],
+                        "filters": [],
+                        "status": (
+                            "empty"
+                            if tool_result["status"] == "empty"
+                            else "completed"
+                        ),
+                    }
+                    cards.append(card)
+                    await active.events.put(
+                        {
+                            "type": "investigation_card",
+                            "turn_id": active.turn_id,
+                            "card": card,
+                        }
+                    )
+                elif call.name == "calculate":
+                    if set(call.arguments) != {"steps"}:
+                        raise ValueError("派生计算参数无效")
+                    tool_result = calculate(
+                        call.arguments["steps"],
+                        results=results,
+                    )
+                    card = {
+                        "operation": "完成派生计算",
+                        "range_start": None,
+                        "range_end": None,
+                        "filters": [],
+                        "status": "completed",
+                    }
+                    cards.append(card)
+                    await active.events.put(
+                        {
+                            "type": "investigation_card",
+                            "turn_id": active.turn_id,
+                            "card": card,
+                        }
+                    )
+                else:
+                    raise ValueError("模型调用了未知工具")
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call.id,
+                        "content": json.dumps(
+                            tool_result,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        ),
+                    }
+                )
+        raise ValueError("Agent model loop exceeded its round limit")
 
     async def _finish_timed_out_turn(
         self,
@@ -409,7 +646,13 @@ class AgentTurnRuntime:
             return status == 429 or status >= 500
         return isinstance(exc, httpx.RequestError)
 
-    async def _persist_completion(self, turn_id: int, answer: str) -> None:
+    async def _persist_completion(
+        self,
+        turn_id: int,
+        answer: str,
+        *,
+        cards: Sequence[dict[str, Any]] = (),
+    ) -> None:
         async with self._session_factory() as session:
             turn = await session.get(AgentTurn, turn_id)
             if turn is None:
@@ -425,6 +668,21 @@ class AgentTurnRuntime:
                 )
                 session.add(assistant_message)
                 await session.flush()
+                for card in cards:
+                    session.add(
+                        AgentInvestigationCard(
+                            turn_id=turn_id,
+                            operation=card["operation"],
+                            range_start=card["range_start"],
+                            range_end=card["range_end"],
+                            filters_json=json.dumps(
+                                card["filters"],
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            ),
+                            status=card["status"],
+                        )
+                    )
                 turn.assistant_message_id = assistant_message.id
                 turn.status = "completed"
                 turn.error_message = None
@@ -450,8 +708,6 @@ class AgentTurnRuntime:
         self,
         active: _ActiveTurn,
     ) -> AsyncIterator[bytes]:
-        import json
-
         while True:
             event = await active.events.get()
             if event is _END:

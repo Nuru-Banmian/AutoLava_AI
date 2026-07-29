@@ -1,4 +1,5 @@
 from datetime import datetime
+import json
 
 from pydantic import BaseModel, Field
 
@@ -18,12 +19,33 @@ class AgentMessageResponse(BaseModel):
     created_at: datetime
 
 
+class AgentInvestigationCardResponse(BaseModel):
+    operation: str
+    range_start: str | None
+    range_end: str | None
+    filters: list[str]
+    status: str
+
+    @classmethod
+    def from_record(cls, record) -> "AgentInvestigationCardResponse":
+        return cls(
+            operation=record.operation,
+            range_start=record.range_start,
+            range_end=record.range_end,
+            filters=json.loads(record.filters_json),
+            status=record.status,
+        )
+
+
 class AgentTurnResponse(BaseModel):
     id: int
     status: str
     error_message: str | None
     started_at: datetime
     finished_at: datetime | None
+    investigation_cards: list[AgentInvestigationCardResponse] = Field(
+        default_factory=list
+    )
 
 
 class AgentConversationResponse(BaseModel):

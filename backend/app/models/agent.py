@@ -113,3 +113,30 @@ class AgentTurn(Base):
             name="status",
         ),
     )
+
+
+class AgentInvestigationCard(Base):
+    __tablename__ = "agent_investigation_cards"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    turn_id: Mapped[int] = mapped_column(
+        ForeignKey("agent_turns.id", ondelete="CASCADE"),
+        index=True,
+    )
+    operation: Mapped[str] = mapped_column(String(120))
+    range_start: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    range_end: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    filters_json: Mapped[str] = mapped_column(
+        Text,
+        default="[]",
+        server_default="[]",
+    )
+    status: Mapped[str] = mapped_column(String(16))
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "status in ('completed','empty','unavailable','failed')",
+            name="status",
+        ),
+    )
