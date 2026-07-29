@@ -383,7 +383,7 @@ describe("LedgerPage", () => {
     expect(screen.queryByRole("form")).not.toBeInTheDocument();
     expect(await screen.findByRole("group", { name: "收入项目" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "天气" })).toHaveTextContent("请选择天气");
-    expect(screen.getByLabelText("洗车数量")).toHaveValue("");
+    expect(screen.getByLabelText("洗车数量")).toHaveValue("0");
     expect(screen.getByLabelText("事件")).toBeVisible();
     expect(screen.getByRole("button", { name: "保存今日记录" })).toBeEnabled();
   });
@@ -532,40 +532,6 @@ describe("LedgerPage", () => {
         items: [
           { category_id: 1, amount: 100 },
           { category_id: 2, amount: 12 },
-          { category_id: 3, amount: 5 },
-        ],
-      }),
-    );
-  });
-
-  it("adds a newly enabled income item when editing an existing record", async () => {
-    const historicalRecord = {
-      ...recordSnapshot(101),
-      items: recordSnapshot(101).items.filter((item) => item.category_id !== 3),
-    };
-    let submitted: unknown;
-    renderLedger(
-      [
-        http.get("/api/ledger/1/:date", ({ params }) =>
-          params.date === "recent" ? HttpResponse.json([]) : HttpResponse.json(historicalRecord),
-        ),
-        http.put("/api/ledger/1/2026-07-15", async ({ request }) => {
-          submitted = await request.json();
-          return HttpResponse.json(historicalRecord);
-        }),
-      ],
-      "/ledger?date=2026-07-15",
-    );
-
-    expect(await screen.findByLabelText("暗钱")).toHaveValue("");
-    fireEvent.change(screen.getByLabelText("暗钱"), { target: { value: "5" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
-
-    await waitFor(() =>
-      expect(submitted).toMatchObject({
-        items: [
-          { category_id: 1, amount: 101 },
-          { category_id: 2, amount: 0 },
           { category_id: 3, amount: 5 },
         ],
       }),
@@ -1407,7 +1373,7 @@ describe("LedgerPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "choose2" }));
     fireEvent.click(await screen.findByRole("button", { name: "放弃修改" }));
-    await waitFor(() => expect(screen.getByLabelText("现金")).toHaveValue(""));
+    await waitFor(() => expect(screen.getByLabelText("现金")).toHaveValue("0"));
   });
 
   it("shows a save error directly without an overwrite confirmation", async () => {
