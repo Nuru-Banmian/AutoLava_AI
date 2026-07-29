@@ -383,7 +383,7 @@ describe("LedgerPage", () => {
     expect(screen.queryByRole("form")).not.toBeInTheDocument();
     expect(await screen.findByRole("group", { name: "收入项目" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "天气" })).toHaveTextContent("请选择天气");
-    expect(screen.getByLabelText("洗车数量")).toHaveValue("0");
+    expect(screen.getByLabelText("洗车数量")).toHaveValue("");
     expect(screen.getByLabelText("事件")).toBeVisible();
     expect(screen.getByRole("button", { name: "保存今日记录" })).toBeEnabled();
   });
@@ -1373,7 +1373,7 @@ describe("LedgerPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "choose2" }));
     fireEvent.click(await screen.findByRole("button", { name: "放弃修改" }));
-    await waitFor(() => expect(screen.getByLabelText("现金")).toHaveValue("0"));
+    await waitFor(() => expect(screen.getByLabelText("现金")).toHaveValue(""));
   });
 
   it("shows a save error directly without an overwrite confirmation", async () => {
