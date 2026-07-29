@@ -225,34 +225,63 @@ def test_domain_https_template_uses_tls_and_replaces_forwarded_client_ip() -> No
     assert "proxy_pass http://127.0.0.1:8080;" in config
 
 
-def test_ci_runs_backend_and_frontend_checks_without_containers() -> None:
+def test_ci_runs_parallel_deterministic_lanes_with_an_agent_seam() -> None:
     ci_text = read(".github/workflows/ci.yml")
     workflow = yaml.safe_load(ci_text)
     jobs = workflow["jobs"]
-    assert set(jobs) == {"backend", "frontend"}
+    lane_names = {
+        "backend-quality",
+        "backend-core",
+        "backend-agent",
+        "frontend-unit-build",
+        "frontend-e2e",
+    }
+    assert set(jobs) == lane_names | {"ci-gate"}
+    assert workflow["env"]["AUTOLAVA_DATABASE_PATH"] == "/tmp/autolava-ci.sqlite3"
 
-    backend = jobs["backend"]
-    frontend = jobs["frontend"]
-    backend_commands = [step["run"] for step in backend["steps"] if "run" in step]
-    frontend_commands = [step["run"] for step in frontend["steps"] if "run" in step]
+    def commands(job_name: str) -> list[str]:
+        return [step["run"] for step in jobs[job_name]["steps"] if "run" in step]
 
-    assert "services" not in backend
-    assert "services" not in frontend
-    assert backend["env"]["AUTOLAVA_DATABASE_PATH"] == "/tmp/autolava-ci.sqlite3"
-    assert any('pip install -e ".[dev]"' in command for command in backend_commands)
-    assert any("alembic upgrade head" in command for command in backend_commands)
-    assert any("ruff check ." in command for command in backend_commands)
-    assert any("pytest -n 2 --dist loadscope" in command for command in backend_commands)
-    assert any("--cov=app --cov-report=term-missing" in command for command in backend_commands)
+    for job_name in lane_names:
+        assert "services" not in jobs[job_name]
 
-    for contract in (
+    quality_commands = commands("backend-quality")
+    core_commands = commands("backend-core")
+    agent_commands = commands("backend-agent")
+    unit_commands = commands("frontend-unit-build")
+    e2e_commands = commands("frontend-e2e")
+    gate_commands = commands("ci-gate")
+
+    for backend_job in ("backend-quality", "backend-core", "backend-agent"):
+        assert any("uv sync --locked --extra dev" in command for command in commands(backend_job))
+
+    assert any("alembic upgrade head" in command for command in quality_commands)
+    assert any("ruff check ." in command for command in quality_commands)
+    assert any("--ignore=tests/agent" in command for command in core_commands)
+    assert any("--ignore-glob=tests/api/test_agent*.py" in command for command in core_commands)
+    assert any("tests/agent" in command for command in agent_commands)
+    assert any("tests/api/test_agent*.py" in command for command in agent_commands)
+    assert all(any(contract in command for command in unit_commands) for contract in (
         "npm ci",
         "npm test",
         "npm run build",
-        "playwright install --with-deps chromium",
+    ))
+    assert all(any(contract in command for command in e2e_commands) for contract in (
+        "npm ci",
         "npm run test:e2e",
-    ):
-        assert any(contract in command for command in frontend_commands)
+    ))
+    assert jobs["frontend-e2e"]["container"]["image"] == (
+        "mcr.microsoft.com/playwright:v1.61.1-noble"
+    )
+    assert "playwright install" not in ci_text
+
+    gate = jobs["ci-gate"]
+    assert set(gate["needs"]) == lane_names
+    assert gate["if"] == "${{ always() }}"
+    assert any("coverage combine" in command for command in gate_commands)
+    assert any("coverage report --fail-under=85" in command for command in gate_commands)
+    assert any("all(result == \"success\"" in command for command in gate_commands)
+    assert (ROOT / "backend" / "uv.lock").is_file()
 
 
 def test_ci_does_not_execute_container_release_or_runtime_checks() -> None:
