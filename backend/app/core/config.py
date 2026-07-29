@@ -46,7 +46,6 @@ class Settings(BaseSettings):
     fallback_model_thinking_parameters: dict[str, JsonValue] = Field(default_factory=dict)
     fallback_model_input_cost_per_million: float | None = None
     fallback_model_output_cost_per_million: float | None = None
-    agent_evidence_batch_limit: int = Field(default=1, ge=1, le=2)
     agent_investigation_max_model_calls: int = Field(default=4, ge=1, le=20)
     agent_investigation_max_tool_calls: int = Field(default=8, ge=1, le=50)
     agent_investigation_timeout_seconds: float = Field(default=90, gt=0, le=600)

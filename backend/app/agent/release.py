@@ -29,7 +29,6 @@ class ReleaseProfile(ClosedModel):
     max_output_tokens: int = Field(gt=0)
     input_cost_per_million: float = Field(gt=0)
     output_cost_per_million: float = Field(gt=0)
-    evidence_batch_limit: int = Field(gt=0)
     adapter_config_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
     @classmethod
@@ -44,7 +43,6 @@ class ReleaseProfile(ClosedModel):
             max_output_tokens=settings.model_max_output_tokens,
             input_cost_per_million=settings.model_input_cost_per_million,
             output_cost_per_million=settings.model_output_cost_per_million,
-            evidence_batch_limit=settings.agent_evidence_batch_limit,
             adapter_config_sha256=agent_adapter_config_sha256(settings),
         )
 
@@ -410,7 +408,6 @@ def agent_adapter_config_sha256(settings: Settings) -> str:
                     if fallback is not None
                     else None
                 ),
-                "evidence_batch_limit": settings.agent_evidence_batch_limit,
             }
         )
     encoded = json.dumps(

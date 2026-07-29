@@ -96,7 +96,6 @@ def test_compose_contains_exactly_api_and_web_with_persistent_sqlite_data() -> N
             "${AUTOLAVA_FALLBACK_MODEL_OUTPUT_COST_PER_MILLION:-0}"
         ),
         "AUTOLAVA_FALLBACK_MODEL_API_KEY": ("${AUTOLAVA_FALLBACK_MODEL_API_KEY:-}"),
-        "AUTOLAVA_AGENT_EVIDENCE_BATCH_LIMIT": ("${AUTOLAVA_AGENT_EVIDENCE_BATCH_LIMIT:-1}"),
         "AUTOLAVA_AGENT_INVESTIGATION_MAX_MODEL_CALLS": (
             "${AUTOLAVA_AGENT_INVESTIGATION_MAX_MODEL_CALLS:-4}"
         ),
@@ -306,7 +305,6 @@ def test_environment_example_and_readme_document_sqlite_release_operations() -> 
         "AUTOLAVA_MODEL_TIMEOUT_SECONDS",
         "AUTOLAVA_MODEL_MAX_OUTPUT_TOKENS",
         "AUTOLAVA_MODEL_API_KEY",
-        "AUTOLAVA_AGENT_EVIDENCE_BATCH_LIMIT",
         "AUTOLAVA_AGENT_INVESTIGATION_MAX_MODEL_CALLS",
         "AUTOLAVA_AGENT_INVESTIGATION_MAX_TOOL_CALLS",
         "AUTOLAVA_AGENT_INVESTIGATION_TIMEOUT_SECONDS",
@@ -370,18 +368,6 @@ def test_development_defaults_remain_available() -> None:
     settings = Settings(_env_file=None)
     assert settings.environment == "development"
     assert settings.agent_release_report_path is None
-
-
-def test_agent_evidence_batch_limit_is_configurable_within_the_fixed_graph() -> None:
-    assert (
-        Settings(
-            _env_file=None,
-            agent_evidence_batch_limit=2,
-        ).agent_evidence_batch_limit
-        == 2
-    )
-    with pytest.raises(ValidationError):
-        Settings(_env_file=None, agent_evidence_batch_limit=3)
 
 
 def test_nginx_enforces_a_bounded_login_rate_limit() -> None:

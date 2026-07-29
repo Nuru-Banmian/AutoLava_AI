@@ -1,10 +1,5 @@
-from app.agent.model import (
-    FakeModelAdapter,
-    ModelAdapter,
-    OpenAICompatibleModelAdapter,
-    OpenAICompatibleProfile,
-    ResilientModelAdapter,
-)
+from app.agent.model import OpenAICompatibleProfile
+from app.agent.native import FakeNativeToolModel, NativeToolModel
 from app.agent.native_model import (
     OpenAICompatibleNativeToolModel,
     ResilientNativeToolModel,
@@ -44,20 +39,9 @@ def configured_openai_profiles(
     return primary, fallback
 
 
-def create_model_adapter(settings: Settings) -> ModelAdapter:
+def create_native_model_adapter(settings: Settings) -> NativeToolModel:
     if settings.model_adapter == "fake":
-        return FakeModelAdapter()
-    primary_profile, fallback_profile = configured_openai_profiles(settings)
-    fallback = (
-        OpenAICompatibleModelAdapter(fallback_profile) if fallback_profile is not None else None
-    )
-    return ResilientModelAdapter(
-        OpenAICompatibleModelAdapter(primary_profile),
-        fallback=fallback,
-    )
-
-
-def create_native_model_adapter(settings: Settings) -> ResilientNativeToolModel:
+        return FakeNativeToolModel()
     primary_profile, fallback_profile = configured_openai_profiles(settings)
     fallback = (
         OpenAICompatibleNativeToolModel(fallback_profile) if fallback_profile is not None else None

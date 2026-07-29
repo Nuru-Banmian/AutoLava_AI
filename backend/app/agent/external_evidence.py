@@ -329,9 +329,6 @@ class ExternalEvidenceService:
                 ]
             },
             warnings=payload.limitations,
-            summary=(
-                f"历史天气外部证据覆盖 {len(requested_dates)} 个日期中的 {recorded_dates} 个日期。"
-            ),
         )
         self._store_cache(cache_key, evidence, queried_at)
         return evidence
@@ -456,10 +453,6 @@ class ExternalEvidenceService:
             failure=ExternalEvidenceFailure(status="none"),
             result={"holidays": holidays},
             warnings=warnings,
-            summary=(
-                f"公共假期外部证据覆盖 {start.year} 年 {start.month} 月，"
-                f"共 {len(holidays)} 个假期。"
-            ),
         )
         self._store_cache(cache_key, evidence, queried_at)
         return evidence
@@ -690,6 +683,5 @@ def _failed_evidence(
             },
             "result": {},
             "warnings": ["外部证据查询失败；未返回任何外部事实。"],
-            "summary": "外部经营证据暂时不可用。",
         }
     )

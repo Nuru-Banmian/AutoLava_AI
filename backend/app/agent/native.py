@@ -13,7 +13,7 @@ from decimal import Decimal
 from typing import Any, Literal, Protocol, TypeAlias, TypeVar
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError, model_validator
 
 from app.agent.answer_grounding import (
     GroundedEvidence,
@@ -44,8 +44,10 @@ from app.agent.contracts import (
     CurrentStoreScope,
     AverageRevenuePerCarResult,
     CategoryAmountResult,
+    BusinessEvidenceRequest,
     ClosedModel,
     DailyLedgerRevenueResult,
+    DailyLedgerResult,
     DailyLedgerDrilldownResult,
     DailyLedgerExtremeResult,
     EVIDENCE_METRIC_LABELS,
@@ -56,7 +58,6 @@ from app.agent.contracts import (
     EvidenceGroup,
     EvidenceMetric,
     EvidencePeriodResult,
-    EvidencePlan,
     EventInvestigationResult,
     ExternalEvidenceBundle,
     ExternalEvidenceFreshness,
@@ -112,6 +113,10 @@ EXPLICIT_CALENDAR_MONTH = re.compile(
     r"(?P<year>20\d{2}|21\d{2}|2200)\s*年\s*(?P<month>1[0-2]|0?[1-9])\s*月"
     r"(?!\s*(?:3[01]|[12]\d|0?[1-9])\s*日)"
 )
+EXPLICIT_CALENDAR_YEAR = re.compile(
+    r"(?P<year>20\d{2}|21\d{2}|2200)\s*年"
+    r"(?!\s*(?:1[0-2]|0?[1-9])\s*月)"
+)
 EXPLICIT_ISO_DATE = re.compile(
     r"(?P<year>20\d{2}|21\d{2}|2200)-(?P<month>1[0-2]|0[1-9])-"
     r"(?P<day>3[01]|[12]\d|0[1-9])"
@@ -128,6 +133,7 @@ EXPLICIT_SHORT_CHINESE_DATE_RANGE = re.compile(
     r"(?:至|到|[-—~～])\s*(?P<end_day>3[01]|[12]\d|0?[1-9])\s*日"
 )
 CURRENT_MONTH_PERIOD = re.compile(r"(?<!上)(?:本月|这个月|当月)")
+PREVIOUS_MONTH_TO_DATE_PERIOD = re.compile(r"(?:上月|上个月)同期")
 PREVIOUS_MONTH_PERIOD = re.compile(r"(?:上月|上个月)")
 AFFIRMATIVE_PERIOD_CONFIRMATION = re.compile(
     r"\s*(?:(?:好(?:的|啊)?|可以|确认|没错|没问题|对|是|行|嗯+)"
@@ -510,7 +516,7 @@ class NativeToolModel(Protocol):
 class NativeEvidenceCollector(Protocol):
     async def collect(
         self,
-        plan: EvidencePlan,
+        request: BusinessEvidenceRequest,
         context: RuntimeContext,
     ) -> object: ...
 
@@ -738,6 +744,10 @@ NATIVE_TOOLS = {
     ),
 }
 
+BUSINESS_EVIDENCE_REQUEST_ADAPTER: TypeAdapter[BusinessEvidenceRequest] = TypeAdapter(
+    BusinessEvidenceRequest
+)
+
 
 class FakeNativeToolModel:
     """Scriptable native-tool model used by high-level acceptance tests."""
@@ -745,7 +755,7 @@ class FakeNativeToolModel:
     def __init__(
         self,
         *,
-        turns: Iterable[NativeModelTurn | dict[str, Any]],
+        turns: Iterable[NativeModelTurn | dict[str, Any]] = (),
         before_turn: Callable[[], None] | None = None,
     ) -> None:
         self._turns = list(turns)
@@ -943,6 +953,7 @@ class NativeToolAgentService:
                     state,
                     collected,
                     reason="本轮调查已达到模型调用上限。",
+                    evidence_references=evidence_references,
                     retried=retried,
                     progress=progress,
                     pending_directions=[*failed_directions, *pending_directions],
@@ -962,6 +973,7 @@ class NativeToolAgentService:
                         state,
                         collected,
                         reason="本轮调查已达到总时间上限。",
+                        evidence_references=evidence_references,
                         retried=retried,
                         progress=progress,
                         pending_directions=[*failed_directions, *pending_directions],
@@ -978,6 +990,7 @@ class NativeToolAgentService:
                         state,
                         collected,
                         reason="本轮调查已达到模型调用上限。",
+                        evidence_references=evidence_references,
                         retried=retried,
                         progress=progress,
                         pending_directions=[*failed_directions, *pending_directions],
@@ -999,6 +1012,7 @@ class NativeToolAgentService:
                         state,
                         collected,
                         reason="本轮调查已达到总时间上限。",
+                        evidence_references=evidence_references,
                         retried=retried,
                         progress=progress,
                         pending_directions=[*failed_directions, *pending_directions],
@@ -1019,6 +1033,7 @@ class NativeToolAgentService:
                     return _model_failure_result(
                         state,
                         collected,
+                        evidence_references=evidence_references,
                         recoverable=error.category in RECOVERABLE_CATEGORIES,
                         retried=retried,
                         progress=progress,
@@ -1031,6 +1046,7 @@ class NativeToolAgentService:
                     state,
                     collected,
                     reason="本轮调查已达到 Token 上限。",
+                    evidence_references=evidence_references,
                     retried=retried,
                     progress=progress,
                     pending_directions=[*failed_directions, *_tool_directions(turn.tool_calls)],
@@ -1040,6 +1056,7 @@ class NativeToolAgentService:
                     state,
                     collected,
                     reason="本轮调查已达到费用上限。",
+                    evidence_references=evidence_references,
                     retried=retried,
                     progress=progress,
                     pending_directions=[*failed_directions, *_tool_directions(turn.tool_calls)],
@@ -1181,6 +1198,7 @@ class NativeToolAgentService:
                     state,
                     collected,
                     reason="本轮调查已达到工具调用上限。",
+                    evidence_references=evidence_references,
                     retried=retried,
                     progress=progress,
                     pending_directions=[
@@ -1332,6 +1350,7 @@ class NativeToolAgentService:
                     state,
                     collected,
                     reason="本轮调查已达到总时间上限。",
+                    evidence_references=evidence_references,
                     retried=retried,
                     progress=progress,
                     pending_directions=[
@@ -1345,6 +1364,7 @@ class NativeToolAgentService:
                     state,
                     collected,
                     reason="本轮调查已达到工具调用上限。",
+                    evidence_references=evidence_references,
                     retried=retried,
                     progress=progress,
                     pending_directions=[
@@ -1548,7 +1568,7 @@ class NativeToolAgentService:
             if value is not None:
                 request[field] = value
         try:
-            plan = EvidencePlan.model_validate({"requests": [request]})
+            business_request = BUSINESS_EVIDENCE_REQUEST_ADAPTER.validate_python(request)
         except ValidationError as error:
             raise NativeToolAccessDenied("native tool call is not authorized") from error
         tool_retried = False
@@ -1556,7 +1576,10 @@ class NativeToolAgentService:
         for retry_number in range(self.limits.retry_attempts + 1):
             tool_budget.reserve()
             try:
-                business_evidence = await self.evidence_collector.collect(plan, fresh_context)
+                business_evidence = await self.evidence_collector.collect(
+                    business_request,
+                    fresh_context,
+                )
                 break
             except NativeToolAccessDenied:
                 raise
@@ -2159,11 +2182,14 @@ def _partial_agent_result(
     collected: Sequence[NativeCollectedEvidence],
     *,
     reason: str,
+    evidence_references: Sequence[ConversationEvidenceReference] | None = None,
     retried: bool = False,
     progress: Sequence[InvestigationProgress] = (),
     pending_directions: Sequence[str] = (),
 ) -> AgentRunResult:
-    verified = list(dict.fromkeys(evidence.summary.strip() for evidence in collected))
+    verified = list(
+        dict.fromkeys(fact for evidence in collected for fact in _partial_verified_facts(evidence))
+    )
     incomplete = list(dict.fromkeys(pending_directions)) or ["后续证据核对与最终综合"]
     unknowns = [f"{direction}目前无法根据已返回证据判断" for direction in incomplete]
     partial = InvestigationPartial(
@@ -2175,6 +2201,7 @@ def _partial_agent_result(
         state,
         collected,
         content=reason,
+        evidence_references=evidence_references,
         retried=retried,
         progress=[
             *progress,
@@ -2182,6 +2209,81 @@ def _partial_agent_result(
         ],
         partial=partial,
     )
+
+
+def _partial_verified_facts(evidence: NativeCollectedEvidence) -> list[str]:
+    period = f"{evidence.period.start.isoformat()} 至 {evidence.period.end.isoformat()}"
+    if isinstance(evidence, SettlementDetailsEvidenceBundle):
+        if evidence.status != "ok" or not evidence.result.companies:
+            return []
+        facts: list[str] = []
+        if evidence.query_scope.status in {None, "pending"}:
+            facts.append(f"{period} 待到账公司结算金额：{evidence.result.pending_amount} EUR")
+        if evidence.query_scope.status in {None, "confirmed"}:
+            facts.append(f"{period} 已确认公司结算收入：{evidence.result.confirmed_amount} EUR")
+        return facts
+    if isinstance(evidence, ExternalEvidenceBundle):
+        rows = evidence.result.get(
+            "days" if evidence.evidence_type == "historical_weather" else "holidays",
+            [],
+        )
+        if not isinstance(rows, list):
+            return []
+        external_facts = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            value = (
+                row.get("weather")
+                if evidence.evidence_type == "historical_weather"
+                else row.get("local_name") or row.get("name")
+            )
+            if row.get("date") and isinstance(value, str):
+                external_facts.append(
+                    f"{row['date']} {_evidence_label(evidence)}：{value}（来源：{evidence.source}）"
+                )
+        return external_facts
+
+    label = _evidence_label(evidence)
+    if isinstance(evidence.result, GroupedMetricResult):
+        return [
+            f"{period} {label}（{row.label}）：{row.value} {evidence.unit}"
+            for row in evidence.result.rows
+            if row.value is not None
+        ]
+    if isinstance(evidence.result, DailyLedgerExtremeResult):
+        if evidence.result.daily_ledger_revenue is None:
+            return []
+        extreme_label = "最高" if evidence.result.extreme == "highest" else "最低"
+        return [
+            f"{value.isoformat()} {extreme_label}{label}："
+            f"{evidence.result.daily_ledger_revenue} {evidence.unit}"
+            for value in evidence.result.dates
+        ]
+    if isinstance(evidence.result, DailyLedgerResult):
+        if evidence.result.facts is None:
+            return []
+        ledger_facts = evidence.result.facts
+        verified = [
+            f"{ledger_facts.date.isoformat()} 每日台账营业额：{ledger_facts.daily_revenue} EUR",
+            f"{ledger_facts.date.isoformat()} 营业状态：{ledger_facts.operating_status}",
+        ]
+        if ledger_facts.recorded_weather is not None:
+            verified.append(
+                f"{ledger_facts.date.isoformat()} 记录天气：{ledger_facts.recorded_weather}"
+            )
+        if ledger_facts.wash_count is not None:
+            verified.append(
+                f"{ledger_facts.date.isoformat()} 洗车数量：{ledger_facts.wash_count} car"
+            )
+        return verified
+    if isinstance(evidence.result, CategoryAmountResult):
+        return [f"{period} {label}：{evidence.result.amount} {evidence.unit}"]
+    result = evidence.result.model_dump(mode="json")
+    metric_value = result.get(evidence.metric.value)
+    if isinstance(metric_value, (int, float)) and not isinstance(metric_value, bool):
+        return [f"{period} {label}：{metric_value} {evidence.unit}"]
+    return []
 
 
 def _tool_directions(calls: Sequence[NativeToolCall]) -> list[str]:
@@ -2239,6 +2341,7 @@ def _model_failure_result(
     state: ConversationState,
     collected: Sequence[NativeCollectedEvidence],
     *,
+    evidence_references: Sequence[ConversationEvidenceReference],
     recoverable: bool,
     retried: bool,
     progress: Sequence[InvestigationProgress],
@@ -2253,6 +2356,7 @@ def _model_failure_result(
             state,
             collected,
             reason=reason,
+            evidence_references=evidence_references,
             retried=retried,
             progress=progress,
         )
@@ -2423,7 +2527,17 @@ def _explicit_period(
             context=context,
             now=now,
         )
+    year_match = EXPLICIT_CALENDAR_YEAR.search(user_message)
+    if year_match is not None:
+        year = int(year_match.group("year"))
+        return InferredPeriod(start=date(year, 1, 1), end=date(year, 12, 31))
     local_today = now.astimezone(ZoneInfo(context.store_timezone)).date()
+    if PREVIOUS_MONTH_TO_DATE_PERIOD.search(user_message):
+        previous_month_end = date.fromordinal(local_today.replace(day=1).toordinal() - 1)
+        return InferredPeriod(
+            start=previous_month_end.replace(day=1),
+            end=previous_month_end.replace(day=min(local_today.day, previous_month_end.day)),
+        )
     if PREVIOUS_MONTH_PERIOD.search(user_message):
         previous_month_end = date.fromordinal(local_today.replace(day=1).toordinal() - 1)
         return _period_from_argument_values(

@@ -76,9 +76,8 @@ fallback equivalents) to estimate cost in conversation-free run statistics.
 
 Production Agent access also requires a passing, redacted 2 GB release report at
 `AUTOLAVA_AGENT_RELEASE_REPORT_PATH`. The report is evaluated against the exact provider, model,
-fallback order, `AUTOLAVA_MODEL_TIMEOUT_SECONDS`, `AUTOLAVA_MODEL_MAX_OUTPUT_TOKENS`,
-and `AUTOLAVA_AGENT_EVIDENCE_BATCH_LIMIT` (one normal batch, optionally one targeted supplemental
-batch), plus the immutable deployed image digest in `AUTOLAVA_AGENT_RUNTIME_IMAGE_DIGEST`.
+fallback order, `AUTOLAVA_MODEL_TIMEOUT_SECONDS`, and `AUTOLAVA_MODEL_MAX_OUTPUT_TOKENS`, plus the
+immutable deployed image digest in `AUTOLAVA_AGENT_RUNTIME_IMAGE_DIGEST`.
 Autonomous investigations are independently bounded by
 `AUTOLAVA_AGENT_INVESTIGATION_MAX_MODEL_CALLS`,
 `AUTOLAVA_AGENT_INVESTIGATION_MAX_TOOL_CALLS`,
