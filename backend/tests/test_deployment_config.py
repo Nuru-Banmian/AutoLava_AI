@@ -273,6 +273,10 @@ def test_ci_runs_parallel_deterministic_lanes_with_an_agent_seam() -> None:
     assert jobs["frontend-e2e"]["container"]["image"] == (
         "mcr.microsoft.com/playwright:v1.61.1-noble"
     )
+    e2e_setup_node = next(
+        step for step in jobs["frontend-e2e"]["steps"] if step.get("uses") == "actions/setup-node@v7"
+    )
+    assert e2e_setup_node["with"]["node-version"] == "22"
     assert "playwright install" not in ci_text
 
     gate = jobs["ci-gate"]
