@@ -5,7 +5,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
-from app.agent.service import create_agent_service
 from app.api.routes.dashboard import RefreshLimiter
 from app.core.config import get_settings
 from app.core.database import async_session_factory
@@ -60,7 +59,6 @@ def create_app() -> FastAPI:
     app.state.weather_service = weather_service
     app.state.dashboard_refresh_limiter = RefreshLimiter()
     app.state.background_refresh_scheduler = scheduler
-    app.state.agent_service = create_agent_service(settings, async_session_factory)
     if maintenance_scheduler is not None:
         # Retention is chained after every backup attempt, so both names expose
         # the same single 03:00 lifecycle owner.

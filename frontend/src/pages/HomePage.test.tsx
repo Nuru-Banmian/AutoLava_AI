@@ -53,24 +53,15 @@ it("clears a refresh error when the selected store changes", async () => {
   fireEvent.click(screen.getByRole("button", { name: "choose2" })); await screen.findByRole("button", { name: "刷新简报" }); expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
-it("places the Agent after briefing cards for administrators only", async () => {
+it("does not expose the retired Agent interface to administrators", async () => {
   vi.mocked(useAuth).mockReturnValue({ user: { id: 1, username: "admin", role: "admin", is_owner: false } } as ReturnType<typeof useAuth>);
   server.use(
     http.get("/api/stores/accessible", () => HttpResponse.json([{ id: 1, name: "Roma", timezone: "Europe/Rome" }])),
     http.get("/api/dashboard/1", () => HttpResponse.json([])),
-    http.get("/api/agent/status", () => HttpResponse.json({ enabled: true })),
-    http.get("/api/agent/stores/1/conversation", () => HttpResponse.json({
-      id: null,
-      messages: [],
-      state: { confirmed_period: null, metrics: [], filters: {}, comparison: null, pending_clarifications: [] },
-      created_at: null,
-      updated_at: null,
-    })),
   );
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<MemoryRouter><QueryClientProvider client={client}><StoreProvider><HomePage /></StoreProvider></QueryClientProvider></MemoryRouter>);
 
-  const agent = await screen.findByRole("region", { name: "门店 Agent" });
-  const briefing = screen.getByRole("region", { name: "每日简报" });
-  expect(briefing.compareDocumentPosition(agent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(await screen.findByRole("region", { name: "每日简报" })).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "门店 Agent" })).not.toBeInTheDocument();
 });

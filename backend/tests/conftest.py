@@ -22,7 +22,6 @@ from app.models.base import Base
 from app.models.identity import Store, User
 from app.services.weather import OpenMeteoProvider, WeatherService
 import app.models.ledger  # noqa: F401
-import app.models.agent  # noqa: F401
 import app.models.operations  # noqa: F401
 import app.models.settlement  # noqa: F401
 

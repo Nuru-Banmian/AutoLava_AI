@@ -21,12 +21,6 @@ EXPECTED_TABLES = {
     "settlement_companies",
     "settlement_records",
     "settlement_audit_events",
-    "agent_settings",
-    "agent_conversations",
-    "agent_messages",
-    "agent_evidence",
-    "agent_run_stats",
-    "agent_alerts",
 }
 
 
@@ -55,26 +49,6 @@ def test_blank_sqlite_file_migrates_to_final_schema(tmp_path: Path) -> None:
         assert store_columns["company_settlement_enabled"][3] == 1
         assert store_columns["wash_count_enabled"][4].strip("'") == "1"
         assert store_columns["wash_count_enabled"][3] == 1
-        agent_columns = {
-            row[1]: row
-            for row in connection.execute("PRAGMA table_info('agent_settings')")
-        }
-        assert agent_columns["enabled"][4].strip("'") == "0"
-        assert agent_columns["enabled"][3] == 1
-        conversation_indexes = {
-            name
-            for _, name, is_unique, *_ in connection.execute(
-                "PRAGMA index_list('agent_conversations')"
-            )
-            if is_unique
-        }
-        assert conversation_indexes
-        message_columns = {
-            row[1]: row
-            for row in connection.execute("PRAGMA table_info('agent_messages')")
-        }
-        assert message_columns["action"][3] == 0
-
         index_names = {
             name
             for _, name, is_unique, *_ in connection.execute(
@@ -274,11 +248,90 @@ def test_applied_revision_0004_upgrades_without_losing_existing_data(tmp_path: P
 
     with closing(sqlite3.connect(database_path)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0008",
+            "0009",
         )
-        assert connection.execute(
-            "SELECT enabled FROM agent_settings WHERE id = 1"
-        ).fetchone() is None
         assert connection.execute("SELECT username FROM users").fetchall() == [
             ("existing-admin",)
         ]
+
+
+def test_legacy_agent_data_is_deleted_without_touching_business_data(tmp_path: Path) -> None:
+    database_path = tmp_path / "legacy-agent.sqlite3"
+    environment = os.environ | {"AUTOLAVA_DATABASE_PATH": str(database_path)}
+    backend = Path(__file__).parents[1]
+
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "0008"],
+        cwd=backend,
+        env=environment,
+        check=True,
+    )
+    with closing(sqlite3.connect(database_path)) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(
+            "INSERT INTO users (username, password_hash, role, is_active) VALUES (?, ?, ?, ?)",
+            ("existing-admin", "hash", "admin", 1),
+        )
+        connection.execute(
+            """
+            INSERT INTO stores (
+                name, address, latitude, longitude, timezone, is_active,
+                income_items_enabled
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("Existing", "Address", 45, 9, "Europe/Rome", 1, 0),
+        )
+        connection.execute(
+            """
+            INSERT INTO store_daily_records (
+                store_id, date, daily_revenue, income_mode, is_open,
+                weather_edited, scanned, created_by, updated_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (1, "2026-07-28", 940, "legacy_total", "营业", 0, 0, 1, 1),
+        )
+        connection.execute(
+            "INSERT INTO agent_settings (id, enabled) VALUES (?, ?)",
+            (1, 1),
+        )
+        connection.execute(
+            "INSERT INTO agent_conversations (user_id, store_id, state) VALUES (?, ?, ?)",
+            (1, 1, "{}"),
+        )
+        connection.execute(
+            "INSERT INTO agent_messages (conversation_id, role, content) VALUES (?, ?, ?)",
+            (1, "user", "legacy"),
+        )
+        connection.commit()
+
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=backend,
+        env=environment,
+        check=True,
+    )
+
+    with closing(sqlite3.connect(database_path)) as connection:
+        tables = {
+            name
+            for (name,) in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        assert not tables.intersection(
+            {
+                "agent_settings",
+                "agent_conversations",
+                "agent_messages",
+                "agent_evidence",
+                "agent_run_stats",
+                "agent_alerts",
+            }
+        )
+        assert connection.execute("SELECT username FROM users").fetchall() == [
+            ("existing-admin",)
+        ]
+        assert connection.execute(
+            "SELECT date, daily_revenue FROM store_daily_records"
+        ).fetchall() == [("2026-07-28", 940)]
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []

@@ -1,7 +1,6 @@
 import { useSearchParams } from "react-router-dom";
 
 import { AdminLayout, isAdminTab, type AdminTab } from "@/admin/AdminLayout";
-import { AgentSettingsPanel } from "@/admin/AgentSettingsPanel";
 import { DatabaseBackupPanel } from "@/admin/DatabaseBackupPanel";
 import { StoreWorkspace } from "@/admin/StoreWorkspace";
 import { SystemStatusPanel } from "@/admin/SystemStatusPanel";
@@ -29,7 +28,6 @@ export function AdminPage() {
     stores: <StoreWorkspace />,
     users: <UsersPanel />,
     status: <>
-      <AgentSettingsPanel isOwner={Boolean(user?.is_owner)} />
       <SystemStatusPanel />
       {user?.is_owner && <DatabaseBackupPanel />}
     </>,

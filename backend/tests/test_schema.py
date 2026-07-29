@@ -1,7 +1,6 @@
 from sqlalchemy.dialects import sqlite
 
 from app.models.base import Base
-import app.models.agent  # noqa: F401
 import app.models.identity  # noqa: F401
 import app.models.ledger  # noqa: F401
 import app.models.operations  # noqa: F401
@@ -22,12 +21,6 @@ def test_final_tables_are_registered() -> None:
         "settlement_companies",
         "settlement_records",
         "settlement_audit_events",
-        "agent_settings",
-        "agent_conversations",
-        "agent_messages",
-        "agent_evidence",
-        "agent_run_stats",
-        "agent_alerts",
     }
 
 
@@ -54,17 +47,6 @@ def test_final_schema_columns_and_money_types() -> None:
     stores = Base.metadata.tables["stores"].c
     assert "income_items_enabled" in stores
     assert "company_settlement_enabled" in stores
-
-    agent_settings = Base.metadata.tables["agent_settings"].c
-    assert agent_settings.enabled.server_default is not None
-    conversations = Base.metadata.tables["agent_conversations"]
-    assert {c.name for c in conversations.constraints} >= {
-        "uq_agent_conversations_user_store"
-    }
-    assert conversations.c.state.type.compile(dialect=sqlite.dialect()) == "JSON"
-    messages = Base.metadata.tables["agent_messages"].c
-    assert messages.action.type.compile(dialect=sqlite.dialect()) == "JSON"
-    assert messages.action.nullable
 
     records = Base.metadata.tables["store_daily_records"].c
     assert "income_config_version_id" not in records

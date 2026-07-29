@@ -67,43 +67,6 @@ def test_compose_contains_exactly_api_and_web_with_persistent_sqlite_data() -> N
         "AUTOLAVA_COOKIE_SECURE": "${AUTOLAVA_COOKIE_SECURE:-true}",
         "AUTOLAVA_BOOTSTRAP_USERNAME": "${AUTOLAVA_BOOTSTRAP_USERNAME}",
         "AUTOLAVA_BOOTSTRAP_PASSWORD": "${AUTOLAVA_BOOTSTRAP_PASSWORD}",
-        "AUTOLAVA_MODEL_ADAPTER": "${AUTOLAVA_MODEL_ADAPTER:-fake}",
-        "AUTOLAVA_MODEL_PROVIDER": "${AUTOLAVA_MODEL_PROVIDER:-primary}",
-        "AUTOLAVA_MODEL_BASE_URL": "${AUTOLAVA_MODEL_BASE_URL:-}",
-        "AUTOLAVA_MODEL_ID": "${AUTOLAVA_MODEL_ID:-}",
-        "AUTOLAVA_MODEL_STRUCTURED_OUTPUT_METHOD": (
-            "${AUTOLAVA_MODEL_STRUCTURED_OUTPUT_METHOD:-json_schema}"
-        ),
-        "AUTOLAVA_MODEL_THINKING_PARAMETERS": "${AUTOLAVA_MODEL_THINKING_PARAMETERS:-{}}",
-        "AUTOLAVA_MODEL_INPUT_COST_PER_MILLION": (
-            "${AUTOLAVA_MODEL_INPUT_COST_PER_MILLION:-0}"
-        ),
-        "AUTOLAVA_MODEL_OUTPUT_COST_PER_MILLION": (
-            "${AUTOLAVA_MODEL_OUTPUT_COST_PER_MILLION:-0}"
-        ),
-        "AUTOLAVA_MODEL_API_KEY": "${AUTOLAVA_MODEL_API_KEY:-}",
-        "AUTOLAVA_FALLBACK_MODEL_PROVIDER": (
-            "${AUTOLAVA_FALLBACK_MODEL_PROVIDER:-fallback}"
-        ),
-        "AUTOLAVA_FALLBACK_MODEL_BASE_URL": (
-            "${AUTOLAVA_FALLBACK_MODEL_BASE_URL:-}"
-        ),
-        "AUTOLAVA_FALLBACK_MODEL_ID": "${AUTOLAVA_FALLBACK_MODEL_ID:-}",
-        "AUTOLAVA_FALLBACK_MODEL_STRUCTURED_OUTPUT_METHOD": (
-            "${AUTOLAVA_FALLBACK_MODEL_STRUCTURED_OUTPUT_METHOD:-json_schema}"
-        ),
-        "AUTOLAVA_FALLBACK_MODEL_THINKING_PARAMETERS": (
-            "${AUTOLAVA_FALLBACK_MODEL_THINKING_PARAMETERS:-{}}"
-        ),
-        "AUTOLAVA_FALLBACK_MODEL_INPUT_COST_PER_MILLION": (
-            "${AUTOLAVA_FALLBACK_MODEL_INPUT_COST_PER_MILLION:-0}"
-        ),
-        "AUTOLAVA_FALLBACK_MODEL_OUTPUT_COST_PER_MILLION": (
-            "${AUTOLAVA_FALLBACK_MODEL_OUTPUT_COST_PER_MILLION:-0}"
-        ),
-        "AUTOLAVA_FALLBACK_MODEL_API_KEY": (
-            "${AUTOLAVA_FALLBACK_MODEL_API_KEY:-}"
-        ),
     }
     assert api["volumes"] == ["autolava_data:/data"]
     assert "ports" not in api
@@ -225,14 +188,13 @@ def test_domain_https_template_uses_tls_and_replaces_forwarded_client_ip() -> No
     assert "proxy_pass http://127.0.0.1:8080;" in config
 
 
-def test_ci_runs_parallel_deterministic_lanes_with_an_agent_seam() -> None:
+def test_ci_runs_parallel_deterministic_lanes() -> None:
     ci_text = read(".github/workflows/ci.yml")
     workflow = yaml.safe_load(ci_text)
     jobs = workflow["jobs"]
     lane_names = {
         "backend-quality",
         "backend-core",
-        "backend-agent",
         "frontend-unit-build",
         "frontend-e2e",
     }
@@ -247,20 +209,16 @@ def test_ci_runs_parallel_deterministic_lanes_with_an_agent_seam() -> None:
 
     quality_commands = commands("backend-quality")
     core_commands = commands("backend-core")
-    agent_commands = commands("backend-agent")
     unit_commands = commands("frontend-unit-build")
     e2e_commands = commands("frontend-e2e")
     gate_commands = commands("ci-gate")
 
-    for backend_job in ("backend-quality", "backend-core", "backend-agent"):
+    for backend_job in ("backend-quality", "backend-core"):
         assert any("uv sync --locked --extra dev" in command for command in commands(backend_job))
 
     assert any("alembic upgrade head" in command for command in quality_commands)
     assert any("ruff check ." in command for command in quality_commands)
-    assert any("--ignore=tests/agent" in command for command in core_commands)
-    assert any("--ignore-glob=tests/api/test_agent*.py" in command for command in core_commands)
-    assert any("tests/agent" in command for command in agent_commands)
-    assert any("tests/api/test_agent*.py" in command for command in agent_commands)
+    assert any("pytest" in command for command in core_commands)
     assert all(any(contract in command for command in unit_commands) for contract in (
         "npm ci",
         "npm test",
@@ -312,14 +270,8 @@ def test_environment_example_and_readme_document_sqlite_release_operations() -> 
         "AUTOLAVA_COOKIE_SECURE",
         "AUTOLAVA_BOOTSTRAP_USERNAME",
         "AUTOLAVA_BOOTSTRAP_PASSWORD",
-        "AUTOLAVA_MODEL_ADAPTER",
-        "AUTOLAVA_MODEL_BASE_URL",
-        "AUTOLAVA_MODEL_ID",
-        "AUTOLAVA_MODEL_STRUCTURED_OUTPUT_METHOD",
-        "AUTOLAVA_MODEL_API_KEY",
     ):
         assert f"{key}=" in environment
-    assert "AUTOLAVA_MODEL_API_KEY=\n" in environment
     assert "AUTOLAVA_DATABASE_PATH=" not in environment
     assert "AUTOLAVA_BACKUP_DIRECTORY=" not in environment
     assert "development-only-secret" not in environment

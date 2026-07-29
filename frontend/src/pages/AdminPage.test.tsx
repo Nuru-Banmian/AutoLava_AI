@@ -17,7 +17,6 @@ const emptyLists = [
   http.get("/api/admin/stores", () => HttpResponse.json([])),
   http.get("/api/admin/alerts", () => HttpResponse.json([])),
   http.get("/api/admin/task-logs", () => HttpResponse.json([])),
-  http.get("/api/admin/agent-settings", () => HttpResponse.json({ enabled: false })),
 ];
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));

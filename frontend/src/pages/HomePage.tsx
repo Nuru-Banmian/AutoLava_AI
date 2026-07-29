@@ -2,8 +2,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { api, ApiError } from "@/api/client";
 import type { BriefingCard } from "@/api/types";
-import { useAuth } from "@/auth/AuthProvider";
-import { AgentPanel } from "@/components/AgentPanel";
 import { BriefingCards } from "@/components/BriefingCards";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { dashboardKey } from "@/lib/user-api";
@@ -22,7 +20,6 @@ function addDays(value: string, amount: number) {
 }
 
 export function HomePage() {
-  const { user } = useAuth();
   const { selected } = useStore(); const client = useQueryClient();
   const query = useQuery({ queryKey: selected ? dashboardKey(selected.id) : ["dashboard", "none"], enabled: Boolean(selected), queryFn: () => api<BriefingCard[]>(`/dashboard/${selected!.id}`) });
   const refresh = useMutation({ mutationFn: (storeId: number) => api<BriefingCard[]>(`/dashboard/${storeId}/refresh`, { method: "POST" }), onSuccess: async (cards, storeId) => { client.setQueryData(dashboardKey(storeId), cards); await client.invalidateQueries({ queryKey: dashboardKey(storeId), exact: true }); } });
@@ -31,7 +28,6 @@ export function HomePage() {
   const today = dateInTimezone(selected.timezone);
   return <section className="grid gap-4"><header><h1 className="text-2xl font-semibold">仪表盘</h1></header>
     {query.isLoading && !query.data ? <p role="status">加载简报…</p> : query.error && !query.data ? <p role="alert">{query.error.message}</p> : <section aria-label="每日简报"><BriefingCards cards={query.data ?? []} yesterdayHref={`/ledger?date=${addDays(today, -1)}`} /></section>}
-    {user?.role === "admin" && <AgentPanel key={selected.id} storeId={selected.id} timezone={selected.timezone} />}
     {selected.is_active !== false ? <div className="flex flex-wrap gap-2"><a className={buttonVariants()} href={`/ledger?date=${today}`}>立即记账</a><Button variant="outline" disabled={refresh.isPending} onClick={() => refresh.mutate(selected.id)}>刷新简报</Button></div> : <p role="status">该门店已归档，仅可查看历史数据和经营分析。</p>}
     {refresh.error && refresh.variables === selected.id && <p role="alert">{refresh.error instanceof ApiError ? refresh.error.detail : "刷新失败"}</p>}
   </section>;
