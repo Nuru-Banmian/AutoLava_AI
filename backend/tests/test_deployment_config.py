@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import tomllib
 
+import fastapi
 import pytest
 from pydantic import ValidationError
 import yaml
@@ -364,3 +365,36 @@ def test_nginx_enforces_a_bounded_login_rate_limit() -> None:
     assert "limit_req zone=login burst=10 nodelay;" in nginx
     assert "limit_req_status 429;" in nginx
     assert "127.0.0.1:80" in read("README.md")
+
+
+def test_only_agent_message_stream_disables_proxy_buffering() -> None:
+    route = r"location ~ ^/api/agent/stores/[0-9]+/messages$"
+    for relative, closing_indent in (
+        ("frontend/nginx.conf", "  "),
+        ("deploy/nginx/d-washpilot.https.conf", "    "),
+    ):
+        config = read(relative)
+        assert config.count(route) == 1
+        block = config.split(route, 1)[1].split(
+            f"\n{closing_indent}}}",
+            1,
+        )[0]
+        assert "proxy_buffering off;" in block
+        assert "proxy_read_timeout 150s;" in block
+        assert "proxy_send_timeout 150s;" in block
+        assert config.count("proxy_buffering off;") == 1
+        assert config.count("proxy_read_timeout 150s;") == 1
+        assert config.count("proxy_send_timeout 150s;") == 1
+
+    general_api = read("frontend/nginx.conf").split(
+        "location /api/ {",
+        1,
+    )[1].split("\n  }", 1)[0]
+    assert "proxy_buffering" not in general_api
+    assert "proxy_read_timeout" not in general_api
+    assert "proxy_send_timeout" not in general_api
+
+
+def test_fastapi_version_is_pinned_for_streaming_response_support() -> None:
+    assert fastapi.__version__ == "0.141.0"
+    assert 'version = "0.141.0"' in read("backend/uv.lock")

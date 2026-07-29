@@ -255,6 +255,165 @@ describe("App", () => {
     expect(screen.getByText("还没有消息，可以从当前门店的经营问题开始。")).toBeInTheDocument();
   });
 
+  it("renders each controlled Agent stream phase, answer chunk, and completion", async () => {
+    let releaseStream: (() => void) | null = null;
+    const pauseStream = () => new Promise<void>((resolve) => {
+      releaseStream = () => {
+        releaseStream = null;
+        resolve();
+      };
+    });
+    const advanceStream = async () => {
+      await waitFor(() => expect(releaseStream).not.toBeNull());
+      releaseStream?.();
+    };
+    server.use(
+      http.get("/api/agent/stores/1", () => HttpResponse.json({
+        store_id: 1,
+        store_name: "总店",
+      })),
+      http.get("/api/agent/stores/1/conversation", () => HttpResponse.json({
+        conversation_id: 9,
+        store_id: 1,
+        store_name: "总店",
+        messages: [],
+        latest_turn: null,
+      })),
+      http.post("/api/agent/stores/1/messages", () => {
+        const encoder = new TextEncoder();
+        return new HttpResponse(new ReadableStream({
+          async start(controller) {
+            for (const event of [
+              { type: "started", turn_id: 7 },
+              {
+                type: "phase",
+                turn_id: 7,
+                phase: "processing_data",
+              },
+              {
+                type: "investigation_card",
+                turn_id: 7,
+                card: {
+                  operation: "汇总经营表现",
+                  range_start: "2026-07-01",
+                  range_end: "2026-07-30",
+                  filters: [],
+                  status: "completed",
+                },
+              },
+              {
+                type: "phase",
+                turn_id: 7,
+                phase: "preparing_answer",
+              },
+              {
+                type: "answer_delta",
+                turn_id: 7,
+                delta: "本月台账营业额",
+              },
+              {
+                type: "answer_delta",
+                turn_id: 7,
+                delta: "为 120 欧元。",
+              },
+              { type: "completed", turn_id: 7 },
+            ]) {
+              controller.enqueue(
+                encoder.encode(`${JSON.stringify(event)}\n`),
+              );
+              await pauseStream();
+            }
+            controller.close();
+          },
+        }), {
+          headers: { "content-type": "application/x-ndjson" },
+        });
+      }),
+    );
+    renderApplication("/agent", "administrator");
+
+    const input = await screen.findByRole(
+      "textbox",
+      { name: "向 Agent 提问" },
+    );
+    await userEvent.type(input, "分析本月营业额");
+    await userEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "正在查询数据…",
+    );
+    await advanceStream();
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "正在处理数据…",
+    );
+    await advanceStream();
+    expect(await screen.findByRole("region", { name: "调查过程" }))
+      .toHaveTextContent("汇总经营表现");
+    await advanceStream();
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "正在准备回答…",
+    );
+    await advanceStream();
+    expect(await screen.findByText("本月台账营业额")).toBeInTheDocument();
+    await advanceStream();
+    expect(await screen.findByText("本月台账营业额为 120 欧元。"))
+      .toBeInTheDocument();
+    await advanceStream();
+    expect(await screen.findByRole("status")).toHaveTextContent("回答已完成");
+    await advanceStream();
+    await waitFor(() => expect(
+      screen.getByRole("button", { name: "发送" }),
+    ).toBeDisabled());
+  });
+
+  it("switches Agent current store conversations and clears the draft", async () => {
+    server.use(
+      http.get("/api/agent/stores/:storeId", ({ params }) => HttpResponse.json({
+        store_id: Number(params.storeId),
+        store_name: params.storeId === "1" ? "总店" : "二店",
+      })),
+      http.get(
+        "/api/agent/stores/:storeId/conversation",
+        ({ params }) => HttpResponse.json({
+          conversation_id: Number(params.storeId),
+          store_id: Number(params.storeId),
+          store_name: params.storeId === "1" ? "总店" : "二店",
+          messages: params.storeId === "1"
+            ? []
+            : [{
+                id: 22,
+                role: "assistant",
+                content: "二店当前没有匹配记录。",
+                created_at: "2026-07-30T10:00:02",
+              }],
+          latest_turn: null,
+        }),
+      ),
+    );
+    renderApplication("/agent", "administrator");
+
+    const input = await screen.findByRole(
+      "textbox",
+      { name: "向 Agent 提问" },
+    );
+    await userEvent.type(input, "尚未发送的草稿");
+    const storePicker = within(
+      screen.getByTestId("desktop-store-picker"),
+    ).getByRole("combobox", { name: "门店" });
+    await userEvent.selectOptions(storePicker, "2");
+
+    expect(await screen.findByText("二店当前没有匹配记录。"))
+      .toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "向 Agent 提问" }))
+      .toHaveValue("");
+    expect(screen.queryByText("还没有消息，可以从当前门店的经营问题开始。"))
+      .not.toBeInTheDocument();
+    await userEvent.selectOptions(storePicker, "1");
+    expect(await screen.findByText(
+      "还没有消息，可以从当前门店的经营问题开始。",
+    )).toBeInTheDocument();
+  });
+
   it("polls a running Agent turn after the JSON Lines connection closes early", async () => {
     let conversationReads = 0;
     server.use(
