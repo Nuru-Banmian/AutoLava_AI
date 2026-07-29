@@ -103,17 +103,28 @@ export function LedgerForm({
     [categories, config, record],
   );
   const composed = record ? record.income_mode === "composed" : resolvedConfig.enabled;
-  const active = useMemo(() => {
+  const effectiveCategories = useMemo(() => {
     if (record && composed) {
-      return record.items
+      const recorded = record.items.map((item) => ({
+        id: item.category_id,
+        name: item.category_name,
+        include_in_total: item.include_in_total,
+        is_active: true,
+        sort_order: item.sort_order,
+      }));
+      const recordedIds = new Set(recorded.map((item) => item.id));
+      const newlyEnabled = resolvedConfig.items
+        .filter((item) => item.is_active && !recordedIds.has(item.id))
         .map((item) => ({
-          id: item.category_id,
-          name: item.category_name,
+          id: item.id,
+          name: item.name,
           include_in_total: item.include_in_total,
           is_active: true,
           sort_order: item.sort_order,
-        }))
-        .sort((left, right) => left.sort_order - right.sort_order || left.id - right.id);
+        }));
+      return [...recorded, ...newlyEnabled].sort(
+        (left, right) => left.sort_order - right.sort_order || left.id - right.id,
+      );
     }
     const configured = resolvedConfig.items
       .filter((item) => item.is_active)
@@ -127,7 +138,7 @@ export function LedgerForm({
     return configured.sort(
       (left, right) => left.sort_order - right.sort_order || left.id - right.id,
     );
-  }, [categories, composed, resolvedConfig.items, record]);
+  }, [composed, resolvedConfig.items, record]);
   const loadedWash = record?.wash_count == null ? "" : String(record.wash_count);
   const [status, setStatus] = useState<LedgerStatus>(record?.is_open ?? "营业");
   const [wash, setWash] = useState(loadedWash);
@@ -139,14 +150,12 @@ export function LedgerForm({
   const loadedAmounts = useMemo(
     () =>
       Object.fromEntries(
-        active.map((category) => [
-          category.id,
-          record
-            ? String(record.items.find((item) => item.category_id === category.id)?.amount ?? 0)
-            : "",
-        ]),
+        effectiveCategories.map((category) => {
+          const recordedItem = record?.items.find((item) => item.category_id === category.id);
+          return [category.id, record ? (recordedItem ? String(recordedItem.amount) : "") : ""];
+        }),
       ),
-    [active, record],
+    [effectiveCategories, record],
   );
   const [amounts, setAmounts] = useState<Record<number, string>>(loadedAmounts);
   const isLegacyEmptyWash = (value: string) =>
@@ -185,7 +194,7 @@ export function LedgerForm({
       weather_edited: values.weatherEdited,
       activity: normalizedActivity(values.activity),
       items: composed
-        ? active.map((category) => [
+        ? effectiveCategories.map((category) => [
             category.id,
             semanticAmount(values.amounts[category.id] ?? "0"),
           ])
@@ -259,7 +268,7 @@ export function LedgerForm({
   useEffect(() => {
     onDirtyChange?.(currentSignature !== effectiveBaselineSignature);
   }, [currentSignature, effectiveBaselineSignature, onDirtyChange]);
-  const amountResults = active.map((category) => ({
+  const amountResults = effectiveCategories.map((category) => ({
     category,
     result: parseBlankAmountAsZero(amounts[category.id] ?? ""),
   }));
@@ -322,7 +331,7 @@ export function LedgerForm({
         if (composed) {
           setAmounts(
             Object.fromEntries(
-              active.map((category) => [category.id, amounts[category.id] || "0"]),
+              effectiveCategories.map((category) => [category.id, amounts[category.id] || "0"]),
             ),
           );
         } else if (directTotal === "") {
@@ -384,7 +393,7 @@ export function LedgerForm({
         <fieldset aria-label="收入项目" disabled={status === "休息"} className="grid min-w-0 gap-3">
           <legend className="font-semibold">收入项目</legend>
           <div className="grid min-w-0 gap-4 md:grid-cols-2">
-            {active.map((category) => (
+            {effectiveCategories.map((category) => (
               <label className="grid min-w-0 gap-1.5 font-medium" key={category.id}>
                 {category.name}
                 <input

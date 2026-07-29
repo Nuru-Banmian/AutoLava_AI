@@ -538,6 +538,40 @@ describe("LedgerPage", () => {
     );
   });
 
+  it("adds a newly enabled income item when editing an existing record", async () => {
+    const historicalRecord = {
+      ...recordSnapshot(101),
+      items: recordSnapshot(101).items.filter((item) => item.category_id !== 3),
+    };
+    let submitted: unknown;
+    renderLedger(
+      [
+        http.get("/api/ledger/1/:date", ({ params }) =>
+          params.date === "recent" ? HttpResponse.json([]) : HttpResponse.json(historicalRecord),
+        ),
+        http.put("/api/ledger/1/2026-07-15", async ({ request }) => {
+          submitted = await request.json();
+          return HttpResponse.json(historicalRecord);
+        }),
+      ],
+      "/ledger?date=2026-07-15",
+    );
+
+    expect(await screen.findByLabelText("暗钱")).toHaveValue("");
+    fireEvent.change(screen.getByLabelText("暗钱"), { target: { value: "5" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+
+    await waitFor(() =>
+      expect(submitted).toMatchObject({
+        items: [
+          { category_id: 1, amount: 101 },
+          { category_id: 2, amount: 0 },
+          { category_id: 3, amount: 5 },
+        ],
+      }),
+    );
+  });
+
   it("loads markers for the calendar month currently being viewed", async () => {
     renderLedger([
       http.get("/api/database/1/records", ({ request }) => {
