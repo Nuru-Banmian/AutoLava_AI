@@ -164,13 +164,56 @@ def _calculation_operand_kinds(
     return step_kinds.get(step, frozenset())
 
 
-def _validate_settlement_calculation(plan: object) -> None:
+def _user_supplied_numbers(content: str) -> frozenset[Decimal]:
+    without_dates = re.sub(
+        r"\d{4}\s*(?:-|年)\s*\d{1,2}\s*(?:-|月)\s*\d{1,2}\s*日?",
+        " ",
+        content,
+    )
+    values: set[Decimal] = set()
+    for matched in re.findall(
+        r"(?<![A-Za-z0-9])[-+]?\d[\d,]*(?:\.\d+)?",
+        without_dates,
+    ):
+        try:
+            values.add(Decimal(matched.replace(",", "")))
+        except InvalidOperation:
+            continue
+    return frozenset(values)
+
+
+def _operand_depends_on_result(
+    operand: object,
+    step_dependencies: dict[str, bool],
+) -> bool:
+    if not isinstance(operand, dict):
+        return False
+    if isinstance(operand.get("result_id"), str):
+        return True
+    return step_dependencies.get(str(operand.get("step", "")), False)
+
+
+def _validate_settlement_calculation(
+    plan: object,
+    *,
+    user_content: str,
+) -> None:
     if not isinstance(plan, list):
         return
     step_kinds: dict[str, frozenset[str]] = {}
+    step_dependencies: dict[str, bool] = {}
+    supplied_numbers = _user_supplied_numbers(user_content)
     for item in plan:
         if not isinstance(item, dict):
             continue
+        depends_on_result = any(
+            _operand_depends_on_result(
+                item.get(operand_name),
+                step_dependencies,
+            )
+            for operand_name in ("left", "right")
+        )
+        uses_formula_constant = False
         for operand_name in ("left", "right"):
             operand = item.get(operand_name)
             if (
@@ -181,12 +224,23 @@ def _validate_settlement_calculation(plan: object) -> None:
                 raise ValueError(
                     "派生计算字面量必须标记为用户输入或公式常量"
                 )
-            if (
-                isinstance(operand, dict)
-                and operand.get("source") == "formula_constant"
-                and str(operand.get("literal")) not in _FORMULA_CONSTANTS
-            ):
-                raise ValueError("派生计算使用了未授权的公式常量")
+            if not isinstance(operand, dict) or "literal" not in operand:
+                continue
+            source = operand.get("source")
+            literal = str(operand.get("literal"))
+            if source == "formula_constant":
+                uses_formula_constant = True
+                if literal not in _FORMULA_CONSTANTS:
+                    raise ValueError("派生计算使用了未授权的公式常量")
+            if source == "user":
+                try:
+                    user_value = Decimal(literal.replace(",", ""))
+                except InvalidOperation as exc:
+                    raise ValueError("用户数值来源无效") from exc
+                if user_value not in supplied_numbers:
+                    raise ValueError("派生计算字面量并非用户明确提供的数值")
+        if uses_formula_constant and not depends_on_result:
+            raise ValueError("公式常量必须用于依赖本轮结果的计算")
         kinds = _calculation_operand_kinds(
             item.get("left"),
             step_kinds,
@@ -202,6 +256,7 @@ def _validate_settlement_calculation(plan: object) -> None:
         name = str(item.get("name", "")).strip()
         if name:
             step_kinds[name] = kinds
+            step_dependencies[name] = depends_on_result
 
 
 def _validate_settlement_answer(
@@ -209,7 +264,6 @@ def _validate_settlement_answer(
     *,
     loaded_skills: dict[str, Any],
     results: dict[str, dict[str, Any]],
-    require_complete: bool = True,
 ) -> None:
     if "company_settlement" not in loaded_skills:
         return
@@ -224,7 +278,7 @@ def _validate_settlement_answer(
     ]
     if not summaries:
         return
-    if require_complete and (
+    if (
         "已确认公司结算收入" not in answer
         or "当前待到账应收款" not in answer
         or not any(phrase in answer for phrase in _PENDING_EXCLUSION_PHRASES)
@@ -1144,7 +1198,6 @@ class AgentTurnRuntime:
             response_content: list[str] = []
             response_tool_calls: list[ModelToolCall] = []
             streamed_answer = False
-            settlement_pending = ""
             async for response_part in self._respond_events_with_retry(
                 adapter,
                 messages,
@@ -1167,25 +1220,8 @@ class AgentTurnRuntime:
                 response_content.append(chunk)
                 if (
                     not missing_capabilities
+                    and "company_settlement" not in loaded_skills
                 ):
-                    if "company_settlement" in loaded_skills:
-                        settlement_pending += chunk
-                        sentence_ends = list(
-                            re.finditer(r"[。！？\n]", settlement_pending)
-                        )
-                        if not sentence_ends:
-                            continue
-                        cutoff = sentence_ends[-1].end()
-                        emitted_chunk = settlement_pending[:cutoff]
-                        settlement_pending = settlement_pending[cutoff:]
-                        _validate_settlement_answer(
-                            emitted_chunk,
-                            loaded_skills=loaded_skills,
-                            results=results,
-                            require_complete=False,
-                        )
-                    else:
-                        emitted_chunk = chunk
                     if not streamed_answer:
                         await self._emit_answer_phases(active)
                         streamed_answer = True
@@ -1193,7 +1229,7 @@ class AgentTurnRuntime:
                         {
                             "type": "answer_delta",
                             "turn_id": active.turn_id,
-                            "delta": emitted_chunk,
+                            "delta": chunk,
                         }
                     )
             response = ModelResponse(
@@ -1212,15 +1248,10 @@ class AgentTurnRuntime:
                     results=results,
                 )
                 if not streamed_answer:
-                    await self._emit_trusted_answer(active, answer)
-                elif settlement_pending:
-                    await active.events.put(
-                        {
-                            "type": "answer_delta",
-                            "turn_id": active.turn_id,
-                            "delta": settlement_pending,
-                        }
-                    )
+                    if "company_settlement" in loaded_skills:
+                        await self._emit_trusted_answer_fragments(active, answer)
+                    else:
+                        await self._emit_trusted_answer(active, answer)
                 return answer, cards
 
             submit_calls = [
@@ -1350,7 +1381,8 @@ class AgentTurnRuntime:
                     if set(call.arguments) != {"steps"}:
                         raise ValueError("派生计算参数无效")
                     _validate_settlement_calculation(
-                        call.arguments["steps"]
+                        call.arguments["steps"],
+                        user_content=str(model_messages[-1].get("content", "")),
                     )
                     result_number += 1
                     result_id = f"result-{result_number}"
@@ -1440,6 +1472,25 @@ class AgentTurnRuntime:
                 "delta": answer,
             }
         )
+
+    @classmethod
+    async def _emit_trusted_answer_fragments(
+        cls,
+        active: _ActiveTurn,
+        answer: str,
+    ) -> None:
+        await cls._emit_answer_phases(active)
+        fragments = re.findall(r".*?(?:[。！？\n]+|$)", answer, flags=re.DOTALL)
+        for fragment in fragments:
+            if not fragment:
+                continue
+            await active.events.put(
+                {
+                    "type": "answer_delta",
+                    "turn_id": active.turn_id,
+                    "delta": fragment,
+                }
+            )
 
     async def _finish_timed_out_turn(
         self,

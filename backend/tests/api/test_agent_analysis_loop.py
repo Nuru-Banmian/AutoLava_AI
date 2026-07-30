@@ -3,6 +3,7 @@ from datetime import date
 import json
 
 from httpx import AsyncClient
+import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import AgentSystemSettings
@@ -80,10 +81,18 @@ class AnalysisModelAdapter:
 
 
 class FormulaConstantModelAdapter:
-    def __init__(self, literal: str = "100") -> None:
+    def __init__(
+        self,
+        literal: str = "100",
+        *,
+        source: str = "formula_constant",
+        use_result: bool = True,
+    ) -> None:
         self.calls: list[Sequence[dict[str, object]]] = []
         self.step = 0
         self.literal = literal
+        self.source = source
+        self.use_result = use_result
 
     async def respond(
         self,
@@ -126,13 +135,20 @@ class FormulaConstantModelAdapter:
                                 {
                                     "name": "percentage",
                                     "operation": "multiply",
-                                    "left": {
-                                        "result_id": "result-1",
-                                        "field": "data.operating_days",
-                                    },
+                                    "left": (
+                                        {
+                                            "result_id": "result-1",
+                                            "field": "data.operating_days",
+                                        }
+                                        if self.use_result
+                                        else {
+                                            "literal": "100",
+                                            "source": "formula_constant",
+                                        }
+                                    ),
                                     "right": {
                                         "literal": self.literal,
-                                        "source": "formula_constant",
+                                        "source": self.source,
                                     },
                                 }
                             ]
@@ -361,14 +377,26 @@ async def test_http_turn_allows_marked_formula_constants_in_calculation(
     assert tool_results[-1]["values"]["percentage"] == "100"
 
 
-async def test_http_turn_rejects_unapproved_formula_constants(
+@pytest.mark.parametrize(
+    ("case", "literal", "source", "use_result"),
+    (
+        ("unknown-formula", "0.5", "formula_constant", True),
+        ("formula-without-result", "100", "formula_constant", False),
+        ("model-claimed-user-value", "37", "user", True),
+    ),
+)
+async def test_http_turn_rejects_untrusted_calculation_literals(
     client: AsyncClient,
     db_session: AsyncSession,
     user_factory,
     store_factory,
+    case: str,
+    literal: str,
+    source: str,
+    use_result: bool,
 ) -> None:
     admin = await user_factory(
-        username="unapproved-formula-constant-admin",
+        username=f"{case}-admin",
         password="secret123",
         role="admin",
     )
@@ -388,7 +416,11 @@ async def test_http_turn_rejects_unapproved_formula_constants(
     )
     await db_session.commit()
     client._transport.app.state.agent_model_adapter = (
-        FormulaConstantModelAdapter("0.5")
+        FormulaConstantModelAdapter(
+            literal,
+            source=source,
+            use_result=use_result,
+        )
     )
     await _login(client, admin.username)
 

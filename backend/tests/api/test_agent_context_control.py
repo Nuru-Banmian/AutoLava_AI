@@ -320,6 +320,19 @@ async def test_follow_up_context_selects_relevant_investigation_cards_without_va
     assert "营业状态=经营日" in investigation
     assert "result_id" not in investigation
 
+    unrelated = await client.post(
+        f"/api/agent/stores/{store_id}/messages",
+        json={"content": "分析 2026 年 6 月的公司结算与待到账应收款"},
+    )
+
+    assert unrelated.status_code == 200
+    assert len(adapter.calls) == 3
+    assert not any(
+        message["role"] == "system"
+        and message["content"].startswith("相关历史调查资料")
+        for message in adapter.calls[-1]
+    )
+
 
 async def test_explicit_time_range_is_normalized_without_clarification(
     client: AsyncClient,

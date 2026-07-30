@@ -703,8 +703,7 @@ async def relevant_investigation_context(
         )
     ]
     if not matched:
-        latest_turn_id = cards[0].turn_id
-        matched = [card for card in cards if card.turn_id == latest_turn_id]
+        return None
 
     lines = [
         "相关历史调查资料（不含业务结果值；需要当前数据时必须重新调用数据工具）："
