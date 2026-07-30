@@ -4,6 +4,7 @@ from collections.abc import Sequence
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy import inspect
 
 
 revision: str = "0011"
@@ -12,7 +13,44 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+def _replace_reused_legacy_revision() -> None:
+    tables = set(inspect(op.get_bind()).get_table_names())
+    if "agent_system_settings" in tables:
+        return
+
+    for table in (
+        "agent_evidence",
+        "agent_messages",
+        "agent_conversations",
+        "agent_alerts",
+        "agent_run_stats",
+        "agent_settings",
+    ):
+        if table in tables:
+            op.drop_table(table)
+
+    op.create_table(
+        "agent_system_settings",
+        sa.Column("id", sa.Integer(), nullable=False),
+        sa.Column(
+            "enabled",
+            sa.Boolean(),
+            server_default="0",
+            nullable=False,
+        ),
+        sa.CheckConstraint(
+            "id = 1",
+            name=op.f("ck_agent_system_settings_singleton"),
+        ),
+        sa.PrimaryKeyConstraint(
+            "id",
+            name=op.f("pk_agent_system_settings"),
+        ),
+    )
+
+
 def upgrade() -> None:
+    _replace_reused_legacy_revision()
     op.create_table(
         "agent_conversations",
         sa.Column("id", sa.Integer(), nullable=False),

@@ -352,3 +352,99 @@ def test_legacy_agent_data_is_deleted_without_touching_business_data(tmp_path: P
             "SELECT date, daily_revenue FROM store_daily_records"
         ).fetchall() == [("2026-07-28", 940)]
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_reused_legacy_revision_0010_upgrades_to_clean_agent_schema(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "legacy-0010.sqlite3"
+    environment = os.environ | {"AUTOLAVA_DATABASE_PATH": str(database_path)}
+    backend = Path(__file__).parents[1]
+
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "0008"],
+        cwd=backend,
+        env=environment,
+        check=True,
+    )
+    with closing(sqlite3.connect(database_path)) as connection:
+        connection.execute(
+            "INSERT INTO users (username, password_hash, role, is_active) VALUES (?, ?, ?, ?)",
+            ("existing-admin", "hash", "admin", 1),
+        )
+        connection.execute(
+            """
+            INSERT INTO stores (
+                name, address, latitude, longitude, timezone, is_active,
+                income_items_enabled
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("Existing", "Address", 45, 9, "Europe/Rome", 1, 0),
+        )
+        connection.execute(
+            """
+            INSERT INTO store_daily_records (
+                store_id, date, daily_revenue, income_mode, is_open,
+                weather_edited, scanned, created_by, updated_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (1, "2026-07-29", 810, "legacy_total", "营业", 0, 0, 1, 1),
+        )
+        connection.execute(
+            "INSERT INTO agent_conversations (user_id, store_id, state) VALUES (?, ?, ?)",
+            (1, 1, "{}"),
+        )
+        connection.execute(
+            "INSERT INTO agent_messages (conversation_id, role, content) VALUES (?, ?, ?)",
+            (1, "user", "legacy"),
+        )
+        connection.execute("UPDATE alembic_version SET version_num = '0010'")
+        connection.commit()
+
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=backend,
+        env=environment,
+        check=True,
+    )
+
+    with closing(sqlite3.connect(database_path)) as connection:
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
+            "0014",
+        )
+        tables = {
+            name
+            for (name,) in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        assert not tables.intersection(
+            {
+                "agent_settings",
+                "agent_evidence",
+                "agent_run_stats",
+                "agent_alerts",
+            }
+        )
+        assert {
+            "agent_system_settings",
+            "agent_conversations",
+            "agent_messages",
+            "agent_turns",
+            "agent_investigation_cards",
+        } <= tables
+        conversation_columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(agent_conversations)"
+            )
+        }
+        assert "context_summary" in conversation_columns
+        assert "state" not in conversation_columns
+        assert connection.execute("SELECT username FROM users").fetchall() == [
+            ("existing-admin",)
+        ]
+        assert connection.execute(
+            "SELECT date, daily_revenue FROM store_daily_records"
+        ).fetchall() == [("2026-07-29", 810)]
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
