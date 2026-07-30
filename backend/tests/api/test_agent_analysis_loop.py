@@ -459,14 +459,16 @@ async def test_http_turn_rejects_untrusted_calculation_literals(
     assert _events(response.text)[-1]["type"] == "failed"
 
 
+@pytest.mark.parametrize("untrusted_value", ("999", "1"))
 async def test_http_turn_does_not_stream_or_persist_untrusted_business_values(
     client: AsyncClient,
     db_session: AsyncSession,
     user_factory,
     store_factory,
+    untrusted_value: str,
 ) -> None:
     admin = await user_factory(
-        username="untrusted-answer-admin",
+        username=f"untrusted-answer-{untrusted_value}-admin",
         password="secret123",
         role="admin",
     )
@@ -516,7 +518,9 @@ async def test_http_turn_does_not_stream_or_persist_untrusted_business_values(
                         ),
                     )
                 )
-            return ModelResponse(content="台账营业额为 999 欧元。")
+            return ModelResponse(
+                content=f"台账营业额为 {untrusted_value} 欧元。"
+            )
 
     client._transport.app.state.agent_model_adapter = UntrustedAnswerAdapter()
     await _login(client, admin.username)
@@ -529,7 +533,7 @@ async def test_http_turn_does_not_stream_or_persist_untrusted_business_values(
     assert response.status_code == 200
     events = _events(response.text)
     assert all(
-        "999" not in str(event.get("delta", ""))
+        untrusted_value not in str(event.get("delta", ""))
         for event in events
         if event["type"] == "answer_delta"
     )
@@ -539,8 +543,9 @@ async def test_http_turn_does_not_stream_or_persist_untrusted_business_values(
         f"/api/agent/stores/{store_id}/conversation",
     )
     assert all(
-        "999" not in message["content"]
+        untrusted_value not in message["content"]
         for message in restored.json()["messages"]
+        if message["role"] == "assistant"
     )
 
 

@@ -620,9 +620,13 @@ async def test_agent_analyzes_settlement_income_and_current_receivables_separate
             "**已确认公司结算收入**为 100 欧元；当前待到账应收款为 "
             "150 欧元，不计入营业额。**月度总收入**合计约为 250 欧元。"
         ),
+        (
+            "2026 年 7 月 1 日已确认公司结算收入为 100 欧元；"
+            "当前待到账应收款为 150 欧元，不计入营业额。"
+        ),
     ),
 )
-async def test_agent_rejects_final_answer_that_merges_pending_into_income(
+async def test_agent_rejects_unsafe_settlement_final_answer(
     client: AsyncClient,
     db_session: AsyncSession,
     user_factory,

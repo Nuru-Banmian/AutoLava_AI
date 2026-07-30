@@ -122,6 +122,73 @@ _CAPABILITY_ROW_FIELD_PRESENTATION = {
     "proportion": ("占比", "%"),
     "include_in_ledger_revenue": ("是否计入营业额", ""),
 }
+_ANSWER_FIELD_MARKERS = (
+    (
+        ("经营日均台账营业额",),
+        frozenset({"operating_day_average_ledger_revenue"}),
+    ),
+    (("平均每车收入",), frozenset({"average_revenue_per_wash"})),
+    (
+        ("已确认公司结算收入",),
+        frozenset({"confirmed_settlement_income"}),
+    ),
+    (
+        ("当前待到账应收款", "待到账应收款"),
+        frozenset({"current_pending_receivables"}),
+    ),
+    (
+        ("分类记账营业额",),
+        frozenset({"classified_ledger_revenue"}),
+    ),
+    (
+        ("台账营业额", "营业额"),
+        frozenset(
+            {
+                "ledger_revenue",
+                "daily_revenue",
+                "classified_ledger_revenue",
+            }
+        ),
+    ),
+    (
+        ("洗车数量",),
+        frozenset({"wash_count", "missing_wash_count_days"}),
+    ),
+    (
+        ("经营日",),
+        frozenset({"operating_days", "missing_wash_count_days"}),
+    ),
+    (("其他数据",), frozenset({"other_data_total"})),
+    (("占比", "比例"), frozenset({"proportion"})),
+    (
+        ("匹配记录", "返回记录", "记录数"),
+        frozenset({"matching_records", "returned_records"}),
+    ),
+    (("匹配公司", "公司数量"), frozenset({"matching_companies"})),
+    (("金额",), frozenset({"amount"})),
+)
+_ANSWER_BUSINESS_NUMBER_CUES = (
+    "欧元",
+    "金额",
+    "收入",
+    "营业额",
+    "应收",
+    "经营日",
+    "洗车",
+    "占比",
+    "比例",
+    "平均",
+    "合计",
+    "总计",
+    "增长",
+    "下降",
+    "变化",
+    "差额",
+    "记录数",
+    "匹配记录",
+    "公司数量",
+    "%",
+)
 
 SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 AdapterFactory = Callable[[], AgentModelAdapter]
@@ -343,6 +410,17 @@ def _validate_settlement_answer(
         answer,
     ):
         raise ValueError("公司结算最终回答合并了收入与当前待到账应收款")
+    for sentence in re.split(r"[。！？\n]+", answer):
+        if (
+            "公司结算收入" in sentence
+            and re.search(
+                r"(?:\d{4}\s*-\s*\d{1,2}\s*-\s*\d{1,2}"
+                r"|\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日"
+                r"|\d{1,2}\s*月\s*\d{1,2}\s*日)",
+                sentence,
+            )
+        ):
+            raise ValueError("公司结算收入不能归因到日粒度")
 
     claimed_monthly_totals = re.findall(
         r"月度总收入[^0-9。\n]{0,30}([0-9][0-9,.]*)\s*欧元",
@@ -400,25 +478,45 @@ def _validate_settlement_answer(
     return frozenset(parsed_claims)
 
 
-def _result_numbers(value: object) -> set[Decimal]:
+def _result_number_fields(
+    value: object,
+    *,
+    path: tuple[str, ...] = (),
+) -> dict[Decimal, set[tuple[str, ...]]]:
     if isinstance(value, dict):
-        return {
-            number
-            for item in value.values()
-            for number in _result_numbers(item)
-        }
+        fields: dict[Decimal, set[tuple[str, ...]]] = {}
+        for key, item in value.items():
+            for number, number_paths in _result_number_fields(
+                item,
+                path=(*path, str(key)),
+            ).items():
+                fields.setdefault(number, set()).update(number_paths)
+        return fields
     if isinstance(value, (list, tuple)):
-        return {
-            number
-            for item in value
-            for number in _result_numbers(item)
-        }
+        fields = {}
+        for item in value:
+            for number, number_paths in _result_number_fields(
+                item,
+                path=path,
+            ).items():
+                fields.setdefault(number, set()).update(number_paths)
+        return fields
     if isinstance(value, bool) or value is None:
-        return set()
+        return {}
     try:
-        return {Decimal(str(value).replace(",", ""))}
+        return {Decimal(str(value).replace(",", "")): {path}}
     except InvalidOperation:
-        return set()
+        return {}
+
+
+def _answer_number_claims(answer: str) -> list[tuple[Decimal, str]]:
+    claims: list[tuple[Decimal, str]] = []
+    for clause in re.split(r"[，,；;。！？\n]+", answer):
+        claims.extend(
+            (number, clause)
+            for number in _user_supplied_numbers(clause)
+        )
+    return claims
 
 
 def _validate_business_answer(
@@ -433,12 +531,30 @@ def _validate_business_answer(
         loaded_skills=loaded_skills,
         results=results,
     )
-    claimed_numbers = _user_supplied_numbers(answer)
-    permitted_numbers = set(_user_supplied_numbers(user_content))
-    permitted_numbers.update(_result_numbers(results))
-    permitted_numbers.update(permitted_settlement_totals)
-    if not claimed_numbers <= permitted_numbers:
-        raise ValueError("最终回答包含未绑定到本轮可信证据的业务数值")
+    result_fields = _result_number_fields(results)
+    generic_numbers = set(_user_supplied_numbers(user_content))
+    generic_numbers.update(permitted_settlement_totals)
+    generic_numbers.update(
+        number
+        for number, paths in result_fields.items()
+        if any("values" in path for path in paths)
+    )
+    for number, clause in _answer_number_claims(answer):
+        if not any(cue in clause for cue in _ANSWER_BUSINESS_NUMBER_CUES):
+            continue
+        if number in generic_numbers:
+            continue
+        permitted_fields = set()
+        for markers, fields in _ANSWER_FIELD_MARKERS:
+            if any(marker in clause for marker in markers):
+                permitted_fields.update(fields)
+        if any(
+            path
+            and path[-1] in permitted_fields
+            for path in result_fields.get(number, ())
+        ):
+            continue
+        raise ValueError("最终回答包含未绑定到本轮可信证据字段的业务数值")
 
 
 def _submitted_capability_answer(
@@ -613,6 +729,47 @@ def _finished_now() -> datetime:
 
 async def _one_chunk(value: str) -> AsyncIterator[str]:
     yield value
+
+
+async def _validated_answer_chunks(
+    chunks: AsyncIterator[str],
+    *,
+    user_content: str,
+    loaded_skills: dict[str, Any],
+    results: dict[str, dict[str, Any]],
+) -> AsyncIterator[str]:
+    full_answer: list[str] = []
+    validation_context = ""
+    held_chunks: list[str] = []
+    async for chunk in chunks:
+        full_answer.append(chunk)
+        validation_context += chunk
+        held_chunks.append(chunk)
+        boundaries = list(re.finditer(r"[。！？\n]+", validation_context))
+        if boundaries:
+            boundary = boundaries[-1].end()
+            _validate_business_answer(
+                validation_context[:boundary],
+                user_content=user_content,
+                loaded_skills=loaded_skills,
+                results=results,
+            )
+            for held_chunk in held_chunks:
+                yield held_chunk
+            held_chunks.clear()
+            validation_context = validation_context[boundary:]
+        elif not any(character.isdigit() for character in "".join(held_chunks)):
+            for held_chunk in held_chunks:
+                yield held_chunk
+            held_chunks.clear()
+    _validate_business_answer(
+        "".join(full_answer),
+        user_content=user_content,
+        loaded_skills=loaded_skills,
+        results=results,
+    )
+    for held_chunk in held_chunks:
+        yield held_chunk
 
 
 async def latest_conversation_turn(
@@ -890,9 +1047,14 @@ class AgentTurnRuntime:
                                 capability_gap_answer(missing_capabilities)
                             )
                         else:
-                            model_chunks = self._model_chunks(
-                                adapter,
-                                model_messages,
+                            model_chunks = _validated_answer_chunks(
+                                self._model_chunks(
+                                    adapter,
+                                    model_messages,
+                                ),
+                                user_content=user_content,
+                                loaded_skills={},
+                                results=trusted_results,
                             )
                         async for chunk in model_chunks:
                             if not chunk:
@@ -1286,6 +1448,9 @@ class AgentTurnRuntime:
             messages = fit_model_context(messages)
             response_content: list[str] = []
             response_tool_calls: list[ModelToolCall] = []
+            streamed_answer = False
+            answer_validation_context = ""
+            held_answer_chunks: list[str] = []
             async for response_part in self._respond_events_with_retry(
                 adapter,
                 messages,
@@ -1306,6 +1471,49 @@ class AgentTurnRuntime:
                         "Agent model mixed answer text and tool calls"
                     )
                 response_content.append(chunk)
+                if (
+                    not missing_capabilities
+                    and "company_settlement" not in loaded_skills
+                ):
+                    answer_validation_context += chunk
+                    held_answer_chunks.append(chunk)
+                    boundaries = list(
+                        re.finditer(
+                            r"[。！？\n]+",
+                            answer_validation_context,
+                        )
+                    )
+                    can_release = False
+                    if boundaries:
+                        boundary = boundaries[-1].end()
+                        _validate_business_answer(
+                            answer_validation_context[:boundary],
+                            user_content=user_content,
+                            loaded_skills=loaded_skills,
+                            results=results,
+                        )
+                        answer_validation_context = (
+                            answer_validation_context[boundary:]
+                        )
+                        can_release = True
+                    elif not any(
+                        character.isdigit()
+                        for character in "".join(held_answer_chunks)
+                    ):
+                        can_release = True
+                    if can_release:
+                        if not streamed_answer:
+                            await self._emit_answer_phases(active)
+                            streamed_answer = True
+                        for held_chunk in held_answer_chunks:
+                            await active.events.put(
+                                {
+                                    "type": "answer_delta",
+                                    "turn_id": active.turn_id,
+                                    "delta": held_chunk,
+                                }
+                            )
+                        held_answer_chunks.clear()
             response = ModelResponse(
                 content="".join(response_content) or None,
                 tool_calls=tuple(response_tool_calls),
@@ -1327,10 +1535,17 @@ class AgentTurnRuntime:
                 elif "company_settlement" in loaded_skills:
                     await self._emit_trusted_answer_fragments(active, answer)
                 else:
-                    await self._emit_trusted_answer_chunks(
-                        active,
-                        response_content,
-                    )
+                    if held_answer_chunks:
+                        if not streamed_answer:
+                            await self._emit_answer_phases(active)
+                        for held_chunk in held_answer_chunks:
+                            await active.events.put(
+                                {
+                                    "type": "answer_delta",
+                                    "turn_id": active.turn_id,
+                                    "delta": held_chunk,
+                                }
+                            )
                 return answer, cards
 
             submit_calls = [
@@ -1552,22 +1767,6 @@ class AgentTurnRuntime:
                 "delta": answer,
             }
         )
-
-    @classmethod
-    async def _emit_trusted_answer_chunks(
-        cls,
-        active: _ActiveTurn,
-        chunks: Sequence[str],
-    ) -> None:
-        await cls._emit_answer_phases(active)
-        for chunk in chunks:
-            await active.events.put(
-                {
-                    "type": "answer_delta",
-                    "turn_id": active.turn_id,
-                    "delta": chunk,
-                }
-            )
 
     @classmethod
     async def _emit_trusted_answer_fragments(
