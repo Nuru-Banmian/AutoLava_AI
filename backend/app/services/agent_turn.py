@@ -165,15 +165,36 @@ def _calculation_operand_kinds(
 
 
 def _user_supplied_numbers(content: str) -> frozenset[Decimal]:
-    without_dates = re.sub(
+    without_periods = re.sub(
         r"\d{4}\s*(?:-|年)\s*\d{1,2}\s*(?:-|月)\s*\d{1,2}\s*日?",
         " ",
         content,
     )
+    without_periods = re.sub(
+        r"\d{4}\s*(?:-\s*\d{1,2}|年\s*\d{1,2}\s*月)",
+        " ",
+        without_periods,
+    )
+    without_periods = re.sub(
+        r"\d{4}\s*年|(?<![\d-])\d{1,2}\s*月",
+        " ",
+        without_periods,
+    )
+    without_periods = re.sub(
+        r"(?:\d{4}\s*年?\s*)?(?:第?\s*[1-4一二三四]\s*季度|Q[1-4])",
+        " ",
+        without_periods,
+        flags=re.IGNORECASE,
+    )
+    without_periods = re.sub(
+        r"(?:最近|过去)\s*\d+\s*(?:天|周|个月|月)",
+        " ",
+        without_periods,
+    )
     values: set[Decimal] = set()
     for matched in re.findall(
         r"(?<![A-Za-z0-9])[-+]?\d[\d,]*(?:\.\d+)?",
-        without_dates,
+        without_periods,
     ):
         try:
             values.add(Decimal(matched.replace(",", "")))

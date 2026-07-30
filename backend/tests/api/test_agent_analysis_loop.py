@@ -378,11 +378,36 @@ async def test_http_turn_allows_marked_formula_constants_in_calculation(
 
 
 @pytest.mark.parametrize(
-    ("case", "literal", "source", "use_result"),
+    ("case", "literal", "source", "use_result", "content"),
     (
-        ("unknown-formula", "0.5", "formula_constant", True),
-        ("formula-without-result", "100", "formula_constant", False),
-        ("model-claimed-user-value", "37", "user", True),
+        (
+            "unknown-formula",
+            "0.5",
+            "formula_constant",
+            True,
+            "分析 2026-07-01 到 2026-07-02 的经营表现与台账营业额变化率",
+        ),
+        (
+            "formula-without-result",
+            "100",
+            "formula_constant",
+            False,
+            "分析 2026-07-01 到 2026-07-02 的经营表现与台账营业额变化率",
+        ),
+        (
+            "model-claimed-user-value",
+            "37",
+            "user",
+            True,
+            "分析 2026-07-01 到 2026-07-02 的经营表现与台账营业额变化率",
+        ),
+        (
+            "model-claimed-month-number",
+            "7",
+            "user",
+            True,
+            "分析 2026 年 7 月的经营表现与台账营业额变化率",
+        ),
     ),
 )
 async def test_http_turn_rejects_untrusted_calculation_literals(
@@ -394,6 +419,7 @@ async def test_http_turn_rejects_untrusted_calculation_literals(
     literal: str,
     source: str,
     use_result: bool,
+    content: str,
 ) -> None:
     admin = await user_factory(
         username=f"{case}-admin",
@@ -426,11 +452,7 @@ async def test_http_turn_rejects_untrusted_calculation_literals(
 
     response = await client.post(
         f"/api/agent/stores/{store.id}/messages",
-        json={
-            "content": (
-                "分析 2026-07-01 到 2026-07-02 的经营表现与台账营业额变化率"
-            )
-        },
+        json={"content": content},
     )
 
     assert response.status_code == 200
