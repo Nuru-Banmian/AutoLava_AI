@@ -33,6 +33,12 @@ class AgentModelAdapter(Protocol):
         tools: Sequence[ModelTool],
     ) -> ModelResponse: ...
 
+    def respond_stream(
+        self,
+        messages: Sequence[ModelMessage],
+        tools: Sequence[ModelTool],
+    ) -> AsyncIterator[ModelResponse]: ...
+
     def stream(
         self,
         messages: Sequence[ModelMessage],
@@ -46,21 +52,43 @@ class BailianOpenAIModelAdapter:
         self._model_id = settings.agent_model_id
         self._api_key = settings.agent_model_api_key.get_secret_value()
 
+    @property
+    def _chat_endpoint(self) -> str:
+        if self._endpoint.endswith("/chat/completions"):
+            return self._endpoint
+        return f"{self._endpoint}/chat/completions"
+
+    @property
+    def _headers(self) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self._api_key}",
+            "X-DashScope-Region": self._region,
+        }
+
+    def _payload(
+        self,
+        messages: Sequence[ModelMessage],
+        *,
+        tools: Sequence[ModelTool] | None = None,
+        stream: bool = False,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "model": self._model_id,
+            "messages": list(messages),
+        }
+        if tools is not None:
+            payload["tools"] = list(tools)
+            payload["tool_choice"] = "auto"
+        if stream:
+            payload["stream"] = True
+        return payload
+
     async def complete(self, messages: Sequence[ModelMessage]) -> str:
-        endpoint = self._endpoint
-        if not endpoint.endswith("/chat/completions"):
-            endpoint = f"{endpoint}/chat/completions"
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(
-                endpoint,
-                headers={
-                    "Authorization": f"Bearer {self._api_key}",
-                    "X-DashScope-Region": self._region,
-                },
-                json={
-                    "model": self._model_id,
-                    "messages": list(messages),
-                },
+                self._chat_endpoint,
+                headers=self._headers,
+                json=self._payload(messages),
             )
             response.raise_for_status()
         payload = response.json()
@@ -77,22 +105,11 @@ class BailianOpenAIModelAdapter:
         messages: Sequence[ModelMessage],
         tools: Sequence[ModelTool],
     ) -> ModelResponse:
-        endpoint = self._endpoint
-        if not endpoint.endswith("/chat/completions"):
-            endpoint = f"{endpoint}/chat/completions"
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(
-                endpoint,
-                headers={
-                    "Authorization": f"Bearer {self._api_key}",
-                    "X-DashScope-Region": self._region,
-                },
-                json={
-                    "model": self._model_id,
-                    "messages": list(messages),
-                    "tools": list(tools),
-                    "tool_choice": "auto",
-                },
+                self._chat_endpoint,
+                headers=self._headers,
+                json=self._payload(messages, tools=tools),
             )
             response.raise_for_status()
         payload = response.json()
@@ -125,27 +142,101 @@ class BailianOpenAIModelAdapter:
             tool_calls=tuple(calls),
         )
 
+    async def respond_stream(
+        self,
+        messages: Sequence[ModelMessage],
+        tools: Sequence[ModelTool],
+    ) -> AsyncIterator[ModelResponse]:
+        received_content = False
+        tool_fragments: dict[int, dict[str, str]] = {}
+        async with httpx.AsyncClient(timeout=60) as client:
+            async with client.stream(
+                "POST",
+                self._chat_endpoint,
+                headers=self._headers,
+                json=self._payload(messages, tools=tools, stream=True),
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    data = line.removeprefix("data:").strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        delta = json.loads(data)["choices"][0]["delta"]
+                    except (
+                        json.JSONDecodeError,
+                        KeyError,
+                        IndexError,
+                        TypeError,
+                    ) as exc:
+                        raise ValueError(
+                            "百炼模型返回了无效流式回答"
+                        ) from exc
+                    content = delta.get("content")
+                    if isinstance(content, str) and content:
+                        if tool_fragments:
+                            raise ValueError("百炼模型混合返回了回答和工具调用")
+                        received_content = True
+                        yield ModelResponse(content=content)
+                    for item in delta.get("tool_calls") or ():
+                        if received_content:
+                            raise ValueError("百炼模型混合返回了回答和工具调用")
+                        try:
+                            index = int(item["index"])
+                            fragment = tool_fragments.setdefault(
+                                index,
+                                {"id": "", "name": "", "arguments": ""},
+                            )
+                            fragment["id"] += str(item.get("id") or "")
+                            function = item.get("function") or {}
+                            fragment["name"] += str(function.get("name") or "")
+                            fragment["arguments"] += str(
+                                function.get("arguments") or ""
+                            )
+                        except (KeyError, TypeError, ValueError) as exc:
+                            raise ValueError(
+                                "百炼模型返回了无效流式工具调用"
+                            ) from exc
+        if tool_fragments:
+            calls: list[ModelToolCall] = []
+            for index in sorted(tool_fragments):
+                fragment = tool_fragments[index]
+                try:
+                    arguments = json.loads(fragment["arguments"])
+                except (TypeError, json.JSONDecodeError) as exc:
+                    raise ValueError(
+                        "百炼模型返回了无效流式工具调用"
+                    ) from exc
+                if (
+                    not fragment["id"]
+                    or not fragment["name"]
+                    or not isinstance(arguments, dict)
+                ):
+                    raise ValueError("百炼模型返回了无效流式工具调用")
+                calls.append(
+                    ModelToolCall(
+                        id=fragment["id"],
+                        name=fragment["name"],
+                        arguments=arguments,
+                    )
+                )
+            yield ModelResponse(tool_calls=tuple(calls))
+        elif not received_content:
+            raise ValueError("百炼模型返回了空回答")
+
     async def stream(
         self,
         messages: Sequence[ModelMessage],
     ) -> AsyncIterator[str]:
-        endpoint = self._endpoint
-        if not endpoint.endswith("/chat/completions"):
-            endpoint = f"{endpoint}/chat/completions"
         received_content = False
         async with httpx.AsyncClient(timeout=60) as client:
             async with client.stream(
                 "POST",
-                endpoint,
-                headers={
-                    "Authorization": f"Bearer {self._api_key}",
-                    "X-DashScope-Region": self._region,
-                },
-                json={
-                    "model": self._model_id,
-                    "messages": list(messages),
-                    "stream": True,
-                },
+                self._chat_endpoint,
+                headers=self._headers,
+                json=self._payload(messages, stream=True),
             ) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():

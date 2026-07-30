@@ -36,6 +36,7 @@ BUSINESS_PERFORMANCE = DataSkill(
         "相同长度或完整自然月，并在需要时建议一致业务口径；"
         "不得静默替换用户范围。\n"
         "- 期间变化率使用 calculate，先求差额再除以比较期基数并乘以 100，"
+        "其中 100 必须以 source=formula_constant 标记为公式常量；"
         "使用 scale=1、rounding=truncate 截断到一位小数；零比较基数不可比。\n"
         "- 需要派生数值时使用 calculate，不要心算。\n"
         "- 最终回答必须说明重要的数据覆盖限制。"

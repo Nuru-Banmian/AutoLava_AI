@@ -41,6 +41,7 @@ from app.services.agent_model import (
     ModelMessage,
     ModelResponse,
     ModelTool,
+    ModelToolCall,
 )
 from app.services.agent_skills import SkillCatalog
 
@@ -58,6 +59,7 @@ _REVENUE_FIELDS = frozenset(
     }
 )
 _PENDING_FIELD = "current_pending_receivables"
+_ALLOWED_LITERAL_SOURCES = frozenset({"user", "formula_constant"})
 _PENDING_EXCLUSION_PHRASES = (
     "不计入营业额",
     "不计入月度总收入",
@@ -172,9 +174,11 @@ def _validate_settlement_calculation(plan: object) -> None:
             if (
                 isinstance(operand, dict)
                 and "literal" in operand
-                and operand.get("source") != "user"
+                and operand.get("source") not in _ALLOWED_LITERAL_SOURCES
             ):
-                raise ValueError("派生计算字面量必须来自用户明确提供的数值")
+                raise ValueError(
+                    "派生计算字面量必须标记为用户输入或公式常量"
+                )
         kinds = _calculation_operand_kinds(
             item.get("left"),
             step_kinds,
@@ -1121,10 +1125,46 @@ class AgentTurnRuntime:
         data_tool_calls = 0
         for _round in range(self._model_round_limit):
             messages = fit_model_context(messages)
-            response = await self._respond_with_retry(
+            response_content: list[str] = []
+            response_tool_calls: list[ModelToolCall] = []
+            streamed_answer = False
+            async for response_part in self._respond_events_with_retry(
                 adapter,
                 messages,
                 self._model_tools(),
+            ):
+                if response_part.tool_calls:
+                    if response_content:
+                        raise ValueError(
+                            "Agent model mixed answer text and tool calls"
+                        )
+                    response_tool_calls.extend(response_part.tool_calls)
+                    continue
+                chunk = response_part.content or ""
+                if not chunk:
+                    continue
+                if response_tool_calls:
+                    raise ValueError(
+                        "Agent model mixed answer text and tool calls"
+                    )
+                response_content.append(chunk)
+                if (
+                    not missing_capabilities
+                    and "company_settlement" not in loaded_skills
+                ):
+                    if not streamed_answer:
+                        await self._emit_answer_phases(active)
+                        streamed_answer = True
+                    await active.events.put(
+                        {
+                            "type": "answer_delta",
+                            "turn_id": active.turn_id,
+                            "delta": chunk,
+                        }
+                    )
+            response = ModelResponse(
+                content="".join(response_content) or None,
+                tool_calls=tuple(response_tool_calls),
             )
             if not response.tool_calls:
                 answer = (response.content or "").strip()
@@ -1137,7 +1177,8 @@ class AgentTurnRuntime:
                     loaded_skills=loaded_skills,
                     results=results,
                 )
-                await self._emit_trusted_answer(active, answer)
+                if not streamed_answer:
+                    await self._emit_trusted_answer(active, answer)
                 return answer, cards
 
             submit_calls = [
@@ -1331,9 +1372,8 @@ class AgentTurnRuntime:
         return answer, cards
 
     @staticmethod
-    async def _emit_trusted_answer(
+    async def _emit_answer_phases(
         active: _ActiveTurn,
-        answer: str,
     ) -> None:
         for phase in ("processing_data", "preparing_answer"):
             await active.events.put(
@@ -1343,6 +1383,14 @@ class AgentTurnRuntime:
                     "phase": phase,
                 }
             )
+
+    @classmethod
+    async def _emit_trusted_answer(
+        cls,
+        active: _ActiveTurn,
+        answer: str,
+    ) -> None:
+        await cls._emit_answer_phases(active)
         await active.events.put(
             {
                 "type": "answer_delta",
@@ -1482,6 +1530,32 @@ class AgentTurnRuntime:
                 ):
                     raise
         raise RuntimeError("unreachable model retry state")
+
+    async def _respond_events_with_retry(
+        self,
+        adapter: AgentModelAdapter,
+        messages: Sequence[ModelMessage],
+        tools: Sequence[ModelTool],
+    ) -> AsyncIterator[ModelResponse]:
+        stream_response = getattr(adapter, "respond_stream", None)
+        if not callable(stream_response):
+            yield await self._respond_with_retry(adapter, messages, tools)
+            return
+        for attempt in range(self._transient_retry_limit + 1):
+            emitted = False
+            try:
+                async for response in stream_response(messages, tools):
+                    emitted = True
+                    yield response
+                return
+            except Exception as exc:
+                if (
+                    attempt < self._transient_retry_limit
+                    and not emitted
+                    and self._is_transient_model_error(exc)
+                ):
+                    continue
+                raise
 
     async def _execute_data_tool_with_retry(
         self,

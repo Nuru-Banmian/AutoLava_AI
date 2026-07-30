@@ -79,6 +79,94 @@ class AnalysisModelAdapter:
         )
 
 
+class FormulaConstantModelAdapter:
+    def __init__(self) -> None:
+        self.calls: list[Sequence[dict[str, object]]] = []
+        self.step = 0
+
+    async def respond(
+        self,
+        messages: Sequence[dict[str, object]],
+        _tools: Sequence[dict[str, object]],
+    ) -> ModelResponse:
+        self.calls.append(messages)
+        self.step += 1
+        if self.step == 1:
+            return ModelResponse(
+                tool_calls=(
+                    ModelToolCall(
+                        id="load-performance",
+                        name="load_skill",
+                        arguments={"name": "business_performance"},
+                    ),
+                )
+            )
+        if self.step == 2:
+            return ModelResponse(
+                tool_calls=(
+                    ModelToolCall(
+                        id="percentage-scale",
+                        name="calculate",
+                        arguments={
+                            "steps": [
+                                {
+                                    "name": "percentage",
+                                    "operation": "multiply",
+                                    "left": {
+                                        "literal": "0.5",
+                                        "source": "formula_constant",
+                                    },
+                                    "right": {
+                                        "literal": "100",
+                                        "source": "formula_constant",
+                                    },
+                                }
+                            ]
+                        },
+                    ),
+                )
+            )
+        return ModelResponse(content="派生计算结果为 50%。")
+
+
+class StreamingAnalysisModelAdapter:
+    def __init__(self) -> None:
+        self.step = 0
+
+    async def respond(self, _messages, _tools) -> ModelResponse:
+        raise AssertionError("tool-enabled streaming response must be used")
+
+    async def respond_stream(self, _messages, _tools):
+        self.step += 1
+        if self.step == 1:
+            yield ModelResponse(
+                tool_calls=(
+                    ModelToolCall(
+                        id="load-performance",
+                        name="load_skill",
+                        arguments={"name": "business_performance"},
+                    ),
+                )
+            )
+            return
+        if self.step == 2:
+            yield ModelResponse(
+                tool_calls=(
+                    ModelToolCall(
+                        id="performance-summary",
+                        name="business_performance_summary",
+                        arguments={
+                            "start": "2026-07-01",
+                            "end": "2026-07-02",
+                        },
+                    ),
+                )
+            )
+            return
+        yield ModelResponse(content="第一段回答，")
+        yield ModelResponse(content="第二段回答。")
+
+
 async def _login(client: AsyncClient, username: str) -> None:
     response = await client.post(
         "/api/auth/login",
@@ -206,6 +294,78 @@ async def test_http_turn_loads_skill_queries_data_calculates_and_persists_cards(
     }
     assert summary["coverage"]["missing_wash_count_days"] == 1
     assert calculation["values"]["above_target"] == "260"
+
+
+async def test_http_turn_allows_marked_formula_constants_in_calculation(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+) -> None:
+    admin = await user_factory(
+        username="formula-constant-admin",
+        password="secret123",
+        role="admin",
+    )
+    store = await store_factory(name="公式常量门店")
+    db_session.add(AgentSystemSettings(enabled=True))
+    await db_session.commit()
+    adapter = FormulaConstantModelAdapter()
+    client._transport.app.state.agent_model_adapter = adapter
+    await _login(client, admin.username)
+
+    response = await client.post(
+        f"/api/agent/stores/{store.id}/messages",
+        json={
+            "content": (
+                "分析 2026-07-01 到 2026-07-02 的经营表现与台账营业额变化率，"
+                "并使用公式中的百分比常量"
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    events = _events(response.text)
+    assert events[-1]["type"] == "completed"
+    tool_results = [
+        json.loads(message["content"])
+        for message in adapter.calls[-1]
+        if message["role"] == "tool"
+    ]
+    assert tool_results[-1]["values"]["percentage"] == "50.0"
+
+
+async def test_http_tool_loop_streams_final_answer_fragments(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+) -> None:
+    admin = await user_factory(
+        username="streaming-analysis-admin",
+        password="secret123",
+        role="admin",
+    )
+    store = await store_factory(name="流式分析门店")
+    db_session.add(AgentSystemSettings(enabled=True))
+    await db_session.commit()
+    client._transport.app.state.agent_model_adapter = (
+        StreamingAnalysisModelAdapter()
+    )
+    await _login(client, admin.username)
+
+    response = await client.post(
+        f"/api/agent/stores/{store.id}/messages",
+        json={"content": "分析 2026-07-01 到 2026-07-02 的台账营业额"},
+    )
+
+    assert response.status_code == 200
+    events = _events(response.text)
+    answer_deltas = [
+        event["delta"] for event in events if event["type"] == "answer_delta"
+    ]
+    assert answer_deltas == ["第一段回答，", "第二段回答。"]
+    assert events[-1]["type"] == "completed"
 
 
 async def test_business_performance_empty_range_is_a_successful_empty_result(
