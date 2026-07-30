@@ -166,9 +166,26 @@ def _calculation_operand_kinds(
 
 def _user_supplied_numbers(content: str) -> frozenset[Decimal]:
     without_periods = re.sub(
-        r"\d{4}\s*(?:-|年)\s*\d{1,2}\s*(?:-|月)\s*\d{1,2}\s*日?",
+        r"\bresult-\d+\b",
         " ",
         content,
+        flags=re.IGNORECASE,
+    )
+    without_periods = re.sub(
+        r"\d{4}\s*(?:-|年)\s*\d{1,2}\s*(?:-|月)\s*\d{1,2}\s*日?",
+        " ",
+        without_periods,
+    )
+    without_periods = re.sub(
+        r"\d{4}\s*年\s*\d{1,2}\s*[-–—]\s*\d{1,2}\s*月",
+        " ",
+        without_periods,
+    )
+    without_periods = re.sub(
+        r"\d{1,2}\s*月\s*\d{1,2}\s*日"
+        r"(?:\s*(?:至|到|-)\s*\d{1,2}\s*日)?",
+        " ",
+        without_periods,
     )
     without_periods = re.sub(
         r"\d{4}\s*(?:-\s*\d{1,2}|年\s*\d{1,2}\s*月)",
@@ -177,6 +194,11 @@ def _user_supplied_numbers(content: str) -> frozenset[Decimal]:
     )
     without_periods = re.sub(
         r"\d{4}\s*年|(?<![\d-])\d{1,2}\s*月",
+        " ",
+        without_periods,
+    )
+    without_periods = re.sub(
+        r"(?<![\d-])\d{1,2}\s*日",
         " ",
         without_periods,
     )
@@ -285,9 +307,9 @@ def _validate_settlement_answer(
     *,
     loaded_skills: dict[str, Any],
     results: dict[str, dict[str, Any]],
-) -> None:
+) -> frozenset[Decimal]:
     if "company_settlement" not in loaded_skills:
-        return
+        return frozenset()
     summaries = [
         result
         for result in results.values()
@@ -298,7 +320,7 @@ def _validate_settlement_answer(
         <= set(result.get("data", {}))
     ]
     if not summaries:
-        return
+        return frozenset()
     if (
         "已确认公司结算收入" not in answer
         or "当前待到账应收款" not in answer
@@ -327,7 +349,7 @@ def _validate_settlement_answer(
         answer,
     )
     if not claimed_monthly_totals:
-        return
+        return frozenset()
     permitted_totals: set[Decimal] = set()
     performance_results = [
         result
@@ -375,6 +397,48 @@ def _validate_settlement_answer(
         raise ValueError("月度总收入金额格式无效") from exc
     if not parsed_claims <= permitted_totals:
         raise ValueError("月度总收入必须由同期间台账营业额和已确认公司结算收入组成")
+    return frozenset(parsed_claims)
+
+
+def _result_numbers(value: object) -> set[Decimal]:
+    if isinstance(value, dict):
+        return {
+            number
+            for item in value.values()
+            for number in _result_numbers(item)
+        }
+    if isinstance(value, (list, tuple)):
+        return {
+            number
+            for item in value
+            for number in _result_numbers(item)
+        }
+    if isinstance(value, bool) or value is None:
+        return set()
+    try:
+        return {Decimal(str(value).replace(",", ""))}
+    except InvalidOperation:
+        return set()
+
+
+def _validate_business_answer(
+    answer: str,
+    *,
+    user_content: str,
+    loaded_skills: dict[str, Any],
+    results: dict[str, dict[str, Any]],
+) -> None:
+    permitted_settlement_totals = _validate_settlement_answer(
+        answer,
+        loaded_skills=loaded_skills,
+        results=results,
+    )
+    claimed_numbers = _user_supplied_numbers(answer)
+    permitted_numbers = set(_user_supplied_numbers(user_content))
+    permitted_numbers.update(_result_numbers(results))
+    permitted_numbers.update(permitted_settlement_totals)
+    if not claimed_numbers <= permitted_numbers:
+        raise ValueError("最终回答包含未绑定到本轮可信证据的业务数值")
 
 
 def _submitted_capability_answer(
@@ -643,6 +707,7 @@ class AgentTurnRuntime:
                         key=key,
                         active=active,
                         model_messages=model_messages,
+                        user_content=content,
                         direct_answer=direct_answer,
                         missing_capabilities=missing_capabilities,
                         deadline=deadline,
@@ -765,6 +830,7 @@ class AgentTurnRuntime:
         key: tuple[int, int],
         active: _ActiveTurn,
         model_messages: Sequence[ModelMessage],
+        user_content: str,
         direct_answer: str | None,
         missing_capabilities: tuple[str, ...],
         deadline: float,
@@ -808,6 +874,7 @@ class AgentTurnRuntime:
                             adapter=adapter,
                             active=active,
                             model_messages=model_messages,
+                            user_content=user_content,
                             user_id=key[0],
                             store_id=key[1],
                             missing_capabilities=missing_capabilities,
@@ -1203,6 +1270,7 @@ class AgentTurnRuntime:
         adapter: AgentModelAdapter,
         active: _ActiveTurn,
         model_messages: Sequence[ModelMessage],
+        user_content: str,
         user_id: int,
         store_id: int,
         missing_capabilities: tuple[str, ...],
@@ -1218,7 +1286,6 @@ class AgentTurnRuntime:
             messages = fit_model_context(messages)
             response_content: list[str] = []
             response_tool_calls: list[ModelToolCall] = []
-            streamed_answer = False
             async for response_part in self._respond_events_with_retry(
                 adapter,
                 messages,
@@ -1239,20 +1306,6 @@ class AgentTurnRuntime:
                         "Agent model mixed answer text and tool calls"
                     )
                 response_content.append(chunk)
-                if (
-                    not missing_capabilities
-                    and "company_settlement" not in loaded_skills
-                ):
-                    if not streamed_answer:
-                        await self._emit_answer_phases(active)
-                        streamed_answer = True
-                    await active.events.put(
-                        {
-                            "type": "answer_delta",
-                            "turn_id": active.turn_id,
-                            "delta": chunk,
-                        }
-                    )
             response = ModelResponse(
                 content="".join(response_content) or None,
                 tool_calls=tuple(response_tool_calls),
@@ -1263,16 +1316,21 @@ class AgentTurnRuntime:
                     raise ValueError("Agent model returned an empty answer")
                 if missing_capabilities:
                     answer = capability_gap_answer(missing_capabilities)
-                _validate_settlement_answer(
+                _validate_business_answer(
                     answer,
+                    user_content=user_content,
                     loaded_skills=loaded_skills,
                     results=results,
                 )
-                if not streamed_answer:
-                    if "company_settlement" in loaded_skills:
-                        await self._emit_trusted_answer_fragments(active, answer)
-                    else:
-                        await self._emit_trusted_answer(active, answer)
+                if missing_capabilities:
+                    await self._emit_trusted_answer(active, answer)
+                elif "company_settlement" in loaded_skills:
+                    await self._emit_trusted_answer_fragments(active, answer)
+                else:
+                    await self._emit_trusted_answer_chunks(
+                        active,
+                        response_content,
+                    )
                 return answer, cards
 
             submit_calls = [
@@ -1295,8 +1353,9 @@ class AgentTurnRuntime:
                     )
                 except ValueError:
                     answer = capability_gap_answer(missing_capabilities)
-                _validate_settlement_answer(
+                _validate_business_answer(
                     answer,
+                    user_content=user_content,
                     loaded_skills=loaded_skills,
                     results=results,
                 )
@@ -1493,6 +1552,22 @@ class AgentTurnRuntime:
                 "delta": answer,
             }
         )
+
+    @classmethod
+    async def _emit_trusted_answer_chunks(
+        cls,
+        active: _ActiveTurn,
+        chunks: Sequence[str],
+    ) -> None:
+        await cls._emit_answer_phases(active)
+        for chunk in chunks:
+            await active.events.put(
+                {
+                    "type": "answer_delta",
+                    "turn_id": active.turn_id,
+                    "delta": chunk,
+                }
+            )
 
     @classmethod
     async def _emit_trusted_answer_fragments(
