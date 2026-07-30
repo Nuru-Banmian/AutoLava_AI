@@ -261,9 +261,15 @@ class SafePartialMonthTotalAdapter:
 
 
 class StreamingSettlementAdapter:
-    def __init__(self, *, unsafe_total: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        unsafe_total: bool = False,
+        combined_unsafe_suffix: bool = False,
+    ) -> None:
         self.step = 0
         self.unsafe_total = unsafe_total
+        self.combined_unsafe_suffix = combined_unsafe_suffix
 
     async def respond(self, _messages, _tools) -> ModelResponse:
         raise AssertionError("tool-enabled streaming response must be used")
@@ -293,6 +299,14 @@ class StreamingSettlementAdapter:
                             "group_by": "opening_month",
                         },
                     ),
+                )
+            )
+            return
+        if self.combined_unsafe_suffix:
+            yield ModelResponse(
+                content=(
+                    "已确认公司结算收入为 100 欧元。"
+                    "两项合计收入为 250 欧元"
                 )
             )
             return
@@ -775,6 +789,38 @@ async def test_company_settlement_stream_withholds_an_unsafe_later_fragment(
     )
     client._transport.app.state.agent_model_adapter = (
         StreamingSettlementAdapter(unsafe_total=True)
+    )
+    await _login(client, admin.username)
+
+    response = await client.post(
+        f"/api/agent/stores/{store_id}/messages",
+        json={"content": "分析 2026 年 7 月公司结算和待到账应收款"},
+    )
+
+    events = [
+        json.loads(line) for line in response.text.splitlines() if line
+    ]
+    assert [
+        event["delta"] for event in events if event["type"] == "answer_delta"
+    ] == ["已确认公司结算收入为 100 欧元。"]
+    assert "250" not in response.text
+    assert events[-1]["type"] == "failed"
+
+
+async def test_company_settlement_stream_releases_only_safe_prefix_of_one_chunk(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+) -> None:
+    admin, store_id = await _seed_guard_case(
+        db_session,
+        user_factory,
+        store_factory,
+        username="unsafe-single-chunk-settlement-admin",
+    )
+    client._transport.app.state.agent_model_adapter = (
+        StreamingSettlementAdapter(combined_unsafe_suffix=True)
     )
     await _login(client, admin.username)
 

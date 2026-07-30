@@ -242,6 +242,49 @@ async def test_complete_adapter_cannot_stream_or_persist_untrusted_values(
     )
 
 
+async def test_stream_adapter_releases_only_safe_prefix_of_one_chunk(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+) -> None:
+    admin = await user_factory(
+        username="unsafe-stream-suffix-admin",
+        password="secret123",
+        role="admin",
+    )
+    store = await store_factory(name="流式后缀安全门店")
+    db_session.add(AgentSystemSettings(enabled=True))
+    await db_session.commit()
+    store_id = store.id
+    adapter = StreamingModelAdapter("已完成分析。台账营业额为 999 欧元")
+    adapter.release.set()
+    client._transport.app.state.agent_model_adapter = adapter
+    await _login(client, admin.username)
+
+    response = await client.post(
+        f"/api/agent/stores/{store_id}/messages",
+        json={"content": "分析本月营业额"},
+    )
+
+    events = _json_lines(response.text)
+    assert [
+        event["delta"]
+        for event in events
+        if event["type"] == "answer_delta"
+    ] == ["已完成分析。"]
+    assert "999" not in response.text
+    assert events[-1]["type"] == "failed"
+
+    restored = await client.get(
+        f"/api/agent/stores/{store_id}/conversation",
+    )
+    assert all(
+        message["role"] != "assistant"
+        for message in restored.json()["messages"]
+    )
+
+
 async def test_closing_live_event_subscription_does_not_cancel_background_turn(
     client: AsyncClient,
     db_session: AsyncSession,

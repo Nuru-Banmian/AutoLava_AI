@@ -565,6 +565,101 @@ async def test_http_turn_does_not_stream_or_persist_untrusted_business_values(
     )
 
 
+async def test_http_turn_rejects_swapped_values_for_multiple_metrics(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+) -> None:
+    admin = await user_factory(
+        username="swapped-metric-values-admin",
+        password="secret123",
+        role="admin",
+    )
+    store = await store_factory(name="多指标数值安全门店")
+    db_session.add_all(
+        (
+            AgentSystemSettings(enabled=True),
+            StoreDailyRecord(
+                store_id=store.id,
+                date=date(2026, 7, 1),
+                daily_revenue=50,
+                wash_count=1,
+                is_open="营业",
+                created_by=admin.id,
+                updated_by=admin.id,
+            ),
+            StoreDailyRecord(
+                store_id=store.id,
+                date=date(2026, 7, 2),
+                daily_revenue=50,
+                wash_count=1,
+                is_open="营业",
+                created_by=admin.id,
+                updated_by=admin.id,
+            ),
+        )
+    )
+    await db_session.commit()
+    store_id = store.id
+
+    class SwappedMetricValuesAdapter:
+        def __init__(self) -> None:
+            self.step = 0
+
+        async def respond(self, _messages, _tools) -> ModelResponse:
+            self.step += 1
+            if self.step == 1:
+                return ModelResponse(
+                    tool_calls=(
+                        ModelToolCall(
+                            id="load-performance",
+                            name="load_skill",
+                            arguments={"name": "business_performance"},
+                        ),
+                    )
+                )
+            if self.step == 2:
+                return ModelResponse(
+                    tool_calls=(
+                        ModelToolCall(
+                            id="performance-summary",
+                            name="business_performance_summary",
+                            arguments={
+                                "start": "2026-07-01",
+                                "end": "2026-07-02",
+                            },
+                        ),
+                    )
+                )
+            return ModelResponse(
+                content="台账营业额和洗车数量分别为 2 欧元和 100 辆。"
+            )
+
+    client._transport.app.state.agent_model_adapter = (
+        SwappedMetricValuesAdapter()
+    )
+    await _login(client, admin.username)
+
+    response = await client.post(
+        f"/api/agent/stores/{store_id}/messages",
+        json={"content": "分析 2026-07-01 到 2026-07-02 的经营表现"},
+    )
+
+    assert response.status_code == 200
+    events = _events(response.text)
+    assert all(event["type"] != "answer_delta" for event in events)
+    assert events[-1]["type"] == "failed"
+
+    restored = await client.get(
+        f"/api/agent/stores/{store_id}/conversation",
+    )
+    assert all(
+        message["role"] != "assistant"
+        for message in restored.json()["messages"]
+    )
+
+
 async def test_http_tool_loop_streams_final_answer_fragments(
     client: AsyncClient,
     db_session: AsyncSession,

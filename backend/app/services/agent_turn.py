@@ -1,7 +1,7 @@
 import asyncio
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 import json
@@ -231,55 +231,46 @@ def _calculation_operand_kinds(
     return step_kinds.get(step, frozenset())
 
 
-def _user_supplied_numbers(content: str) -> frozenset[Decimal]:
-    without_periods = re.sub(
-        r"\bresult-\d+\b",
-        " ",
+def _blank_matches(
+    content: str,
+    pattern: str,
+    *,
+    flags: int = 0,
+) -> str:
+    return re.sub(
+        pattern,
+        lambda match: " " * len(match.group(0)),
         content,
+        flags=flags,
+    )
+
+
+def _without_period_numbers(content: str) -> str:
+    without_periods = _blank_matches(
+        content,
+        r"\bresult-\d+\b",
         flags=re.IGNORECASE,
     )
-    without_periods = re.sub(
+    for pattern in (
         r"\d{4}\s*(?:-|年)\s*\d{1,2}\s*(?:-|月)\s*\d{1,2}\s*日?",
-        " ",
-        without_periods,
-    )
-    without_periods = re.sub(
         r"\d{4}\s*年\s*\d{1,2}\s*[-–—]\s*\d{1,2}\s*月",
-        " ",
-        without_periods,
-    )
-    without_periods = re.sub(
         r"\d{1,2}\s*月\s*\d{1,2}\s*日"
         r"(?:\s*(?:至|到|-)\s*\d{1,2}\s*日)?",
-        " ",
-        without_periods,
-    )
-    without_periods = re.sub(
         r"\d{4}\s*(?:-\s*\d{1,2}|年\s*\d{1,2}\s*月)",
-        " ",
-        without_periods,
-    )
-    without_periods = re.sub(
         r"\d{4}\s*年|(?<![\d-])\d{1,2}\s*月",
-        " ",
-        without_periods,
-    )
-    without_periods = re.sub(
         r"(?<![\d-])\d{1,2}\s*日",
-        " ",
+        r"(?:最近|过去)\s*\d+\s*(?:天|周|个月|月)",
+    ):
+        without_periods = _blank_matches(without_periods, pattern)
+    return _blank_matches(
         without_periods,
-    )
-    without_periods = re.sub(
         r"(?:\d{4}\s*年?\s*)?(?:第?\s*[1-4一二三四]\s*季度|Q[1-4])",
-        " ",
-        without_periods,
         flags=re.IGNORECASE,
     )
-    without_periods = re.sub(
-        r"(?:最近|过去)\s*\d+\s*(?:天|周|个月|月)",
-        " ",
-        without_periods,
-    )
+
+
+def _user_supplied_numbers(content: str) -> frozenset[Decimal]:
+    without_periods = _without_period_numbers(content)
     values: set[Decimal] = set()
     for matched in re.findall(
         r"(?<![A-Za-z0-9])[-+]?\d[\d,]*(?:\.\d+)?",
@@ -511,14 +502,68 @@ def _result_number_fields(
         return {}
 
 
-def _answer_number_claims(answer: str) -> list[tuple[Decimal, str]]:
-    claims: list[tuple[Decimal, str]] = []
-    for clause in re.split(r"[，,；;。！？\n]+", answer):
-        claims.extend(
-            (number, clause)
-            for number in _user_supplied_numbers(clause)
+def _answer_number_claims(
+    answer: str,
+) -> list[tuple[str, list[tuple[Decimal, int, int]]]]:
+    clauses: list[tuple[str, list[tuple[Decimal, int, int]]]] = []
+    for clause_match in re.finditer(r"[^，,；;。！？\n]+", answer):
+        clause = clause_match.group(0)
+        claims: list[tuple[Decimal, int, int]] = []
+        for number_match in re.finditer(
+            r"(?<![A-Za-z0-9])[-+]?\d[\d,]*(?:\.\d+)?",
+            _without_period_numbers(clause),
+        ):
+            try:
+                number = Decimal(number_match.group(0).replace(",", ""))
+            except InvalidOperation:
+                continue
+            claims.append((number, number_match.start(), number_match.end()))
+        if claims:
+            clauses.append((clause, claims))
+    return clauses
+
+
+def _specific_answer_markers(
+    clause: str,
+) -> list[tuple[int, int, frozenset[str]]]:
+    matches = [
+        (match.start(), match.end(), fields)
+        for markers, fields in _ANSWER_FIELD_MARKERS
+        for marker in markers
+        for match in re.finditer(re.escape(marker), clause)
+    ]
+    return [
+        (start, end, fields)
+        for start, end, fields in matches
+        if not any(
+            other_start <= start
+            and end <= other_end
+            and (other_start, other_end) != (start, end)
+            for other_start, other_end, _other_fields in matches
         )
-    return claims
+    ]
+
+
+def _nearest_answer_fields(
+    *,
+    claim_start: int,
+    claim_end: int,
+    markers: Sequence[tuple[int, int, frozenset[str]]],
+) -> frozenset[str]:
+    if not markers:
+        return frozenset()
+
+    def distance(
+        marker: tuple[int, int, frozenset[str]],
+    ) -> tuple[int, int]:
+        start, end, _fields = marker
+        if end <= claim_start:
+            return claim_start - end, 0
+        if claim_end <= start:
+            return start - claim_end, 1
+        return 0, 0
+
+    return min(markers, key=distance)[2]
 
 
 def _validate_business_answer(
@@ -543,35 +588,86 @@ def _validate_business_answer(
         for number, paths in result_fields.items()
         if any("values" in path for path in paths)
     )
-    for number, clause in _answer_number_claims(answer):
+    for clause, claims in _answer_number_claims(answer):
         if not any(cue in clause for cue in _ANSWER_BUSINESS_NUMBER_CUES):
             continue
-        if number in generic_numbers:
-            continue
-        matched_markers = [
-            (marker, fields)
-            for markers, fields in _ANSWER_FIELD_MARKERS
-            for marker in markers
-            if marker in clause
-        ]
-        most_specific_markers = [
-            (marker, fields)
-            for marker, fields in matched_markers
-            if not any(
-                marker != other_marker and marker in other_marker
-                for other_marker, _other_fields in matched_markers
+        markers = _specific_answer_markers(clause)
+        ordered_markers = sorted(markers, key=lambda marker: marker[0])
+        use_ordered_pairing = (
+            "分别" in clause and len(ordered_markers) == len(claims)
+        )
+        for index, (number, claim_start, claim_end) in enumerate(claims):
+            if number in generic_numbers:
+                continue
+            permitted_fields = (
+                ordered_markers[index][2]
+                if use_ordered_pairing
+                else _nearest_answer_fields(
+                    claim_start=claim_start,
+                    claim_end=claim_end,
+                    markers=markers,
+                )
             )
-        ]
-        permitted_fields = set()
-        for _marker, fields in most_specific_markers:
-            permitted_fields.update(fields)
-        if any(
-            path
-            and path[-1] in permitted_fields
-            for path in result_fields.get(number, ())
-        ):
-            continue
-        raise ValueError("最终回答包含未绑定到本轮可信证据字段的业务数值")
+            if any(
+                path
+                and path[-1] in permitted_fields
+                for path in result_fields.get(number, ())
+            ):
+                continue
+            raise ValueError(
+                "最终回答包含未绑定到本轮可信证据字段的业务数值"
+            )
+
+
+@dataclass
+class _AnswerChunkGuard:
+    user_content: str
+    loaded_skills: dict[str, Any]
+    results: dict[str, dict[str, Any]]
+    full_answer: list[str] = dataclass_field(default_factory=list)
+    validation_context: str = ""
+    unreleased_text: str = ""
+
+    def add(self, chunk: str) -> tuple[str, ...]:
+        self.full_answer.append(chunk)
+        self.validation_context += chunk
+        self.unreleased_text += chunk
+        boundaries = list(
+            re.finditer(r"[。！？\n]+", self.validation_context)
+        )
+        if boundaries:
+            boundary = boundaries[-1].end()
+            _validate_business_answer(
+                self.validation_context[:boundary],
+                user_content=self.user_content,
+                loaded_skills=self.loaded_skills,
+                results=self.results,
+                require_complete_settlement=False,
+            )
+            emitted_prefix_length = (
+                len(self.validation_context) - len(self.unreleased_text)
+            )
+            release_length = max(0, boundary - emitted_prefix_length)
+            released = self.unreleased_text[:release_length]
+            self.unreleased_text = self.unreleased_text[release_length:]
+            self.validation_context = self.validation_context[boundary:]
+            return (released,) if released else ()
+        if not any(character.isdigit() for character in self.unreleased_text):
+            released = self.unreleased_text
+            self.unreleased_text = ""
+            return (released,) if released else ()
+        return ()
+
+    def finish(self) -> tuple[str, ...]:
+        _validate_business_answer(
+            "".join(self.full_answer),
+            user_content=self.user_content,
+            loaded_skills=self.loaded_skills,
+            results=self.results,
+        )
+        released = self.unreleased_text
+        self.unreleased_text = ""
+        return (released,) if released else ()
 
 
 def _submitted_capability_answer(
@@ -755,38 +851,16 @@ async def _validated_answer_chunks(
     loaded_skills: dict[str, Any],
     results: dict[str, dict[str, Any]],
 ) -> AsyncIterator[str]:
-    full_answer: list[str] = []
-    validation_context = ""
-    held_chunks: list[str] = []
-    async for chunk in chunks:
-        full_answer.append(chunk)
-        validation_context += chunk
-        held_chunks.append(chunk)
-        boundaries = list(re.finditer(r"[。！？\n]+", validation_context))
-        if boundaries:
-            boundary = boundaries[-1].end()
-            _validate_business_answer(
-                validation_context[:boundary],
-                user_content=user_content,
-                loaded_skills=loaded_skills,
-                results=results,
-            )
-            for held_chunk in held_chunks:
-                yield held_chunk
-            held_chunks.clear()
-            validation_context = validation_context[boundary:]
-        elif not any(character.isdigit() for character in "".join(held_chunks)):
-            for held_chunk in held_chunks:
-                yield held_chunk
-            held_chunks.clear()
-    _validate_business_answer(
-        "".join(full_answer),
+    guard = _AnswerChunkGuard(
         user_content=user_content,
         loaded_skills=loaded_skills,
         results=results,
     )
-    for held_chunk in held_chunks:
-        yield held_chunk
+    async for chunk in chunks:
+        for released in guard.add(chunk):
+            yield released
+    for released in guard.finish():
+        yield released
 
 
 async def latest_conversation_turn(
@@ -1466,8 +1540,11 @@ class AgentTurnRuntime:
             response_content: list[str] = []
             response_tool_calls: list[ModelToolCall] = []
             streamed_answer = False
-            answer_validation_context = ""
-            held_answer_chunks: list[str] = []
+            answer_guard = _AnswerChunkGuard(
+                user_content=user_content,
+                loaded_skills=loaded_skills,
+                results=results,
+            )
             async for response_part in self._respond_events_with_retry(
                 adapter,
                 messages,
@@ -1489,34 +1566,7 @@ class AgentTurnRuntime:
                     )
                 response_content.append(chunk)
                 if not missing_capabilities:
-                    answer_validation_context += chunk
-                    held_answer_chunks.append(chunk)
-                    boundaries = list(
-                        re.finditer(
-                            r"[。！？\n]+",
-                            answer_validation_context,
-                        )
-                    )
-                    can_release = False
-                    if boundaries:
-                        boundary = boundaries[-1].end()
-                        _validate_business_answer(
-                            answer_validation_context[:boundary],
-                            user_content=user_content,
-                            loaded_skills=loaded_skills,
-                            results=results,
-                            require_complete_settlement=False,
-                        )
-                        answer_validation_context = (
-                            answer_validation_context[boundary:]
-                        )
-                        can_release = True
-                    elif not any(
-                        character.isdigit()
-                        for character in "".join(held_answer_chunks)
-                    ):
-                        can_release = True
-                    if can_release:
+                    for released in answer_guard.add(chunk):
                         if not streamed_answer:
                             await self._emit_answer_phases(active)
                             streamed_answer = True
@@ -1524,10 +1574,9 @@ class AgentTurnRuntime:
                             {
                                 "type": "answer_delta",
                                 "turn_id": active.turn_id,
-                                "delta": "".join(held_answer_chunks),
+                                "delta": released,
                             }
                         )
-                        held_answer_chunks.clear()
             response = ModelResponse(
                 content="".join(response_content) or None,
                 tool_calls=tuple(response_tool_calls),
@@ -1538,23 +1587,23 @@ class AgentTurnRuntime:
                     raise ValueError("Agent model returned an empty answer")
                 if missing_capabilities:
                     answer = capability_gap_answer(missing_capabilities)
-                _validate_business_answer(
-                    answer,
-                    user_content=user_content,
-                    loaded_skills=loaded_skills,
-                    results=results,
-                )
-                if missing_capabilities:
+                    _validate_business_answer(
+                        answer,
+                        user_content=user_content,
+                        loaded_skills=loaded_skills,
+                        results=results,
+                    )
                     await self._emit_trusted_answer(active, answer)
                 else:
-                    if held_answer_chunks:
+                    for released in answer_guard.finish():
                         if not streamed_answer:
                             await self._emit_answer_phases(active)
+                            streamed_answer = True
                         await active.events.put(
                             {
                                 "type": "answer_delta",
                                 "turn_id": active.turn_id,
-                                "delta": "".join(held_answer_chunks),
+                                "delta": released,
                             }
                         )
                 return answer, cards
