@@ -459,12 +459,20 @@ async def test_http_turn_rejects_untrusted_calculation_literals(
     assert _events(response.text)[-1]["type"] == "failed"
 
 
-@pytest.mark.parametrize("untrusted_value", ("999", "1"))
+@pytest.mark.parametrize(
+    ("claim_label", "untrusted_value"),
+    (
+        ("台账营业额", "999"),
+        ("台账营业额", "2"),
+        ("经营日均台账营业额", "100"),
+    ),
+)
 async def test_http_turn_does_not_stream_or_persist_untrusted_business_values(
     client: AsyncClient,
     db_session: AsyncSession,
     user_factory,
     store_factory,
+    claim_label: str,
     untrusted_value: str,
 ) -> None:
     admin = await user_factory(
@@ -479,6 +487,14 @@ async def test_http_turn_does_not_stream_or_persist_untrusted_business_values(
             StoreDailyRecord(
                 store_id=store.id,
                 date=date(2026, 7, 1),
+                daily_revenue=50,
+                is_open="营业",
+                created_by=admin.id,
+                updated_by=admin.id,
+            ),
+            StoreDailyRecord(
+                store_id=store.id,
+                date=date(2026, 7, 2),
                 daily_revenue=50,
                 is_open="营业",
                 created_by=admin.id,
@@ -513,13 +529,13 @@ async def test_http_turn_does_not_stream_or_persist_untrusted_business_values(
                             name="business_performance_summary",
                             arguments={
                                 "start": "2026-07-01",
-                                "end": "2026-07-01",
+                                "end": "2026-07-02",
                             },
                         ),
                     )
                 )
             return ModelResponse(
-                content=f"台账营业额为 {untrusted_value} 欧元。"
+                content=f"{claim_label}为 {untrusted_value} 欧元。"
             )
 
     client._transport.app.state.agent_model_adapter = UntrustedAnswerAdapter()
@@ -527,7 +543,7 @@ async def test_http_turn_does_not_stream_or_persist_untrusted_business_values(
 
     response = await client.post(
         f"/api/agent/stores/{store_id}/messages",
-        json={"content": "分析 2026-07-01 的经营表现"},
+        json={"content": "分析 2026-07-01 到 2026-07-02 的经营表现"},
     )
 
     assert response.status_code == 200

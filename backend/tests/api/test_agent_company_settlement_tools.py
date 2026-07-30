@@ -261,8 +261,9 @@ class SafePartialMonthTotalAdapter:
 
 
 class StreamingSettlementAdapter:
-    def __init__(self) -> None:
+    def __init__(self, *, unsafe_total: bool = False) -> None:
         self.step = 0
+        self.unsafe_total = unsafe_total
 
     async def respond(self, _messages, _tools) -> ModelResponse:
         raise AssertionError("tool-enabled streaming response must be used")
@@ -297,7 +298,13 @@ class StreamingSettlementAdapter:
             return
         yield ModelResponse(content="已确认公司结算收入为 100 欧元。")
         yield ModelResponse(content="当前待到账应收款为 150 欧元，")
-        yield ModelResponse(content="不计入营业额。")
+        yield ModelResponse(
+            content=(
+                "不计入营业额。两项合计收入为 250 欧元。"
+                if self.unsafe_total
+                else "不计入营业额。"
+            )
+        )
 
 
 async def _login(client: AsyncClient, username: str) -> None:
@@ -624,6 +631,11 @@ async def test_agent_analyzes_settlement_income_and_current_receivables_separate
             "2026 年 7 月 1 日已确认公司结算收入为 100 欧元；"
             "当前待到账应收款为 150 欧元，不计入营业额。"
         ),
+        (
+            "已确认公司结算收入与当前待到账应收款分开说明。"
+            "7/1 的已确认结算收入为 100 欧元；"
+            "当前待到账应收款为 150 欧元，不计入营业额。"
+        ),
     ),
 )
 async def test_agent_rejects_unsafe_settlement_final_answer(
@@ -747,3 +759,35 @@ async def test_company_settlement_answer_streams_safe_sentence_fragments(
         "当前待到账应收款为 150 欧元，不计入营业额。",
     ]
     assert events[-1]["type"] == "completed"
+
+
+async def test_company_settlement_stream_withholds_an_unsafe_later_fragment(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+) -> None:
+    admin, store_id = await _seed_guard_case(
+        db_session,
+        user_factory,
+        store_factory,
+        username="unsafe-streaming-settlement-admin",
+    )
+    client._transport.app.state.agent_model_adapter = (
+        StreamingSettlementAdapter(unsafe_total=True)
+    )
+    await _login(client, admin.username)
+
+    response = await client.post(
+        f"/api/agent/stores/{store_id}/messages",
+        json={"content": "分析 2026 年 7 月公司结算和待到账应收款"},
+    )
+
+    events = [
+        json.loads(line) for line in response.text.splitlines() if line
+    ]
+    assert [
+        event["delta"] for event in events if event["type"] == "answer_delta"
+    ] == ["已确认公司结算收入为 100 欧元。"]
+    assert "250" not in response.text
+    assert events[-1]["type"] == "failed"

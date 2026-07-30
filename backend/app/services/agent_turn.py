@@ -374,6 +374,7 @@ def _validate_settlement_answer(
     *,
     loaded_skills: dict[str, Any],
     results: dict[str, dict[str, Any]],
+    require_complete: bool = True,
 ) -> frozenset[Decimal]:
     if "company_settlement" not in loaded_skills:
         return frozenset()
@@ -388,7 +389,7 @@ def _validate_settlement_answer(
     ]
     if not summaries:
         return frozenset()
-    if (
+    if require_complete and (
         "已确认公司结算收入" not in answer
         or "当前待到账应收款" not in answer
         or not any(phrase in answer for phrase in _PENDING_EXCLUSION_PHRASES)
@@ -412,11 +413,12 @@ def _validate_settlement_answer(
         raise ValueError("公司结算最终回答合并了收入与当前待到账应收款")
     for sentence in re.split(r"[。！？\n]+", answer):
         if (
-            "公司结算收入" in sentence
+            "结算收入" in sentence
             and re.search(
                 r"(?:\d{4}\s*-\s*\d{1,2}\s*-\s*\d{1,2}"
                 r"|\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日"
-                r"|\d{1,2}\s*月\s*\d{1,2}\s*日)",
+                r"|\d{1,2}\s*月\s*\d{1,2}\s*日"
+                r"|\d{1,2}\s*/\s*\d{1,2})",
                 sentence,
             )
         ):
@@ -525,11 +527,13 @@ def _validate_business_answer(
     user_content: str,
     loaded_skills: dict[str, Any],
     results: dict[str, dict[str, Any]],
+    require_complete_settlement: bool = True,
 ) -> None:
     permitted_settlement_totals = _validate_settlement_answer(
         answer,
         loaded_skills=loaded_skills,
         results=results,
+        require_complete=require_complete_settlement,
     )
     result_fields = _result_number_fields(results)
     generic_numbers = set(_user_supplied_numbers(user_content))
@@ -544,10 +548,23 @@ def _validate_business_answer(
             continue
         if number in generic_numbers:
             continue
+        matched_markers = [
+            (marker, fields)
+            for markers, fields in _ANSWER_FIELD_MARKERS
+            for marker in markers
+            if marker in clause
+        ]
+        most_specific_markers = [
+            (marker, fields)
+            for marker, fields in matched_markers
+            if not any(
+                marker != other_marker and marker in other_marker
+                for other_marker, _other_fields in matched_markers
+            )
+        ]
         permitted_fields = set()
-        for markers, fields in _ANSWER_FIELD_MARKERS:
-            if any(marker in clause for marker in markers):
-                permitted_fields.update(fields)
+        for _marker, fields in most_specific_markers:
+            permitted_fields.update(fields)
         if any(
             path
             and path[-1] in permitted_fields
@@ -1471,10 +1488,7 @@ class AgentTurnRuntime:
                         "Agent model mixed answer text and tool calls"
                     )
                 response_content.append(chunk)
-                if (
-                    not missing_capabilities
-                    and "company_settlement" not in loaded_skills
-                ):
+                if not missing_capabilities:
                     answer_validation_context += chunk
                     held_answer_chunks.append(chunk)
                     boundaries = list(
@@ -1491,6 +1505,7 @@ class AgentTurnRuntime:
                             user_content=user_content,
                             loaded_skills=loaded_skills,
                             results=results,
+                            require_complete_settlement=False,
                         )
                         answer_validation_context = (
                             answer_validation_context[boundary:]
@@ -1505,14 +1520,13 @@ class AgentTurnRuntime:
                         if not streamed_answer:
                             await self._emit_answer_phases(active)
                             streamed_answer = True
-                        for held_chunk in held_answer_chunks:
-                            await active.events.put(
-                                {
-                                    "type": "answer_delta",
-                                    "turn_id": active.turn_id,
-                                    "delta": held_chunk,
-                                }
-                            )
+                        await active.events.put(
+                            {
+                                "type": "answer_delta",
+                                "turn_id": active.turn_id,
+                                "delta": "".join(held_answer_chunks),
+                            }
+                        )
                         held_answer_chunks.clear()
             response = ModelResponse(
                 content="".join(response_content) or None,
@@ -1532,20 +1546,17 @@ class AgentTurnRuntime:
                 )
                 if missing_capabilities:
                     await self._emit_trusted_answer(active, answer)
-                elif "company_settlement" in loaded_skills:
-                    await self._emit_trusted_answer_fragments(active, answer)
                 else:
                     if held_answer_chunks:
                         if not streamed_answer:
                             await self._emit_answer_phases(active)
-                        for held_chunk in held_answer_chunks:
-                            await active.events.put(
-                                {
-                                    "type": "answer_delta",
-                                    "turn_id": active.turn_id,
-                                    "delta": held_chunk,
-                                }
-                            )
+                        await active.events.put(
+                            {
+                                "type": "answer_delta",
+                                "turn_id": active.turn_id,
+                                "delta": "".join(held_answer_chunks),
+                            }
+                        )
                 return answer, cards
 
             submit_calls = [
@@ -1767,25 +1778,6 @@ class AgentTurnRuntime:
                 "delta": answer,
             }
         )
-
-    @classmethod
-    async def _emit_trusted_answer_fragments(
-        cls,
-        active: _ActiveTurn,
-        answer: str,
-    ) -> None:
-        await cls._emit_answer_phases(active)
-        fragments = re.findall(r".*?(?:[。！？\n]+|$)", answer, flags=re.DOTALL)
-        for fragment in fragments:
-            if not fragment:
-                continue
-            await active.events.put(
-                {
-                    "type": "answer_delta",
-                    "turn_id": active.turn_id,
-                    "delta": fragment,
-                }
-            )
 
     async def _finish_timed_out_turn(
         self,
