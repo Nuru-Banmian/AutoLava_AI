@@ -661,26 +661,47 @@ async def test_http_turn_rejects_swapped_values_for_multiple_metrics(
 
 
 @pytest.mark.parametrize(
-    ("case_key", "claim", "calculate_value", "question"),
+    ("case_key", "claim", "calculation_case", "question"),
     (
         pytest.param(
             "coverage",
             "经营日为 1 天。",
-            False,
+            None,
             "分析 2026-07-01 到 2026-07-02 的经营表现",
             id="missing-wash-count-days-as-operating-days",
         ),
         pytest.param(
             "calculation",
             "台账营业额为 200 欧元。",
-            True,
+            "operating-days-percentage",
             "分析 2026-07-01 到 2026-07-02 的经营表现",
             id="calculation-value-as-ledger-revenue",
         ),
         pytest.param(
+            "same-source-calculation",
+            "经营日为 200 天。",
+            "operating-days-percentage",
+            "分析 2026-07-01 到 2026-07-02 的经营表现",
+            id="calculation-value-as-source-metric",
+        ),
+        pytest.param(
+            "mixed-calculation",
+            "台账营业额为 102 欧元。",
+            "mixed-fields",
+            "分析 2026-07-01 到 2026-07-02 的经营表现",
+            id="mixed-calculation-as-one-source-metric",
+        ),
+        pytest.param(
+            "step-name",
+            "台账营业额为 200 欧元。",
+            "field-like-step-name",
+            "分析 2026-07-01 到 2026-07-02 的经营表现",
+            id="calculation-step-name-as-metric",
+        ),
+        pytest.param(
             "user",
             "台账营业额为 300 欧元。",
-            False,
+            None,
             (
                 "分析 2026-07-01 到 2026-07-02 的经营表现，"
                 "并与 300 欧元目标比较"
@@ -696,7 +717,7 @@ async def test_http_turn_rejects_values_bound_to_a_different_metric(
     store_factory,
     case_key: str,
     claim: str,
-    calculate_value: bool,
+    calculation_case: str | None,
     question: str,
 ) -> None:
     admin = await user_factory(
@@ -760,27 +781,48 @@ async def test_http_turn_rejects_values_bound_to_a_different_metric(
                         ),
                     )
                 )
-            if calculate_value and self.step == 3:
+            if calculation_case and self.step == 3:
+                if calculation_case == "mixed-fields":
+                    steps = [
+                        {
+                            "name": "mixed_total",
+                            "operation": "add",
+                            "left": {
+                                "result_id": "result-1",
+                                "field": "data.ledger_revenue",
+                            },
+                            "right": {
+                                "result_id": "result-1",
+                                "field": "data.operating_days",
+                            },
+                        }
+                    ]
+                else:
+                    steps = [
+                        {
+                            "name": (
+                                "ledger_revenue"
+                                if calculation_case == "field-like-step-name"
+                                else "percentage"
+                            ),
+                            "operation": "multiply",
+                            "left": {
+                                "result_id": "result-1",
+                                "field": "data.operating_days",
+                            },
+                            "right": {
+                                "literal": "100",
+                                "source": "formula_constant",
+                            },
+                        }
+                    ]
                 return ModelResponse(
                     tool_calls=(
                         ModelToolCall(
                             id="calculated-value",
                             name="calculate",
                             arguments={
-                                "steps": [
-                                    {
-                                        "name": "percentage",
-                                        "operation": "multiply",
-                                        "left": {
-                                            "result_id": "result-1",
-                                            "field": "data.operating_days",
-                                        },
-                                        "right": {
-                                            "literal": "100",
-                                            "source": "formula_constant",
-                                        },
-                                    }
-                                ]
+                                "steps": steps,
                             },
                         ),
                     )

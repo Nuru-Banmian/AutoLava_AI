@@ -193,6 +193,25 @@ _ANSWER_BUSINESS_NUMBER_CUES = (
     "公司数量",
     "%",
 )
+_ANSWER_DERIVED_NUMBER_CUES = (
+    "相差",
+    "差额",
+    "多",
+    "少",
+    "高",
+    "低",
+    "增加",
+    "减少",
+    "增长",
+    "下降",
+    "变化",
+    "占比",
+    "比例",
+    "平均",
+    "合计",
+    "总计",
+    "倍",
+)
 
 SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 AdapterFactory = Callable[[], AgentModelAdapter]
@@ -677,6 +696,11 @@ def _validate_business_answer(
         use_ordered_pairing = (
             "分别" in clause and len(ordered_markers) == len(claims)
         )
+        clause_fields = frozenset(
+            field
+            for _start, _end, fields in markers
+            for field in fields
+        )
         for index, (number, claim_start, claim_end) in enumerate(claims):
             if (
                 number in generic_numbers or number in calculation_fields
@@ -693,10 +717,18 @@ def _validate_business_answer(
             )
             if any(
                 path
+                and "values" not in path
                 and path[-1] in permitted_fields
                 for path in result_fields.get(number, ())
-            ) or permitted_fields.intersection(
-                calculation_fields.get(number, ())
+            ):
+                continue
+            derived_fields = calculation_fields.get(number, frozenset())
+            if (
+                derived_fields
+                and derived_fields <= clause_fields
+                and any(
+                    cue in clause for cue in _ANSWER_DERIVED_NUMBER_CUES
+                )
             ):
                 continue
             raise ValueError(
