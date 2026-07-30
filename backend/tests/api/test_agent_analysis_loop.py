@@ -725,6 +725,16 @@ async def test_http_turn_rejects_swapped_values_for_multiple_metrics(
             ),
             id="user-value-as-ledger-revenue",
         ),
+        pytest.param(
+            "unmarked-user",
+            "总收入为 300 欧元。",
+            None,
+            (
+                "分析 2026-07-01 到 2026-07-02 的经营表现，"
+                "并与 300 欧元目标比较"
+            ),
+            id="user-value-as-unmarked-income-metric",
+        ),
     ),
 )
 async def test_http_turn_rejects_values_bound_to_a_different_metric(

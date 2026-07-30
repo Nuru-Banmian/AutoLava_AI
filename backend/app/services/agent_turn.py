@@ -141,6 +141,10 @@ _ANSWER_FIELD_MARKERS = (
         frozenset({"classified_ledger_revenue"}),
     ),
     (
+        ("月度总收入", "总收入"),
+        frozenset({"monthly_total_income", "total_income"}),
+    ),
+    (
         ("台账营业额", "营业额"),
         frozenset(
             {
@@ -613,8 +617,7 @@ def _validate_business_answer(
     )
     result_fields = _result_number_fields(results)
     calculation_numbers = _calculation_numbers(results)
-    generic_numbers = set(_user_supplied_numbers(user_content))
-    generic_numbers.update(permitted_settlement_totals)
+    user_numbers = _user_supplied_numbers(user_content)
     for clause, claims in _answer_number_claims(answer):
         if not any(cue in clause for cue in _ANSWER_BUSINESS_NUMBER_CUES):
             continue
@@ -653,7 +656,13 @@ def _validate_business_answer(
                 raise ValueError(
                     "派生计算数值必须使用无指标歧义的单值表达"
                 )
-            if number in generic_numbers and not markers:
+            if number in permitted_settlement_totals:
+                continue
+            if (
+                number in user_numbers
+                and not markers
+                and "目标" in clause
+            ):
                 continue
             raise ValueError(
                 "最终回答包含未绑定到本轮可信证据字段的业务数值"
