@@ -184,8 +184,15 @@ class UnsafeSettlementCalculationAdapter:
 
 
 class SafePartialMonthTotalAdapter:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        reuse_total_as_operating_days: bool = False,
+    ) -> None:
         self.step = 0
+        self.reuse_total_as_operating_days = (
+            reuse_total_as_operating_days
+        )
 
     async def respond(self, _messages, _tools) -> ModelResponse:
         self.step += 1
@@ -244,7 +251,21 @@ class SafePartialMonthTotalAdapter:
                                             "data.confirmed_settlement_income"
                                         ),
                                     },
-                                }
+                                },
+                                {
+                                    "name": "monthly_total",
+                                    "operation": "add",
+                                    "left": {
+                                        "result_id": "result-2",
+                                        "field": "data.ledger_revenue",
+                                    },
+                                    "right": {
+                                        "result_id": "result-1",
+                                        "field": (
+                                            "data.confirmed_settlement_income"
+                                        ),
+                                    },
+                                },
                             ]
                         },
                     ),
@@ -256,6 +277,11 @@ class SafePartialMonthTotalAdapter:
                 "100 欧元，当前待到账应收款为 150 欧元，不计入营业额。"
                 "两者相差 50 欧元。"
                 "月度总收入合计约为 500 欧元。"
+                + (
+                    "经营日为 500 天。"
+                    if self.reuse_total_as_operating_days
+                    else ""
+                )
             )
         )
 
@@ -710,6 +736,43 @@ async def test_agent_allows_partial_month_ledger_plus_confirmed_settlement_total
     assert any(event["type"] == "completed" for event in events)
     assert all(event["type"] != "failed" for event in events)
     assert "月度总收入合计约为 500 欧元" in response.text
+
+
+async def test_settlement_total_cannot_be_reused_as_an_unrelated_metric(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+) -> None:
+    admin, store_id = await _seed_guard_case(
+        db_session,
+        user_factory,
+        store_factory,
+        username="settlement-total-metric-collision-admin",
+    )
+    client._transport.app.state.agent_model_adapter = (
+        SafePartialMonthTotalAdapter(reuse_total_as_operating_days=True)
+    )
+    await _login(client, admin.username)
+
+    response = await client.post(
+        f"/api/agent/stores/{store_id}/messages",
+        json={"content": "分析 2026 年 7 月 15 日到 29 日月度总收入"},
+    )
+
+    events = [
+        json.loads(line) for line in response.text.splitlines() if line
+    ]
+    assert all(event["type"] != "answer_delta" for event in events)
+    assert events[-1]["type"] == "failed"
+
+    restored = await client.get(
+        f"/api/agent/stores/{store_id}/conversation",
+    )
+    assert all(
+        message["role"] != "assistant"
+        for message in restored.json()["messages"]
+    )
 
 
 async def test_agent_rejects_calculation_that_combines_pending_and_revenue(

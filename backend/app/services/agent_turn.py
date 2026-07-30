@@ -647,6 +647,16 @@ def _validate_business_answer(
                 for path in result_fields.get(number, ())
             ):
                 continue
+            if number in permitted_settlement_totals:
+                if (
+                    number in calculation_numbers
+                    and permitted_fields
+                    & {"monthly_total_income", "total_income"}
+                ):
+                    continue
+                raise ValueError(
+                    "月度总收入必须绑定到派生计算结果及对应收入字段"
+                )
             if number in calculation_numbers:
                 if (
                     len(calculation_claims) == 1
@@ -656,8 +666,6 @@ def _validate_business_answer(
                 raise ValueError(
                     "派生计算数值必须使用无指标歧义的单值表达"
                 )
-            if number in permitted_settlement_totals:
-                continue
             if (
                 number in user_numbers
                 and not markers
