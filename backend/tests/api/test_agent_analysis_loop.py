@@ -699,6 +699,23 @@ async def test_http_turn_rejects_swapped_values_for_multiple_metrics(
             id="calculation-step-name-as-metric",
         ),
         pytest.param(
+            "unmarked-total-income",
+            "总收入增加了 200 欧元。",
+            "operating-days-percentage",
+            "分析 2026-07-01 到 2026-07-02 的经营表现",
+            id="calculation-value-as-unmarked-income-metric",
+        ),
+        pytest.param(
+            "swapped-derived-values",
+            (
+                "经营日增长和台账营业额增长分别为 "
+                "10000 天和 0.02 欧元。"
+            ),
+            "two-derived-values",
+            "分析 2026-07-01 到 2026-07-02 的经营表现",
+            id="swapped-values-for-derived-metrics",
+        ),
+        pytest.param(
             "user",
             "台账营业额为 300 欧元。",
             None,
@@ -796,6 +813,33 @@ async def test_http_turn_rejects_values_bound_to_a_different_metric(
                                 "field": "data.operating_days",
                             },
                         }
+                    ]
+                elif calculation_case == "two-derived-values":
+                    steps = [
+                        {
+                            "name": "operating_change",
+                            "operation": "divide",
+                            "left": {
+                                "result_id": "result-1",
+                                "field": "data.operating_days",
+                            },
+                            "right": {
+                                "literal": "100",
+                                "source": "formula_constant",
+                            },
+                        },
+                        {
+                            "name": "revenue_change",
+                            "operation": "multiply",
+                            "left": {
+                                "result_id": "result-1",
+                                "field": "data.ledger_revenue",
+                            },
+                            "right": {
+                                "literal": "100",
+                                "source": "formula_constant",
+                            },
+                        },
                     ]
                 else:
                     steps = [
