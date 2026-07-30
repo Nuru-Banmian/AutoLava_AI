@@ -151,12 +151,16 @@ _ANSWER_FIELD_MARKERS = (
         ),
     ),
     (
+        ("洗车数量缺失天数",),
+        frozenset({"missing_wash_count_days"}),
+    ),
+    (
         ("洗车数量",),
-        frozenset({"wash_count", "missing_wash_count_days"}),
+        frozenset({"wash_count"}),
     ),
     (
         ("经营日",),
-        frozenset({"operating_days", "missing_wash_count_days"}),
+        frozenset({"operating_days"}),
     ),
     (("其他数据",), frozenset({"other_data_total"})),
     (("占比", "比例"), frozenset({"proportion"})),
@@ -229,6 +233,62 @@ def _calculation_operand_kinds(
         return frozenset({"revenue"})
     step = str(operand.get("step", ""))
     return step_kinds.get(step, frozenset())
+
+
+def _calculation_operand_fields(
+    operand: object,
+    *,
+    results: dict[str, dict[str, Any]],
+    step_fields: dict[str, frozenset[str]],
+) -> frozenset[str]:
+    if not isinstance(operand, dict):
+        return frozenset()
+    result_id = str(operand.get("result_id", ""))
+    field_path = str(operand.get("field", ""))
+    if result_id in results and field_path:
+        field_name = field_path.rsplit(".", 1)[-1]
+        if field_path.startswith("values."):
+            answer_fields = results[result_id].get("_answer_fields", {})
+            if isinstance(answer_fields, dict):
+                fields = answer_fields.get(field_name, ())
+                if isinstance(fields, (list, tuple, set, frozenset)):
+                    return frozenset(str(field) for field in fields)
+            return frozenset()
+        return frozenset({field_name})
+    step = str(operand.get("step", ""))
+    return step_fields.get(step, frozenset())
+
+
+def _calculation_step_fields(
+    plan: object,
+    *,
+    results: dict[str, dict[str, Any]],
+) -> dict[str, frozenset[str]]:
+    if not isinstance(plan, list):
+        return {}
+    step_fields: dict[str, frozenset[str]] = {}
+    for item in plan:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", "")).strip()
+        if not name:
+            continue
+        fields = set(
+            _calculation_operand_fields(
+                item.get("left"),
+                results=results,
+                step_fields=step_fields,
+            )
+        )
+        fields.update(
+            _calculation_operand_fields(
+                item.get("right"),
+                results=results,
+                step_fields=step_fields,
+            )
+        )
+        step_fields[name] = frozenset(fields)
+    return step_fields
 
 
 def _blank_matches(
@@ -502,6 +562,31 @@ def _result_number_fields(
         return {}
 
 
+def _calculation_number_fields(
+    results: dict[str, dict[str, Any]],
+) -> dict[Decimal, frozenset[str]]:
+    fields_by_number: dict[Decimal, set[str]] = {}
+    for result in results.values():
+        values = result.get("values", {})
+        answer_fields = result.get("_answer_fields", {})
+        if not isinstance(values, dict) or not isinstance(answer_fields, dict):
+            continue
+        for name, value in values.items():
+            try:
+                number = Decimal(str(value).replace(",", ""))
+            except InvalidOperation:
+                continue
+            fields = answer_fields.get(name, ())
+            if isinstance(fields, (list, tuple, set, frozenset)):
+                fields_by_number.setdefault(number, set()).update(
+                    str(field) for field in fields
+                )
+    return {
+        number: frozenset(fields)
+        for number, fields in fields_by_number.items()
+    }
+
+
 def _answer_number_claims(
     answer: str,
 ) -> list[tuple[str, list[tuple[Decimal, int, int]]]]:
@@ -581,13 +666,9 @@ def _validate_business_answer(
         require_complete=require_complete_settlement,
     )
     result_fields = _result_number_fields(results)
+    calculation_fields = _calculation_number_fields(results)
     generic_numbers = set(_user_supplied_numbers(user_content))
     generic_numbers.update(permitted_settlement_totals)
-    generic_numbers.update(
-        number
-        for number, paths in result_fields.items()
-        if any("values" in path for path in paths)
-    )
     for clause, claims in _answer_number_claims(answer):
         if not any(cue in clause for cue in _ANSWER_BUSINESS_NUMBER_CUES):
             continue
@@ -597,7 +678,9 @@ def _validate_business_answer(
             "分别" in clause and len(ordered_markers) == len(claims)
         )
         for index, (number, claim_start, claim_end) in enumerate(claims):
-            if number in generic_numbers:
+            if (
+                number in generic_numbers or number in calculation_fields
+            ) and not markers:
                 continue
             permitted_fields = (
                 ordered_markers[index][2]
@@ -612,6 +695,8 @@ def _validate_business_answer(
                 path
                 and path[-1] in permitted_fields
                 for path in result_fields.get(number, ())
+            ) or permitted_fields.intersection(
+                calculation_fields.get(number, ())
             ):
                 continue
             raise ValueError(
@@ -1749,7 +1834,16 @@ class AgentTurnRuntime:
                         "result_id": result_id,
                         **calculation,
                     }
-                    results[result_id] = tool_result
+                    results[result_id] = {
+                        **tool_result,
+                        "_answer_fields": {
+                            name: sorted(fields)
+                            for name, fields in _calculation_step_fields(
+                                call.arguments["steps"],
+                                results=results,
+                            ).items()
+                        },
+                    }
                     calculation_unavailable = bool(
                         calculation["unavailable"]
                     )

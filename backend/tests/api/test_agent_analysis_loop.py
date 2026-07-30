@@ -75,7 +75,7 @@ class AnalysisModelAdapter:
             content=(
                 "7 月 1 日至 3 日台账营业额为 360 欧元，2 个经营日，"
                 "经营日均台账营业额为 180 欧元；比你给出的 100 欧元目标高 260 欧元。"
-                "洗车数量只覆盖其中 1 个经营日，平均每车收入为 60 欧元。"
+                "洗车数量缺失天数为 1 天，平均每车收入为 60 欧元。"
             )
         )
 
@@ -644,6 +644,155 @@ async def test_http_turn_rejects_swapped_values_for_multiple_metrics(
     response = await client.post(
         f"/api/agent/stores/{store_id}/messages",
         json={"content": "分析 2026-07-01 到 2026-07-02 的经营表现"},
+    )
+
+    assert response.status_code == 200
+    events = _events(response.text)
+    assert all(event["type"] != "answer_delta" for event in events)
+    assert events[-1]["type"] == "failed"
+
+    restored = await client.get(
+        f"/api/agent/stores/{store_id}/conversation",
+    )
+    assert all(
+        message["role"] != "assistant"
+        for message in restored.json()["messages"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("case_key", "claim", "calculate_value", "question"),
+    (
+        pytest.param(
+            "coverage",
+            "经营日为 1 天。",
+            False,
+            "分析 2026-07-01 到 2026-07-02 的经营表现",
+            id="missing-wash-count-days-as-operating-days",
+        ),
+        pytest.param(
+            "calculation",
+            "台账营业额为 200 欧元。",
+            True,
+            "分析 2026-07-01 到 2026-07-02 的经营表现",
+            id="calculation-value-as-ledger-revenue",
+        ),
+        pytest.param(
+            "user",
+            "台账营业额为 300 欧元。",
+            False,
+            (
+                "分析 2026-07-01 到 2026-07-02 的经营表现，"
+                "并与 300 欧元目标比较"
+            ),
+            id="user-value-as-ledger-revenue",
+        ),
+    ),
+)
+async def test_http_turn_rejects_values_bound_to_a_different_metric(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+    case_key: str,
+    claim: str,
+    calculate_value: bool,
+    question: str,
+) -> None:
+    admin = await user_factory(
+        username=f"wrong-metric-{case_key}-admin",
+        password="secret123",
+        role="admin",
+    )
+    store = await store_factory(name=f"错误指标绑定 {case_key}")
+    db_session.add_all(
+        (
+            AgentSystemSettings(enabled=True),
+            StoreDailyRecord(
+                store_id=store.id,
+                date=date(2026, 7, 1),
+                daily_revenue=50,
+                wash_count=1,
+                is_open="营业",
+                created_by=admin.id,
+                updated_by=admin.id,
+            ),
+            StoreDailyRecord(
+                store_id=store.id,
+                date=date(2026, 7, 2),
+                daily_revenue=50,
+                wash_count=None,
+                is_open="营业",
+                created_by=admin.id,
+                updated_by=admin.id,
+            ),
+        )
+    )
+    await db_session.commit()
+    store_id = store.id
+
+    class WrongMetricAdapter:
+        def __init__(self) -> None:
+            self.step = 0
+
+        async def respond(self, _messages, _tools) -> ModelResponse:
+            self.step += 1
+            if self.step == 1:
+                return ModelResponse(
+                    tool_calls=(
+                        ModelToolCall(
+                            id="load-performance",
+                            name="load_skill",
+                            arguments={"name": "business_performance"},
+                        ),
+                    )
+                )
+            if self.step == 2:
+                return ModelResponse(
+                    tool_calls=(
+                        ModelToolCall(
+                            id="performance-summary",
+                            name="business_performance_summary",
+                            arguments={
+                                "start": "2026-07-01",
+                                "end": "2026-07-02",
+                            },
+                        ),
+                    )
+                )
+            if calculate_value and self.step == 3:
+                return ModelResponse(
+                    tool_calls=(
+                        ModelToolCall(
+                            id="calculated-value",
+                            name="calculate",
+                            arguments={
+                                "steps": [
+                                    {
+                                        "name": "percentage",
+                                        "operation": "multiply",
+                                        "left": {
+                                            "result_id": "result-1",
+                                            "field": "data.operating_days",
+                                        },
+                                        "right": {
+                                            "literal": "100",
+                                            "source": "formula_constant",
+                                        },
+                                    }
+                                ]
+                            },
+                        ),
+                    )
+                )
+            return ModelResponse(content=claim)
+
+    client._transport.app.state.agent_model_adapter = WrongMetricAdapter()
+    await _login(client, admin.username)
+
+    response = await client.post(
+        f"/api/agent/stores/{store_id}/messages",
+        json={"content": question},
     )
 
     assert response.status_code == 200
