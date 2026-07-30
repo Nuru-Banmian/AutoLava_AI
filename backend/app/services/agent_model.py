@@ -83,6 +83,41 @@ class BailianOpenAIModelAdapter:
             payload["stream"] = True
         return payload
 
+    async def _stream_deltas(
+        self,
+        messages: Sequence[ModelMessage],
+        *,
+        tools: Sequence[ModelTool] | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        async with httpx.AsyncClient(timeout=60) as client:
+            async with client.stream(
+                "POST",
+                self._chat_endpoint,
+                headers=self._headers,
+                json=self._payload(messages, tools=tools, stream=True),
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    data = line.removeprefix("data:").strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        delta = json.loads(data)["choices"][0]["delta"]
+                    except (
+                        json.JSONDecodeError,
+                        KeyError,
+                        IndexError,
+                        TypeError,
+                    ) as exc:
+                        raise ValueError(
+                            "百炼模型返回了无效流式回答"
+                        ) from exc
+                    if not isinstance(delta, dict):
+                        raise ValueError("百炼模型返回了无效流式回答")
+                    yield delta
+
     async def complete(self, messages: Sequence[ModelMessage]) -> str:
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(
@@ -149,56 +184,32 @@ class BailianOpenAIModelAdapter:
     ) -> AsyncIterator[ModelResponse]:
         received_content = False
         tool_fragments: dict[int, dict[str, str]] = {}
-        async with httpx.AsyncClient(timeout=60) as client:
-            async with client.stream(
-                "POST",
-                self._chat_endpoint,
-                headers=self._headers,
-                json=self._payload(messages, tools=tools, stream=True),
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line.startswith("data:"):
-                        continue
-                    data = line.removeprefix("data:").strip()
-                    if data == "[DONE]":
-                        break
-                    try:
-                        delta = json.loads(data)["choices"][0]["delta"]
-                    except (
-                        json.JSONDecodeError,
-                        KeyError,
-                        IndexError,
-                        TypeError,
-                    ) as exc:
-                        raise ValueError(
-                            "百炼模型返回了无效流式回答"
-                        ) from exc
-                    content = delta.get("content")
-                    if isinstance(content, str) and content:
-                        if tool_fragments:
-                            raise ValueError("百炼模型混合返回了回答和工具调用")
-                        received_content = True
-                        yield ModelResponse(content=content)
-                    for item in delta.get("tool_calls") or ():
-                        if received_content:
-                            raise ValueError("百炼模型混合返回了回答和工具调用")
-                        try:
-                            index = int(item["index"])
-                            fragment = tool_fragments.setdefault(
-                                index,
-                                {"id": "", "name": "", "arguments": ""},
-                            )
-                            fragment["id"] += str(item.get("id") or "")
-                            function = item.get("function") or {}
-                            fragment["name"] += str(function.get("name") or "")
-                            fragment["arguments"] += str(
-                                function.get("arguments") or ""
-                            )
-                        except (KeyError, TypeError, ValueError) as exc:
-                            raise ValueError(
-                                "百炼模型返回了无效流式工具调用"
-                            ) from exc
+        async for delta in self._stream_deltas(messages, tools=tools):
+            content = delta.get("content")
+            if isinstance(content, str) and content:
+                if tool_fragments:
+                    raise ValueError("百炼模型混合返回了回答和工具调用")
+                received_content = True
+                yield ModelResponse(content=content)
+            for item in delta.get("tool_calls") or ():
+                if received_content:
+                    raise ValueError("百炼模型混合返回了回答和工具调用")
+                try:
+                    index = int(item["index"])
+                    fragment = tool_fragments.setdefault(
+                        index,
+                        {"id": "", "name": "", "arguments": ""},
+                    )
+                    fragment["id"] += str(item.get("id") or "")
+                    function = item.get("function") or {}
+                    fragment["name"] += str(function.get("name") or "")
+                    fragment["arguments"] += str(
+                        function.get("arguments") or ""
+                    )
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise ValueError(
+                        "百炼模型返回了无效流式工具调用"
+                    ) from exc
         if tool_fragments:
             calls: list[ModelToolCall] = []
             for index in sorted(tool_fragments):
@@ -231,35 +242,10 @@ class BailianOpenAIModelAdapter:
         messages: Sequence[ModelMessage],
     ) -> AsyncIterator[str]:
         received_content = False
-        async with httpx.AsyncClient(timeout=60) as client:
-            async with client.stream(
-                "POST",
-                self._chat_endpoint,
-                headers=self._headers,
-                json=self._payload(messages, stream=True),
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line.startswith("data:"):
-                        continue
-                    data = line.removeprefix("data:").strip()
-                    if data == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(data)["choices"][0]["delta"].get(
-                            "content"
-                        )
-                    except (
-                        json.JSONDecodeError,
-                        KeyError,
-                        IndexError,
-                        TypeError,
-                    ) as exc:
-                        raise ValueError(
-                            "百炼模型返回了无效流式回答"
-                        ) from exc
-                    if isinstance(chunk, str) and chunk:
-                        received_content = True
-                        yield chunk
+        async for delta in self._stream_deltas(messages):
+            chunk = delta.get("content")
+            if isinstance(chunk, str) and chunk:
+                received_content = True
+                yield chunk
         if not received_content:
             raise ValueError("百炼模型返回了空回答")

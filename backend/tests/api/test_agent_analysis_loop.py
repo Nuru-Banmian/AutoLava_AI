@@ -80,9 +80,10 @@ class AnalysisModelAdapter:
 
 
 class FormulaConstantModelAdapter:
-    def __init__(self) -> None:
+    def __init__(self, literal: str = "100") -> None:
         self.calls: list[Sequence[dict[str, object]]] = []
         self.step = 0
+        self.literal = literal
 
     async def respond(
         self,
@@ -105,6 +106,19 @@ class FormulaConstantModelAdapter:
             return ModelResponse(
                 tool_calls=(
                     ModelToolCall(
+                        id="performance-summary",
+                        name="business_performance_summary",
+                        arguments={
+                            "start": "2026-07-01",
+                            "end": "2026-07-02",
+                        },
+                    ),
+                )
+            )
+        if self.step == 3:
+            return ModelResponse(
+                tool_calls=(
+                    ModelToolCall(
                         id="percentage-scale",
                         name="calculate",
                         arguments={
@@ -113,11 +127,11 @@ class FormulaConstantModelAdapter:
                                     "name": "percentage",
                                     "operation": "multiply",
                                     "left": {
-                                        "literal": "0.5",
-                                        "source": "formula_constant",
+                                        "result_id": "result-1",
+                                        "field": "data.operating_days",
                                     },
                                     "right": {
-                                        "literal": "100",
+                                        "literal": self.literal,
                                         "source": "formula_constant",
                                     },
                                 }
@@ -308,7 +322,19 @@ async def test_http_turn_allows_marked_formula_constants_in_calculation(
         role="admin",
     )
     store = await store_factory(name="公式常量门店")
-    db_session.add(AgentSystemSettings(enabled=True))
+    db_session.add_all(
+        (
+            AgentSystemSettings(enabled=True),
+            StoreDailyRecord(
+                store_id=store.id,
+                date=date(2026, 7, 1),
+                daily_revenue=50,
+                is_open="营业",
+                created_by=admin.id,
+                updated_by=admin.id,
+            ),
+        )
+    )
     await db_session.commit()
     adapter = FormulaConstantModelAdapter()
     client._transport.app.state.agent_model_adapter = adapter
@@ -332,7 +358,51 @@ async def test_http_turn_allows_marked_formula_constants_in_calculation(
         for message in adapter.calls[-1]
         if message["role"] == "tool"
     ]
-    assert tool_results[-1]["values"]["percentage"] == "50.0"
+    assert tool_results[-1]["values"]["percentage"] == "100"
+
+
+async def test_http_turn_rejects_unapproved_formula_constants(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+) -> None:
+    admin = await user_factory(
+        username="unapproved-formula-constant-admin",
+        password="secret123",
+        role="admin",
+    )
+    store = await store_factory(name="非法公式常量门店")
+    db_session.add_all(
+        (
+            AgentSystemSettings(enabled=True),
+            StoreDailyRecord(
+                store_id=store.id,
+                date=date(2026, 7, 1),
+                daily_revenue=50,
+                is_open="营业",
+                created_by=admin.id,
+                updated_by=admin.id,
+            ),
+        )
+    )
+    await db_session.commit()
+    client._transport.app.state.agent_model_adapter = (
+        FormulaConstantModelAdapter("0.5")
+    )
+    await _login(client, admin.username)
+
+    response = await client.post(
+        f"/api/agent/stores/{store.id}/messages",
+        json={
+            "content": (
+                "分析 2026-07-01 到 2026-07-02 的经营表现与台账营业额变化率"
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    assert _events(response.text)[-1]["type"] == "failed"
 
 
 async def test_http_tool_loop_streams_final_answer_fragments(

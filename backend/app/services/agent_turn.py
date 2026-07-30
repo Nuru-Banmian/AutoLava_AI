@@ -29,6 +29,7 @@ from app.services.agent_conversation import (
     get_or_create_conversation,
     is_business_scope_question,
     interpret_time_scope,
+    relevant_investigation_context,
     refresh_context_summary,
     trusted_store_context,
 )
@@ -60,6 +61,7 @@ _REVENUE_FIELDS = frozenset(
 )
 _PENDING_FIELD = "current_pending_receivables"
 _ALLOWED_LITERAL_SOURCES = frozenset({"user", "formula_constant"})
+_FORMULA_CONSTANTS = frozenset({"100"})
 _PENDING_EXCLUSION_PHRASES = (
     "不计入营业额",
     "不计入月度总收入",
@@ -179,6 +181,12 @@ def _validate_settlement_calculation(plan: object) -> None:
                 raise ValueError(
                     "派生计算字面量必须标记为用户输入或公式常量"
                 )
+            if (
+                isinstance(operand, dict)
+                and operand.get("source") == "formula_constant"
+                and str(operand.get("literal")) not in _FORMULA_CONSTANTS
+            ):
+                raise ValueError("派生计算使用了未授权的公式常量")
         kinds = _calculation_operand_kinds(
             item.get("left"),
             step_kinds,
@@ -201,6 +209,7 @@ def _validate_settlement_answer(
     *,
     loaded_skills: dict[str, Any],
     results: dict[str, dict[str, Any]],
+    require_complete: bool = True,
 ) -> None:
     if "company_settlement" not in loaded_skills:
         return
@@ -215,7 +224,7 @@ def _validate_settlement_answer(
     ]
     if not summaries:
         return
-    if (
+    if require_complete and (
         "已确认公司结算收入" not in answer
         or "当前待到账应收款" not in answer
         or not any(phrase in answer for phrase in _PENDING_EXCLUSION_PHRASES)
@@ -626,6 +635,13 @@ class AgentTurnRuntime:
             )
             missing_capabilities = capability_gap_terms(content)
             additional_context = list(time_scope.guidance)
+            investigation_context = await relevant_investigation_context(
+                session,
+                conversation_id,
+                content,
+            )
+            if investigation_context is not None:
+                additional_context.append(investigation_context)
             gap_guidance = capability_gap_guidance(missing_capabilities)
             if gap_guidance is not None:
                 additional_context.append(gap_guidance)
@@ -1128,6 +1144,7 @@ class AgentTurnRuntime:
             response_content: list[str] = []
             response_tool_calls: list[ModelToolCall] = []
             streamed_answer = False
+            settlement_pending = ""
             async for response_part in self._respond_events_with_retry(
                 adapter,
                 messages,
@@ -1150,8 +1167,25 @@ class AgentTurnRuntime:
                 response_content.append(chunk)
                 if (
                     not missing_capabilities
-                    and "company_settlement" not in loaded_skills
                 ):
+                    if "company_settlement" in loaded_skills:
+                        settlement_pending += chunk
+                        sentence_ends = list(
+                            re.finditer(r"[。！？\n]", settlement_pending)
+                        )
+                        if not sentence_ends:
+                            continue
+                        cutoff = sentence_ends[-1].end()
+                        emitted_chunk = settlement_pending[:cutoff]
+                        settlement_pending = settlement_pending[cutoff:]
+                        _validate_settlement_answer(
+                            emitted_chunk,
+                            loaded_skills=loaded_skills,
+                            results=results,
+                            require_complete=False,
+                        )
+                    else:
+                        emitted_chunk = chunk
                     if not streamed_answer:
                         await self._emit_answer_phases(active)
                         streamed_answer = True
@@ -1159,7 +1193,7 @@ class AgentTurnRuntime:
                         {
                             "type": "answer_delta",
                             "turn_id": active.turn_id,
-                            "delta": chunk,
+                            "delta": emitted_chunk,
                         }
                     )
             response = ModelResponse(
@@ -1179,6 +1213,14 @@ class AgentTurnRuntime:
                 )
                 if not streamed_answer:
                     await self._emit_trusted_answer(active, answer)
+                elif settlement_pending:
+                    await active.events.put(
+                        {
+                            "type": "answer_delta",
+                            "turn_id": active.turn_id,
+                            "delta": settlement_pending,
+                        }
+                    )
                 return answer, cards
 
             submit_calls = [

@@ -6,7 +6,12 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.agent import AgentConversation, AgentSystemSettings
+from app.models.agent import (
+    AgentConversation,
+    AgentInvestigationCard,
+    AgentSystemSettings,
+    AgentTurn,
+)
 from app.services.agent_conversation import (
     capability_gap_terms,
     interpret_time_scope,
@@ -243,6 +248,77 @@ async def test_model_context_is_bounded_while_full_conversation_remains_visible(
         )
         is None
     )
+
+
+async def test_follow_up_context_selects_relevant_investigation_cards_without_values(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+) -> None:
+    admin = await user_factory(
+        username="investigation-context-admin",
+        password="secret123",
+        role="admin",
+    )
+    store = await store_factory(name="调查上下文门店")
+    admin_id = admin.id
+    store_id = store.id
+    username = admin.username
+    db_session.add(AgentSystemSettings(enabled=True))
+    await db_session.commit()
+    adapter = ContextRecordingAdapter()
+    client._transport.app.state.agent_model_adapter = adapter
+    await _login(client, username)
+
+    first = await client.post(
+        f"/api/agent/stores/{store_id}/messages",
+        json={"content": "分析 2026-06-01 到 2026-06-30 的台账营业额"},
+    )
+    assert first.status_code == 200
+    conversation = await db_session.scalar(
+        select(AgentConversation).where(
+            AgentConversation.user_id == admin_id,
+            AgentConversation.store_id == store_id,
+        )
+    )
+    assert conversation is not None
+    turn = await db_session.scalar(
+        select(AgentTurn)
+        .where(AgentTurn.conversation_id == conversation.id)
+        .order_by(AgentTurn.id.desc())
+    )
+    assert turn is not None
+    db_session.add(
+        AgentInvestigationCard(
+            turn_id=turn.id,
+            operation="汇总经营表现",
+            range_start="2026-06-01",
+            range_end="2026-06-30",
+            filters_json='["营业状态=经营日"]',
+            status="completed",
+        )
+    )
+    await db_session.commit()
+
+    follow_up = await client.post(
+        f"/api/agent/stores/{store_id}/messages",
+        json={"content": "分析 2026-06-15 到 2026-06-30 的经营表现"},
+    )
+
+    assert follow_up.status_code == 200
+    assert len(adapter.calls) == 2
+    context = adapter.calls[-1]
+    investigation = next(
+        message["content"]
+        for message in context
+        if message["role"] == "system"
+        and message["content"].startswith("相关历史调查资料")
+    )
+    assert "操作=汇总经营表现" in investigation
+    assert "范围=2026-06-01 至 2026-06-30" in investigation
+    assert "营业状态=经营日" in investigation
+    assert "result_id" not in investigation
 
 
 async def test_explicit_time_range_is_normalized_without_clarification(
