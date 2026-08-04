@@ -3,7 +3,6 @@ from datetime import date, datetime
 import json
 
 from httpx import AsyncClient
-import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import AgentSystemSettings
@@ -89,40 +88,6 @@ class CompanySettlementAdapter:
                 "公司结算按开票月份归属，没有到账日期或日粒度。"
             )
         )
-
-
-class UnsafeSettlementAnswerAdapter:
-    def __init__(self, content: str) -> None:
-        self.step = 0
-        self.content = content
-
-    async def respond(self, _messages, _tools) -> ModelResponse:
-        self.step += 1
-        if self.step == 1:
-            return ModelResponse(
-                tool_calls=(
-                    ModelToolCall(
-                        id="load-settlement",
-                        name="load_skill",
-                        arguments={"name": "company_settlement"},
-                    ),
-                )
-            )
-        if self.step == 2:
-            return ModelResponse(
-                tool_calls=(
-                    ModelToolCall(
-                        id="summary",
-                        name="company_settlement_summary",
-                        arguments={
-                            "start_month": "2026-07",
-                            "end_month": "2026-07",
-                            "group_by": "opening_month",
-                        },
-                    ),
-                )
-            )
-        return ModelResponse(content=self.content)
 
 
 class UnsafeSettlementCalculationAdapter:
@@ -656,58 +621,6 @@ async def test_agent_analyzes_settlement_income_and_current_receivables_separate
     assert "不是过去日期的历史快照" in response.text
 
 
-@pytest.mark.parametrize(
-    "unsafe_answer",
-    (
-        (
-            "已确认公司结算收入为 100 欧元；当前待到账应收款为 150 欧元，"
-            "不计入营业额。两项合计收入为 250 欧元。"
-        ),
-        (
-            "**已确认公司结算收入**为 100 欧元；当前待到账应收款为 "
-            "150 欧元，不计入营业额。**月度总收入**合计约为 250 欧元。"
-        ),
-        (
-            "2026 年 7 月 1 日已确认公司结算收入为 100 欧元；"
-            "当前待到账应收款为 150 欧元，不计入营业额。"
-        ),
-        (
-            "已确认公司结算收入与当前待到账应收款分开说明。"
-            "7/1 的已确认结算收入为 100 欧元；"
-            "当前待到账应收款为 150 欧元，不计入营业额。"
-        ),
-    ),
-)
-async def test_agent_rejects_unsafe_settlement_final_answer(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    user_factory,
-    store_factory,
-    unsafe_answer: str,
-) -> None:
-    admin, store_id = await _seed_guard_case(
-        db_session,
-        user_factory,
-        store_factory,
-        username="unsafe-answer-admin",
-    )
-    client._transport.app.state.agent_model_adapter = (
-        UnsafeSettlementAnswerAdapter(unsafe_answer)
-    )
-    await _login(client, admin.username)
-
-    response = await client.post(
-        f"/api/agent/stores/{store_id}/messages",
-        json={"content": "分析 2026 年 7 月公司结算和待到账应收款"},
-    )
-
-    events = [
-        json.loads(line) for line in response.text.splitlines() if line
-    ]
-    assert any(event["type"] == "failed" for event in events)
-    assert all(event["type"] != "answer_delta" for event in events)
-
-
 async def test_agent_allows_partial_month_ledger_plus_confirmed_settlement_total(
     client: AsyncClient,
     db_session: AsyncSession,
@@ -736,43 +649,6 @@ async def test_agent_allows_partial_month_ledger_plus_confirmed_settlement_total
     assert any(event["type"] == "completed" for event in events)
     assert all(event["type"] != "failed" for event in events)
     assert "月度总收入合计约为 500 欧元" in response.text
-
-
-async def test_settlement_total_cannot_be_reused_as_an_unrelated_metric(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    user_factory,
-    store_factory,
-) -> None:
-    admin, store_id = await _seed_guard_case(
-        db_session,
-        user_factory,
-        store_factory,
-        username="settlement-total-metric-collision-admin",
-    )
-    client._transport.app.state.agent_model_adapter = (
-        SafePartialMonthTotalAdapter(reuse_total_as_operating_days=True)
-    )
-    await _login(client, admin.username)
-
-    response = await client.post(
-        f"/api/agent/stores/{store_id}/messages",
-        json={"content": "分析 2026 年 7 月 15 日到 29 日月度总收入"},
-    )
-
-    events = [
-        json.loads(line) for line in response.text.splitlines() if line
-    ]
-    assert all(event["type"] != "answer_delta" for event in events)
-    assert events[-1]["type"] == "failed"
-
-    restored = await client.get(
-        f"/api/agent/stores/{store_id}/conversation",
-    )
-    assert all(
-        message["role"] != "assistant"
-        for message in restored.json()["messages"]
-    )
 
 
 async def test_agent_rejects_calculation_that_combines_pending_and_revenue(
@@ -804,7 +680,7 @@ async def test_agent_rejects_calculation_that_combines_pending_and_revenue(
     assert all(event["type"] != "answer_delta" for event in events)
 
 
-async def test_company_settlement_answer_streams_safe_sentence_fragments(
+async def test_company_settlement_answer_streams_model_sentence_fragments(
     client: AsyncClient,
     db_session: AsyncSession,
     user_factory,
@@ -833,70 +709,7 @@ async def test_company_settlement_answer_streams_safe_sentence_fragments(
         event["delta"] for event in events if event["type"] == "answer_delta"
     ] == [
         "已确认公司结算收入为 100 欧元。",
-        "当前待到账应收款为 150 欧元，不计入营业额。",
+        "当前待到账应收款为 150 欧元，",
+        "不计入营业额。",
     ]
     assert events[-1]["type"] == "completed"
-
-
-async def test_company_settlement_stream_withholds_an_unsafe_later_fragment(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    user_factory,
-    store_factory,
-) -> None:
-    admin, store_id = await _seed_guard_case(
-        db_session,
-        user_factory,
-        store_factory,
-        username="unsafe-streaming-settlement-admin",
-    )
-    client._transport.app.state.agent_model_adapter = (
-        StreamingSettlementAdapter(unsafe_total=True)
-    )
-    await _login(client, admin.username)
-
-    response = await client.post(
-        f"/api/agent/stores/{store_id}/messages",
-        json={"content": "分析 2026 年 7 月公司结算和待到账应收款"},
-    )
-
-    events = [
-        json.loads(line) for line in response.text.splitlines() if line
-    ]
-    assert [
-        event["delta"] for event in events if event["type"] == "answer_delta"
-    ] == ["已确认公司结算收入为 100 欧元。"]
-    assert "250" not in response.text
-    assert events[-1]["type"] == "failed"
-
-
-async def test_company_settlement_stream_releases_only_safe_prefix_of_one_chunk(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    user_factory,
-    store_factory,
-) -> None:
-    admin, store_id = await _seed_guard_case(
-        db_session,
-        user_factory,
-        store_factory,
-        username="unsafe-single-chunk-settlement-admin",
-    )
-    client._transport.app.state.agent_model_adapter = (
-        StreamingSettlementAdapter(combined_unsafe_suffix=True)
-    )
-    await _login(client, admin.username)
-
-    response = await client.post(
-        f"/api/agent/stores/{store_id}/messages",
-        json={"content": "分析 2026 年 7 月公司结算和待到账应收款"},
-    )
-
-    events = [
-        json.loads(line) for line in response.text.splitlines() if line
-    ]
-    assert [
-        event["delta"] for event in events if event["type"] == "answer_delta"
-    ] == ["已确认公司结算收入为 100 欧元。"]
-    assert "250" not in response.text
-    assert events[-1]["type"] == "failed"

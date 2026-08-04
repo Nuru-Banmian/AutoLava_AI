@@ -78,6 +78,51 @@ class BusinessContextAdapter:
         )
 
 
+class BusinessContextComparisonAdapter:
+    def __init__(self) -> None:
+        self.step = 0
+        self.last_messages: Sequence[dict[str, object]] = ()
+
+    async def respond(self, messages, _tools) -> ModelResponse:
+        self.step += 1
+        self.last_messages = messages
+        if self.step == 1:
+            return ModelResponse(
+                tool_calls=(
+                    ModelToolCall(
+                        id="load-context-comparison",
+                        name="load_skill",
+                        arguments={"name": "business_context"},
+                    ),
+                )
+            )
+        if self.step == 2:
+            return ModelResponse(
+                tool_calls=(
+                    ModelToolCall(
+                        id="compare-context",
+                        name="business_context_comparison",
+                        arguments={
+                            "period_a": {
+                                "start": "2026-07-06",
+                                "end": "2026-07-07",
+                            },
+                            "period_b": {
+                                "start": "2026-07-08",
+                                "end": "2026-07-09",
+                            },
+                        },
+                    ),
+                )
+            )
+        return ModelResponse(
+            content=(
+                "前一期间营业额较高与其经营日更多、记录天气和事件分布不同"
+                "存在相关性，但这些记录不足以证明因果关系。"
+            )
+        )
+
+
 async def _login(client: AsyncClient, username: str) -> None:
     response = await client.post(
         "/api/auth/login",
@@ -239,6 +284,10 @@ async def test_agent_groups_operating_days_and_investigates_original_events(
 
     instructions = skill["instructions"]
     for requirement in (
+        "为什么会这样",
+        "business_context_comparison",
+        "最近一次对比",
+        "经营日差异",
         "原始事件文本",
         "多个",
         "门店具体标识",
@@ -246,6 +295,7 @@ async def test_agent_groups_operating_days_and_investigates_original_events(
         "不写回",
         "相关性",
         "覆盖",
+        "公司结算收入没有日粒度",
     ):
         assert requirement in instructions
 
@@ -270,3 +320,90 @@ async def test_agent_groups_operating_days_and_investigates_original_events(
             "结论强度有限",
         )
     )
+
+
+async def test_agent_compares_two_period_business_context_in_one_tool_call(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+) -> None:
+    admin = await user_factory(
+        username="context-comparison-admin",
+        password="secret123",
+        role="admin",
+    )
+    store = await store_factory(name="经营差异背景门店")
+    db_session.add_all(
+        (
+            AgentSystemSettings(enabled=True),
+            StoreDailyRecord(
+                store_id=store.id,
+                date=date(2026, 7, 6),
+                daily_revenue=100,
+                is_open="营业",
+                weather="晴",
+                activity="学校活动",
+                created_by=admin.id,
+                updated_by=admin.id,
+            ),
+            StoreDailyRecord(
+                store_id=store.id,
+                date=date(2026, 7, 7),
+                daily_revenue=50,
+                is_open="提前休息",
+                weather="中雨",
+                activity=None,
+                created_by=admin.id,
+                updated_by=admin.id,
+            ),
+            StoreDailyRecord(
+                store_id=store.id,
+                date=date(2026, 7, 8),
+                daily_revenue=0,
+                is_open="休息",
+                weather="晴",
+                activity=None,
+                created_by=admin.id,
+                updated_by=admin.id,
+            ),
+            StoreDailyRecord(
+                store_id=store.id,
+                date=date(2026, 7, 9),
+                daily_revenue=70,
+                is_open="营业",
+                weather=None,
+                activity="附近施工",
+                created_by=admin.id,
+                updated_by=admin.id,
+            ),
+        )
+    )
+    store_id = store.id
+    await db_session.commit()
+    adapter = BusinessContextComparisonAdapter()
+    client._transport.app.state.agent_model_adapter = adapter
+    await _login(client, admin.username)
+
+    response = await client.post(
+        f"/api/agent/stores/{store_id}/messages",
+        json={"content": "刚才两个期间营业额为什么会这样？"},
+    )
+
+    assert response.status_code == 200
+    assert '"type":"failed"' not in response.text, response.text
+    comparison = next(
+        payload
+        for payload in _tool_payloads(adapter.last_messages)
+        if "periods" in payload.get("data", {})
+    )
+    period_a = comparison["data"]["periods"]["period_a"]
+    period_b = comparison["data"]["periods"]["period_b"]
+    assert period_a["performance"]["ledger_revenue"] == "150"
+    assert period_b["performance"]["ledger_revenue"] == "70"
+    assert period_a["performance"]["operating_days"] == 2
+    assert period_b["performance"]["operating_days"] == 1
+    assert period_a["events"][0]["event"] == "学校活动"
+    assert period_b["events"][0]["event"] == "附近施工"
+    assert period_b["coverage"]["weather"]["missing_dimension_days"] == 1
+    assert adapter.step == 3

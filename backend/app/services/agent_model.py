@@ -173,7 +173,7 @@ class BailianOpenAIModelAdapter:
         if not normalized_content and not calls:
             raise ValueError("百炼模型返回了空回答")
         return ModelResponse(
-            content=normalized_content or None,
+            content=None if calls else normalized_content or None,
             tool_calls=tuple(calls),
         )
 
@@ -182,18 +182,13 @@ class BailianOpenAIModelAdapter:
         messages: Sequence[ModelMessage],
         tools: Sequence[ModelTool],
     ) -> AsyncIterator[ModelResponse]:
-        received_content = False
+        content_chunks: list[str] = []
         tool_fragments: dict[int, dict[str, str]] = {}
         async for delta in self._stream_deltas(messages, tools=tools):
             content = delta.get("content")
             if isinstance(content, str) and content:
-                if tool_fragments:
-                    raise ValueError("百炼模型混合返回了回答和工具调用")
-                received_content = True
-                yield ModelResponse(content=content)
+                content_chunks.append(content)
             for item in delta.get("tool_calls") or ():
-                if received_content:
-                    raise ValueError("百炼模型混合返回了回答和工具调用")
                 try:
                     index = int(item["index"])
                     fragment = tool_fragments.setdefault(
@@ -234,7 +229,10 @@ class BailianOpenAIModelAdapter:
                     )
                 )
             yield ModelResponse(tool_calls=tuple(calls))
-        elif not received_content:
+        elif content_chunks:
+            for content in content_chunks:
+                yield ModelResponse(content=content)
+        else:
             raise ValueError("百炼模型返回了空回答")
 
     async def stream(

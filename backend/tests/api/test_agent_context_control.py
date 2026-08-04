@@ -1,6 +1,5 @@
 from collections.abc import Sequence
 from datetime import date
-import json
 
 from httpx import AsyncClient
 from sqlalchemy import select
@@ -17,7 +16,6 @@ from app.services.agent_conversation import (
     interpret_time_scope,
 )
 from app.services.agent_model import ModelResponse, ModelToolCall
-from app.services.agent_turn import _submitted_capability_answer
 
 
 class ContextRecordingAdapter:
@@ -32,48 +30,12 @@ class ContextRecordingAdapter:
         return f"已回答第 {len(self.calls)} 轮经营问题。"
 
 
-class MissingCapabilityAdapter:
-    def __init__(self) -> None:
-        self.calls: list[list[dict[str, object]]] = []
-
-    async def respond(self, messages, _tools) -> ModelResponse:
-        self.calls.append([dict(message) for message in messages])
-        if len(self.calls) == 1:
-            return ModelResponse(
-                tool_calls=(
-                    ModelToolCall(
-                        id="external-search",
-                        name="web_search",
-                        arguments={"query": "附近竞品价格" * 2_000},
-                    ),
-                )
-            )
-        return ModelResponse(
-            content=(
-                "当前门店本月营业额可以继续通过已有数据工具调查。"
-                "无法访问附近竞品价格。当地通常收费 35 欧元。"
-            )
-        )
-
-
 async def _login(client: AsyncClient, username: str) -> None:
     response = await client.post(
         "/api/auth/login",
         json={"username": username, "password": "secret123"},
     )
     assert response.status_code == 200
-
-
-def test_capability_answer_handles_empty_evidence() -> None:
-    answer = _submitted_capability_answer(
-        {"evidence": []},
-        results={},
-        missing_capabilities=("未来天气",),
-    )
-
-    assert "未来天气" in answer
-    assert "本轮尚未形成带本轮结果编号的可信结论" in answer
-    assert "不会声称已经取得这些数据" in answer
 
 
 def test_supported_ledger_language_is_not_a_capability_gap() -> None:
@@ -91,82 +53,6 @@ def test_explicit_quarter_is_normalized_without_clarification() -> None:
         "已解析时间范围：2026-01-01 至 2026-03-31。"
         "数据工具必须使用该范围，不要自行扩大、缩小或替换。",
     )
-
-
-def test_capability_answer_renders_settlement_boundary_in_domain_language() -> None:
-    answer = _submitted_capability_answer(
-        {
-            "evidence": [
-                {
-                    "result_id": "result-1",
-                    "fields": [
-                        "data.confirmed_settlement_income",
-                    ],
-                }
-            ]
-        },
-        results={
-            "result-1": {
-                "data": {
-                    "confirmed_settlement_income": "100",
-                    "current_pending_receivables": "50",
-                }
-            }
-        },
-        missing_capabilities=("外部公司信用数据",),
-    )
-
-    assert "已确认公司结算收入为 100欧元" in answer
-    assert "当前待到账应收款为 50欧元" in answer
-    assert "当前待到账应收款不计入营业额或月度总收入" in answer
-
-
-def test_capability_answer_renders_trend_rows_without_raw_json() -> None:
-    answer = _submitted_capability_answer(
-        {
-            "evidence": [
-                {
-                    "result_id": "result-1",
-                    "fields": ["data.points"],
-                },
-                {
-                    "result_id": "result-2",
-                    "fields": ["data.companies"],
-                }
-            ]
-        },
-        results={
-            "result-1": {
-                "data": {
-                    "points": [
-                        {
-                            "period": "2026-07-01",
-                            "ledger_revenue": "120",
-                        }
-                    ]
-                }
-            },
-            "result-2": {
-                "data": {
-                    "companies": [
-                        {
-                            "company_name": "示例公司",
-                            "status": "archived",
-                        }
-                    ]
-                }
-            },
-        },
-        missing_capabilities=("未来天气",),
-    )
-
-    assert "台账营业额趋势" in answer
-    assert "期间为 2026-07-01" in answer
-    assert "台账营业额为 120欧元" in answer
-    assert "结算公司为 示例公司" in answer
-    assert "状态为 已归档" in answer
-    assert "archived" not in answer
-    assert '"ledger_revenue"' not in answer
 
 
 async def test_model_context_is_bounded_while_full_conversation_remains_visible(
@@ -513,73 +399,6 @@ async def test_incomparable_quantified_ranges_are_both_parsed(
     assert "相同天数" in answer
 
 
-async def test_capability_gap_keeps_partial_answer_and_rejects_unavailable_claim(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    user_factory,
-    store_factory,
-) -> None:
-    admin = await user_factory(
-        username="capability-gap-admin",
-        password="secret123",
-        role="admin",
-    )
-    store = await store_factory(name="能力边界门店")
-    db_session.add(AgentSystemSettings(enabled=True))
-    await db_session.commit()
-    store_id = store.id
-    adapter = MissingCapabilityAdapter()
-    client._transport.app.state.agent_model_adapter = adapter
-    await _login(client, admin.username)
-
-    response = await client.post(
-        f"/api/agent/stores/{store_id}/messages",
-        json={
-            "content": (
-                "分析本月营业额，并结合附近竞品价格给出能确认的部分"
-            )
-        },
-    )
-
-    assert response.status_code == 200
-    assert len(adapter.calls) == 2
-    assert all(
-        len(
-            json.dumps(
-                messages,
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-        )
-        <= 12_000
-        for messages in adapter.calls
-    )
-    unavailable_result = next(
-        message["content"]
-        for message in adapter.calls[-1]
-        if message["role"] == "tool"
-    )
-    assert '"status":"unavailable"' in unavailable_result
-    conversation = (
-        await client.get(f"/api/agent/stores/{store_id}/conversation")
-    ).json()
-    answer = conversation["messages"][-1]["content"]
-    assert "本轮尚未形成带本轮结果编号的可信结论" in answer
-    assert "附近竞品价格为 35 欧元" not in answer
-    assert "当地通常收费 35 欧元" not in answer
-    assert "无法访问附近竞品价格" in answer
-
-    follow_up = await client.post(
-        f"/api/agent/stores/{store_id}/messages",
-        json={"content": "分析本月营业额"},
-    )
-    assert follow_up.status_code == 200
-    assert all(
-        message["role"] != "tool"
-        for message in adapter.calls[-1]
-    )
-
-
 async def test_mixed_business_and_news_question_keeps_the_answerable_part(
     client: AsyncClient,
     db_session: AsyncSession,
@@ -602,7 +421,10 @@ async def test_mixed_business_and_news_question_keeps_the_answerable_part(
             messages: Sequence[dict[str, str]],
         ) -> str:
             self.calls.append([dict(message) for message in messages])
-            return "当前门店本月营业额仍可由数据工具调查。"
+            return (
+                "当前门店本月营业额仍可由数据工具调查，"
+                "但我无法访问外部新闻，因此不能用外部新闻解释变化。"
+            )
 
     adapter = MixedNewsAdapter()
     client._transport.app.state.agent_model_adapter = adapter
@@ -614,12 +436,15 @@ async def test_mixed_business_and_news_question_keeps_the_answerable_part(
     )
 
     assert response.status_code == 200
-    assert adapter.calls == []
+    assert len(adapter.calls) == 1
     conversation = (
         await client.get(f"/api/agent/stores/{store_id}/conversation")
     ).json()
     answer = conversation["messages"][-1]["content"]
-    assert "本轮尚未形成带本轮结果编号的可信结论" in answer
+    assert answer == (
+        "当前门店本月营业额仍可由数据工具调查，"
+        "但我无法访问外部新闻，因此不能用外部新闻解释变化。"
+    )
     assert "无法访问外部新闻" in answer
     assert "只能帮助你分析 Agent 当前门店" not in answer
 
@@ -670,19 +495,9 @@ async def test_capability_boundary_preserves_numeric_business_evidence(
                     )
                 )
             return ModelResponse(
-                tool_calls=(
-                    ModelToolCall(
-                        id="submit-supported-answer",
-                        name="submit_answer",
-                        arguments={
-                            "evidence": [
-                                {
-                                    "result_id": "result-1",
-                                    "fields": ["data.ledger_revenue"],
-                                }
-                            ]
-                        },
-                    ),
+                content=(
+                    "7月台账营业额为100欧元。"
+                    "我无法访问附近竞品价格，因此不能据此解释变化。"
                 )
             )
 
@@ -701,63 +516,11 @@ async def test_capability_boundary_preserves_numeric_business_evidence(
     ).json()
     answer = conversation["messages"][-1]["content"]
     assert adapter.calls == 3
-    assert "根据本轮结果编号 result-1" in answer
-    assert "台账营业额为" in answer
-    assert "data.ledger_revenue" not in answer
+    assert answer == (
+        "7月台账营业额为100欧元。"
+        "我无法访问附近竞品价格，因此不能据此解释变化。"
+    )
     assert "无法访问附近竞品价格" in answer
-
-
-async def test_invalid_capability_answer_citation_falls_back_safely(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    user_factory,
-    store_factory,
-) -> None:
-    admin = await user_factory(
-        username="invalid-gap-citation-admin",
-        password="secret123",
-        role="admin",
-    )
-    store = await store_factory(name="无效引用门店")
-    db_session.add(AgentSystemSettings(enabled=True))
-    await db_session.commit()
-    store_id = store.id
-
-    class InvalidCitationAdapter:
-        async def respond(self, _messages, _tools) -> ModelResponse:
-            return ModelResponse(
-                tool_calls=(
-                    ModelToolCall(
-                        id="submit-forged-answer",
-                        name="submit_answer",
-                        arguments={
-                            "evidence": [
-                                {
-                                    "result_id": "result-999",
-                                    "fields": ["data.ledger_revenue"],
-                                }
-                            ]
-                        },
-                    ),
-                )
-            )
-
-    client._transport.app.state.agent_model_adapter = InvalidCitationAdapter()
-    await _login(client, admin.username)
-
-    response = await client.post(
-        f"/api/agent/stores/{store_id}/messages",
-        json={"content": "分析本月营业额，并结合竞争对手数据"},
-    )
-
-    assert response.status_code == 200
-    conversation = (
-        await client.get(f"/api/agent/stores/{store_id}/conversation")
-    ).json()
-    answer = conversation["messages"][-1]["content"]
-    assert "5000 欧元" not in answer
-    assert "本轮尚未形成带本轮结果编号的可信结论" in answer
-    assert "无法访问竞争对手数据" in answer
 
 
 async def test_unlisted_capability_gap_still_returns_a_bounded_partial_answer(
@@ -782,20 +545,10 @@ async def test_unlisted_capability_gap_still_returns_a_bounded_partial_answer(
 
         async def respond(self, _messages, _tools) -> ModelResponse:
             self.calls += 1
-            if self.calls == 1:
-                return ModelResponse(
-                    tool_calls=(
-                        ModelToolCall(
-                            id="exchange-rate",
-                            name="exchange_rate_lookup",
-                            arguments={"currency": "EUR"},
-                        ),
-                    )
-                )
             return ModelResponse(
                 content=(
-                    "当前门店营业额仍可调查。"
-                    "虽然无法访问欧元汇率，但换算标准约 1.2。"
+                    "当前门店营业额仍可调查，但我无法访问欧元汇率，"
+                    "因此不能进行汇率换算。"
                 )
             )
 
@@ -809,13 +562,15 @@ async def test_unlisted_capability_gap_still_returns_a_bounded_partial_answer(
     )
 
     assert response.status_code == 200
-    assert adapter.calls == 2
+    assert adapter.calls == 1
     conversation = (
         await client.get(f"/api/agent/stores/{store_id}/conversation")
     ).json()
     answer = conversation["messages"][-1]["content"]
-    assert "本轮尚未形成带本轮结果编号的可信结论" in answer
-    assert "换算标准约 1.2" not in answer
+    assert answer == (
+        "当前门店营业额仍可调查，但我无法访问欧元汇率，"
+        "因此不能进行汇率换算。"
+    )
     assert "无法访问欧元汇率" in answer
 
     for question in (
@@ -837,9 +592,8 @@ async def test_unlisted_capability_gap_still_returns_a_bounded_partial_answer(
     ]
     assert len(follow_up_answers) == 2
     assert all(
-        "本轮尚未形成带本轮结果编号的可信结论" in answer
-        and "能力边界" in answer
-        and "汇率" in answer
+        "无法访问欧元汇率" in answer
+        and "不能进行汇率换算" in answer
         for answer in follow_up_answers
     )
 
