@@ -1,5 +1,6 @@
 from collections.abc import Sequence
-from datetime import date
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from httpx import AsyncClient
 from sqlalchemy import select
@@ -248,6 +249,47 @@ async def test_explicit_time_range_is_normalized_without_clarification(
     assert any(
         message["role"] == "system"
         and "已解析时间范围：2026-07-01 至 2026-07-31" in message["content"]
+        for message in adapter.calls[0]
+    )
+
+
+async def test_month_before_last_is_normalized_at_the_agent_http_seam(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory,
+    store_factory,
+) -> None:
+    admin = await user_factory(
+        username="month-before-last-admin",
+        password="secret123",
+        role="admin",
+    )
+    store = await store_factory(name="上上个月门店", timezone="UTC")
+    db_session.add(AgentSystemSettings(enabled=True))
+    await db_session.commit()
+    adapter = ContextRecordingAdapter()
+    client._transport.app.state.agent_model_adapter = adapter
+    await _login(client, admin.username)
+
+    response = await client.post(
+        f"/api/agent/stores/{store.id}/messages",
+        json={"content": "上上个月的收入怎么样？"},
+    )
+
+    current_month_start = datetime.now(ZoneInfo("UTC")).date().replace(day=1)
+    month_before_last_end = (
+        current_month_start - timedelta(days=1)
+    ).replace(day=1) - timedelta(days=1)
+    month_before_last_start = month_before_last_end.replace(day=1)
+    expected_range = (
+        f"已解析时间范围：{month_before_last_start.isoformat()} 至 "
+        f"{month_before_last_end.isoformat()}"
+    )
+    assert response.status_code == 200
+    assert len(adapter.calls) == 1
+    assert any(
+        message["role"] == "system"
+        and expected_range in message["content"]
         for message in adapter.calls[0]
     )
 

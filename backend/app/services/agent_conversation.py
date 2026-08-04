@@ -543,6 +543,11 @@ def interpret_time_scope(content: str, *, local_date: date) -> TimeScopeDecision
             _previous_month_day(local_date.replace(day=1), 1),
             local_date.replace(day=1) - timedelta(days=1),
         ),
+        "上上个月": (
+            _previous_month_day(local_date.replace(day=1), 2),
+            _previous_month_day(local_date.replace(day=1), 1)
+            - timedelta(days=1),
+        ),
         "本季度": (current_quarter_start, local_date),
         "这个季度": (current_quarter_start, local_date),
         "上季度": (previous_quarter_start, previous_quarter_end),
@@ -552,12 +557,16 @@ def interpret_time_scope(content: str, *, local_date: date) -> TimeScopeDecision
             date(local_date.year - 1, 12, 31),
         ),
     }
-    for phrase in sorted(relative_ranges, key=len, reverse=True):
-        start_at = content.find(phrase)
-        if start_at >= 0:
-            positioned_ranges.append(
-                (start_at, relative_ranges[phrase])
-            )
+    relative_pattern = re.compile(
+        "|".join(
+            re.escape(phrase)
+            for phrase in sorted(relative_ranges, key=len, reverse=True)
+        )
+    )
+    for match in relative_pattern.finditer(content):
+        positioned_ranges.append(
+            (match.start(), relative_ranges[match.group(0)])
+        )
 
     if positioned_ranges:
         ranges = [
