@@ -189,6 +189,7 @@ function Ensure-Dependencies {
     $backendHash = Get-ManifestHash (Join-Path $BackendDir "pyproject.toml")
     $backendMarker = Join-Path $StateDir "backend.sha256"
     if (-not (Test-Path $BackendPython) -or -not (Test-HashCurrent $backendMarker $backendHash)) {
+        Assert-Command "uv"
         if (-not (Test-Path $BackendPython)) {
             Invoke-Checked "创建 Python 虚拟环境" { uv venv $BackendVenv }
         }
@@ -273,7 +274,6 @@ function Stop-OwnedProcess([Diagnostics.Process]$Process) {
 if ($PSVersionTable.PSVersion.Major -ge 6 -and -not $IsWindows) {
     Stop-WithMessage "本启动器仅支持 Windows。"
 }
-Assert-Command "uv"
 Assert-Command "node"
 Assert-Command "npm"
 Assert-PortFree 8000

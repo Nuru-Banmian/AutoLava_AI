@@ -129,7 +129,6 @@ try {
 def test_launcher_preflight_and_dependency_cache_are_repository_local() -> None:
     launcher = read("scripts/start-local.ps1")
     for fragment in (
-        'Assert-Command "uv"',
         'Assert-Command "node"',
         'Assert-Command "npm"',
         "Assert-PortFree 8000",
@@ -141,6 +140,16 @@ def test_launcher_preflight_and_dependency_cache_are_repository_local() -> None:
         "npm ci",
     ):
         assert fragment in launcher
+    ensure_dependencies = re.search(
+        r"function Ensure-Dependencies.*?^}", launcher, re.DOTALL | re.MULTILINE
+    )
+    assert ensure_dependencies
+    assert 'Assert-Command "uv"' in ensure_dependencies.group(0)
+    startup_preflight = launcher[
+        launcher.index("if ($PSVersionTable.PSVersion.Major") :
+        launcher.index("Ensure-Dependencies", launcher.index("$backendProcess = $null"))
+    ]
+    assert 'Assert-Command "uv"' not in startup_preflight
     assert ".autolava-local/" in read(".gitignore")
 
 
