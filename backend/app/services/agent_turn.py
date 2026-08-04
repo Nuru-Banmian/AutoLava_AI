@@ -1,7 +1,7 @@
 import asyncio
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 import json
@@ -19,15 +19,12 @@ from app.models.agent import AgentInvestigationCard, AgentMessage, AgentTurn
 from app.models.identity import Store
 from app.services.agent_calculation import calculate
 from app.services.agent_conversation import (
-    AGENT_SCOPE_EXPLANATION,
     bounded_model_context,
-    capability_gap_answer,
     capability_gap_guidance,
     capability_gap_terms,
     conversation_messages,
     fit_model_context,
     get_or_create_conversation,
-    is_business_scope_question,
     interpret_time_scope,
     relevant_investigation_context,
     refresh_context_summary,
@@ -62,141 +59,6 @@ _REVENUE_FIELDS = frozenset(
 _PENDING_FIELD = "current_pending_receivables"
 _ALLOWED_LITERAL_SOURCES = frozenset({"user", "formula_constant"})
 _FORMULA_CONSTANTS = frozenset({"100"})
-_PENDING_EXCLUSION_PHRASES = (
-    "不计入营业额",
-    "不计入月度总收入",
-    "不属于营业额",
-    "不属于收入",
-)
-_CAPABILITY_FIELD_PRESENTATION = {
-    "data.ledger_revenue": ("台账营业额", "欧元"),
-    "data.operating_days": ("经营日", "天"),
-    "data.operating_day_average_ledger_revenue": (
-        "经营日均台账营业额",
-        "欧元",
-    ),
-    "data.wash_count": ("洗车数量", "辆"),
-    "data.average_revenue_per_wash": ("平均每车收入", "欧元"),
-    "data.classified_ledger_revenue": ("分类记账营业额", "欧元"),
-    "data.other_data_total": ("其他数据合计", "欧元"),
-    "data.confirmed_settlement_income": ("已确认公司结算收入", "欧元"),
-    "data.current_pending_receivables": ("当前待到账应收款", "欧元"),
-    "coverage.range_start": ("数据覆盖开始日期", ""),
-    "coverage.range_end": ("数据覆盖结束日期", ""),
-    "coverage.matching_records": ("匹配记录", "条"),
-    "coverage.operating_days": ("数据覆盖经营日", "天"),
-    "coverage.truncated": ("数据是否截断", ""),
-}
-_CAPABILITY_LIST_PRESENTATION = {
-    "data.points": "台账营业额趋势",
-    "data.groups": "分组结果",
-    "data.income_categories": "收入分类",
-    "data.other_data": "其他数据",
-    "data.records": "明细",
-    "data.companies": "结算公司目录",
-}
-_CAPABILITY_ROW_FIELD_PRESENTATION = {
-    "period": ("期间", ""),
-    "date": ("日期", ""),
-    "label": ("分组", ""),
-    "category_name": ("分类名称", ""),
-    "company_name": ("结算公司", ""),
-    "opening_month": ("开票月份", ""),
-    "status": ("状态", ""),
-    "operating_status": ("营业状态", ""),
-    "recorded_weather": ("记录天气", ""),
-    "weather": ("记录天气", ""),
-    "event": ("事件", ""),
-    "events": ("事件", ""),
-    "ledger_revenue": ("台账营业额", "欧元"),
-    "daily_revenue": ("台账营业额", "欧元"),
-    "amount": ("金额", "欧元"),
-    "confirmed_settlement_income": ("已确认公司结算收入", "欧元"),
-    "current_pending_receivables": ("当前待到账应收款", "欧元"),
-    "operating_days": ("经营日", "天"),
-    "operating_day_average_ledger_revenue": (
-        "经营日均台账营业额",
-        "欧元",
-    ),
-    "wash_count": ("洗车数量", "辆"),
-    "proportion": ("占比", "%"),
-    "include_in_ledger_revenue": ("是否计入营业额", ""),
-}
-_ANSWER_FIELD_MARKERS = (
-    (
-        ("经营日均台账营业额",),
-        frozenset({"operating_day_average_ledger_revenue"}),
-    ),
-    (("平均每车收入",), frozenset({"average_revenue_per_wash"})),
-    (
-        ("已确认公司结算收入",),
-        frozenset({"confirmed_settlement_income"}),
-    ),
-    (
-        ("当前待到账应收款", "待到账应收款"),
-        frozenset({"current_pending_receivables"}),
-    ),
-    (
-        ("分类记账营业额",),
-        frozenset({"classified_ledger_revenue"}),
-    ),
-    (
-        ("月度总收入", "总收入"),
-        frozenset({"monthly_total_income", "total_income"}),
-    ),
-    (
-        ("台账营业额", "营业额"),
-        frozenset(
-            {
-                "ledger_revenue",
-                "daily_revenue",
-                "classified_ledger_revenue",
-            }
-        ),
-    ),
-    (
-        ("洗车数量缺失天数",),
-        frozenset({"missing_wash_count_days"}),
-    ),
-    (
-        ("洗车数量",),
-        frozenset({"wash_count"}),
-    ),
-    (
-        ("经营日",),
-        frozenset({"operating_days"}),
-    ),
-    (("其他数据",), frozenset({"other_data_total"})),
-    (("占比", "比例"), frozenset({"proportion"})),
-    (
-        ("匹配记录", "返回记录", "记录数"),
-        frozenset({"matching_records", "returned_records"}),
-    ),
-    (("匹配公司", "公司数量"), frozenset({"matching_companies"})),
-    (("金额",), frozenset({"amount"})),
-)
-_ANSWER_BUSINESS_NUMBER_CUES = (
-    "欧元",
-    "金额",
-    "收入",
-    "营业额",
-    "应收",
-    "经营日",
-    "洗车",
-    "占比",
-    "比例",
-    "平均",
-    "合计",
-    "总计",
-    "增长",
-    "下降",
-    "变化",
-    "差额",
-    "记录数",
-    "匹配记录",
-    "公司数量",
-    "%",
-)
 SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 AdapterFactory = Callable[[], AgentModelAdapter]
 TurnEvent = dict[str, Any]
@@ -367,522 +229,46 @@ def _validate_settlement_calculation(
             step_dependencies[name] = depends_on_result
 
 
-def _validate_settlement_answer(
-    answer: str,
-    *,
-    loaded_skills: dict[str, Any],
-    results: dict[str, dict[str, Any]],
-    require_complete: bool = True,
-) -> frozenset[Decimal]:
-    if "company_settlement" not in loaded_skills:
-        return frozenset()
-    summaries = [
-        result
-        for result in results.values()
-        if {
-            "confirmed_settlement_income",
-            "current_pending_receivables",
-        }
-        <= set(result.get("data", {}))
-    ]
-    if not summaries:
-        return frozenset()
-    if require_complete and (
-        "已确认公司结算收入" not in answer
-        or "当前待到账应收款" not in answer
-        or not any(phrase in answer for phrase in _PENDING_EXCLUSION_PHRASES)
-    ):
-        raise ValueError("公司结算最终回答未分离收入与当前待到账应收款")
-    risky_inclusion = re.search(
-        r"(?:当前)?待到账应收款.{0,20}(?:计入|纳入|包含在|构成)"
-        r".{0,15}(?:营业额|月度总收入|收入)",
-        answer,
-    )
-    if risky_inclusion and "不" not in risky_inclusion.group(0):
-        raise ValueError("公司结算最终回答错误计入待到账应收款")
-    if re.search(
-        r"(?:两项|二者|上述两类|合并|加总).{0,12}(?:收入|营业额)",
-        answer,
-    ) or re.search(
-        r"(?:公司结算|已确认).{0,12}(?:和|与|加上).{0,12}"
-        r"(?:应收|待到账).{0,12}(?:合计|总计|收入|营业额)",
-        answer,
-    ):
-        raise ValueError("公司结算最终回答合并了收入与当前待到账应收款")
-    for sentence in re.split(r"[。！？\n]+", answer):
-        if (
-            "结算收入" in sentence
-            and re.search(
-                r"(?:\d{4}\s*-\s*\d{1,2}\s*-\s*\d{1,2}"
-                r"|\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日"
-                r"|\d{1,2}\s*月\s*\d{1,2}\s*日"
-                r"|\d{1,2}\s*/\s*\d{1,2})",
-                sentence,
-            )
-        ):
-            raise ValueError("公司结算收入不能归因到日粒度")
-
-    claimed_monthly_totals = re.findall(
-        r"月度总收入[^0-9。\n]{0,30}([0-9][0-9,.]*)\s*欧元",
-        answer,
-    )
-    if not claimed_monthly_totals:
-        return frozenset()
-    permitted_totals: set[Decimal] = set()
-    performance_results = [
-        result
-        for result in results.values()
-        if "ledger_revenue" in result.get("data", {})
-    ]
-    for settlement in summaries:
-        for performance in performance_results:
-            settlement_start = str(
-                settlement.get("coverage", {}).get("range_start", "")
-            )
-            settlement_end = str(
-                settlement.get("coverage", {}).get("range_end", "")
-            )
-            performance_start = str(
-                performance.get("coverage", {}).get("range_start", "")
-            )
-            performance_end = str(
-                performance.get("coverage", {}).get("range_end", "")
-            )
-            if (
-                settlement_start[:7] != performance_start[:7]
-                or settlement_end[:7] != performance_end[:7]
-            ):
-                continue
-            try:
-                permitted_totals.add(
-                    Decimal(
-                        performance["data"]["ledger_revenue"]
-                    )
-                    + Decimal(
-                        settlement["data"][
-                            "confirmed_settlement_income"
-                        ]
-                    )
-                )
-            except (InvalidOperation, KeyError, TypeError):
-                continue
-    try:
-        parsed_claims = {
-            Decimal(value.replace(",", ""))
-            for value in claimed_monthly_totals
-        }
-    except InvalidOperation as exc:
-        raise ValueError("月度总收入金额格式无效") from exc
-    if not parsed_claims <= permitted_totals:
-        raise ValueError("月度总收入必须由同期间台账营业额和已确认公司结算收入组成")
-    return frozenset(parsed_claims)
-
-
-def _result_number_fields(
-    value: object,
-    *,
-    path: tuple[str, ...] = (),
-) -> dict[Decimal, set[tuple[str, ...]]]:
-    if isinstance(value, dict):
-        fields: dict[Decimal, set[tuple[str, ...]]] = {}
-        for key, item in value.items():
-            for number, number_paths in _result_number_fields(
-                item,
-                path=(*path, str(key)),
-            ).items():
-                fields.setdefault(number, set()).update(number_paths)
-        return fields
-    if isinstance(value, (list, tuple)):
-        fields = {}
-        for item in value:
-            for number, number_paths in _result_number_fields(
-                item,
-                path=path,
-            ).items():
-                fields.setdefault(number, set()).update(number_paths)
-        return fields
-    if isinstance(value, bool) or value is None:
-        return {}
-    try:
-        return {Decimal(str(value).replace(",", "")): {path}}
-    except InvalidOperation:
-        return {}
-
-
-def _calculation_numbers(
-    results: dict[str, dict[str, Any]],
-) -> frozenset[Decimal]:
-    numbers: set[Decimal] = set()
-    for result in results.values():
-        values = result.get("values", {})
-        if not isinstance(values, dict):
-            continue
-        for value in values.values():
-            try:
-                numbers.add(Decimal(str(value).replace(",", "")))
-            except InvalidOperation:
-                continue
-    return frozenset(numbers)
-
-
-def _is_neutral_calculation_clause(clause: str) -> bool:
-    if _specific_answer_markers(clause):
-        return False
-    if "派生计算结果" in clause:
-        return True
-    if re.search(r"(?:两者|二者).{0,12}(?:相差|差额)", clause):
-        return True
-    return "目标" in clause and any(
-        cue in clause for cue in ("相差", "差额", "多", "少", "高", "低")
-    )
-
-
-def _answer_number_claims(
-    answer: str,
-) -> list[tuple[str, list[tuple[Decimal, int, int]]]]:
-    clauses: list[tuple[str, list[tuple[Decimal, int, int]]]] = []
-    for clause_match in re.finditer(r"[^，,；;。！？\n]+", answer):
-        clause = clause_match.group(0)
-        claims: list[tuple[Decimal, int, int]] = []
-        for number_match in re.finditer(
-            r"(?<![A-Za-z0-9])[-+]?\d[\d,]*(?:\.\d+)?",
-            _without_period_numbers(clause),
-        ):
-            try:
-                number = Decimal(number_match.group(0).replace(",", ""))
-            except InvalidOperation:
-                continue
-            claims.append((number, number_match.start(), number_match.end()))
-        if claims:
-            clauses.append((clause, claims))
-    return clauses
-
-
-def _specific_answer_markers(
-    clause: str,
-) -> list[tuple[int, int, frozenset[str]]]:
-    matches = [
-        (match.start(), match.end(), fields)
-        for markers, fields in _ANSWER_FIELD_MARKERS
-        for marker in markers
-        for match in re.finditer(re.escape(marker), clause)
-    ]
-    return [
-        (start, end, fields)
-        for start, end, fields in matches
-        if not any(
-            other_start <= start
-            and end <= other_end
-            and (other_start, other_end) != (start, end)
-            for other_start, other_end, _other_fields in matches
-        )
-    ]
-
-
-def _nearest_answer_fields(
-    *,
-    claim_start: int,
-    claim_end: int,
-    markers: Sequence[tuple[int, int, frozenset[str]]],
-) -> frozenset[str]:
-    if not markers:
-        return frozenset()
-
-    def distance(
-        marker: tuple[int, int, frozenset[str]],
-    ) -> tuple[int, int]:
-        start, end, _fields = marker
-        if end <= claim_start:
-            return claim_start - end, 0
-        if claim_end <= start:
-            return start - claim_end, 1
-        return 0, 0
-
-    return min(markers, key=distance)[2]
-
-
-def _validate_business_answer(
-    answer: str,
-    *,
-    user_content: str,
-    loaded_skills: dict[str, Any],
-    results: dict[str, dict[str, Any]],
-    require_complete_settlement: bool = True,
-) -> None:
-    permitted_settlement_totals = _validate_settlement_answer(
-        answer,
-        loaded_skills=loaded_skills,
-        results=results,
-        require_complete=require_complete_settlement,
-    )
-    result_fields = _result_number_fields(results)
-    calculation_numbers = _calculation_numbers(results)
-    user_numbers = _user_supplied_numbers(user_content)
-    for clause, claims in _answer_number_claims(answer):
-        if not any(cue in clause for cue in _ANSWER_BUSINESS_NUMBER_CUES):
-            continue
-        markers = _specific_answer_markers(clause)
-        ordered_markers = sorted(markers, key=lambda marker: marker[0])
-        use_ordered_pairing = (
-            "分别" in clause and len(ordered_markers) == len(claims)
-        )
-        calculation_claims = tuple(
-            number for number, _start, _end in claims
-            if number in calculation_numbers
-        )
-        for index, (number, claim_start, claim_end) in enumerate(claims):
-            permitted_fields = (
-                ordered_markers[index][2]
-                if use_ordered_pairing
-                else _nearest_answer_fields(
-                    claim_start=claim_start,
-                    claim_end=claim_end,
-                    markers=markers,
-                )
-            )
-            if any(
-                path
-                and "values" not in path
-                and path[-1] in permitted_fields
-                for path in result_fields.get(number, ())
-            ):
-                continue
-            if number in permitted_settlement_totals:
-                if (
-                    number in calculation_numbers
-                    and permitted_fields
-                    & {"monthly_total_income", "total_income"}
-                ):
-                    continue
-                raise ValueError(
-                    "月度总收入必须绑定到派生计算结果及对应收入字段"
-                )
-            if number in calculation_numbers:
-                if (
-                    len(calculation_claims) == 1
-                    and _is_neutral_calculation_clause(clause)
-                ):
-                    continue
-                raise ValueError(
-                    "派生计算数值必须使用无指标歧义的单值表达"
-                )
-            if (
-                number in user_numbers
-                and not markers
-                and "目标" in clause
-            ):
-                continue
-            raise ValueError(
-                "最终回答包含未绑定到本轮可信证据字段的业务数值"
-            )
-
-
-@dataclass
-class _AnswerChunkGuard:
-    user_content: str
-    loaded_skills: dict[str, Any]
-    results: dict[str, dict[str, Any]]
-    full_answer: list[str] = dataclass_field(default_factory=list)
-    validation_context: str = ""
-    unreleased_text: str = ""
-
-    def add(self, chunk: str) -> tuple[str, ...]:
-        self.full_answer.append(chunk)
-        self.validation_context += chunk
-        self.unreleased_text += chunk
-        boundaries = list(
-            re.finditer(r"[。！？\n]+", self.validation_context)
-        )
-        if boundaries:
-            boundary = boundaries[-1].end()
-            _validate_business_answer(
-                self.validation_context[:boundary],
-                user_content=self.user_content,
-                loaded_skills=self.loaded_skills,
-                results=self.results,
-                require_complete_settlement=False,
-            )
-            emitted_prefix_length = (
-                len(self.validation_context) - len(self.unreleased_text)
-            )
-            release_length = max(0, boundary - emitted_prefix_length)
-            released = self.unreleased_text[:release_length]
-            self.unreleased_text = self.unreleased_text[release_length:]
-            self.validation_context = self.validation_context[boundary:]
-            return (released,) if released else ()
-        if not any(character.isdigit() for character in self.unreleased_text):
-            released = self.unreleased_text
-            self.unreleased_text = ""
-            return (released,) if released else ()
-        return ()
-
-    def finish(self) -> tuple[str, ...]:
-        _validate_business_answer(
-            "".join(self.full_answer),
-            user_content=self.user_content,
-            loaded_skills=self.loaded_skills,
-            results=self.results,
-        )
-        released = self.unreleased_text
-        self.unreleased_text = ""
-        return (released,) if released else ()
-
-
-def _submitted_capability_answer(
-    arguments: object,
-    *,
-    results: dict[str, dict[str, Any]],
-    missing_capabilities: tuple[str, ...],
-) -> str:
-    if not isinstance(arguments, dict) or set(arguments) != {"evidence"}:
-        raise ValueError("能力缺口回答提交参数无效")
-    evidence = arguments["evidence"]
-    if not isinstance(evidence, list) or len(evidence) > 20:
-        raise ValueError("能力缺口回答证据无效")
-    accepted: list[str] = []
-    submitted_fields: set[str] = set()
-    settlement_fields = {
-        "data.confirmed_settlement_income",
-        "data.current_pending_receivables",
-    }
-    for item in evidence:
-        if (
-            not isinstance(item, dict)
-            or set(item) != {"result_id", "fields"}
-        ):
-            raise ValueError("能力缺口回答证据无效")
-        result_id = item["result_id"]
-        fields = item["fields"]
-        if (
-            not isinstance(result_id, str)
-            or result_id not in results
-            or not isinstance(fields, list)
-            or not fields
-            or len(fields) > 20
-        ):
-            raise ValueError("能力缺口回答引用了无效的本轮结果编号")
-        fields = list(fields)
-        result_data = results[result_id].get("data")
-        if (
-            isinstance(result_data, dict)
-            and {
-                "confirmed_settlement_income",
-                "current_pending_receivables",
-            }
-            <= result_data.keys()
-        ):
-            for settlement_field in settlement_fields:
-                if settlement_field not in fields:
-                    fields.append(settlement_field)
-        rendered_fields: list[str] = []
-        for field in fields:
-            if not isinstance(field, str) or not field.strip():
-                raise ValueError("能力缺口回答字段路径无效")
-            current: object = results[result_id]
-            for part in field.split("."):
-                if not isinstance(current, dict) or part not in current:
-                    raise ValueError("能力缺口回答引用的字段不存在")
-                current = current[part]
-            presentation = _CAPABILITY_FIELD_PRESENTATION.get(field)
-            if presentation is None and field.startswith("values."):
-                presentation = ("派生计算结果", "")
-            if isinstance(current, list):
-                list_label = _CAPABILITY_LIST_PRESENTATION.get(field)
-                if list_label is None:
-                    raise ValueError("能力缺口回答列表字段不允许直接展示")
-                rows: list[str] = []
-                for row in current:
-                    if not isinstance(row, dict):
-                        raise ValueError("能力缺口回答列表结构无效")
-                    values: list[str] = []
-                    for key, value in row.items():
-                        row_presentation = (
-                            _CAPABILITY_ROW_FIELD_PRESENTATION.get(key)
-                        )
-                        if row_presentation is None or isinstance(
-                            value, (dict, list)
-                        ):
-                            continue
-                        row_label, row_unit = row_presentation
-                        if value is None:
-                            rendered = "不可用"
-                            row_unit = ""
-                        elif key == "status":
-                            rendered = {
-                                "active": "使用中",
-                                "archived": "已归档",
-                                "pending": "待到账",
-                                "confirmed": "已确认",
-                            }.get(str(value), str(value))
-                        elif isinstance(value, bool):
-                            rendered = "是" if value else "否"
-                        else:
-                            rendered = str(value)
-                        values.append(
-                            f"{row_label}为 {rendered}{row_unit}"
-                        )
-                    if values:
-                        rows.append("、".join(values))
-                rendered_fields.append(
-                    f"{list_label}："
-                    + ("；".join(rows) if rows else "没有匹配结果")
-                )
-            else:
-                if presentation is None or isinstance(current, dict):
-                    raise ValueError("能力缺口回答字段不允许直接展示")
-                label, unit = presentation
-                if current is None:
-                    rendered = "不可用"
-                    unit = ""
-                elif isinstance(current, bool):
-                    rendered = "是" if current else "否"
-                else:
-                    rendered = str(current)
-                rendered_fields.append(f"{label}为 {rendered}{unit}")
-            submitted_fields.add(field)
-        accepted.append(
-            f"根据本轮结果编号 {result_id}，可确认："
-            + "；".join(rendered_fields)
-            + "。"
-        )
-    if settlement_fields <= submitted_fields:
-        accepted.append("当前待到账应收款不计入营业额或月度总收入。")
-    return capability_gap_answer(missing_capabilities, accepted)
-
-
 def _trusted_limit_answer(
-    results: dict[str, dict[str, Any]],
-    limitation: str,
+    results: dict[str, dict[str, Any]], limitation: str
 ) -> str:
-    evidence: list[dict[str, object]] = []
-    for result_id, result in results.items():
-        fields: list[str] = []
-        for field in (
-            *_CAPABILITY_FIELD_PRESENTATION,
-            *_CAPABILITY_LIST_PRESENTATION,
-        ):
-            current: object = result
-            for part in field.split("."):
-                if not isinstance(current, dict) or part not in current:
-                    break
-                current = current[part]
-            else:
-                fields.append(field)
-        if fields:
-            evidence.append({"result_id": result_id, "fields": fields})
-    if not evidence:
+    presentation = {
+        "ledger_revenue": ("台账营业额", "欧元"),
+        "operating_days": ("经营日", "天"),
+        "operating_day_average_ledger_revenue": (
+            "经营日均台账营业额",
+            "欧元",
+        ),
+        "wash_count": ("洗车数量", "辆"),
+        "average_revenue_per_wash": ("平均每车收入", "欧元"),
+        "classified_ledger_revenue": ("分类记账营业额", "欧元"),
+        "other_data_total": ("其他数据合计", "欧元"),
+        "confirmed_settlement_income": ("已确认公司结算收入", "欧元"),
+        "current_pending_receivables": ("当前待到账应收款", "欧元"),
+    }
+    statements: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for result in results.values():
+        data = result.get("data")
+        if not isinstance(data, dict):
+            continue
+        for field, (label, unit) in presentation.items():
+            value = data.get(field)
+            if value is None or isinstance(value, (dict, list)):
+                continue
+            normalized = str(value)
+            key = (field, normalized)
+            if key in seen:
+                continue
+            seen.add(key)
+            statements.append(f"{label}为 {normalized}{unit}")
+    if not statements:
         return (
             "本轮尚未取得可安全展示的业务结果，无法提供未经验证的数值或判断。"
             f"\n\n限制说明：本轮已达到{limitation}。"
         )
-    answer = _submitted_capability_answer(
-        {"evidence": evidence},
-        results=results,
-        missing_capabilities=(limitation,),
-    )
-    supported, _, _boundary = answer.partition("\n\n能力边界：")
     return (
-        f"{supported}\n\n限制说明：本轮已达到{limitation}，"
+        f"{'；'.join(statements)}。\n\n限制说明：本轮已达到{limitation}，"
         "回答仅包含当前已取得的可信结果。"
     )
 
@@ -896,29 +282,6 @@ class _ActiveTurn:
 
 def _finished_now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
-
-
-async def _one_chunk(value: str) -> AsyncIterator[str]:
-    yield value
-
-
-async def _validated_answer_chunks(
-    chunks: AsyncIterator[str],
-    *,
-    user_content: str,
-    loaded_skills: dict[str, Any],
-    results: dict[str, dict[str, Any]],
-) -> AsyncIterator[str]:
-    guard = _AnswerChunkGuard(
-        user_content=user_content,
-        loaded_skills=loaded_skills,
-        results=results,
-    )
-    async for chunk in chunks:
-        for released in guard.add(chunk):
-            yield released
-    for released in guard.finish():
-        yield released
 
 
 async def latest_conversation_turn(
@@ -996,7 +359,6 @@ class AgentTurnRuntime:
                     turn_id,
                     model_messages,
                     direct_answer,
-                    missing_capabilities,
                 ) = (
                     await self._persist_start(
                         user_id=user_id,
@@ -1013,9 +375,7 @@ class AgentTurnRuntime:
                         key=key,
                         active=active,
                         model_messages=model_messages,
-                        user_content=content,
                         direct_answer=direct_answer,
-                        missing_capabilities=missing_capabilities,
                         deadline=deadline,
                         tool_start_deadline=tool_start_deadline,
                     )
@@ -1053,7 +413,6 @@ class AgentTurnRuntime:
         int,
         list[ModelMessage],
         str | None,
-        tuple[str, ...],
     ]:
         async with self._session_factory() as session:
             store = await session.get(Store, store_id)
@@ -1098,15 +457,7 @@ class AgentTurnRuntime:
                 content=content,
                 additional_system_context=additional_context,
             )
-            direct_answer = (
-                (
-                    time_scope.direct_answer
-                    if time_scope.direct_answer is not None
-                    else None
-                )
-                if is_business_scope_question(content)
-                else AGENT_SCOPE_EXPLANATION
-            )
+            direct_answer = time_scope.direct_answer
             async with sqlite_short_write(session):
                 user_message = AgentMessage(
                     conversation_id=conversation_id,
@@ -1127,7 +478,6 @@ class AgentTurnRuntime:
             turn_id,
             model_messages,
             direct_answer,
-            missing_capabilities,
         )
 
     async def _run(
@@ -1136,9 +486,7 @@ class AgentTurnRuntime:
         key: tuple[int, int],
         active: _ActiveTurn,
         model_messages: Sequence[ModelMessage],
-        user_content: str,
         direct_answer: str | None,
-        missing_capabilities: tuple[str, ...],
         deadline: float,
         tool_start_deadline: float,
     ) -> None:
@@ -1180,10 +528,8 @@ class AgentTurnRuntime:
                             adapter=adapter,
                             active=active,
                             model_messages=model_messages,
-                            user_content=user_content,
                             user_id=key[0],
                             store_id=key[1],
-                            missing_capabilities=missing_capabilities,
                             tool_start_deadline=tool_start_deadline,
                             results=trusted_results,
                             cards=cards,
@@ -1191,20 +537,10 @@ class AgentTurnRuntime:
                         chunks.append(answer)
                     else:
                         emitted_answer_phase = False
-                        if missing_capabilities:
-                            model_chunks = _one_chunk(
-                                capability_gap_answer(missing_capabilities)
-                            )
-                        else:
-                            model_chunks = _validated_answer_chunks(
-                                self._model_chunks(
-                                    adapter,
-                                    model_messages,
-                                ),
-                                user_content=user_content,
-                                loaded_skills={},
-                                results=trusted_results,
-                            )
+                        model_chunks = self._model_chunks(
+                            adapter,
+                            model_messages,
+                        )
                         async for chunk in model_chunks:
                             if not chunk:
                                 continue
@@ -1276,42 +612,18 @@ class AgentTurnRuntime:
 
     @staticmethod
     def _model_tools() -> tuple[ModelTool, ...]:
-        return (
-            {
-                "type": "function",
-                "function": {
-                    "name": "submit_answer",
-                    "description": (
-                        "能力缺口问题的最终回答提交。选择本轮结果编号及其中"
-                        "要展示的字段；后端生成可信段落并追加能力缺口说明。"
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "evidence": {
-                                "type": "array",
-                                "maxItems": 20,
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "result_id": {"type": "string"},
-                                        "fields": {
-                                            "type": "array",
-                                            "minItems": 1,
-                                            "maxItems": 20,
-                                            "items": {"type": "string"},
-                                        },
-                                    },
-                                    "required": ["result_id", "fields"],
-                                    "additionalProperties": False,
-                                },
-                            }
-                        },
-                        "required": ["evidence"],
-                        "additionalProperties": False,
-                    },
-                },
+        calculation_operand = {
+            "type": "object",
+            "properties": {
+                "result_id": {"type": "string"},
+                "field": {"type": "string"},
+                "step": {"type": "string"},
+                "literal": {"type": ["number", "string"]},
+                "source": {"type": "string"},
             },
+            "additionalProperties": False,
+        }
+        return (
             {
                 "type": "function",
                 "function": {
@@ -1434,6 +746,59 @@ class AgentTurnRuntime:
                             },
                         },
                         "required": ["start", "end", "dimension"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "business_context_comparison",
+                    "description": (
+                        "比较两个明确期间的经营差异背景，一次返回经营汇总、"
+                        "日趋势、星期、记录天气和有界事件证据。适用于营业额"
+                        "对比后的“为什么/原因”类追问。"
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "period_a": {
+                                "type": "object",
+                                "properties": {
+                                    "start": {
+                                        "type": "string",
+                                        "format": "date",
+                                    },
+                                    "end": {
+                                        "type": "string",
+                                        "format": "date",
+                                    },
+                                },
+                                "required": ["start", "end"],
+                                "additionalProperties": False,
+                            },
+                            "period_b": {
+                                "type": "object",
+                                "properties": {
+                                    "start": {
+                                        "type": "string",
+                                        "format": "date",
+                                    },
+                                    "end": {
+                                        "type": "string",
+                                        "format": "date",
+                                    },
+                                },
+                                "required": ["start", "end"],
+                                "additionalProperties": False,
+                            },
+                            "event_limit": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 50,
+                            },
+                        },
+                        "required": ["period_a", "period_b"],
                         "additionalProperties": False,
                     },
                 },
@@ -1565,7 +930,47 @@ class AgentTurnRuntime:
                         "properties": {
                             "steps": {
                                 "type": "array",
-                                "items": {"type": "object"},
+                                "minItems": 1,
+                                "maxItems": 20,
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "name": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                        },
+                                        "operation": {
+                                            "type": "string",
+                                            "enum": [
+                                                "add",
+                                                "subtract",
+                                                "multiply",
+                                                "divide",
+                                            ],
+                                        },
+                                        "left": calculation_operand,
+                                        "right": calculation_operand,
+                                        "scale": {
+                                            "type": "integer",
+                                            "minimum": 0,
+                                            "maximum": 6,
+                                        },
+                                        "rounding": {
+                                            "type": "string",
+                                            "enum": [
+                                                "half_up",
+                                                "truncate",
+                                            ],
+                                        },
+                                    },
+                                    "required": [
+                                        "name",
+                                        "operation",
+                                        "left",
+                                        "right",
+                                    ],
+                                    "additionalProperties": False,
+                                },
                             }
                         },
                         "required": ["steps"],
@@ -1581,10 +986,8 @@ class AgentTurnRuntime:
         adapter: AgentModelAdapter,
         active: _ActiveTurn,
         model_messages: Sequence[ModelMessage],
-        user_content: str,
         user_id: int,
         store_id: int,
-        missing_capabilities: tuple[str, ...],
         tool_start_deadline: float,
         results: dict[str, dict[str, Any]],
         cards: list[dict[str, Any]],
@@ -1593,20 +996,16 @@ class AgentTurnRuntime:
         loaded_skills = {}
         result_number = 0
         data_tool_calls = 0
+        model_tools = self._model_tools()
         for _round in range(self._model_round_limit):
             messages = fit_model_context(messages)
             response_content: list[str] = []
             response_tool_calls: list[ModelToolCall] = []
             streamed_answer = False
-            answer_guard = _AnswerChunkGuard(
-                user_content=user_content,
-                loaded_skills=loaded_skills,
-                results=results,
-            )
             async for response_part in self._respond_events_with_retry(
                 adapter,
                 messages,
-                self._model_tools(),
+                model_tools,
             ):
                 if response_part.tool_calls:
                     if response_content:
@@ -1623,18 +1022,16 @@ class AgentTurnRuntime:
                         "Agent model mixed answer text and tool calls"
                     )
                 response_content.append(chunk)
-                if not missing_capabilities:
-                    for released in answer_guard.add(chunk):
-                        if not streamed_answer:
-                            await self._emit_answer_phases(active)
-                            streamed_answer = True
-                        await active.events.put(
-                            {
-                                "type": "answer_delta",
-                                "turn_id": active.turn_id,
-                                "delta": released,
-                            }
-                        )
+                if not streamed_answer:
+                    await self._emit_answer_phases(active)
+                    streamed_answer = True
+                await active.events.put(
+                    {
+                        "type": "answer_delta",
+                        "turn_id": active.turn_id,
+                        "delta": chunk,
+                    }
+                )
             response = ModelResponse(
                 content="".join(response_content) or None,
                 tool_calls=tuple(response_tool_calls),
@@ -1643,56 +1040,6 @@ class AgentTurnRuntime:
                 answer = (response.content or "").strip()
                 if not answer:
                     raise ValueError("Agent model returned an empty answer")
-                if missing_capabilities:
-                    answer = capability_gap_answer(missing_capabilities)
-                    _validate_business_answer(
-                        answer,
-                        user_content=user_content,
-                        loaded_skills=loaded_skills,
-                        results=results,
-                    )
-                    await self._emit_trusted_answer(active, answer)
-                else:
-                    for released in answer_guard.finish():
-                        if not streamed_answer:
-                            await self._emit_answer_phases(active)
-                            streamed_answer = True
-                        await active.events.put(
-                            {
-                                "type": "answer_delta",
-                                "turn_id": active.turn_id,
-                                "delta": released,
-                            }
-                        )
-                return answer, cards
-
-            submit_calls = [
-                call
-                for call in response.tool_calls
-                if call.name == "submit_answer"
-            ]
-            if submit_calls:
-                if (
-                    not missing_capabilities
-                    or len(response.tool_calls) != 1
-                    or len(submit_calls) != 1
-                ):
-                    raise ValueError("submit_answer 只能单独用于能力缺口最终回答")
-                try:
-                    answer = _submitted_capability_answer(
-                        submit_calls[0].arguments,
-                        results=results,
-                        missing_capabilities=missing_capabilities,
-                    )
-                except ValueError:
-                    answer = capability_gap_answer(missing_capabilities)
-                _validate_business_answer(
-                    answer,
-                    user_content=user_content,
-                    loaded_skills=loaded_skills,
-                    results=results,
-                )
-                await self._emit_trusted_answer(active, answer)
                 return answer, cards
 
             messages.append(
@@ -1751,7 +1098,8 @@ class AgentTurnRuntime:
                         call.name in skill.allowed_data_tools
                         for skill in loaded_skills.values()
                     ):
-                        raise ValueError("数据工具未获得已加载 Skill 授权")
+                        skill = self._skills.load_for_tool(call.name)
+                        loaded_skills[skill.name] = skill
                     data_tool_calls += 1
                     result_number += 1
                     result_id = f"result-{result_number}"
@@ -1833,16 +1181,7 @@ class AgentTurnRuntime:
                         }
                     )
                 else:
-                    if not missing_capabilities:
-                        raise ValueError("模型调用了未知工具")
-                    tool_result = {
-                        "status": "unavailable",
-                        "reason": (
-                            "该能力不在当前数据 Skill 和数据工具范围内；"
-                            "请使用已有可信结果回答可确认部分并明确说明缺口。"
-                        ),
-                        "requested_tool": call.name,
-                    }
+                    raise ValueError("模型调用了未知工具")
                 messages.append(
                     {
                         "role": "tool",

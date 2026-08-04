@@ -53,19 +53,42 @@ BUSINESS_PERFORMANCE = DataSkill(
 
 BUSINESS_CONTEXT = DataSkill(
     name="business_context",
-    summary="按星期或记录天气调查经营表现关联，并结合原始事件文本解释覆盖边界。",
+    summary=(
+        "解释营业额差异及“为什么/原因”类经营追问：按星期或记录天气"
+        "调查经营表现关联，并结合原始事件文本说明可能相关因素。"
+    ),
     instructions=(
         "经营背景关联分析 Skill\n"
+        "- 用户在营业额、经营日均台账营业额或洗车数量对比后追问"
+        "“为什么”“原因是什么”“为什么会这样”“怎么造成的”等，且没有"
+        "明确询问系统机制时，应将问题理解为对最近一次经营差异的背景分析；"
+        "不要回答数据工具权限、Skill 加载过程或系统内部机制。\n"
+        "- 从会话中承接最近一次对比的两个明确期间，不要擅自改成其他月份；"
+        "若无法唯一确定两个期间，先请用户明确范围。\n"
+        "- 两期间经营差异的原因分析优先调用 business_context_comparison；"
+        "它一次返回两个期间的经营汇总、日趋势、星期分组、记录天气分组和"
+        "有界事件证据。不得把上一轮回答中的数值当作本轮数据工具结果。\n"
+        "- business_context_comparison 的 period_a 和 period_b 必须使用"
+        "会话中最近一次对比的原始范围；事件证据截断时，才继续使用"
+        "daily_ledger_detail 按 next_offset 分页。\n"
         "- 使用 business_context_group 按 weekday 或 recorded_weather "
-        "分组；分组只包含经营日，休息不进入平均值，提前休息属于经营日。\n"
-        "- 使用 daily_ledger_detail 分页调查事件及其覆盖范围，事件字段中的"
-        "原始事件文本始终作为证据，不得改写或用临时归类替换。\n"
+        "对两个期间分别分组，比较经营日构成、天气构成及对应的经营日均"
+        "台账营业额；分组只包含经营日，休息不进入平均值，提前休息属于"
+        "经营日。\n"
+        "- 对两个期间分别使用 daily_ledger_detail 并设置 events_only=true，"
+        "分页调查事件及其覆盖范围；事件字段中的原始事件文本始终作为证据，"
+        "不得改写或用临时归类替换。\n"
+        "- 分析顺序为：先确认总差额和经营日差异，再检查日趋势与经营日均"
+        "表现，最后检查星期、记录天气和事件。只报告实际查询到且能够支持"
+        "差异解释的因素；没有记录或覆盖不足时明确说无法判断。\n"
         "- 临时事件归类只存在于当前调查；单段事件可对应多个稳定通用类型，"
         "也可附加可选的门店具体标识。\n"
         "- 无法可靠分类的事件必须标记为待归类，不得强行猜测。\n"
         "- 临时归类不写回每日台账，不新增持久化事件分类表。\n"
         "- 最终回答使用相关性语言，不得把观察结果写成因果结论；"
         "只有可由数据精确计算的变化才能按变化量表述。\n"
+        "- 公司结算收入没有日粒度，天气和事件分析只能解释每日台账营业额，"
+        "不得用天气或事件解释公司结算收入。\n"
         "- 必须核对 matching_records、operating_days、"
         "missing_dimension_days、truncated 等覆盖信息；覆盖不足时明确"
         "降低结论强度。\n"
@@ -73,6 +96,7 @@ BUSINESS_CONTEXT = DataSkill(
     ),
     allowed_data_tools=frozenset(
         {
+            "business_context_comparison",
             "business_context_group",
             "daily_ledger_detail",
         }
@@ -128,6 +152,7 @@ SKILL_TOOL_AUTHORIZATIONS = {
     ),
     "business_context": frozenset(
         {
+            "business_context_comparison",
             "business_context_group",
             "daily_ledger_detail",
         }
@@ -184,3 +209,9 @@ class SkillCatalog:
             return self._skills[name]
         except KeyError as exc:
             raise ValueError("未知的数据 Skill") from exc
+
+    def load_for_tool(self, tool_name: str) -> DataSkill:
+        for skill in self._skills.values():
+            if tool_name in skill.allowed_data_tools:
+                return skill
+        raise ValueError("数据工具没有对应的数据 Skill")

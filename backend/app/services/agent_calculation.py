@@ -21,7 +21,13 @@ def _decimal(value: Any, message: str) -> Decimal:
 
 
 def _field_value(result: dict[str, Any], path: str) -> Decimal:
-    current: Any = result
+    current: Any = (
+        result["data"]
+        if "." not in path
+        and isinstance(result.get("data"), dict)
+        and path in result["data"]
+        else result
+    )
     for part in path.split("."):
         if not isinstance(current, dict) or part not in current:
             raise CalculationValidationError("引用的结果字段不存在")

@@ -17,7 +17,7 @@ os.environ["AUTOLAVA_DATABASE_PATH"] = str(
     Path(_test_database_directory.name) / "autolava-test.sqlite3"
 )
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.core.database import engine, get_session
 from app.models.base import Base
 from app.models.identity import Store, User
@@ -47,6 +47,7 @@ class NoNetworkWeather:
 
 @pytest.fixture(autouse=True)
 def test_jwt_secret(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
     monkeypatch.setenv("AUTOLAVA_JWT_SECRET", "test-only-jwt-secret-with-32-bytes")
     get_settings.cache_clear()
     yield

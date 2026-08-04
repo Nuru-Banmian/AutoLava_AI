@@ -140,6 +140,44 @@ def _validate_context_group(arguments: dict[str, Any]) -> ToolRequest:
     return request
 
 
+def _validate_context_comparison(arguments: dict[str, Any]) -> ToolRequest:
+    supplied = set(arguments)
+    if not {"period_a", "period_b"} <= supplied <= {
+        "period_a",
+        "period_b",
+        "event_limit",
+    }:
+        raise DataToolValidationError("经营差异背景比较参数无效")
+
+    periods: dict[str, ToolRequest] = {}
+    for name in ("period_a", "period_b"):
+        value = arguments[name]
+        if not isinstance(value, dict):
+            raise DataToolValidationError("比较期间参数无效")
+        periods[name] = _validated_range(
+            value,
+            allowed={"start", "end"},
+            exact=True,
+        )
+
+    event_limit = arguments.get("event_limit", 20)
+    if (
+        not isinstance(event_limit, int)
+        or isinstance(event_limit, bool)
+        or not 1 <= event_limit <= 50
+    ):
+        raise DataToolValidationError("事件证据条数必须在 1 到 50 之间")
+
+    starts = [period["start"] for period in periods.values()]
+    ends = [period["end"] for period in periods.values()]
+    return {
+        **periods,
+        "start": min(starts),
+        "end": max(ends),
+        "event_limit": event_limit,
+    }
+
+
 def _parse_month(value: object) -> date:
     text = str(value)
     if len(text) != 7:
@@ -384,6 +422,18 @@ def _context_group_filters(arguments: dict[str, Any]) -> list[str]:
     ]
 
 
+def _context_comparison_filters(arguments: dict[str, Any]) -> list[str]:
+    period_a = arguments["period_a"]
+    period_b = arguments["period_b"]
+    return [
+        (
+            f"期间A：{period_a['start']} 至 {period_a['end']}；"
+            f"期间B：{period_b['start']} 至 {period_b['end']}"
+        ),
+        "包含经营汇总、日趋势、星期、记录天气和事件证据",
+    ]
+
+
 def _settlement_summary_filters(arguments: dict[str, Any]) -> list[str]:
     return [
         (
@@ -447,6 +497,12 @@ class AgentDataToolRegistry:
                 validate=_validate_context_group,
                 execute=self._execute_context_group,
                 format_filters=_context_group_filters,
+            ),
+            "business_context_comparison": DataToolDefinition(
+                operation="比较经营差异背景",
+                validate=_validate_context_comparison,
+                execute=self._execute_context_comparison,
+                format_filters=_context_comparison_filters,
             ),
             "company_settlement_summary": DataToolDefinition(
                 operation="汇总公司结算与应收",
@@ -962,6 +1018,107 @@ class AgentDataToolRegistry:
                 ),
                 "missing_dimension_days": missing_dimension_days,
                 "truncated": False,
+            },
+        }
+
+    async def _execute_context_comparison(
+        self,
+        session: AsyncSession,
+        store: Store,
+        context: DataToolContext,
+        result_id: str,
+        request: ToolRequest,
+    ) -> ToolResult:
+        periods: dict[str, dict[str, Any]] = {}
+        total_matching_records = 0
+        total_operating_days = 0
+        events_truncated = False
+
+        for name in ("period_a", "period_b"):
+            base_request = {
+                **request[name],
+                "local_today": request["local_today"],
+            }
+            summary = await self._execute_summary(
+                session,
+                store,
+                context,
+                f"{result_id}:{name}:summary",
+                base_request,
+            )
+            trend = await self._execute_trend(
+                session,
+                store,
+                context,
+                f"{result_id}:{name}:trend",
+                {**base_request, "bucket": "day"},
+            )
+            weekday = await self._execute_context_group(
+                session,
+                store,
+                context,
+                f"{result_id}:{name}:weekday",
+                {**base_request, "dimension": "weekday"},
+            )
+            weather = await self._execute_context_group(
+                session,
+                store,
+                context,
+                f"{result_id}:{name}:weather",
+                {**base_request, "dimension": "recorded_weather"},
+            )
+            event_request = _validate_detail(
+                {
+                    "start": request[name]["start"].isoformat(),
+                    "end": request[name]["end"].isoformat(),
+                    "events_only": True,
+                    "limit": request["event_limit"],
+                }
+            )
+            event_request["local_today"] = request["local_today"]
+            events = await self._execute_detail(
+                session,
+                store,
+                context,
+                f"{result_id}:{name}:events",
+                event_request,
+            )
+
+            summary_coverage = summary["coverage"]
+            total_matching_records += int(
+                summary_coverage["matching_records"]
+            )
+            total_operating_days += int(summary_coverage["operating_days"])
+            events_truncated = (
+                events_truncated or bool(events["coverage"]["truncated"])
+            )
+            periods[name] = {
+                "range_start": request[name]["start"].isoformat(),
+                "range_end": request[name]["end"].isoformat(),
+                "performance": summary["data"],
+                "daily_trend": trend["data"]["points"],
+                "weekday_groups": weekday["data"]["groups"],
+                "weather_groups": weather["data"]["groups"],
+                "events": events["data"]["records"],
+                "coverage": {
+                    "performance": summary_coverage,
+                    "weekday": weekday["coverage"],
+                    "weather": weather["coverage"],
+                    "events": events["coverage"],
+                },
+            }
+
+        return {
+            "result_id": result_id,
+            "status": "success" if total_matching_records else "empty",
+            "data": {"periods": periods},
+            "coverage": {
+                "range_start": request["start"].isoformat(),
+                "range_end": request["end"].isoformat(),
+                "matching_records": total_matching_records,
+                "operating_days": total_operating_days,
+                "events_truncated": events_truncated,
+                "truncated": events_truncated,
             },
         }
 
