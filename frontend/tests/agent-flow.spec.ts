@@ -98,6 +98,18 @@ function completedConversation(storeId = 1): Conversation {
   };
 }
 
+function longConversation(): Conversation {
+  return {
+    ...completedConversation(),
+    messages: Array.from({ length: 40 }, (_, index) => ({
+      id: index + 1,
+      role: index % 2 === 0 ? "user" as const : "assistant" as const,
+      content: `第 ${index + 1} 条经营分析消息，用于确认长对话只在对话内容区滚动。`,
+      created_at: "2026-07-30T10:00:00",
+    })),
+  };
+}
+
 async function mockAgentApi(
   page: Page,
   conversation: (storeId: number) => Conversation,
@@ -239,9 +251,8 @@ test("streams phases, cards and answer while enforcing one active turn", async (
   await page.goto("/agent");
 
   const input = page.getByRole("textbox", { name: "向 Agent 提问" });
-  const send = page.getByRole("button", { name: "发送" });
   await input.fill("分析本月营业额");
-  await send.click();
+  await input.press("Enter");
 
   await expect(page.getByRole("button", { name: "正在回答…" }))
     .toBeDisabled();
@@ -294,9 +305,70 @@ test("narrow layout remains contained and store switching clears the draft", asy
   await expect(page.getByText("米兰分店当前没有匹配记录。"))
     .toBeVisible();
   await expect(input).toHaveValue("");
+  await input.fill("移动端换行");
+  await input.press("Enter");
+  await expect(input).toHaveValue("移动端换行\n");
   await expect.poll(() => page.evaluate(() => ({
     body: document.body.scrollWidth,
     document: document.documentElement.scrollWidth,
     viewport: window.innerWidth,
   }))).toEqual({ body: 320, document: 320, viewport: 320 });
+});
+
+test("desktop fills the available viewport and scrolls only the conversation", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1920, height: 900 });
+  await mockAgentApi(page, () => longConversation());
+  await page.goto("/agent");
+
+  const workspace = page.getByRole("region", { name: "Agent 工作区" });
+  const conversation = page.getByRole("region", { name: "Agent 对话内容" });
+  await expect(workspace).toBeVisible();
+  await expect(conversation).toBeVisible();
+  await expect.poll(() => page.evaluate(() => ({
+    documentHeight: document.documentElement.scrollHeight,
+    viewportHeight: window.innerHeight,
+    scrollY: window.scrollY,
+  }))).toEqual({ documentHeight: 900, viewportHeight: 900, scrollY: 0 });
+  await expect.poll(() => conversation.evaluate(
+    (node) => node.scrollHeight > node.clientHeight,
+  )).toBe(true);
+
+  await conversation.evaluate((node) => node.scrollTo({ top: node.scrollHeight }));
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+
+  const [resetBox, sendBox, workspaceBox] = await Promise.all([
+    page.getByRole("button", { name: "重置会话" }).boundingBox(),
+    page.getByRole("button", { name: "发送" }).boundingBox(),
+    workspace.boundingBox(),
+  ]);
+  expect(resetBox).not.toBeNull();
+  expect(sendBox).not.toBeNull();
+  expect(workspaceBox).not.toBeNull();
+  expect(1920 - workspaceBox!.x - workspaceBox!.width)
+    .toBeLessThanOrEqual(24);
+  expect(resetBox!.x).toBeLessThan(sendBox!.x);
+  expect(Math.abs(resetBox!.y - sendBox!.y)).toBeLessThanOrEqual(1);
+  expect(workspaceBox!.x + workspaceBox!.width - sendBox!.x - sendBox!.width)
+    .toBeLessThanOrEqual(1);
+});
+
+test("mobile keeps long conversations inside the conversation scroller", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 700 });
+  await mockAgentApi(page, () => longConversation());
+  await page.goto("/agent");
+
+  const conversation = page.getByRole("region", { name: "Agent 对话内容" });
+  await expect(conversation).toBeVisible();
+  await expect.poll(() => page.evaluate(() => ({
+    documentHeight: document.documentElement.scrollHeight,
+    viewportHeight: window.innerHeight,
+    scrollY: window.scrollY,
+  }))).toEqual({ documentHeight: 700, viewportHeight: 700, scrollY: 0 });
+  await expect.poll(() => conversation.evaluate(
+    (node) => node.scrollHeight > node.clientHeight,
+  )).toBe(true);
 });

@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, KeyboardEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { friendlyApiError } from "@/api/client";
@@ -44,6 +44,8 @@ function AgentConversationPanel({ storeId }: { storeId: number }) {
   const conversation = useAgentConversation(storeId);
   const send = useSendAgentMessage(storeId);
   const reset = useResetAgentConversation(storeId);
+  const running = conversation.data?.latest_turn?.status === "running";
+  const canSend = Boolean(draft.trim()) && !send.isPending && !running;
 
   useEffect(() => {
     setDraft("");
@@ -55,7 +57,7 @@ function AgentConversationPanel({ storeId }: { storeId: number }) {
   function submit(event: FormEvent) {
     event.preventDefault();
     const content = draft.trim();
-    if (!content) return;
+    if (!canSend) return;
     setLiveAnswer("");
     setLivePhase("正在开始本轮分析…");
     setLiveCards([]);
@@ -86,6 +88,21 @@ function AgentConversationPanel({ storeId }: { storeId: number }) {
     });
   }
 
+  function sendOnEnter(event: KeyboardEvent<HTMLTextAreaElement>) {
+    const isDesktop = !window.matchMedia
+      || window.matchMedia("(min-width: 768px)").matches;
+    if (
+      !isDesktop
+      || event.key !== "Enter"
+      || event.shiftKey
+      || event.nativeEvent.isComposing
+    ) {
+      return;
+    }
+    event.preventDefault();
+    event.currentTarget.form?.requestSubmit();
+  }
+
   if (conversation.isPending) {
     return <p role="status">正在恢复 Agent 会话…</p>;
   }
@@ -97,7 +114,6 @@ function AgentConversationPanel({ storeId }: { storeId: number }) {
     );
   }
 
-  const running = conversation.data.latest_turn?.status === "running";
   const latestAnswer = [...conversation.data.messages]
     .reverse()
     .find((message) => message.role === "assistant")?.content;
@@ -113,101 +129,105 @@ function AgentConversationPanel({ storeId }: { storeId: number }) {
     : (conversation.data.latest_turn?.investigation_cards ?? []);
 
   return (
-    <div className="grid gap-4">
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
       <div
-        aria-label="Agent 会话"
-        className="grid min-h-48 gap-3 rounded-lg border bg-background p-4"
+        aria-label="Agent 对话内容"
+        className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto rounded-lg border bg-background p-4"
+        role="region"
       >
-        {conversation.data.messages.length === 0
-          ? (
-              <p className="text-sm text-muted-foreground">
-                还没有消息，可以从当前门店的经营问题开始。
-              </p>
-            )
-          : conversation.data.messages.map((message) => (
-              <article
-                className={message.role === "user"
-                  ? "ml-auto max-w-[85%] rounded-lg bg-primary px-3 py-2 text-primary-foreground"
-                  : "mr-auto max-w-[85%] rounded-lg bg-muted px-3 py-2"}
-                key={message.id}
-              >
-                <p className="mb-1 text-xs font-medium">
-                  {message.role === "user" ? "你" : "Agent"}
+        <div aria-label="Agent 会话" className="grid gap-3">
+          {conversation.data.messages.length === 0
+            ? (
+                <p className="text-sm text-muted-foreground">
+                  还没有消息，可以从当前门店的经营问题开始。
                 </p>
-                <p className="whitespace-pre-wrap text-sm">{message.content}</p>
-              </article>
-            ))}
-        {showLiveAnswer && (
-          <article className="mr-auto max-w-[85%] rounded-lg bg-muted px-3 py-2">
-            <p className="mb-1 text-xs font-medium">Agent</p>
-            <p className="whitespace-pre-wrap text-sm">{liveAnswer}</p>
-          </article>
+              )
+            : conversation.data.messages.map((message) => (
+                <article
+                  className={message.role === "user"
+                    ? "ml-auto max-w-[85%] rounded-lg bg-primary px-3 py-2 text-primary-foreground"
+                    : "mr-auto max-w-[85%] rounded-lg bg-muted px-3 py-2"}
+                  key={message.id}
+                >
+                  <p className="mb-1 text-xs font-medium">
+                    {message.role === "user" ? "你" : "Agent"}
+                  </p>
+                  <p className="whitespace-pre-wrap text-sm">{message.content}</p>
+                </article>
+              ))}
+          {showLiveAnswer && (
+            <article className="mr-auto max-w-[85%] rounded-lg bg-muted px-3 py-2">
+              <p className="mb-1 text-xs font-medium">Agent</p>
+              <p className="whitespace-pre-wrap text-sm">{liveAnswer}</p>
+            </article>
+          )}
+        </div>
+
+        {investigationCards.length > 0 && (
+          <section
+            aria-label="调查过程"
+            className="grid gap-2 rounded-lg border bg-muted/30 p-4"
+          >
+            <h2 className="text-sm font-semibold">调查过程</h2>
+            <ol className="grid gap-2">
+              {investigationCards.map((card, index) => (
+                <li
+                  className="rounded-md border bg-background px-3 py-2"
+                  key={[
+                    card.operation,
+                    card.range_start,
+                    card.range_end,
+                    ...card.filters,
+                    card.error_category,
+                    index,
+                  ].join("|")}
+                >
+                  <p className="text-sm font-medium">{card.operation}</p>
+                  {card.error_category && (
+                    <p className="text-xs text-muted-foreground">
+                      {SAFE_INVESTIGATION_MESSAGES[card.error_category]}
+                    </p>
+                  )}
+                  {card.range_start && card.range_end && (
+                    <p className="text-xs text-muted-foreground">
+                      {card.range_start} 至 {card.range_end}
+                    </p>
+                  )}
+                  {card.filters.length > 0 && (
+                    <ul className="mt-1 flex flex-wrap gap-1">
+                      {card.filters.map((filter) => (
+                        <li
+                          className="rounded bg-muted px-2 py-0.5 text-xs"
+                          key={filter}
+                        >
+                          {filter}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              ))}
+            </ol>
+          </section>
+        )}
+
+        {(running || send.isPending) && (
+          <p className="text-sm text-muted-foreground" role="status">
+            {livePhase ?? "后台处理中，正在恢复结果…"}
+          </p>
         )}
       </div>
-
-      {investigationCards.length > 0 && (
-        <section
-          aria-label="调查过程"
-          className="grid gap-2 rounded-lg border bg-muted/30 p-4"
-        >
-          <h2 className="text-sm font-semibold">调查过程</h2>
-          <ol className="grid gap-2">
-            {investigationCards.map((card, index) => (
-              <li
-                className="rounded-md border bg-background px-3 py-2"
-                key={[
-                  card.operation,
-                  card.range_start,
-                  card.range_end,
-                  ...card.filters,
-                  card.error_category,
-                  index,
-                ].join("|")}
-              >
-                <p className="text-sm font-medium">{card.operation}</p>
-                {card.error_category && (
-                  <p className="text-xs text-muted-foreground">
-                    {SAFE_INVESTIGATION_MESSAGES[card.error_category]}
-                  </p>
-                )}
-                {card.range_start && card.range_end && (
-                  <p className="text-xs text-muted-foreground">
-                    {card.range_start} 至 {card.range_end}
-                  </p>
-                )}
-                {card.filters.length > 0 && (
-                  <ul className="mt-1 flex flex-wrap gap-1">
-                    {card.filters.map((filter) => (
-                      <li
-                        className="rounded bg-muted px-2 py-0.5 text-xs"
-                        key={filter}
-                      >
-                        {filter}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </li>
-            ))}
-          </ol>
-        </section>
-      )}
-
-      {(running || send.isPending) && (
-        <p className="text-sm text-muted-foreground" role="status">
-          {livePhase ?? "后台处理中，正在恢复结果…"}
-        </p>
-      )}
-      <form className="grid gap-2" onSubmit={submit}>
+      <form className="grid shrink-0 gap-2" onSubmit={submit}>
         <label className="text-sm font-medium" htmlFor="agent-message">
           向 Agent 提问
         </label>
         <textarea
           aria-label="向 Agent 提问"
-          className="min-h-24 rounded-md border bg-background px-3 py-2 text-sm"
+          className="h-24 resize-none rounded-md border bg-background px-3 py-2 text-sm"
           id="agent-message"
           maxLength={4000}
           onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={sendOnEnter}
           placeholder="例如：上个月的经营情况怎么样？"
           value={draft}
         />
@@ -221,13 +241,7 @@ function AgentConversationPanel({ storeId }: { storeId: number }) {
               )}
           </p>
         )}
-        <div className="flex flex-wrap gap-2">
-          <Button
-            disabled={!draft.trim() || send.isPending || running}
-            type="submit"
-          >
-            {send.isPending || running ? "正在回答…" : "发送"}
-          </Button>
+        <div className="flex flex-wrap justify-end gap-2">
           <Button
             disabled={reset.isPending}
             onClick={() => setResetOpen(true)}
@@ -235,6 +249,12 @@ function AgentConversationPanel({ storeId }: { storeId: number }) {
             variant="outline"
           >
             重置会话
+          </Button>
+          <Button
+            disabled={!canSend}
+            type="submit"
+          >
+            {send.isPending || running ? "正在回答…" : "发送"}
           </Button>
         </div>
       </form>
@@ -296,8 +316,11 @@ export function AgentPage() {
   }
 
   return (
-    <section className="mx-auto max-w-3xl space-y-4">
-      <div>
+    <section
+      aria-label="Agent 工作区"
+      className="flex h-full min-h-0 w-full flex-1 flex-col gap-4"
+    >
+      <div className="shrink-0">
         <h1 className="text-2xl font-semibold">数据分析 Agent</h1>
         <p className="mt-2 text-sm text-muted-foreground">Agent 当前门店</p>
         <p className="text-lg font-medium">{access.data.store_name}</p>

@@ -160,3 +160,66 @@ it("shows safe failure categories without internal error details", () => {
   expect(within(cards).queryByText(/secret|exception|参数值/))
     .not.toBeInTheDocument();
 });
+
+it("sends with Enter while preserving Shift+Enter for a new line", () => {
+  const mutate = vi.fn();
+  vi.mocked(useSendAgentMessage).mockReturnValue({
+    isPending: false,
+    isError: false,
+    mutate,
+  } as unknown as ReturnType<typeof useSendAgentMessage>);
+  render(<AgentPage />);
+
+  const input = screen.getByRole("textbox", { name: "向 Agent 提问" });
+  fireEvent.change(input, { target: { value: "分析本月营业额" } });
+  fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+  expect(mutate).not.toHaveBeenCalled();
+
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(mutate).toHaveBeenCalledOnce();
+  expect(mutate).toHaveBeenCalledWith(
+    expect.objectContaining({ content: "分析本月营业额" }),
+    expect.any(Object),
+  );
+});
+
+it("keeps the message editor at a fixed size", () => {
+  render(<AgentPage />);
+
+  expect(screen.getByRole("textbox", { name: "向 Agent 提问" }))
+    .toHaveClass("h-24", "resize-none");
+});
+
+it("does not let Enter bypass the one-active-turn guard", () => {
+  const mutate = vi.fn();
+  vi.mocked(useAgentConversation).mockReturnValue({
+    data: {
+      conversation_id: 3,
+      store_id: 7,
+      store_name: "经营背景门店",
+      messages: [],
+      latest_turn: {
+        id: 9,
+        status: "running",
+        error_message: null,
+        started_at: "2026-07-29T10:00:00",
+        finished_at: null,
+        investigation_cards: [],
+      },
+    },
+    isPending: false,
+    isError: false,
+  } as unknown as ReturnType<typeof useAgentConversation>);
+  vi.mocked(useSendAgentMessage).mockReturnValue({
+    isPending: false,
+    isError: false,
+    mutate,
+  } as unknown as ReturnType<typeof useSendAgentMessage>);
+  render(<AgentPage />);
+
+  const input = screen.getByRole("textbox", { name: "向 Agent 提问" });
+  fireEvent.change(input, { target: { value: "再发一条" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+
+  expect(mutate).not.toHaveBeenCalled();
+});
