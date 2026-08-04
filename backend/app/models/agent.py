@@ -1,10 +1,9 @@
 from datetime import datetime
 
 from sqlalchemy import (
-    JSON,
     Boolean,
     CheckConstraint,
-    Float,
+    DateTime,
     ForeignKey,
     String,
     Text,
@@ -15,21 +14,53 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
 
+AGENT_SYSTEM_SETTINGS_ID = 1
+
+
+class AgentSystemSettings(Base):
+    __tablename__ = "agent_system_settings"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True,
+        default=AGENT_SYSTEM_SETTINGS_ID,
+    )
+    enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        server_default="0",
+    )
+
+    __table_args__ = (
+        CheckConstraint("id = 1", name="singleton"),
+    )
+
 
 class AgentConversation(Base):
     __tablename__ = "agent_conversations"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
-    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id", ondelete="CASCADE"))
-    state: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+    )
+    store_id: Mapped[int] = mapped_column(
+        ForeignKey("stores.id", ondelete="CASCADE"),
+    )
+    context_summary: Mapped[str] = mapped_column(
+        Text,
+        default="",
+        server_default="",
+    )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
-        server_default=func.now(), onupdate=func.now()
+        server_default=func.now(),
+        onupdate=func.now(),
     )
+
     __table_args__ = (
         UniqueConstraint(
-            "user_id", "store_id", name="uq_agent_conversations_user_store"
+            "user_id",
+            "store_id",
+            name="uq_agent_conversations_user_store",
         ),
     )
 
@@ -39,59 +70,77 @@ class AgentMessage(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     conversation_id: Mapped[int] = mapped_column(
-        ForeignKey("agent_conversations.id", ondelete="CASCADE")
+        ForeignKey("agent_conversations.id", ondelete="CASCADE"),
     )
     role: Mapped[str] = mapped_column(String(16))
     content: Mapped[str] = mapped_column(Text)
-    action: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
     __table_args__ = (
-        CheckConstraint("role in ('user','assistant')", name="role"),
+        CheckConstraint(
+            "role in ('user','assistant')",
+            name="role",
+        ),
     )
 
 
-class AgentEvidence(Base):
-    __tablename__ = "agent_evidence"
+class AgentTurn(Base):
+    __tablename__ = "agent_turns"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     conversation_id: Mapped[int] = mapped_column(
-        ForeignKey("agent_conversations.id", ondelete="CASCADE")
+        ForeignKey("agent_conversations.id", ondelete="CASCADE"),
+        index=True,
     )
-    payload: Mapped[dict] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    user_message_id: Mapped[int] = mapped_column(
+        ForeignKey("agent_messages.id", ondelete="CASCADE"),
+    )
+    assistant_message_id: Mapped[int | None] = mapped_column(
+        ForeignKey("agent_messages.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    status: Mapped[str] = mapped_column(String(16))
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status in ('running','completed','failed','interrupted')",
+            name="status",
+        ),
+    )
 
 
-class AgentRunStat(Base):
-    """Conversation-free model attempt telemetry retained across conversation reset."""
-
-    __tablename__ = "agent_run_stats"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column()
-    store_id: Mapped[int] = mapped_column()
-    role: Mapped[str] = mapped_column(String(16))
-    stage: Mapped[str] = mapped_column(String(16))
-    provider: Mapped[str] = mapped_column(String(60))
-    model: Mapped[str] = mapped_column(String(120))
-    input_tokens: Mapped[int | None]
-    output_tokens: Mapped[int | None]
-    result: Mapped[str] = mapped_column(String(16))
-    error_category: Mapped[str | None] = mapped_column(String(40))
-    latency_ms: Mapped[int]
-    estimated_cost: Mapped[float | None] = mapped_column(Float)
-    is_fallback: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-
-
-class AgentAlert(Base):
-    __tablename__ = "agent_alerts"
+class AgentInvestigationCard(Base):
+    __tablename__ = "agent_investigation_cards"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    alert_type: Mapped[str] = mapped_column(String(32))
-    provider: Mapped[str] = mapped_column(String(60))
-    model: Mapped[str] = mapped_column(String(120))
-    error_category: Mapped[str] = mapped_column(String(40))
-    message: Mapped[str] = mapped_column(String(240))
-    is_resolved: Mapped[bool] = mapped_column(Boolean, default=False)
+    turn_id: Mapped[int] = mapped_column(
+        ForeignKey("agent_turns.id", ondelete="CASCADE"),
+        index=True,
+    )
+    operation: Mapped[str] = mapped_column(String(120))
+    range_start: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    range_end: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    filters_json: Mapped[str] = mapped_column(
+        Text,
+        default="[]",
+        server_default="[]",
+    )
+    status: Mapped[str] = mapped_column(String(16))
+    error_category: Mapped[str | None] = mapped_column(
+        String(32),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    resolved_at: Mapped[datetime | None]
+
+    __table_args__ = (
+        CheckConstraint(
+            "status in ('completed','empty','unavailable','failed')",
+            name="status",
+        ),
+    )

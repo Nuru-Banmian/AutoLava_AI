@@ -1,62 +1,63 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
-import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { AgentSettingsPanel } from "@/admin/AgentSettingsPanel";
 
 const server = setupServer();
+
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
-function renderPanel(isOwner: boolean) {
-  const client = new QueryClient({
-    defaultOptions: {
-      queries: { retry: false },
-      mutations: { retry: false },
-    },
-  });
+function renderPanel() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <AgentSettingsPanel isOwner={isOwner} />
+      <AgentSettingsPanel />
     </QueryClientProvider>,
   );
 }
 
-it("lets the final administrator persist the global Agent switch", async () => {
-  let enabled = false;
-  server.use(
-    http.get("/api/admin/agent-settings", () => HttpResponse.json({ enabled })),
-    http.patch("/api/admin/agent-settings", async ({ request }) => {
-      enabled = (await request.json() as { enabled: boolean }).enabled;
-      return HttpResponse.json({ enabled });
-    }),
-  );
-  renderPanel(true);
+describe("AgentSettingsPanel", () => {
+  it("shows readiness without exposing model connection values and blocks an incomplete enable", async () => {
+    server.use(
+      http.get("/api/agent/admin/settings", () => HttpResponse.json({
+        enabled: false,
+        model_config_ready: false,
+      })),
+    );
+    renderPanel();
 
-  const toggle = await screen.findByRole("switch", {
-    name: "全局启用 Agent",
+    expect(await screen.findByText("模型配置不完整")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "全系统启用数据分析 Agent" })).toBeDisabled();
+    expect(document.body).not.toHaveTextContent("endpoint");
+    expect(document.body).not.toHaveTextContent("model-id");
+    expect(document.body).not.toHaveTextContent("api-key");
   });
-  expect(toggle).toHaveAttribute("aria-checked", "false");
-  fireEvent.click(toggle);
 
-  expect(await screen.findByText("Agent 已全局启用")).toBeInTheDocument();
-  expect(toggle).toHaveAttribute("aria-checked", "true");
-});
+  it("lets the final administrator control the only global switch", async () => {
+    let enabled = false;
+    server.use(
+      http.get("/api/agent/admin/settings", () => HttpResponse.json({
+        enabled,
+        model_config_ready: true,
+      })),
+      http.patch("/api/agent/admin/settings", async ({ request }) => {
+        enabled = (await request.json() as { enabled: boolean }).enabled;
+        return HttpResponse.json({ enabled, model_config_ready: true });
+      }),
+    );
+    renderPanel();
 
-it("shows ordinary administrators the state without allowing changes", async () => {
-  server.use(
-    http.get("/api/admin/agent-settings", () =>
-      HttpResponse.json({ enabled: true }),
-    ),
-  );
-  renderPanel(false);
+    const toggle = await screen.findByRole("checkbox", { name: "全系统启用数据分析 Agent" });
+    expect(toggle).toBeEnabled();
+    await userEvent.click(toggle);
 
-  const toggle = await screen.findByRole("switch", {
-    name: "全局启用 Agent",
+    await waitFor(() => expect(toggle).toBeChecked());
+    expect(screen.getByRole("status")).toHaveTextContent("数据分析 Agent 已启用");
   });
-  expect(toggle).toBeDisabled();
-  expect(screen.getByText("仅最终管理员可以修改此设置")).toBeInTheDocument();
 });

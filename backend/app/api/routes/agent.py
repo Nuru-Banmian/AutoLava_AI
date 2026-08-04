@@ -1,237 +1,234 @@
-from typing import Literal, Protocol
+from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException, Request, Response
-from pydantic import BaseModel, ConfigDict, Field
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy import delete, select
+from starlette.responses import StreamingResponse
 
-from app.agent.conversation import (
-    AgentRunResult,
-    AgentTurnResponse,
-    ConversationResponse,
-    ConversationState,
-    append_message,
-    conversation_response,
-    create_or_get_conversation,
-    delete_conversation,
-    get_conversation_by_id,
-    recent_model_messages,
+from app.api.deps import (
+    Session,
+    StoreAccess,
+    require_admin,
+    require_final_admin,
+    require_store_access,
 )
-from app.agent.contracts import ModelMessage
-from app.agent.model import CONFIGURATION_CATEGORIES
-from app.agent.runtime import RuntimeContext, RuntimeFeatureFlags
-from app.api.deps import CurrentUser, Session
-from app.api.routes.agent_admin import agent_enabled
-from app.core.database import end_read_transaction, sqlite_short_write
-from app.models.agent import AgentAlert, AgentEvidence, AgentRunStat
-from app.services.access import require_fresh_store_access, require_fresh_user
-from app.services.owner import is_administrator, is_owner
+from app.core.config import get_settings
+from app.core.database import sqlite_short_write
+from app.models.agent import (
+    AGENT_SYSTEM_SETTINGS_ID,
+    AgentConversation,
+    AgentInvestigationCard,
+    AgentSystemSettings,
+)
+from app.models.identity import User
+from app.schemas.agent import (
+    AgentConversationResponse,
+    AgentInvestigationCardResponse,
+    AgentMessageCreate,
+    AgentMessageResponse,
+    AgentSettingsPatch,
+    AgentTurnResponse,
+)
+from app.services.agent_conversation import (
+    conversation_messages,
+    get_or_create_conversation,
+)
+from app.services.agent_turn import (
+    ActiveAgentTurnError,
+    AgentTurnRuntime,
+    AgentTurnStartTimeoutError,
+    latest_conversation_turn,
+)
 
 router = APIRouter(prefix="/agent", tags=["agent"])
+Administrator = Annotated[User, Depends(require_admin)]
+FinalAdministrator = Annotated[User, Depends(require_final_admin)]
 
 
-class AgentTurnBody(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    question: str = Field(min_length=1, max_length=2_000)
-
-
-class AgentResetBody(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    confirmation: Literal["permanently_delete"]
+async def _is_agent_globally_enabled(session: Session) -> bool:
+    settings = await session.get(AgentSystemSettings, AGENT_SYSTEM_SETTINGS_ID)
+    return settings.enabled if settings is not None else False
 
 
-class AgentRunner(Protocol):
-    async def run(
-        self,
-        context: RuntimeContext,
-        state: ConversationState,
-        recent_messages: list[ModelMessage],
-    ) -> AgentRunResult: ...
+def _settings_payload(enabled: bool) -> dict[str, bool]:
+    return {
+        "enabled": enabled,
+        "model_config_ready": get_settings().agent_model_config_ready,
+    }
 
 
-async def _require_agent_administrator(session: Session, user_id: int):
-    user = await require_fresh_user(session, user_id=user_id)
-    if not is_administrator(user):
-        raise HTTPException(403, "Administrator access required")
-    return user
-
-
-@router.get("/status")
-async def get_agent_status(
-    session: Session, actor: CurrentUser
-) -> dict[str, bool]:
-    await _require_agent_administrator(session, actor.id)
-    return {"enabled": await agent_enabled(session)}
-
-
-@router.post("/stores/{store_id}/turn")
-async def run_agent_turn(
-    store_id: int,
-    body: AgentTurnBody,
-    request: Request,
+@router.get("/admin/settings")
+async def read_agent_settings(
     session: Session,
-    actor: CurrentUser,
-) -> AgentTurnResponse:
-    user = await _require_agent_administrator(session, actor.id)
-    user, store = await require_fresh_store_access(
-        session,
-        user_id=user.id,
-        store_id=store_id,
-        capability="analytics.view",
+    _actor: FinalAdministrator,
+) -> dict[str, bool]:
+    return _settings_payload(await _is_agent_globally_enabled(session))
+
+
+@router.patch("/admin/settings")
+async def patch_agent_settings(
+    body: AgentSettingsPatch,
+    session: Session,
+    _actor: FinalAdministrator,
+) -> dict[str, bool]:
+    if body.enabled and not get_settings().agent_model_config_ready:
+        raise HTTPException(409, "模型配置不完整，无法启用数据分析 Agent")
+
+    async with sqlite_short_write(session):
+        settings = await session.get(
+            AgentSystemSettings,
+            AGENT_SYSTEM_SETTINGS_ID,
+        )
+        if settings is None:
+            settings = AgentSystemSettings(id=AGENT_SYSTEM_SETTINGS_ID)
+            session.add(settings)
+        settings.enabled = body.enabled
+
+    return _settings_payload(body.enabled)
+
+
+@router.get("/stores/{store_id}")
+async def enter_agent_current_store(
+    store_id: int,
+    actor: Administrator,
+    session: Session,
+) -> dict[str, Any]:
+    if not await _is_agent_globally_enabled(session):
+        raise HTTPException(403, "数据分析 Agent 未启用")
+    access = await require_store_access(store_id, actor, session)
+    return {
+        "store_id": access.store.id,
+        "store_name": access.store.name,
+    }
+
+
+async def _current_agent_store(
+    store_id: int,
+    actor: User,
+    session: Session,
+) -> StoreAccess:
+    if not await _is_agent_globally_enabled(session):
+        raise HTTPException(403, "数据分析 Agent 未启用")
+    return await require_store_access(store_id, actor, session)
+
+
+async def _conversation_payload(
+    session: Session,
+    conversation: AgentConversation,
+    *,
+    store_name: str,
+) -> AgentConversationResponse:
+    messages = await conversation_messages(session, conversation.id)
+    latest_turn = await latest_conversation_turn(session, conversation.id)
+    cards = (
+        list(
+            await session.scalars(
+                select(AgentInvestigationCard)
+                .where(AgentInvestigationCard.turn_id == latest_turn.id)
+                .order_by(AgentInvestigationCard.id)
+            )
+        )
+        if latest_turn is not None
+        else []
     )
-    enabled = await agent_enabled(session)
-    if not enabled:
-        raise HTTPException(403, "Agent 当前未启用")
-    context = RuntimeContext(
-        user_id=user.id,
-        store_id=store.id,
-        role="final_admin" if is_owner(user) else "admin",
-        store_timezone=store.timezone,
-        features=RuntimeFeatureFlags(
-            agent_enabled=enabled,
-            company_settlement_enabled=store.company_settlement_enabled,
-            income_items_enabled=store.income_items_enabled,
-            wash_count_enabled=store.wash_count_enabled,
+    return AgentConversationResponse(
+        conversation_id=conversation.id,
+        store_id=conversation.store_id,
+        store_name=store_name,
+        messages=[
+            AgentMessageResponse.model_validate(message, from_attributes=True)
+            for message in messages
+        ],
+        latest_turn=(
+            AgentTurnResponse(
+                **AgentTurnResponse.model_validate(
+                    latest_turn,
+                    from_attributes=True,
+                ).model_dump(exclude={"investigation_cards"}),
+                investigation_cards=[
+                    AgentInvestigationCardResponse.from_record(card)
+                    for card in cards
+                ],
+            )
+            if latest_turn is not None
+            else None
         ),
     )
-    user_id = user.id
-    authorized_store_id = store.id
-    async with sqlite_short_write(session):
-        conversation = await create_or_get_conversation(
-            session, user_id=user_id, store_id=authorized_store_id
-        )
-        await append_message(
-            session,
-            conversation=conversation,
-            role="user",
-            content=body.question,
-        )
-        state = ConversationState.model_validate(conversation.state)
-        conversation_id = conversation.id
-        recent_messages = await recent_model_messages(
-            session, conversation_id=conversation.id
-        )
-
-    # The model call happens after the short write and outside any SQLite snapshot.
-    await end_read_transaction(session)
-    runner: AgentRunner = request.app.state.agent_service
-    run_result = await runner.run(context, state, recent_messages)
-    result = run_result.turn
-
-    async with sqlite_short_write(session):
-        conversation = await get_conversation_by_id(
-            session,
-            conversation_id=conversation_id,
-            user_id=user_id,
-            store_id=authorized_store_id,
-        )
-        if conversation is None:
-            raise HTTPException(409, "当前对话已被重置")
-        conversation.state = run_result.state.model_dump(mode="json")
-        if run_result.evidence is not None:
-            session.add(
-                AgentEvidence(
-                    conversation_id=conversation.id,
-                    payload=run_result.evidence.model_dump(mode="json"),
-                )
-            )
-        for attempt in run_result.attempts:
-            session.add(
-                AgentRunStat(
-                    user_id=user_id,
-                    store_id=authorized_store_id,
-                    role=context.role,
-                    stage=attempt.stage,
-                    provider=attempt.provider,
-                    model=attempt.model,
-                    input_tokens=attempt.input_tokens,
-                    output_tokens=attempt.output_tokens,
-                    result=attempt.result,
-                    error_category=(
-                        attempt.error_category.value
-                        if attempt.error_category is not None
-                        else None
-                    ),
-                    latency_ms=attempt.latency_ms,
-                    estimated_cost=attempt.estimated_cost,
-                    is_fallback=attempt.is_fallback,
-                )
-            )
-            if attempt.error_category in CONFIGURATION_CATEGORIES:
-                alert_type = (
-                    "budget"
-                    if attempt.error_category.value == "insufficient_balance"
-                    else "configuration"
-                )
-                session.add(
-                    AgentAlert(
-                        alert_type=alert_type,
-                        provider=attempt.provider,
-                        model=attempt.model,
-                        error_category=attempt.error_category.value,
-                        message=(
-                            "模型预算不可用，请检查供应商账户。"
-                            if alert_type == "budget"
-                            else "模型配置不可用，请检查供应商设置。"
-                        ),
-                        is_resolved=False,
-                    )
-                )
-        await append_message(
-            session,
-            conversation=conversation,
-            role="assistant",
-            content=result.content,
-            action=result.action,
-        )
-        snapshot = await conversation_response(
-            session, user_id=user_id, store_id=authorized_store_id
-        )
-    return AgentTurnResponse(
-        route=result.route,
-        content=result.content,
-        recovery_status=result.recovery_status,
-        conversation=snapshot,
-    )
 
 
-@router.get("/stores/{store_id}/conversation")
-async def get_current_conversation(
+@router.get(
+    "/stores/{store_id}/conversation",
+    response_model=AgentConversationResponse,
+)
+async def read_agent_conversation(
     store_id: int,
+    actor: Administrator,
     session: Session,
-    actor: CurrentUser,
-) -> ConversationResponse:
-    user = await _require_agent_administrator(session, actor.id)
-    user, store = await require_fresh_store_access(
+) -> AgentConversationResponse:
+    access = await _current_agent_store(store_id, actor, session)
+    store_name = access.store.name
+    conversation = await get_or_create_conversation(
         session,
-        user_id=user.id,
-        store_id=store_id,
-        capability="analytics.view",
+        user_id=actor.id,
+        store_id=access.store.id,
     )
-    return await conversation_response(
-        session, user_id=user.id, store_id=store.id
+    return await _conversation_payload(
+        session,
+        conversation,
+        store_name=store_name,
+    )
+
+
+@router.post(
+    "/stores/{store_id}/messages",
+)
+async def send_agent_message(
+    store_id: int,
+    body: AgentMessageCreate,
+    request: Request,
+    actor: Administrator,
+    session: Session,
+) -> StreamingResponse:
+    access = await _current_agent_store(store_id, actor, session)
+    runtime: AgentTurnRuntime = request.app.state.agent_turn_runtime
+    try:
+        events = await runtime.start(
+            user_id=actor.id,
+            store_id=access.store.id,
+            content=body.content.strip(),
+        )
+    except ActiveAgentTurnError as exc:
+        raise HTTPException(
+            409,
+            "当前 Agent 会话已有进行中的轮次",
+        ) from exc
+    except AgentTurnStartTimeoutError as exc:
+        raise HTTPException(
+            503,
+            "Agent 本轮启动超时，请稍后重试",
+        ) from exc
+    return StreamingResponse(
+        events,
+        media_type="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 
 @router.delete("/stores/{store_id}/conversation", status_code=204)
-async def reset_current_conversation(
+async def reset_agent_conversation(
     store_id: int,
-    body: AgentResetBody,
+    actor: Administrator,
     session: Session,
-    actor: CurrentUser,
-) -> Response:
-    del body
-    user = await _require_agent_administrator(session, actor.id)
-    user, store = await require_fresh_store_access(
-        session,
-        user_id=user.id,
-        store_id=store_id,
-        capability="analytics.view",
-    )
-    user_id = user.id
-    authorized_store_id = store.id
+) -> None:
+    access = await _current_agent_store(store_id, actor, session)
+    actor_id = actor.id
+    current_store_id = access.store.id
     async with sqlite_short_write(session):
-        await delete_conversation(
-            session, user_id=user_id, store_id=authorized_store_id
+        await session.execute(
+            delete(AgentConversation).where(
+                AgentConversation.user_id == actor_id,
+                AgentConversation.store_id == current_store_id,
+            )
         )
-    return Response(status_code=204)

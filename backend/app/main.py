@@ -5,7 +5,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
-from app.agent.service import create_agent_service
 from app.api.routes.dashboard import RefreshLimiter
 from app.core.config import get_settings
 from app.core.database import async_session_factory
@@ -16,6 +15,8 @@ from app.services.scheduler import (
     make_sqlite_maintenance_callback,
 )
 from app.services.sqlite_backup import has_valid_backup
+from app.services.agent_model import BailianOpenAIModelAdapter
+from app.services.agent_turn import AgentTurnRuntime
 from app.services.weather import OpenMeteoProvider, WeatherService
 
 
@@ -45,12 +46,14 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        await app.state.agent_turn_runtime.recover_interrupted_turns()
         scheduler.start()
         if maintenance_scheduler is not None:
             maintenance_scheduler.start()
         try:
             yield
         finally:
+            await app.state.agent_turn_runtime.stop()
             if maintenance_scheduler is not None:
                 await maintenance_scheduler.stop()
             await scheduler.stop()
@@ -60,7 +63,18 @@ def create_app() -> FastAPI:
     app.state.weather_service = weather_service
     app.state.dashboard_refresh_limiter = RefreshLimiter()
     app.state.background_refresh_scheduler = scheduler
-    app.state.agent_service = create_agent_service(settings, async_session_factory)
+    app.state.agent_model_adapter = BailianOpenAIModelAdapter(settings)
+    app.state.agent_session_factory = async_session_factory
+    app.state.agent_turn_runtime = AgentTurnRuntime(
+        lambda: app.state.agent_session_factory(),
+        lambda: app.state.agent_model_adapter,
+        turn_timeout_seconds=settings.agent_turn_timeout_seconds,
+        stop_new_tools_seconds=settings.agent_stop_new_tools_seconds,
+        model_round_limit=settings.agent_model_round_limit,
+        data_tool_call_limit=settings.agent_data_tool_call_limit,
+        data_tool_timeout_seconds=settings.agent_data_tool_timeout_seconds,
+        transient_retry_limit=settings.agent_transient_retry_limit,
+    )
     if maintenance_scheduler is not None:
         # Retention is chained after every backup attempt, so both names expose
         # the same single 03:00 lifecycle owner.

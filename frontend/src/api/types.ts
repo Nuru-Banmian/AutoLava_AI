@@ -10,6 +10,51 @@ export interface AuthenticatedUser extends User {
   is_owner: boolean;
 }
 
+export interface AgentSettings {
+  enabled: boolean;
+  model_config_ready: boolean;
+}
+
+export interface AgentCurrentStore {
+  store_id: number;
+  store_name: string;
+}
+
+export interface AgentMessage {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+}
+
+export type AgentTurnStatus = "running" | "completed" | "failed" | "interrupted";
+
+export interface AgentInvestigationCard {
+  operation: string;
+  range_start: string | null;
+  range_end: string | null;
+  filters: string[];
+  status: "completed" | "empty" | "unavailable" | "failed";
+  error_category?: "timeout" | "temporary" | "permission" | "validation" | "tool_failure" | "expected_unavailable" | null;
+}
+
+export interface AgentTurn {
+  id: number;
+  status: AgentTurnStatus;
+  error_message: string | null;
+  started_at: string;
+  finished_at: string | null;
+  investigation_cards: AgentInvestigationCard[];
+}
+
+export interface AgentConversation {
+  conversation_id: number;
+  store_id: number;
+  store_name: string;
+  messages: AgentMessage[];
+  latest_turn: AgentTurn | null;
+}
+
 export interface AdminUser extends User {
   is_active: boolean;
   store_ids: number[];
@@ -130,42 +175,6 @@ export interface BriefingCard {
   hint: string | null;
   generated_at: string | null;
   timestamp_status: "utc" | "legacy_unknown";
-}
-export interface AgentStatus { enabled: boolean }
-export interface OpenBusinessRecordsAction {
-  type: "open_business_records";
-  start_month: string;
-  end_month: string;
-}
-export interface AgentConversationState {
-  confirmed_period: { start: string; end: string } | null;
-  metrics: string[];
-  filters: Record<string, string[]>;
-  comparison: {
-    period: { start: string; end: string };
-    label: string;
-  } | null;
-  pending_clarifications: string[];
-}
-export interface AgentConversationMessage {
-  id: number;
-  role: "user" | "assistant";
-  content: string;
-  action?: OpenBusinessRecordsAction | null;
-  created_at: string;
-}
-export interface AgentConversation {
-  id: number | null;
-  messages: AgentConversationMessage[];
-  state: AgentConversationState;
-  created_at: string | null;
-  updated_at: string | null;
-}
-export interface AgentTurnResult {
-  route: "clarify" | "answer" | "safe_failure";
-  content: string;
-  recovery_status: "none" | "retried" | "fallback";
-  conversation: AgentConversation;
 }
 export interface WeatherResponse { weather: string | null; weather_code: number | null; temperature_max: number | null; temperature_min: number | null; precipitation: number | null }
 export type ChartBucket = "day" | "month";

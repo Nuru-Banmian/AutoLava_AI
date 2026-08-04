@@ -17,7 +17,6 @@ concurrency:
 env:
   AUTOLAVA_DATABASE_PATH: /tmp/autolava-ci.sqlite3
   AUTOLAVA_JWT_SECRET: ci-only-jwt-secret-with-at-least-32-bytes
-  AUTOLAVA_MODEL_ADAPTER: fake
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
 jobs:
@@ -79,13 +78,11 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --locked --extra dev
 
-      - name: Run non-Agent tests
+      - name: Run backend tests
         run: >-
           uv run --frozen pytest
           -n 2
           --dist loadscope
-          --ignore=tests/agent
-          --ignore-glob=tests/api/test_agent*.py
           --cov=app
           --cov-report=
 
@@ -97,53 +94,6 @@ jobs:
         with:
           name: backend-coverage-core
           path: backend/.coverage.core
-          include-hidden-files: true
-          retention-days: 1
-
-  backend-agent:
-    name: Backend Agent tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: backend
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          version: "0.11.26"
-          enable-cache: true
-          cache-dependency-glob: backend/uv.lock
-
-      - name: Install locked dependencies
-        run: uv sync --locked --extra dev
-
-      - name: Run Agent tests
-        run: >-
-          uv run --frozen pytest
-          -n 2
-          --dist loadscope
-          tests/agent
-          tests/api/test_agent*.py
-          --cov=app
-          --cov-report=
-
-      - name: Preserve Agent coverage
-        run: mv .coverage .coverage.agent
-
-      - name: Upload Agent coverage
-        uses: actions/upload-artifact@v7
-        with:
-          name: backend-coverage-agent
-          path: backend/.coverage.agent
           include-hidden-files: true
           retention-days: 1
 
@@ -216,24 +166,23 @@ jobs:
     needs:
       - backend-quality
       - backend-core
-      - backend-agent
       - frontend-unit-build
       - frontend-e2e
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Check out repository
-        if: ${{ needs.backend-core.result == 'success' && needs.backend-agent.result == 'success' }}
+        if: ${{ needs.backend-core.result == 'success' }}
         uses: actions/checkout@v7
 
       - name: Set up Python
-        if: ${{ needs.backend-core.result == 'success' && needs.backend-agent.result == 'success' }}
+        if: ${{ needs.backend-core.result == 'success' }}
         uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
       - name: Set up uv
-        if: ${{ needs.backend-core.result == 'success' && needs.backend-agent.result == 'success' }}
+        if: ${{ needs.backend-core.result == 'success' }}
         uses: astral-sh/setup-uv@v7
         with:
           version: "0.11.26"
@@ -241,12 +190,12 @@ jobs:
           cache-dependency-glob: backend/uv.lock
 
       - name: Install locked dependencies
-        if: ${{ needs.backend-core.result == 'success' && needs.backend-agent.result == 'success' }}
+        if: ${{ needs.backend-core.result == 'success' }}
         working-directory: backend
         run: uv sync --locked --extra dev
 
       - name: Download backend coverage
-        if: ${{ needs.backend-core.result == 'success' && needs.backend-agent.result == 'success' }}
+        if: ${{ needs.backend-core.result == 'success' }}
         uses: actions/download-artifact@v8
         with:
           pattern: backend-coverage-*
@@ -254,7 +203,7 @@ jobs:
           merge-multiple: true
 
       - name: Enforce combined backend coverage
-        if: ${{ needs.backend-core.result == 'success' && needs.backend-agent.result == 'success' }}
+        if: ${{ needs.backend-core.result == 'success' }}
         working-directory: backend
         run: |
           uv run --frozen coverage combine

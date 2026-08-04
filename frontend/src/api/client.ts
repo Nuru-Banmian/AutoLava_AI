@@ -46,7 +46,10 @@ function errorDetail(body: unknown, fallback: string): string {
   return fallback || "Request failed";
 }
 
-export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function apiRequest(
+  path: string,
+  init: RequestInit = {},
+): Promise<Response> {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   const headers = new Headers(init.headers);
   if (init.body != null && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
@@ -65,6 +68,11 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     const text = await response.text().catch(() => "");
     throw new ApiError(response.status, text || response.statusText || "Request failed");
   }
+  return response;
+}
+
+export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const response = await apiRequest(path, init);
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }

@@ -1,24 +1,27 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api, ApiError } from "@/api/client";
-import type { AgentStatus } from "@/api/types";
+import { api, friendlyApiError } from "@/api/client";
+import type { AgentSettings } from "@/api/types";
 
-const agentSettingsKey = ["admin", "agent-settings"] as const;
+export const agentSettingsKey = ["agent", "admin", "settings"] as const;
 
-export function AgentSettingsPanel({ isOwner }: { isOwner: boolean }) {
+export function AgentSettingsPanel() {
+  const queryClient = useQueryClient();
   const settings = useQuery({
     queryKey: agentSettingsKey,
-    queryFn: () => api<AgentStatus>("/admin/agent-settings"),
+    queryFn: () => api<AgentSettings>("/agent/admin/settings"),
+    retry: false,
   });
   const update = useMutation({
-    mutationFn: (enabled: boolean) =>
-      api<AgentStatus>("/admin/agent-settings", {
-        method: "PATCH",
-        body: JSON.stringify({ enabled }),
-      }),
-    onSuccess: (next) => settings.refetch().then(() => next),
+    mutationFn: (enabled: boolean) => api<AgentSettings>("/agent/admin/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ enabled }),
+    }),
+    onSuccess: async (value) => {
+      queryClient.setQueryData(agentSettingsKey, value);
+      await queryClient.invalidateQueries({ queryKey: ["agent", "store"] });
+    },
   });
-  const enabled = update.data?.enabled ?? settings.data?.enabled ?? false;
 
   return (
     <section
@@ -26,54 +29,44 @@ export function AgentSettingsPanel({ isOwner }: { isOwner: boolean }) {
       className="space-y-3 rounded-xl border bg-card p-5 shadow-sm"
     >
       <div>
-        <h2 className="font-medium" id="agent-settings-title">Agent 全局开关</h2>
+        <h2 className="font-medium" id="agent-settings-title">数据分析 Agent</h2>
         <p className="text-sm text-muted-foreground">
-          关闭只会隐藏 Agent 并拒绝 Agent 请求，不影响其他业务功能。
+          模型连接由部署环境管理；这里不显示或保存任何连接信息。
         </p>
       </div>
-      {settings.isPending ? (
-        <p role="status">正在获取 Agent 设置…</p>
-      ) : settings.isError ? (
-        <p role="alert">Agent 设置暂时无法获取</p>
-      ) : (
+      {settings.isPending && <p role="status">正在读取 Agent 配置…</p>}
+      {settings.isError && (
+        <p className="text-sm text-destructive" role="alert">
+          {friendlyApiError(settings.error, "Agent 配置暂时无法读取")}
+        </p>
+      )}
+      {settings.data && (
         <>
-          <button
-            aria-checked={enabled}
-            aria-label="全局启用 Agent"
-            className="inline-flex items-center gap-3 rounded-md border px-3 py-2 text-sm disabled:opacity-60"
-            disabled={!isOwner || update.isPending}
-            onClick={() => update.mutate(!enabled)}
-            role="switch"
-            type="button"
-          >
-            <span
-              aria-hidden="true"
-              className={`h-5 w-9 rounded-full p-0.5 ${enabled ? "bg-primary" : "bg-muted"}`}
-            >
-              <span
-                className={`block h-4 w-4 rounded-full bg-white transition-transform ${enabled ? "translate-x-4" : ""}`}
-              />
-            </span>
-            {enabled ? "已启用" : "已关闭"}
-          </button>
-          {!isOwner && (
-            <p className="text-sm text-muted-foreground">
-              仅最终管理员可以修改此设置
-            </p>
-          )}
-          {update.isSuccess && (
-            <p className="text-sm text-emerald-700" role="status">
-              Agent 已全局{enabled ? "启用" : "关闭"}
-            </p>
-          )}
-          {update.error && (
-            <p className="text-sm text-destructive" role="alert">
-              {update.error instanceof ApiError
-                ? update.error.detail
-                : "Agent 设置保存失败"}
-            </p>
-          )}
+          <p className="text-sm">
+            {settings.data.model_config_ready ? "模型配置已就绪" : "模型配置不完整"}
+          </p>
+          <label className="flex items-center gap-3 text-sm font-medium">
+            <input
+              aria-label="全系统启用数据分析 Agent"
+              checked={settings.data.enabled}
+              disabled={
+                update.isPending
+                || (!settings.data.enabled && !settings.data.model_config_ready)
+              }
+              onChange={(event) => update.mutate(event.target.checked)}
+              type="checkbox"
+            />
+            全系统启用数据分析 Agent
+          </label>
+          <p className="text-sm" role="status">
+            数据分析 Agent {settings.data.enabled ? "已启用" : "已关闭"}
+          </p>
         </>
+      )}
+      {update.isError && (
+        <p className="text-sm text-destructive" role="alert">
+          {friendlyApiError(update.error, "Agent 开关保存失败，请重试")}
+        </p>
       )}
     </section>
   );

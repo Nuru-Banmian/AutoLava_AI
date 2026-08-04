@@ -2,7 +2,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
-import { MemoryRouter } from "react-router-dom";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 import { useAuth } from "@/auth/AuthProvider";
 import { HomePage } from "@/pages/HomePage";
@@ -51,26 +50,4 @@ it("clears a refresh error when the selected store changes", async () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); render(<QueryClientProvider client={client}><StoreProvider><StoreControls /><HomePage /></StoreProvider></QueryClientProvider>);
   fireEvent.click(await screen.findByRole("button", { name: "choose1" })); fireEvent.click(await screen.findByRole("button", { name: "刷新简报" })); expect(await screen.findByRole("alert")).toHaveTextContent("wait");
   fireEvent.click(screen.getByRole("button", { name: "choose2" })); await screen.findByRole("button", { name: "刷新简报" }); expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-});
-
-it("places the Agent after briefing cards for administrators only", async () => {
-  vi.mocked(useAuth).mockReturnValue({ user: { id: 1, username: "admin", role: "admin", is_owner: false } } as ReturnType<typeof useAuth>);
-  server.use(
-    http.get("/api/stores/accessible", () => HttpResponse.json([{ id: 1, name: "Roma", timezone: "Europe/Rome" }])),
-    http.get("/api/dashboard/1", () => HttpResponse.json([])),
-    http.get("/api/agent/status", () => HttpResponse.json({ enabled: true })),
-    http.get("/api/agent/stores/1/conversation", () => HttpResponse.json({
-      id: null,
-      messages: [],
-      state: { confirmed_period: null, metrics: [], filters: {}, comparison: null, pending_clarifications: [] },
-      created_at: null,
-      updated_at: null,
-    })),
-  );
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(<MemoryRouter><QueryClientProvider client={client}><StoreProvider><HomePage /></StoreProvider></QueryClientProvider></MemoryRouter>);
-
-  const agent = await screen.findByRole("region", { name: "门店 Agent" });
-  const briefing = screen.getByRole("region", { name: "每日简报" });
-  expect(briefing.compareDocumentPosition(agent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });

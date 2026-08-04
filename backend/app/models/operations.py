@@ -54,14 +54,3 @@ class SystemAlert(Base):
     timestamp_contract: Mapped[str] = mapped_column(
         String(24), default=LEGACY_TIMESTAMP_CONTRACT, server_default=LEGACY_TIMESTAMP_CONTRACT
     )
-
-
-class AgentSettings(Base):
-    __tablename__ = "agent_settings"
-    id: Mapped[int] = mapped_column(primary_key=True, default=1)
-    enabled: Mapped[bool] = mapped_column(
-        Boolean, default=False, server_default="0"
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        server_default=func.now(), onupdate=func.now()
-    )

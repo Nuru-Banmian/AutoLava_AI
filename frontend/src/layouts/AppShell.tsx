@@ -1,4 +1,4 @@
-import { BookOpen, Building2, Database, Home, LogOut, Menu, Settings } from "lucide-react";
+import { BookOpen, Bot, Building2, Database, Home, LogOut, Menu, Settings } from "lucide-react";
 import type { ComponentType, SVGProps } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 
@@ -6,6 +6,7 @@ import { useAuth } from "@/auth/AuthProvider";
 import { StorePicker } from "@/components/StorePicker";
 import { Button } from "@/components/ui/button";
 import { navigationFor } from "@/navigation/modules";
+import { useAgentCurrentStore } from "@/lib/agent";
 import { useStore } from "@/stores/StoreProvider";
 import { UnsavedRouteGuard } from "@/navigation/UnsavedChanges";
 
@@ -17,16 +18,21 @@ const icons: Record<string, Icon> = {
   "/settlements": Building2,
   "/database": Database,
   "/admin": Settings,
+  "/agent": Bot,
   "/more": Menu,
 };
 
 function Navigation({ surface }: { surface: "desktop" | "mobile" }) {
   const { user } = useAuth();
   const { selected } = useStore();
+  const agentStore = useAgentCurrentStore(
+    selected?.id,
+    user?.role === "admin",
+  );
   if (!user) return null;
 
   return <>
-    {navigationFor(user.role, surface, selected?.company_settlement_enabled).map(({ to, label, end }) => {
+    {navigationFor(user.role, surface, selected?.company_settlement_enabled, agentStore.isSuccess).map(({ to, label, end }) => {
       const Icon = icons[to];
       return <NavLink
         key={to}
@@ -49,9 +55,10 @@ export function AppShell() {
   const { pathname } = useLocation();
   const isAdminRoute = pathname === "/admin" || pathname.startsWith("/admin/");
   const isBusinessRecordsRoute = pathname === "/database";
+  const isAgentRoute = pathname === "/agent";
 
   return (
-    <div className="min-h-screen bg-muted/20 md:pl-64">
+    <div className={`min-h-screen bg-muted/20 md:pl-64 ${isAgentRoute ? "flex h-dvh flex-col overflow-hidden" : ""}`}>
       <UnsavedRouteGuard />
       <header className="border-b bg-background md:fixed md:left-0 md:top-0 md:z-40 md:w-64 md:border-0 md:bg-transparent md:text-primary-foreground">
         <div className="flex items-center gap-3 px-4 py-3"><strong>AutoLava AI</strong>{!isAdminRoute && <div data-testid="mobile-store-picker" className="ml-auto w-40 max-w-[55vw] md:hidden"><StorePicker showLabel={false} /></div>}</div>
@@ -68,7 +75,7 @@ export function AppShell() {
           </div>
         </div>
       </aside>
-      <main className={`mx-auto max-w-7xl p-4 pb-24 md:p-6 md:pb-6 ${isBusinessRecordsRoute ? "lg:flex lg:h-dvh lg:flex-col lg:overflow-hidden" : ""}`}>
+      <main className={`mx-auto w-full p-4 pb-24 md:p-6 md:pb-6 ${isAgentRoute ? "flex min-h-0 max-w-none flex-1 flex-col overflow-hidden md:h-dvh" : "max-w-7xl"} ${isBusinessRecordsRoute ? "lg:flex lg:h-dvh lg:flex-col lg:overflow-hidden" : ""}`}>
         {logoutError && <p className="mb-4 text-sm text-destructive" role="alert">退出失败，请重试</p>}
         {!isAdminRoute && storeError && <div className="mb-4 flex flex-wrap items-center gap-2 text-sm text-destructive" role="alert"><span>门店加载失败，请重试</span><Button aria-label="重试门店" onClick={() => { void refetchStores(); }} size="sm" variant="outline">重试</Button></div>}
         <Outlet />

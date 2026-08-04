@@ -10,6 +10,11 @@ import app.models.settlement  # noqa: F401
 
 def test_final_tables_are_registered() -> None:
     assert set(Base.metadata.tables) == {
+        "agent_system_settings",
+        "agent_conversations",
+        "agent_messages",
+        "agent_turns",
+        "agent_investigation_cards",
         "users",
         "stores",
         "store_members",
@@ -22,16 +27,14 @@ def test_final_tables_are_registered() -> None:
         "settlement_companies",
         "settlement_records",
         "settlement_audit_events",
-        "agent_settings",
-        "agent_conversations",
-        "agent_messages",
-        "agent_evidence",
-        "agent_run_stats",
-        "agent_alerts",
     }
 
 
 def test_business_unique_constraints_exist() -> None:
+    assert {
+        c.name
+        for c in Base.metadata.tables["agent_conversations"].constraints
+    } >= {"uq_agent_conversations_user_store"}
     assert {c.name for c in Base.metadata.tables["store_members"].constraints} >= {
         "uq_store_members_store_user"
     }
@@ -54,17 +57,6 @@ def test_final_schema_columns_and_money_types() -> None:
     stores = Base.metadata.tables["stores"].c
     assert "income_items_enabled" in stores
     assert "company_settlement_enabled" in stores
-
-    agent_settings = Base.metadata.tables["agent_settings"].c
-    assert agent_settings.enabled.server_default is not None
-    conversations = Base.metadata.tables["agent_conversations"]
-    assert {c.name for c in conversations.constraints} >= {
-        "uq_agent_conversations_user_store"
-    }
-    assert conversations.c.state.type.compile(dialect=sqlite.dialect()) == "JSON"
-    messages = Base.metadata.tables["agent_messages"].c
-    assert messages.action.type.compile(dialect=sqlite.dialect()) == "JSON"
-    assert messages.action.nullable
 
     records = Base.metadata.tables["store_daily_records"].c
     assert "income_config_version_id" not in records

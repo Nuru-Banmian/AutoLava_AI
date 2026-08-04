@@ -47,7 +47,7 @@ Do not run a production build on the 2-core/2-GB server. The Web image consumes 
 
 1. Copy `.env.example` to `.env`.
 2. Replace every `change-me` value. Use a long random JWT secret and a strong bootstrap password;
-   configure the model profile fields, and do not commit `.env`.
+   do not commit `.env`.
 3. Load both images, then run `docker compose up -d --no-build`.
 4. Run the external HTTPS reverse proxy on the same host and forward it to `127.0.0.1:80`.
 
@@ -56,21 +56,6 @@ Compose binds Web only to loopback by default. The TLS proxy must replace untrus
 the Compose network's fixed `172.30.0.1` gateway. Production requires
 `AUTOLAVA_COOKIE_SECURE=true`. For deliberate local HTTP evaluation only,
 `AUTOLAVA_COOKIE_SECURE=false` may be used; never use it for an internet-accessible deployment.
-
-The Agent model transport is selected with `AUTOLAVA_MODEL_ADAPTER`. CI uses the deterministic
-`fake` adapter and never calls a provider. A production `openai_compatible` profile requires
-`AUTOLAVA_MODEL_BASE_URL`, `AUTOLAVA_MODEL_ID`, `AUTOLAVA_MODEL_STRUCTURED_OUTPUT_METHOD`, and
-`AUTOLAVA_MODEL_API_KEY`; no provider or model identifier is hard-coded in business code. Keep the
-API key only in the ignored root `.env` or an injected deployment Secret, and never place it in
-logs, error responses, frontend assets, or committed example values.
-
-An optional fallback profile uses the corresponding `AUTOLAVA_FALLBACK_MODEL_*` fields. The API
-retries only transient network, timeout, rate-limit, and provider 5xx failures once on the primary
-model, then redoes that same model stage once on the fallback. Authentication, balance,
-configuration, safety, permission, insufficient-information, and prompt-injection failures do not
-switch providers. Provider/model pricing can be supplied with
-`AUTOLAVA_MODEL_INPUT_COST_PER_MILLION` and `AUTOLAVA_MODEL_OUTPUT_COST_PER_MILLION` (and the
-fallback equivalents) to estimate cost in conversation-free run statistics.
 
 The API container runs Alembic before starting. On an empty volume it then creates the schema, and
 the administrator bootstrap command is idempotent:
@@ -95,7 +80,7 @@ Replacing a live SQLite file can corrupt or discard committed data.
 
 After deployment, record `docker stats --no-stream` once after the services have been idle and once
 after one normal workflow (login, ledger read/write, and chart load). Keep both snapshots with the
-release notes so later Agent or automation design uses measured remaining memory.
+release notes so later automation design uses measured remaining memory.
 
 ## Verification
 

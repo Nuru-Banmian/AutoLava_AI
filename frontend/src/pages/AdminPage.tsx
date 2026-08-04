@@ -29,7 +29,7 @@ export function AdminPage() {
     stores: <StoreWorkspace />,
     users: <UsersPanel />,
     status: <>
-      <AgentSettingsPanel isOwner={Boolean(user?.is_owner)} />
+      {user?.is_owner && <AgentSettingsPanel />}
       <SystemStatusPanel />
       {user?.is_owner && <DatabaseBackupPanel />}
     </>,
