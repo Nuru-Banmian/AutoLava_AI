@@ -1,4 +1,4 @@
-import { format, parseISO } from "date-fns";
+import { format, isValid, parseISO } from "date-fns";
 import { Link } from "react-router-dom";
 
 import type { RecordSnapshot } from "@/api/types";
@@ -24,6 +24,12 @@ const statusClasses = {
   "提前休息": "bg-amber-100 text-amber-800",
 } as const;
 
+function formatBookkeepingEventTime(value: string) {
+  if (!value) return null;
+  const parsed = parseISO(value);
+  return isValid(parsed) ? format(parsed, "yyyy年M月d日 HH:mm") : null;
+}
+
 export function RecordDetailPanel({
   record,
   canEdit,
@@ -39,6 +45,20 @@ export function RecordDetailPanel({
   const summaryValueClass = "mt-1 text-lg font-semibold";
   const status = isUnrecorded ? "未录入" : record.is_open;
   const showWashCount = !isUnrecorded && washCountEnabled && typeof record.wash_count === "number" && record.wash_count > 0;
+  const bookkeepingEvents = isUnrecorded ? [] : [
+    {
+      action: "创建记录",
+      actor: record.created_by_name?.trim() || `用户 ${record.created_by}`,
+      at: record.created_at,
+      formattedAt: formatBookkeepingEventTime(record.created_at),
+    },
+    ...(record.updated_at !== record.created_at || record.updated_by !== record.created_by ? [{
+      action: "最后修改",
+      actor: record.updated_by_name?.trim() || `用户 ${record.updated_by}`,
+      at: record.updated_at,
+      formattedAt: formatBookkeepingEventTime(record.updated_at),
+    }] : []),
+  ].filter((event) => event.formattedAt !== null);
 
   return (
     <Card className={mobile ? "border-0 shadow-none" : "overflow-hidden"}>
@@ -77,6 +97,22 @@ export function RecordDetailPanel({
             <span className="text-muted-foreground">事件：</span>
             {record.activity}
           </p>
+        )}
+        {bookkeepingEvents.length > 0 && (
+          <section className="grid gap-2" aria-labelledby={`bookkeeping-events-${record.date}`}>
+            <div className="flex items-baseline justify-between gap-3">
+              <h4 className="font-semibold" id={`bookkeeping-events-${record.date}`}>记账事件</h4>
+              <span className="text-xs text-muted-foreground">自动记录</span>
+            </div>
+            <ol className="grid gap-2 text-sm">
+              {bookkeepingEvents.map((event) => (
+                <li key={event.action} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 rounded-lg bg-muted/50 px-3 py-2.5">
+                  <span><span className="font-medium">{event.actor}</span>{event.action}</span>
+                  <time className="shrink-0 tabular-nums text-muted-foreground" dateTime={event.at}>{event.formattedAt}</time>
+                </li>
+              ))}
+            </ol>
+          </section>
         )}
         <div className={`flex flex-wrap gap-2 border-t pt-4 ${mobile ? "" : "items-center"}`}>
           {canEdit && <Button asChild className={mobile ? "h-11 w-full text-base" : "h-10 text-base"}><Link to={`/ledger?date=${record.date}`} onClick={onEdit ? (event) => { event.preventDefault(); onEdit(record.date); } : undefined}>修改这天记录</Link></Button>}

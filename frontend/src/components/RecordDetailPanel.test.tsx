@@ -70,6 +70,25 @@ describe("RecordDetailPanel", () => {
     expect(screen.queryByRole("button", { name: "删除记录" })).not.toBeInTheDocument();
   });
 
+  it("shows the automatically recorded bookkeeping events in the saved-record detail card", () => {
+    renderPanel({
+      ...record,
+      created_by: 1,
+      created_by_name: "小王",
+      created_at: "2026-07-14T08:30:00",
+      updated_by: 2,
+      updated_by_name: "小李",
+      updated_at: "2026-07-14T10:45:00",
+    });
+
+    const events = screen.getByRole("region", { name: "记账事件" });
+    expect(events).toHaveTextContent("小王创建记录");
+    expect(events).toHaveTextContent("2026年7月14日 08:30");
+    expect(events).toHaveTextContent("小李最后修改");
+    expect(events).toHaveTextContent("2026年7月14日 10:45");
+    expect(events.querySelectorAll("li")).toHaveLength(2);
+  });
+
   it("shows a destructive delete action for a saved record when allowed", () => {
     const onDelete = vi.fn();
     renderPanel(record, true, onDelete);

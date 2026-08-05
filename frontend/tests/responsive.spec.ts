@@ -13,6 +13,7 @@ function record(index: number) {
   const day = 17 - index;
   const date = `2026-07-${String(day).padStart(2, "0")}`;
   const now = `${date}T12:00:00`;
+  const createdAt = `${date}T08:30:00`;
   const detailVariant = [
     { is_open: "营业", wash_count: 20 },
     { is_open: "休息", wash_count: 0 },
@@ -36,9 +37,11 @@ function record(index: number) {
     weather_edited: false,
     scanned: false,
     created_by: 1,
-    updated_by: 1,
-    created_at: now,
+    updated_by: index === 0 ? 2 : 1,
+    created_at: createdAt,
     updated_at: now,
+    created_by_name: "小王",
+    updated_by_name: index === 0 ? "小李" : "小王",
     items: [{
       id: 1000 + index,
       category_id: 1,
@@ -254,6 +257,21 @@ test("320px record list, bottom sheet, and analysis remain reachable without cli
   const visibleFields = firstRow.locator(":scope > span");
   await expect(visibleFields).toHaveCount(3);
   await expect(visibleFields).toHaveText(["2026年7月17日", "营业", "€100"]);
+  await expect(firstRow.getByText("记账事件")).toHaveCount(0);
+  const alignedRows = [
+    firstRow,
+    page.locator('main button[aria-label^="2026年7月16日"]').first(),
+    page.locator('main button[aria-label^="2026年7月15日"]').first(),
+  ];
+  const alignedColumns = await Promise.all(alignedRows.map(async (row) => {
+    const [status, revenue] = await Promise.all([
+      row.locator(":scope > span").nth(1).boundingBox(),
+      row.locator(":scope > span").nth(2).boundingBox(),
+    ]);
+    return { statusLeft: status?.x, revenueRight: (revenue?.x ?? 0) + (revenue?.width ?? 0) };
+  }));
+  expect(new Set(alignedColumns.map(({ statusLeft }) => Math.round(statusLeft ?? -1))).size).toBe(1);
+  expect(new Set(alignedColumns.map(({ revenueRight }) => Math.round(revenueRight))).size).toBe(1);
   await firstRow.scrollIntoViewIfNeeded();
   const scrollBeforeOpen = await page.evaluate(() => window.scrollY);
   await firstRow.click();
@@ -268,6 +286,11 @@ test("320px record list, bottom sheet, and analysis remain reachable without cli
   await expect(summary).toContainText("天气晴");
   await expect(sheet.getByText("洗车 20 辆", { exact: true })).toBeVisible();
   await expect(sheet.getByText("事件：会员日照常营业", { exact: true })).toBeVisible();
+  const bookkeepingEvents = sheet.getByRole("region", { name: "记账事件" });
+  await expect(bookkeepingEvents).toContainText("小王创建记录");
+  await expect(bookkeepingEvents).toContainText("2026年7月17日 08:30");
+  await expect(bookkeepingEvents).toContainText("小李最后修改");
+  await expect(bookkeepingEvents).toContainText("2026年7月17日 12:00");
   await expect(sheet.getByText("洗车数量", { exact: true })).toHaveCount(0);
   await expect.poll(() => sheet.evaluate((node) => ({
     position: getComputedStyle(node).position,
