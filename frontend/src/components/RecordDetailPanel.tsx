@@ -59,7 +59,12 @@ export function RecordDetailPanel({
   const summaryValueClass = "mt-1 text-lg font-semibold";
   const status = isUnrecorded ? "未录入" : record.is_open;
   const showWashCount = !isUnrecorded && washCountEnabled && typeof record.wash_count === "number" && record.wash_count > 0;
-  const bookkeepingEvents = isUnrecorded ? [] : (record.bookkeeping_events ?? [])
+  const savedBookkeepingEvents = isUnrecorded ? [] : (record.bookkeeping_events ?? []);
+  const bookkeepingEvents = [
+    savedBookkeepingEvents.find((event) => event.action === "created"),
+    [...savedBookkeepingEvents].reverse().find((event) => event.action === "updated"),
+  ]
+    .filter((event) => event !== undefined)
     .map((event) => ({
       id: event.id,
       action: event.action === "created" ? "创建记录" : "修改记录",
