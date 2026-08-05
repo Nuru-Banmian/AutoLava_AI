@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -11,7 +11,13 @@ from sqlalchemy.orm import selectinload
 from app.core.database import sqlite_short_write
 from app.events.ledger import LedgerChanged
 from app.models.identity import Store
-from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
+from app.models.ledger import (
+    DailyIncomeItem,
+    IncomeCategory,
+    LedgerBookkeepingEvent,
+    StoreDailyRecord,
+)
+from app.models.operations import UTC_TIMESTAMP_CONTRACT
 from app.services.access import require_fresh_store_access
 
 _MAX_MONEY = 9_999_999_999
@@ -289,6 +295,16 @@ class LedgerService:
             for category_id, amount in item_values
         ]
         await self.session.flush()
+        self.session.add(
+            LedgerBookkeepingEvent(
+                store_id=store.id,
+                record_id=record.id,
+                actor_id=actor_id,
+                action="created" if created else "updated",
+                occurred_at=datetime.now(UTC).replace(tzinfo=None),
+                timestamp_contract=UTC_TIMESTAMP_CONTRACT,
+            )
+        )
         return created, record.id, record.date
 
     async def upsert(

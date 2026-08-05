@@ -246,6 +246,7 @@ export function BusinessRecordsPage() {
                 canEdit
                 canDelete={isAdmin && selectedTableRow.id !== null}
                 washCountEnabled={selected.wash_count_enabled ?? true}
+                timeZone={selected.timezone}
                 onEdit={editRecord}
                 onDelete={(trigger) => {
                   if (selectedTableRow.id === null) return;
@@ -272,6 +273,7 @@ export function BusinessRecordsPage() {
           canEdit
           canDelete={isAdmin && mobileRecord.id !== null}
           washCountEnabled={selected.wash_count_enabled ?? true}
+          timeZone={selected.timezone}
           onEdit={editRecord}
           returnFocusTo={returnFocusTo}
           onOpenChange={(open) => {

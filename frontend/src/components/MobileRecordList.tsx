@@ -22,13 +22,13 @@ export function MobileRecordList({ records, selectedDate, onSelect }: MobileReco
             key={record.id ?? record.date}
             type="button"
             aria-pressed={record.date === selectedDate}
-            className="grid w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 overflow-hidden px-3 py-2 text-left aria-pressed:bg-primary/10"
+            className="grid w-full grid-cols-[minmax(0,1fr)_4.5rem_6.5rem] items-center gap-2 overflow-hidden px-3 py-2 text-left aria-pressed:bg-primary/10"
             aria-label={`${dateLabel}，${status}，${revenue}`}
             onClick={(event) => onSelect(record, event.currentTarget)}
           >
             <span className="truncate">{dateLabel}</span>
             <span className="whitespace-nowrap">{status}</span>
-            <span className="whitespace-nowrap text-right">{revenue}</span>
+            <span className="whitespace-nowrap text-right tabular-nums">{revenue}</span>
           </button>
         );
       })}

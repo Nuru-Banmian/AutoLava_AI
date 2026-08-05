@@ -9,7 +9,8 @@ const record: RecordSnapshot = {
   income_mode: "legacy_total", weather: "晴", weather_auto: null,
   weather_code: null, temperature_max: null, temperature_min: null, precipitation: null, activity: "活动",
   weather_edited: false, scanned: false, created_by: 1, updated_by: 1, created_at: "2026-07-14T00:00:00Z",
-  updated_at: "2026-07-14T00:00:00Z", items: [],
+  updated_at: "2026-07-14T00:00:00Z", created_by_name: "小王", updated_by_name: "小李",
+  bookkeeping_events: [{ id: 1, action: "created", actor_id: 1, actor_name: "小王", occurred_at: "2026-07-14T00:00:00Z", timestamp_status: "utc" }], items: [],
 };
 
 describe("MobileRecordList", () => {
@@ -26,5 +27,7 @@ describe("MobileRecordList", () => {
     expect(screen.queryByText("晴")).not.toBeInTheDocument();
     expect(screen.queryByText("活动")).not.toBeInTheDocument();
     expect(screen.queryByText("4")).not.toBeInTheDocument();
+    expect(screen.queryByText("记账事件")).not.toBeInTheDocument();
+    expect(screen.queryByText(/小王|小李/)).not.toBeInTheDocument();
   });
 });

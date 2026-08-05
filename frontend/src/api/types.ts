@@ -154,6 +154,7 @@ export interface LedgerBody {
 }
 export interface LedgerSaveResponse { id: number; date: string; daily_revenue: number }
 export interface RecordItem extends IncomeItemBody { id: number; category_name: string; include_in_total: boolean; sort_order: number; created_at: string; updated_at: string }
+export interface BookkeepingEvent { id: number; action: "created" | "updated"; actor_id: number; actor_name: string; occurred_at: string | null; timestamp_status: "utc" | "legacy_unknown" }
 export interface RecordSnapshot {
   id: number; store_id: number; date: string; daily_revenue: number; wash_count?: number | null; is_open: LedgerStatus;
   income_mode: IncomeMode;
@@ -161,6 +162,7 @@ export interface RecordSnapshot {
   temperature_min: string | null; precipitation: string | null; activity: string | null; weather_edited: boolean; scanned: boolean;
   created_by: number; updated_by: number; created_at: string; updated_at: string; items: RecordItem[];
   created_by_name?: string; updated_by_name?: string;
+  bookkeeping_events?: BookkeepingEvent[];
 }
 export interface DatabaseResponse { items: RecordSnapshot[]; categories: CategoryDescriptor[]; sum_daily_revenue: number; total: number; page: number; page_size: number }
 export interface BriefingCard {

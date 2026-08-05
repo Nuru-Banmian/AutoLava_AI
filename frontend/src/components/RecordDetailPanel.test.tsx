@@ -20,6 +20,7 @@ function renderPanel(value: RecordSnapshot, canDelete = false, onDelete = vi.fn(
         canEdit
         canDelete={canDelete}
         washCountEnabled={washCountEnabled}
+        timeZone="Europe/Rome"
         onDelete={onDelete}
       />
     </MemoryRouter>,
@@ -35,6 +36,7 @@ describe("RecordDetailPanel", () => {
           canEdit
           canDelete
           washCountEnabled
+          timeZone="Europe/Rome"
           onDelete={vi.fn()}
         />
       </MemoryRouter>,
@@ -68,6 +70,32 @@ describe("RecordDetailPanel", () => {
     expect(screen.getByRole("link", { name: "修改这天记录" })).toHaveAttribute("href", "/ledger?date=2026-07-14");
     expect(screen.getByRole("link", { name: "修改这天记录" })).toHaveClass("h-10", "text-base");
     expect(screen.queryByRole("button", { name: "删除记录" })).not.toBeInTheDocument();
+  });
+
+  it("shows the automatically recorded bookkeeping events in the saved-record detail card", () => {
+    renderPanel({
+      ...record,
+      created_by: 1,
+      created_by_name: "小王",
+      created_at: "2026-07-14T08:30:00",
+      updated_by: 2,
+      updated_by_name: "小李",
+      updated_at: "2026-07-14T10:45:00",
+      bookkeeping_events: [
+        { id: 1, action: "created", actor_id: 1, actor_name: "小王", occurred_at: "2026-07-14T06:30:00Z", timestamp_status: "utc" },
+        { id: 2, action: "updated", actor_id: 2, actor_name: "小李", occurred_at: "2026-07-14T08:45:00Z", timestamp_status: "utc" },
+        { id: 3, action: "updated", actor_id: 1, actor_name: "小王", occurred_at: "2026-07-14T09:00:00Z", timestamp_status: "utc" },
+      ],
+    });
+
+    const events = screen.getByRole("region", { name: "记账事件" });
+    expect(events).toHaveTextContent("小王创建记录");
+    expect(events).toHaveTextContent("2026年7月14日 08:30");
+    expect(events).toHaveTextContent("小李修改记录");
+    expect(events).toHaveTextContent("2026年7月14日 10:45");
+    expect(events).toHaveTextContent("小王修改记录");
+    expect(events).toHaveTextContent("2026年7月14日 11:00");
+    expect(events.querySelectorAll("li")).toHaveLength(3);
   });
 
   it("shows a destructive delete action for a saved record when allowed", () => {

@@ -14,6 +14,7 @@ export function MobileRecordSheet({
   canEdit,
   canDelete,
   washCountEnabled,
+  timeZone,
   onEdit,
   onDelete,
   returnFocusTo,
@@ -36,6 +37,7 @@ export function MobileRecordSheet({
           canEdit={canEdit}
           canDelete={canDelete}
           washCountEnabled={washCountEnabled}
+          timeZone={timeZone}
           onEdit={onEdit}
           onDelete={onDelete}
         />

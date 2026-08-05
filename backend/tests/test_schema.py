@@ -20,6 +20,7 @@ def test_final_tables_are_registered() -> None:
         "store_members",
         "income_categories",
         "store_daily_records",
+        "ledger_bookkeeping_events",
         "daily_income_items",
         "daily_briefings",
         "scheduled_task_logs",
