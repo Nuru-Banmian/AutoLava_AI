@@ -11,7 +11,12 @@ from sqlalchemy.orm import selectinload
 from app.core.database import sqlite_short_write
 from app.events.ledger import LedgerChanged
 from app.models.identity import Store
-from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
+from app.models.ledger import (
+    DailyIncomeItem,
+    IncomeCategory,
+    LedgerBookkeepingEvent,
+    StoreDailyRecord,
+)
 from app.services.access import require_fresh_store_access
 
 _MAX_MONEY = 9_999_999_999
@@ -289,6 +294,14 @@ class LedgerService:
             for category_id, amount in item_values
         ]
         await self.session.flush()
+        self.session.add(
+            LedgerBookkeepingEvent(
+                store_id=store.id,
+                record_id=record.id,
+                actor_id=actor_id,
+                action="created" if created else "updated",
+            )
+        )
         return created, record.id, record.date
 
     async def upsert(

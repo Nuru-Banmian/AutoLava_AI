@@ -8,7 +8,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.identity import Store, StoreMember, User
-from app.models.ledger import IncomeCategory
+from app.models.ledger import IncomeCategory, StoreDailyRecord
+from app.services.scheduler import apply_refreshed_weather
+from app.services.weather import WeatherResult
 
 
 @dataclass
@@ -147,6 +149,52 @@ async def test_second_put_overwrites_without_compatibility_parameters(
     assert first.status_code == 201
     assert second.status_code == 200
     assert second.json()["daily_revenue"] == 321
+
+
+async def test_record_card_returns_persisted_bookkeeping_events_only_on_database_view(
+    auth_client: AsyncClient,
+    assigned_store: AssignedStore,
+    ledger_payload: dict,
+    db_session: AsyncSession,
+) -> None:
+    path = f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}"
+
+    created = await auth_client.put(path, json=ledger_payload)
+    updated = await auth_client.put(
+        path,
+        json=ledger_payload
+        | {
+            "items": [
+                {"category_id": assigned_store.cash_id, "amount": 321},
+                {"category_id": assigned_store.excluded_id, "amount": 90},
+            ]
+        },
+    )
+    saved_record = await db_session.scalar(
+        select(StoreDailyRecord).where(StoreDailyRecord.store_id == assigned_store.id)
+    )
+    assert saved_record is not None
+    apply_refreshed_weather(
+        saved_record,
+        WeatherResult("多云", 3, 24.0, 16.0, 0.0),
+    )
+    await db_session.commit()
+    card_records = await auth_client.get(
+        f"/api/database/{assigned_store.id}/records"
+    )
+    direct_record = await auth_client.get(path)
+
+    assert created.status_code == 201
+    assert updated.status_code == 200
+    assert card_records.status_code == 200
+    events = card_records.json()["items"][0]["bookkeeping_events"]
+    assert [event["action"] for event in events] == ["created", "updated"]
+    assert [event["actor_name"] for event in events] == [
+        "authenticated",
+        "authenticated",
+    ]
+    assert all(event["occurred_at"] for event in events)
+    assert "bookkeeping_events" not in direct_record.json()
 
 
 async def test_record_snapshot_is_retained_after_current_category_edits(

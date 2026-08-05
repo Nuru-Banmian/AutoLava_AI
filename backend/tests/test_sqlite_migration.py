@@ -19,6 +19,7 @@ EXPECTED_TABLES = {
     "store_members",
     "income_categories",
     "store_daily_records",
+    "ledger_bookkeeping_events",
     "daily_income_items",
     "daily_briefings",
     "scheduled_task_logs",
@@ -221,6 +222,12 @@ def test_existing_store_and_ledger_survive_company_settlement_upgrade(
         assert connection.execute(
             "SELECT date, daily_revenue, income_mode, is_open FROM store_daily_records WHERE id = 1"
         ).fetchone() == ("2026-06-30", 730, "legacy_total", "营业")
+        assert connection.execute(
+            """
+            SELECT store_id, record_id, actor_id, action
+            FROM ledger_bookkeeping_events
+            """
+        ).fetchall() == [(1, 1, 1, "created")]
         assert connection.execute("SELECT COUNT(*) FROM stores").fetchone() == (1,)
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
@@ -253,7 +260,7 @@ def test_applied_revision_0004_upgrades_without_losing_existing_data(tmp_path: P
 
     with closing(sqlite3.connect(database_path)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0014",
+            "0015",
         )
         assert connection.execute("SELECT username FROM users").fetchall() == [
             ("existing-admin",)
@@ -410,7 +417,7 @@ def test_reused_legacy_revision_0010_upgrades_to_clean_agent_schema(
 
     with closing(sqlite3.connect(database_path)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0014",
+            "0015",
         )
         tables = {
             name

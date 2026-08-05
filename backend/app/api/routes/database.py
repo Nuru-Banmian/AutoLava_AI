@@ -8,7 +8,12 @@ from sqlalchemy.orm import selectinload
 
 from app.api.deps import Session, StoreAccess, require_capability, require_store_read_access
 from app.models.identity import User
-from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
+from app.models.ledger import (
+    DailyIncomeItem,
+    IncomeCategory,
+    LedgerBookkeepingEvent,
+    StoreDailyRecord,
+)
 from app.schemas.database import DatabaseFilters, DatabasePage
 from app.services.export import build_ledger_workbook
 from app.services.record_payload import record_payload
@@ -100,8 +105,24 @@ async def _record_payloads(
     records: list[StoreDailyRecord],
     *,
     include_wash_count: bool,
+    include_bookkeeping_events: bool,
 ) -> list[dict]:
-    user_ids = {value for record in records for value in (record.created_by, record.updated_by)}
+    events = (
+        list(
+            await session.scalars(
+                select(LedgerBookkeepingEvent)
+                .where(
+                    LedgerBookkeepingEvent.record_id.in_(record.id for record in records)
+                )
+                .order_by(LedgerBookkeepingEvent.record_id, LedgerBookkeepingEvent.id)
+            )
+        )
+        if include_bookkeeping_events and records
+        else []
+    )
+    user_ids = {
+        value for record in records for value in (record.created_by, record.updated_by)
+    } | {event.actor_id for event in events}
     usernames = (
         {}
         if not user_ids
@@ -111,14 +132,28 @@ async def _record_payloads(
             .all()
         )
     )
-    return [
-        record_payload(record, include_wash_count=include_wash_count)
-        | {
+    events_by_record: dict[int, list[LedgerBookkeepingEvent]] = {}
+    for event in events:
+        events_by_record.setdefault(event.record_id, []).append(event)
+
+    payloads = []
+    for record in records:
+        payload = record_payload(record, include_wash_count=include_wash_count) | {
             "created_by_name": usernames.get(record.created_by, ""),
             "updated_by_name": usernames.get(record.updated_by, ""),
         }
-        for record in records
-    ]
+        if include_bookkeeping_events:
+            payload["bookkeeping_events"] = [
+                {
+                    "action": event.action,
+                    "actor_id": event.actor_id,
+                    "actor_name": usernames.get(event.actor_id, ""),
+                    "occurred_at": event.occurred_at.isoformat(),
+                }
+                for event in events_by_record.get(record.id, [])
+            ]
+        payloads.append(payload)
+    return payloads
 
 
 async def _query_summary(session: AsyncSession, record_query: Select) -> tuple[int, int]:
@@ -170,7 +205,10 @@ async def export_records(
     record_query = build_record_query(store_id, filters)
     records = await _load_records(session, record_query)
     payloads = await _record_payloads(
-        session, records, include_wash_count=include_wash_count
+        session,
+        records,
+        include_wash_count=include_wash_count,
+        include_bookkeeping_events=False,
     )
     if start is not None and end is not None:
         suffix = f"{start.isoformat()}-{end.isoformat()}"
@@ -223,7 +261,10 @@ async def record_page(
     records = await _load_records(session, page_query)
     return {
         "items": await _record_payloads(
-            session, records, include_wash_count=include_wash_count
+            session,
+            records,
+            include_wash_count=include_wash_count,
+            include_bookkeeping_events=True,
         ),
         "categories": await _categories_for_query(
             session, store_id=store_id, record_query=page_query

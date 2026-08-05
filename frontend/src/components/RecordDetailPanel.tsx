@@ -45,20 +45,14 @@ export function RecordDetailPanel({
   const summaryValueClass = "mt-1 text-lg font-semibold";
   const status = isUnrecorded ? "未录入" : record.is_open;
   const showWashCount = !isUnrecorded && washCountEnabled && typeof record.wash_count === "number" && record.wash_count > 0;
-  const bookkeepingEvents = isUnrecorded ? [] : [
-    {
-      action: "创建记录",
-      actor: record.created_by_name?.trim() || `用户 ${record.created_by}`,
-      at: record.created_at,
-      formattedAt: formatBookkeepingEventTime(record.created_at),
-    },
-    ...(record.updated_at !== record.created_at || record.updated_by !== record.created_by ? [{
-      action: "最后修改",
-      actor: record.updated_by_name?.trim() || `用户 ${record.updated_by}`,
-      at: record.updated_at,
-      formattedAt: formatBookkeepingEventTime(record.updated_at),
-    }] : []),
-  ].filter((event) => event.formattedAt !== null);
+  const bookkeepingEvents = isUnrecorded ? [] : (record.bookkeeping_events ?? [])
+    .map((event) => ({
+      action: event.action === "created" ? "创建记录" : "修改记录",
+      actor: event.actor_name.trim() || `用户 ${event.actor_id}`,
+      at: event.occurred_at,
+      formattedAt: formatBookkeepingEventTime(event.occurred_at),
+    }))
+    .filter((event) => event.formattedAt !== null);
 
   return (
     <Card className={mobile ? "border-0 shadow-none" : "overflow-hidden"}>

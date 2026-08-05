@@ -79,12 +79,16 @@ describe("RecordDetailPanel", () => {
       updated_by: 2,
       updated_by_name: "小李",
       updated_at: "2026-07-14T10:45:00",
+      bookkeeping_events: [
+        { action: "created", actor_id: 1, actor_name: "小王", occurred_at: "2026-07-14T08:30:00" },
+        { action: "updated", actor_id: 2, actor_name: "小李", occurred_at: "2026-07-14T10:45:00" },
+      ],
     });
 
     const events = screen.getByRole("region", { name: "记账事件" });
     expect(events).toHaveTextContent("小王创建记录");
     expect(events).toHaveTextContent("2026年7月14日 08:30");
-    expect(events).toHaveTextContent("小李最后修改");
+    expect(events).toHaveTextContent("小李修改记录");
     expect(events).toHaveTextContent("2026年7月14日 10:45");
     expect(events.querySelectorAll("li")).toHaveLength(2);
   });
