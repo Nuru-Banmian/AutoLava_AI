@@ -15,6 +15,7 @@ from app.models.ledger import (
     StoreDailyRecord,
 )
 from app.schemas.database import DatabaseFilters, DatabasePage
+from app.schemas.time import timestamp_status, trusted_utc
 from app.services.export import build_ledger_workbook
 from app.services.record_payload import record_payload
 
@@ -145,10 +146,14 @@ async def _record_payloads(
         if include_bookkeeping_events:
             payload["bookkeeping_events"] = [
                 {
+                    "id": event.id,
                     "action": event.action,
                     "actor_id": event.actor_id,
                     "actor_name": usernames.get(event.actor_id, ""),
-                    "occurred_at": event.occurred_at.isoformat(),
+                    "occurred_at": trusted_utc(
+                        event.occurred_at, event.timestamp_contract
+                    ),
+                    "timestamp_status": timestamp_status(event.timestamp_contract),
                 }
                 for event in events_by_record.get(record.id, [])
             ]

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -17,6 +17,7 @@ from app.models.ledger import (
     LedgerBookkeepingEvent,
     StoreDailyRecord,
 )
+from app.models.operations import UTC_TIMESTAMP_CONTRACT
 from app.services.access import require_fresh_store_access
 
 _MAX_MONEY = 9_999_999_999
@@ -300,6 +301,8 @@ class LedgerService:
                 record_id=record.id,
                 actor_id=actor_id,
                 action="created" if created else "updated",
+                occurred_at=datetime.now(UTC).replace(tzinfo=None),
+                timestamp_contract=UTC_TIMESTAMP_CONTRACT,
             )
         )
         return created, record.id, record.date

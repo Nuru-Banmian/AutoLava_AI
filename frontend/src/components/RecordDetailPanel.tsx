@@ -13,6 +13,7 @@ export interface RecordDetailPanelProps {
   canEdit: boolean;
   canDelete: boolean;
   washCountEnabled: boolean;
+  timeZone: string;
   onEdit?(date: string): void;
   onDelete(trigger: HTMLButtonElement): void;
   mobile?: boolean;
@@ -24,10 +25,22 @@ const statusClasses = {
   "提前休息": "bg-amber-100 text-amber-800",
 } as const;
 
-function formatBookkeepingEventTime(value: string) {
+function formatBookkeepingEventTime(value: string | null, timeZone: string) {
   if (!value) return null;
   const parsed = parseISO(value);
-  return isValid(parsed) ? format(parsed, "yyyy年M月d日 HH:mm") : null;
+  if (!isValid(parsed)) return null;
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("zh-CN", {
+      timeZone,
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(parsed).map((part) => [part.type, part.value]),
+  );
+  return `${parts.year}年${parts.month}月${parts.day}日 ${parts.hour}:${parts.minute}`;
 }
 
 export function RecordDetailPanel({
@@ -35,6 +48,7 @@ export function RecordDetailPanel({
   canEdit,
   canDelete,
   washCountEnabled,
+  timeZone,
   onEdit,
   onDelete,
   mobile = false,
@@ -47,12 +61,12 @@ export function RecordDetailPanel({
   const showWashCount = !isUnrecorded && washCountEnabled && typeof record.wash_count === "number" && record.wash_count > 0;
   const bookkeepingEvents = isUnrecorded ? [] : (record.bookkeeping_events ?? [])
     .map((event) => ({
+      id: event.id,
       action: event.action === "created" ? "创建记录" : "修改记录",
       actor: event.actor_name.trim() || `用户 ${event.actor_id}`,
       at: event.occurred_at,
-      formattedAt: formatBookkeepingEventTime(event.occurred_at),
-    }))
-    .filter((event) => event.formattedAt !== null);
+      formattedAt: formatBookkeepingEventTime(event.occurred_at, timeZone) ?? "时间未知",
+    }));
 
   return (
     <Card className={mobile ? "border-0 shadow-none" : "overflow-hidden"}>
@@ -100,9 +114,13 @@ export function RecordDetailPanel({
             </div>
             <ol className="grid gap-2 text-sm">
               {bookkeepingEvents.map((event) => (
-                <li key={event.action} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 rounded-lg bg-muted/50 px-3 py-2.5">
+                <li key={event.id} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 rounded-lg bg-muted/50 px-3 py-2.5">
                   <span><span className="font-medium">{event.actor}</span>{event.action}</span>
-                  <time className="shrink-0 tabular-nums text-muted-foreground" dateTime={event.at}>{event.formattedAt}</time>
+                  {event.at ? (
+                    <time className="shrink-0 tabular-nums text-muted-foreground" dateTime={event.at}>{event.formattedAt}</time>
+                  ) : (
+                    <span className="shrink-0 text-muted-foreground">{event.formattedAt}</span>
+                  )}
                 </li>
               ))}
             </ol>

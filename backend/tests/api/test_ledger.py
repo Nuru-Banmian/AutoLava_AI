@@ -193,7 +193,13 @@ async def test_record_card_returns_persisted_bookkeeping_events_only_on_database
         "authenticated",
         "authenticated",
     ]
-    assert all(event["occurred_at"] for event in events)
+    assert len({event["id"] for event in events}) == 2
+    assert [event["timestamp_status"] for event in events] == ["utc", "utc"]
+    assert all(
+        datetime.fromisoformat(event["occurred_at"].replace("Z", "+00:00")).utcoffset()
+        == timedelta(0)
+        for event in events
+    )
     assert "bookkeeping_events" not in direct_record.json()
 
 

@@ -43,8 +43,8 @@ function record(index: number) {
     created_by_name: "小王",
     updated_by_name: index === 0 ? "小李" : "小王",
     bookkeeping_events: [
-      { action: "created", actor_id: 1, actor_name: "小王", occurred_at: createdAt },
-      { action: "updated", actor_id: index === 0 ? 2 : 1, actor_name: index === 0 ? "小李" : "小王", occurred_at: now },
+      { id: 2000 + index * 2, action: "created", actor_id: 1, actor_name: "小王", occurred_at: `${createdAt}Z`, timestamp_status: "utc" },
+      { id: 2001 + index * 2, action: "updated", actor_id: index === 0 ? 2 : 1, actor_name: index === 0 ? "小李" : "小王", occurred_at: `${now}Z`, timestamp_status: "utc" },
     ],
     items: [{
       id: 1000 + index,
@@ -292,9 +292,9 @@ test("320px record list, bottom sheet, and analysis remain reachable without cli
   await expect(sheet.getByText("事件：会员日照常营业", { exact: true })).toBeVisible();
   const bookkeepingEvents = sheet.getByRole("region", { name: "记账事件" });
   await expect(bookkeepingEvents).toContainText("小王创建记录");
-  await expect(bookkeepingEvents).toContainText("2026年7月17日 08:30");
+  await expect(bookkeepingEvents).toContainText("2026年7月17日 10:30");
   await expect(bookkeepingEvents).toContainText("小李修改记录");
-  await expect(bookkeepingEvents).toContainText("2026年7月17日 12:00");
+  await expect(bookkeepingEvents).toContainText("2026年7月17日 14:00");
   await expect(sheet.getByText("洗车数量", { exact: true })).toHaveCount(0);
   await expect.poll(() => sheet.evaluate((node) => ({
     position: getComputedStyle(node).position,

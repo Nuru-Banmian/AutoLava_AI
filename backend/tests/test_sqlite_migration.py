@@ -224,10 +224,10 @@ def test_existing_store_and_ledger_survive_company_settlement_upgrade(
         ).fetchone() == ("2026-06-30", 730, "legacy_total", "营业")
         assert connection.execute(
             """
-            SELECT store_id, record_id, actor_id, action
+            SELECT store_id, record_id, actor_id, action, timestamp_contract
             FROM ledger_bookkeeping_events
             """
-        ).fetchall() == [(1, 1, 1, "created")]
+        ).fetchall() == [(1, 1, 1, "created", "legacy_unknown")]
         assert connection.execute("SELECT COUNT(*) FROM stores").fetchone() == (1,)
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 

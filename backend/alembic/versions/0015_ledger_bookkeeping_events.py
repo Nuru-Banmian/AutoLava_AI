@@ -26,6 +26,12 @@ def upgrade() -> None:
             server_default=sa.text("(CURRENT_TIMESTAMP)"),
             nullable=False,
         ),
+        sa.Column(
+            "timestamp_contract",
+            sa.String(length=24),
+            server_default="legacy_unknown",
+            nullable=False,
+        ),
         sa.CheckConstraint(
             "action in ('created','updated')",
             name=op.f("ck_ledger_bookkeeping_events_bookkeeping_action"),

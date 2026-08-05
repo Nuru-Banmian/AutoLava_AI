@@ -10,7 +10,7 @@ const record: RecordSnapshot = {
   weather_code: null, temperature_max: null, temperature_min: null, precipitation: null, activity: "活动",
   weather_edited: false, scanned: false, created_by: 1, updated_by: 1, created_at: "2026-07-14T00:00:00Z",
   updated_at: "2026-07-14T00:00:00Z", created_by_name: "小王", updated_by_name: "小李",
-  bookkeeping_events: [{ action: "created", actor_id: 1, actor_name: "小王", occurred_at: "2026-07-14T00:00:00Z" }], items: [],
+  bookkeeping_events: [{ id: 1, action: "created", actor_id: 1, actor_name: "小王", occurred_at: "2026-07-14T00:00:00Z", timestamp_status: "utc" }], items: [],
 };
 
 describe("MobileRecordList", () => {

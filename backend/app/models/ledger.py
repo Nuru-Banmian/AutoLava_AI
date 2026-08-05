@@ -18,8 +18,10 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
+from app.models.operations import LEGACY_TIMESTAMP_CONTRACT
 
 IncomeMode = Literal["legacy_total", "composed"]
+BookkeepingAction = Literal["created", "updated"]
 
 
 class IncomeCategory(Base):
@@ -76,8 +78,13 @@ class LedgerBookkeepingEvent(Base):
         ForeignKey("store_daily_records.id", ondelete="CASCADE")
     )
     actor_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
-    action: Mapped[str] = mapped_column(String(16))
+    action: Mapped[BookkeepingAction] = mapped_column(String(16))
     occurred_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    timestamp_contract: Mapped[str] = mapped_column(
+        String(24),
+        default=LEGACY_TIMESTAMP_CONTRACT,
+        server_default=LEGACY_TIMESTAMP_CONTRACT,
+    )
     __table_args__ = (
         CheckConstraint("action in ('created','updated')", name="bookkeeping_action"),
         Index("ix_ledger_bookkeeping_events_record_id", "record_id", "id"),
