@@ -1279,7 +1279,7 @@ class AgentTurnRuntime:
 
     @property
     def _cleanup_timeout_seconds(self) -> float:
-        return min(5.0, max(0.1, self._turn_timeout_seconds))
+        return min(5.0, max(1.0, self._turn_timeout_seconds))
 
     async def _emit_failed_turn(self, active: _ActiveTurn) -> None:
         await self._persist_failure_bounded(

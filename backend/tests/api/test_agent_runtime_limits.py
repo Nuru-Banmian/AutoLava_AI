@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import Sequence
 from datetime import date
 import json
+from typing import Any
 
 import httpx
 from httpx import AsyncClient
@@ -781,12 +782,25 @@ async def test_total_timeout_returns_successful_current_turn_evidence(
     app = client._transport.app
     adapter = TotalTimeoutAdapter()
     app.state.agent_model_adapter = adapter
-    app.state.agent_turn_runtime = AgentTurnRuntime(
+    runtime = AgentTurnRuntime(
         lambda: app.state.agent_session_factory(),
         lambda: app.state.agent_model_adapter,
         turn_timeout_seconds=0.12,
         stop_new_tools_seconds=0.09,
     )
+    persist_completion = runtime._persist_completion
+
+    async def delayed_persist_completion(
+        turn_id: int,
+        answer: str,
+        *,
+        cards: Sequence[dict[str, Any]] = (),
+    ) -> None:
+        await asyncio.sleep(0.15)
+        await persist_completion(turn_id, answer, cards=cards)
+
+    runtime._persist_completion = delayed_persist_completion
+    app.state.agent_turn_runtime = runtime
     await _login(client, admin.username)
 
     response = await client.post(
