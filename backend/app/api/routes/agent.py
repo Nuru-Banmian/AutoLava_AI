@@ -101,6 +101,7 @@ async def send_agent_message(
                 session=session,
                 user_id=actor_id,
                 store_id=store_id,
+                now=request.app.state.agent_clock(),
             ),
         )
     except ChatModelNotConfiguredError as exc:

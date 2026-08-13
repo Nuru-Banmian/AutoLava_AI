@@ -1,21 +1,24 @@
 import json
+import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date
-from typing import Any
+from datetime import date, datetime, timedelta
+from typing import Any, Literal, cast
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.orm.attributes import InstrumentedAttribute
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.identity import Store
 from app.models.ledger import IncomeCategory, StoreDailyRecord
-from app.models.settlement import SettlementRecord
+from app.models.settlement import SettlementCompany, SettlementRecord
 from app.services.access import require_fresh_store_access
 from app.services.income_config import IncomeConfigService
 
 JsonObject = dict[str, Any]
+SettlementGroup = Literal["company", "opening_month", "status"]
 
 
 @dataclass(frozen=True)
@@ -23,6 +26,7 @@ class AgentToolContext:
     session: AsyncSession
     user_id: int
     store_id: int
+    now: datetime
 
 
 @dataclass(frozen=True)
@@ -30,6 +34,7 @@ class AuthorizedToolContext:
     session: AsyncSession
     user_id: int
     store: Store
+    local_today: date
 
 
 ToolHandler = Callable[[AuthorizedToolContext, Mapping[str, Any]], Awaitable[JsonObject]]
@@ -92,6 +97,7 @@ class AgentToolRegistry:
                 session=context.session,
                 user_id=user.id,
                 store=store,
+                local_today=context.now.astimezone(ZoneInfo(store.timezone)).date(),
             ),
             arguments,
         )
@@ -241,6 +247,238 @@ async def get_store_data_catalog(
     }
 
 
+_EXPLICIT_RANGE = re.compile(
+    r"^\s*(?P<start>\d{4}(?:-|年)\d{1,2}(?:-|月)\d{1,2}日?)"
+    r"\s*(?:至|到|~|—|–)\s*"
+    r"(?P<end>(?:\d{4}(?:-|年)\d{1,2}(?:-|月))?\d{1,2}日?)\s*$"
+)
+_RECENT_WEEKS = re.compile(r"^最近\s*(?P<count>\d+|[一二三四五六七八九十]+)\s*周$")
+_CHINESE_DIGITS = {
+    "一": 1,
+    "二": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+    "十": 10,
+}
+
+
+def _month_start(value: date) -> date:
+    return value.replace(day=1)
+
+
+def _previous_month(value: date) -> tuple[date, date]:
+    end = _month_start(value) - timedelta(days=1)
+    return _month_start(end), end
+
+
+def _parse_date(
+    value: str, *, default_year: int | None = None, default_month: int | None = None
+) -> date:
+    normalized = value.replace("年", "-").replace("月", "-").removesuffix("日")
+    parts = normalized.split("-")
+    if len(parts) == 1 and default_year is not None and default_month is not None:
+        year, month, day = str(default_year), str(default_month), parts[0]
+    else:
+        year, month, day = parts
+    return date(int(year), int(month), int(day))
+
+
+def _chinese_number(value: str) -> int:
+    if value.isdigit():
+        return int(value)
+    if value in _CHINESE_DIGITS:
+        return _CHINESE_DIGITS[value]
+    if value.startswith("十"):
+        return 10 + _CHINESE_DIGITS.get(value[1:], 0)
+    if "十" in value:
+        tens, ones = value.split("十", 1)
+        return _CHINESE_DIGITS[tens] * 10 + _CHINESE_DIGITS.get(ones, 0)
+    raise ValueError
+
+
+def _resolve_period(value: object, *, local_today: date) -> tuple[date, date] | str:
+    if not isinstance(value, str) or not value.strip():
+        return "期间必须是非空文本"
+    period = value.strip()
+    if period == "上个月":
+        return _previous_month(local_today)
+    if period == "今年":
+        return date(local_today.year, 1, 1), local_today
+    recent_weeks = _RECENT_WEEKS.fullmatch(period)
+    if recent_weeks is not None:
+        try:
+            count = _chinese_number(recent_weeks["count"])
+        except (KeyError, ValueError):
+            return "无法识别最近周数"
+        if not 1 <= count <= 52:
+            return "最近周数必须在 1 至 52 之间"
+        return local_today - timedelta(days=count * 7 - 1), local_today
+    explicit = _EXPLICIT_RANGE.fullmatch(period)
+    if explicit is None:
+        return "无法识别期间，请使用上个月、今年、最近若干周或明确起止日期"
+    try:
+        start = _parse_date(explicit["start"])
+        end = _parse_date(
+            explicit["end"], default_year=start.year, default_month=start.month
+        )
+    except ValueError:
+        return "期间包含无效自然日"
+    if start > end:
+        return "期间起始日期不能晚于结束日期"
+    if end > local_today:
+        return "期间结束日期不能晚于门店当地今天"
+    return start, end
+
+
+def _settlement_breakdown(
+    records: Sequence[SettlementRecord],
+    *,
+    group_by: SettlementGroup,
+    first_month: date,
+    last_month: date,
+    company_names: Mapping[int, str],
+) -> list[JsonObject]:
+    grouped: dict[object, JsonObject] = {}
+    for record in records:
+        in_period = first_month <= record.opening_month <= last_month
+        if record.status == "confirmed" and not in_period:
+            continue
+        if group_by == "company":
+            key: object = record.company_id
+            identity = {
+                "company_id": record.company_id,
+                "company_name": company_names.get(
+                    record.company_id, record.company_name
+                ),
+            }
+        elif group_by == "opening_month":
+            key = record.opening_month.strftime("%Y-%m")
+            identity = {"opening_month": key}
+        else:
+            key = record.status
+            identity = {"status": record.status}
+        row = grouped.setdefault(
+            key,
+            {
+                **identity,
+                "confirmed_settlement_income": 0,
+                "current_pending_receivables": 0,
+            },
+        )
+        field = (
+            "confirmed_settlement_income"
+            if record.status == "confirmed"
+            else "current_pending_receivables"
+        )
+        row[field] = int(row[field]) + record.amount
+    return [grouped[key] for key in sorted(grouped)]
+
+
+async def get_period_revenue(
+    context: AuthorizedToolContext, arguments: Mapping[str, Any]
+) -> JsonObject:
+    resolved = _resolve_period(arguments.get("period"), local_today=context.local_today)
+    if isinstance(resolved, str):
+        return {"status": "error", "error": resolved}
+    start, end = resolved
+    raw_group_by = arguments.get("settlement_group_by", "company")
+    if raw_group_by not in {"company", "opening_month", "status"}:
+        return {"status": "error", "error": "公司结算分组方式无效"}
+    group_by = cast(SettlementGroup, raw_group_by)
+
+    daily_rows = (
+        await context.session.execute(
+            select(StoreDailyRecord.date, StoreDailyRecord.daily_revenue)
+            .where(
+                StoreDailyRecord.store_id == context.store.id,
+                StoreDailyRecord.date.between(start, end),
+            )
+            .order_by(StoreDailyRecord.date, StoreDailyRecord.id)
+        )
+    ).tuples()
+    first_month = _month_start(start)
+    last_month = _month_start(end)
+    settlement_records = list(
+        await context.session.scalars(
+            select(SettlementRecord)
+            .where(
+                SettlementRecord.store_id == context.store.id,
+                or_(
+                    SettlementRecord.opening_month.between(first_month, last_month),
+                    SettlementRecord.status == "pending",
+                ),
+            )
+            .order_by(SettlementRecord.opening_month, SettlementRecord.id)
+        )
+    )
+    company_names = {
+        company_id: name
+        for company_id, name in (
+            await context.session.execute(
+                select(SettlementCompany.id, SettlementCompany.name).where(
+                    SettlementCompany.store_id == context.store.id
+                )
+            )
+        ).tuples()
+    }
+
+    daily_by_month: dict[str, int] = {}
+    for record_date, amount in daily_rows:
+        month = record_date.strftime("%Y-%m")
+        daily_by_month[month] = daily_by_month.get(month, 0) + int(amount)
+    confirmed_by_month: dict[str, int] = {}
+    for record in settlement_records:
+        if record.status != "confirmed":
+            continue
+        month = record.opening_month.strftime("%Y-%m")
+        confirmed_by_month[month] = confirmed_by_month.get(month, 0) + record.amount
+
+    months = sorted(daily_by_month.keys() | confirmed_by_month.keys())
+    monthly = []
+    for month in months:
+        daily_revenue = daily_by_month.get(month, 0)
+        settlement_income = confirmed_by_month.get(month, 0)
+        monthly.append(
+            {
+                "month": month,
+                "daily_ledger_revenue": daily_revenue,
+                "confirmed_settlement_income": settlement_income,
+                "monthly_total_income": daily_revenue + settlement_income,
+            }
+        )
+    daily_total = sum(daily_by_month.values())
+    confirmed_total = sum(confirmed_by_month.values())
+    pending_total = sum(
+        record.amount for record in settlement_records if record.status == "pending"
+    )
+    return {
+        "status": "success" if months or pending_total else "empty",
+        "period": {
+            "input": str(arguments["period"]).strip(),
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "timezone": context.store.timezone,
+        },
+        "daily_ledger_revenue": daily_total,
+        "confirmed_settlement_income": confirmed_total,
+        "total_income": daily_total + confirmed_total,
+        "monthly": monthly,
+        "current_pending_receivables": pending_total,
+        "settlement_breakdown": _settlement_breakdown(
+            settlement_records,
+            group_by=group_by,
+            first_month=first_month,
+            last_month=last_month,
+            company_names=company_names,
+        ),
+    }
+
+
 DEFAULT_AGENT_TOOLS = AgentToolRegistry(
     [
         AgentTool(
@@ -255,6 +493,33 @@ DEFAULT_AGENT_TOOLS = AgentToolRegistry(
                 "additionalProperties": False,
             },
             handler=get_store_data_catalog,
-        )
+        ),
+        AgentTool(
+            name="get_period_revenue",
+            description=(
+                "按门店当地日期解析期间，汇总每日台账营业额、已确认公司结算收入、"
+                "月度总收入和独立的当前待到账应收款。可按公司、开票月份或状态分组。"
+                "门店和当地今天由后端锁定。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "period": {
+                        "type": "string",
+                        "description": (
+                            "用户要求的期间，例如上个月、今年、最近三周，或"
+                            "2026-07-01 至 2026-07-31"
+                        ),
+                    },
+                    "settlement_group_by": {
+                        "type": "string",
+                        "enum": ["company", "opening_month", "status"],
+                    },
+                },
+                "required": ["period"],
+                "additionalProperties": False,
+            },
+            handler=get_period_revenue,
+        ),
     ]
 )
