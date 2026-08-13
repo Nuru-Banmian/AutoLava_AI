@@ -326,7 +326,11 @@ async def test_agent_chat_calls_an_openai_compatible_model_through_langgraph(
     final_request = json.loads(request.content)
     assert final_request["model"] == "basic-chat"
     assert "tools" not in final_request
-    assert "回答 Agent" in final_request["messages"][0]["content"]
+    answer_prompt = final_request["messages"][0]["content"]
+    assert "回答 Agent" in answer_prompt
+    assert "不使用 emoji 或表情符号" in answer_prompt
+    assert "表格每行列数必须一致" in answer_prompt
+    assert "不输出没有实际内容作用的装饰性分隔线" in answer_prompt
     assert final_request["messages"][1] == {"role": "user", "content": "第二问"}
     assert final_request["messages"][2]["name"] == "understanding_agent"
     analysis_request = json.loads(model_route.calls[1].request.content)

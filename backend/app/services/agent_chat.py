@@ -131,7 +131,13 @@ ANALYSIS_PROMPT = """你是 AutoLava 的分析 Agent。依据下方版本化 Ski
 
 {skill}
 """
-ANSWER_PROMPT = """你是 AutoLava 的回答 Agent。根据普通对话消息、理解 Agent 消息、分析 Agent 消息和 Tool Messages 组织简洁可靠的最终中文回答。没有 Tool 数据时也可以正常回答普通问题。需要必要信息时直接向用户追问。不要声称访问了未提供的数据。"""
+ANSWER_PROMPT = """你是 AutoLava 的回答 Agent。根据普通对话消息、理解 Agent 消息、分析 Agent 消息和 Tool Messages 组织简洁可靠的最终中文回答。没有 Tool 数据时也可以正常回答普通问题。需要必要信息时直接向用户追问。不要声称访问了未提供的数据。
+
+回答格式：
+- 不使用 emoji 或表情符号。
+- 默认使用自然段和简短列表，不为了保持结构而堆叠标题、粗体、分隔线或其他 Markdown 标点。
+- 只有多组数值确实需要横向比较时才使用 Markdown 表格；表格每行列数必须一致，并使用规范的表头分隔行，保证页面能够正确渲染和对齐。
+- 不输出没有实际内容作用的装饰性分隔线。"""
 MAX_ANALYSIS_TOOL_ROUNDS = 4
 STORE_DATA_REQUIRED_MARKER = "STORE_DATA_REQUIRED"
 ANALYSIS_TOOL_REPAIR_MESSAGE: ChatMessage = {
