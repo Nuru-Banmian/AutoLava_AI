@@ -18,6 +18,7 @@ from app.services.agent_chat import (
     ChatModelNotConfiguredError,
     ChatModelUnavailableError,
 )
+from app.services.agent_tools import AgentToolContext
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 Administrator = Annotated[User, Depends(require_admin)]
@@ -94,7 +95,15 @@ async def send_agent_message(
     context.append({"role": "user", "content": body.content})
     graph: AgentChatGraph = request.app.state.agent_chat_graph
     try:
-        answer = await graph.reply(context)
+        answer = await graph.reply(
+            context,
+            tool_context=AgentToolContext(
+                session=session,
+                user_id=actor_id,
+                store_id=store_id,
+                now=request.app.state.agent_clock(),
+            ),
+        )
     except ChatModelNotConfiguredError as exc:
         raise HTTPException(503, "AI 模型尚未配置") from exc
     except ChatModelUnavailableError as exc:

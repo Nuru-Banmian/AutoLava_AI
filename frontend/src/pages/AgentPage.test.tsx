@@ -46,6 +46,37 @@ it("restores the complete saved conversation when the page opens", async () => {
   expect(screen.getByText("历史消息22")).toBeInTheDocument();
 });
 
+it("renders structured AI replies as readable Markdown", async () => {
+  selectStore(7);
+  server.use(
+    http.get("/api/agent/stores/7/conversation", () =>
+      HttpResponse.json({
+        messages: [{
+          role: "assistant",
+          content: [
+            "## 主要指标",
+            "",
+            "| 指标 | 6月 | 7月 |",
+            "| --- | ---: | ---: |",
+            "| **总营业额** | 32,921 | 30,054 |",
+            "",
+            "---",
+          ].join("\n"),
+        }],
+      }),
+    ),
+  );
+
+  render(<AgentPage />);
+
+  expect(await screen.findByRole("heading", { name: "主要指标" })).toBeInTheDocument();
+  const table = screen.getByRole("table");
+  expect(table).toHaveTextContent("总营业额");
+  expect(table.querySelector("strong")).toHaveTextContent("总营业额");
+  expect(document.querySelector("hr")).toBeInTheDocument();
+  expect(screen.queryByText(/\| 指标 \|/)).not.toBeInTheDocument();
+});
+
 it("sends only the new message and appends the saved reply", async () => {
   selectStore(7);
   server.use(http.post("/api/agent/stores/7/messages", async ({ request }) => {

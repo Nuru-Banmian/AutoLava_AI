@@ -1,4 +1,6 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { friendlyApiError } from "@/api/client";
 import { Button } from "@/components/ui/button";
@@ -9,6 +11,31 @@ import {
   type AgentChatMessage,
 } from "@/lib/agent-chat";
 import { useStore } from "@/stores/StoreProvider";
+
+function AgentMarkdown({ content }: { content: string }) {
+  return (
+    <div className="space-y-2 text-sm [&_a]:text-primary [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:text-base [&_h2]:font-semibold [&_h3]:font-semibold [&_hr]:my-3 [&_li]:ml-5 [&_ol]:list-decimal [&_p]:whitespace-pre-wrap [&_strong]:font-semibold [&_ul]:list-disc">
+      <ReactMarkdown
+        components={{
+          table: ({ children, ...props }) => (
+            <div className="my-2 max-w-full overflow-x-auto rounded-lg border">
+              <table className="w-full min-w-max border-collapse text-left" {...props}>{children}</table>
+            </div>
+          ),
+          th: ({ children, ...props }) => (
+            <th className="border-b border-r bg-background px-3 py-2 font-semibold last:border-r-0" {...props}>{children}</th>
+          ),
+          td: ({ children, ...props }) => (
+            <td className="border-b border-r px-3 py-2 align-top last:border-r-0" {...props}>{children}</td>
+          ),
+        }}
+        remarkPlugins={[remarkGfm]}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+}
 
 export function AgentPage() {
   const { selected } = useStore();
@@ -137,7 +164,11 @@ export function AgentPage() {
             key={`${message.role}-${index}`}
           >
             <span className="sr-only">{message.role === "user" ? "你" : "AI"}：</span>
-            <p className="whitespace-pre-wrap text-sm">{message.content}</p>
+            {message.role === "user" ? (
+              <p className="whitespace-pre-wrap text-sm">{message.content}</p>
+            ) : (
+              <AgentMarkdown content={message.content} />
+            )}
           </article>
         ))}
         {isSending && <p className="text-sm text-muted-foreground" role="status">AI 正在回复…</p>}

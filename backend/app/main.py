@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI
@@ -61,6 +62,7 @@ def create_app() -> FastAPI:
     app.state.dashboard_refresh_limiter = RefreshLimiter()
     app.state.background_refresh_scheduler = scheduler
     app.state.agent_chat_graph = AgentChatGraph(OpenAICompatibleChatModel(settings))
+    app.state.agent_clock = lambda: datetime.now(UTC)
     if maintenance_scheduler is not None:
         # Retention is chained after every backup attempt, so both names expose
         # the same single 03:00 lifecycle owner.
