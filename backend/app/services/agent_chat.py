@@ -1,15 +1,16 @@
 from collections.abc import Mapping, Sequence
 from operator import add
-from typing import Annotated, Literal, Protocol, TypedDict
+from typing import Annotated, Protocol, TypedDict
 
 import httpx
 from langgraph.graph import END, START, StateGraph
 
+from app.agent_chat_types import AgentMessageRole
 from app.core.config import Settings
 
 
 class ChatMessage(TypedDict):
-    role: Literal["user", "assistant"]
+    role: AgentMessageRole
     content: str
 
 

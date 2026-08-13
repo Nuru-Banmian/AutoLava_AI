@@ -6,8 +6,6 @@ from httpx import AsyncClient
     ("method", "path"),
     (
         ("GET", "/api/agent/stores/1"),
-        ("GET", "/api/agent/stores/1/conversation"),
-        ("DELETE", "/api/agent/stores/1/conversation"),
         ("GET", "/api/agent/admin/settings"),
         ("PATCH", "/api/agent/admin/settings"),
     ),

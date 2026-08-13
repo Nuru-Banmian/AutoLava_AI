@@ -22,6 +22,8 @@ EXPECTED_TABLES = {
     "settlement_companies",
     "settlement_records",
     "settlement_audit_events",
+    "agent_conversations",
+    "agent_messages",
     # The replacement runtime does not map or use these archival tables. They
     # remain in the physical schema so upgrading does not destroy old chats.
     "retired_agent_system_settings",
@@ -78,6 +80,29 @@ def test_blank_sqlite_file_migrates_to_final_schema(tmp_path: Path) -> None:
         ).fetchone()
         assert company_index_sql is not None
         assert "UNIQUE INDEX" in company_index_sql[0]
+
+        connection.execute(
+            "INSERT INTO users (username, password_hash, role, is_active) VALUES (?, ?, ?, ?)",
+            ("admin", "hash", "admin", 1),
+        )
+        connection.execute(
+            """
+            INSERT INTO stores (
+                name, address, latitude, longitude, timezone, is_active,
+                income_items_enabled
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("Store", "Address", 45, 9, "Europe/Rome", 1, 0),
+        )
+        connection.execute(
+            "INSERT INTO agent_conversations (user_id, store_id) VALUES (?, ?)",
+            (1, 1),
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="UNIQUE constraint failed"):
+            connection.execute(
+                "INSERT INTO agent_conversations (user_id, store_id) VALUES (?, ?)",
+                (1, 1),
+            )
         assert "WHERE is_active = 1" in company_index_sql[0]
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
@@ -262,7 +287,7 @@ def test_applied_revision_0004_upgrades_without_losing_existing_data(tmp_path: P
 
     with closing(sqlite3.connect(database_path)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0016",
+            "0017",
         )
         assert connection.execute("SELECT username FROM users").fetchall() == [
             ("existing-admin",)
@@ -273,7 +298,10 @@ def test_applied_revision_0004_upgrades_without_losing_existing_data(tmp_path: P
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             )
         }
-        assert not {table for table in tables if table.startswith("agent_")}
+        assert {table for table in tables if table.startswith("agent_")} == {
+            "agent_conversations",
+            "agent_messages",
+        }
 
 
 def test_previous_agent_data_is_retired_without_touching_business_data(tmp_path: Path) -> None:
@@ -351,7 +379,11 @@ def test_previous_agent_data_is_retired_without_touching_business_data(tmp_path:
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             )
         }
-        assert not {table for table in tables if table.startswith("agent_")}
+        assert {table for table in tables if table.startswith("agent_")} == {
+            "agent_conversations",
+            "agent_messages",
+        }
+        assert connection.execute("SELECT COUNT(*) FROM agent_messages").fetchone() == (0,)
         assert {
             "retired_agent_system_settings",
             "retired_agent_conversations",
@@ -374,7 +406,7 @@ def test_previous_agent_data_is_retired_without_touching_business_data(tmp_path:
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
-def test_reused_legacy_revision_0010_upgrades_to_no_agent_schema(
+def test_reused_legacy_revision_0010_upgrades_to_new_agent_schema(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "legacy-0010.sqlite3"
@@ -430,7 +462,7 @@ def test_reused_legacy_revision_0010_upgrades_to_no_agent_schema(
 
     with closing(sqlite3.connect(database_path)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0016",
+            "0017",
         )
         tables = {
             name
@@ -438,7 +470,10 @@ def test_reused_legacy_revision_0010_upgrades_to_no_agent_schema(
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             )
         }
-        assert not {table for table in tables if table.startswith("agent_")}
+        assert {table for table in tables if table.startswith("agent_")} == {
+            "agent_conversations",
+            "agent_messages",
+        }
         assert connection.execute("SELECT username FROM users").fetchall() == [
             ("existing-admin",)
         ]
