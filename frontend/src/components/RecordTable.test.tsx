@@ -19,7 +19,7 @@ describe("RecordTable", () => {
     const empty = { id: null, date: "2026-07-15" };
     render(<RecordTable records={[empty]} selectedDate={empty.date} loading={false} error={null} onSelect={onSelect} onRetry={onRetry} />);
 
-    const row = screen.getByRole("row", { name: /2026年7月15日 未录入/ });
+    const row = screen.getByRole("row", { name: /2026年7月15日 星期三 未录入/ });
     expect(row).toHaveAttribute("aria-selected", "true");
     expect(row).toHaveAttribute("tabIndex", "0");
     fireEvent.click(row);
@@ -35,7 +35,7 @@ describe("RecordTable", () => {
 
     expect(screen.getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["日期", "状态", "总营业额", "天气"]);
     expect(screen.queryByRole("columnheader", { name: /洗车|活动|收入/ })).not.toBeInTheDocument();
-    const row = screen.getByRole("row", { name: /2026年7月14日 休息/ });
+    const row = screen.getByRole("row", { name: /2026年7月14日 星期二 休息/ });
     expect(row).toHaveAttribute("aria-selected", "true");
     expect(row).toHaveTextContent("休息");
     const statusText = within(row).getByText("休息", { exact: true });
@@ -51,7 +51,7 @@ describe("RecordTable", () => {
     const onRetry = vi.fn();
     const { rerender } = render(<RecordTable records={[record]} selectedDate={null} loading={false} error={null} onSelect={onSelect} onRetry={onRetry} />);
 
-    fireEvent.keyDown(screen.getByRole("row", { name: /2026年7月14日 休息/ }), { key: " " });
+    fireEvent.keyDown(screen.getByRole("row", { name: /2026年7月14日 星期二 休息/ }), { key: " " });
     expect(onSelect).toHaveBeenCalledWith(record);
 
     rerender(<RecordTable records={[]} selectedDate={null} loading error={null} onSelect={onSelect} onRetry={onRetry} />);

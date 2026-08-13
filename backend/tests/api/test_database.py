@@ -84,11 +84,13 @@ async def test_database_summary_and_export_use_integer_money(
     assert isinstance(page.json()["sum_daily_revenue"], int)
     workbook = load_workbook(BytesIO(exported.content), read_only=False)
     sheet = workbook["经营记录"]
-    assert sheet.cell(row=2, column=3).value == 321
-    assert sheet.cell(row=2, column=3).number_format == "€#,##0"
+    assert sheet.cell(row=2, column=2).value == "星期六"
+    assert sheet.cell(row=2, column=4).value == 321
+    assert sheet.cell(row=2, column=4).number_format == "€#,##0"
     detail = workbook["收入明细"]
-    assert detail.cell(row=2, column=5).value == 321
-    assert detail.cell(row=2, column=5).number_format == "€#,##0"
+    assert detail.cell(row=2, column=2).value == "星期六"
+    assert detail.cell(row=2, column=6).value == 321
+    assert detail.cell(row=2, column=6).number_format == "€#,##0"
 
 
 async def test_export_uses_saved_income_item_snapshots_after_current_category_changes(
@@ -142,8 +144,9 @@ async def test_export_uses_saved_income_item_snapshots_after_current_category_ch
     summary = workbook["经营记录"]
     assert [cell.value for cell in summary[1]] == [
         "日期",
+        "星期",
         "状态",
-        "总收入",
+        "总营业额",
         "洗车",
         "天气",
         "事件",
@@ -151,14 +154,15 @@ async def test_export_uses_saved_income_item_snapshots_after_current_category_ch
         "最后修改人",
     ]
     detail = workbook["收入明细"]
-    assert [detail.cell(row=2, column=index).value for index in range(1, 6)] == [
+    assert [detail.cell(row=2, column=index).value for index in range(1, 7)] == [
         datetime(2026, 7, 1),
+        "星期三",
         "Historical name",
         True,
         0,
         150,
     ]
-    assert detail.cell(row=2, column=5).number_format == "€#,##0"
+    assert detail.cell(row=2, column=6).number_format == "€#,##0"
 
 
 async def test_database_context_and_export_follow_the_requested_store_wash_setting(
@@ -198,8 +202,9 @@ async def test_database_context_and_export_follow_the_requested_store_wash_setti
     disabled_workbook = load_workbook(BytesIO(disabled_export.content), read_only=False)
     assert [cell.value for cell in disabled_workbook["经营记录"][1]] == [
         "日期",
+        "星期",
         "状态",
-        "总收入",
+        "总营业额",
         "天气",
         "事件",
         "记录人",
@@ -219,10 +224,11 @@ async def test_database_context_and_export_follow_the_requested_store_wash_setti
     assert reenabled_page.json()["items"][0]["wash_count"] == 8
     assert filtered_page.json()["total"] == 0
     reenabled_workbook = load_workbook(BytesIO(reenabled_export.content), read_only=False)
-    assert [cell.value for cell in reenabled_workbook["经营记录"][1]][:4] == [
+    assert [cell.value for cell in reenabled_workbook["经营记录"][1]][:5] == [
         "日期",
+        "星期",
         "状态",
-        "总收入",
+        "总营业额",
         "洗车",
     ]
 
@@ -267,5 +273,5 @@ async def test_database_records_and_export_filter_by_early_close_status(
     assert page.json()["total"] == 1
     assert page.json()["items"][0]["is_open"] == "提前休息"
     workbook = load_workbook(BytesIO(exported.content), read_only=False)
-    assert workbook["经营记录"].cell(row=2, column=2).value == "提前休息"
+    assert workbook["经营记录"].cell(row=2, column=3).value == "提前休息"
     assert legacy_page.status_code == legacy_export.status_code == 422

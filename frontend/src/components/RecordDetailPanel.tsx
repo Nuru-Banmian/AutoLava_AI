@@ -1,9 +1,10 @@
-import { format, isValid, parseISO } from "date-fns";
+import { isValid, parseISO } from "date-fns";
 import { Link } from "react-router-dom";
 
 import type { RecordSnapshot } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatBusinessRecordDate } from "@/lib/business-record-date";
 import { formatWholeEuro } from "@/lib/user-api";
 
 export type RecordDetail = RecordSnapshot | { id: null; date: string };
@@ -71,7 +72,7 @@ export function RecordDetailPanel({
   return (
     <Card className={mobile ? "border-0 shadow-none" : "overflow-hidden"}>
       <CardHeader className={`flex-row flex-wrap items-center gap-2 space-y-0 ${mobile ? "p-1 pb-5 pr-14" : "p-5 pb-4"}`}>
-        <CardTitle className={mobile ? "text-2xl leading-tight" : "text-xl leading-tight"}>{format(parseISO(record.date), "yyyy年M月d日")}</CardTitle>
+        <CardTitle className={mobile ? "text-2xl leading-tight" : "text-xl leading-tight"}>{formatBusinessRecordDate(record.date)}</CardTitle>
         <span className={`rounded-full px-2.5 py-1 text-sm font-medium ${isUnrecorded ? "bg-muted text-muted-foreground" : statusClasses[record.is_open]}`}>
           {status}
         </span>

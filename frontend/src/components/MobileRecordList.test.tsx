@@ -18,7 +18,8 @@ describe("MobileRecordList", () => {
     const onSelect = vi.fn();
     render(<MobileRecordList records={[record]} selectedDate={record.date} onSelect={onSelect} />);
 
-    const row = screen.getByRole("button", { name: /2026年7月14日，休息，€100/ });
+    const row = screen.getByRole("button", { name: /2026年7月14日 星期二，休息，€100/ });
+    expect(row).toHaveTextContent("2026年7月14日 星期二");
     expect(row).toHaveClass("py-2");
     expect(row).not.toHaveClass("py-3");
     expect(row).toHaveAttribute("aria-pressed", "true");

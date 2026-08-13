@@ -42,7 +42,7 @@ describe("RecordDetailPanel", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole("heading", { name: "2026年7月15日" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "2026年7月15日 星期三" })).toBeInTheDocument();
     expect(screen.getByText("未录入", { exact: true })).toBeInTheDocument();
     expect(screen.getAllByText("—", { exact: true })).toHaveLength(2);
     expect(screen.getByRole("link", { name: "修改这天记录" })).toHaveAttribute("href", "/ledger?date=2026-07-15");
@@ -52,9 +52,9 @@ describe("RecordDetailPanel", () => {
   it("keeps the date, textual status, revenue, weather, wash count, and event easy to scan", () => {
     renderPanel({ ...record, is_open: "提前休息", activity: "会员日照常营业" });
 
-    const heading = screen.getByRole("heading", { name: "2026年7月14日" });
+    const heading = screen.getByRole("heading", { name: "2026年7月14日 星期二" });
     expect(heading.parentElement).toHaveClass("flex-row", "flex-wrap");
-    expect(heading.parentElement).toHaveTextContent("2026年7月14日提前休息");
+    expect(heading.parentElement).toHaveTextContent("2026年7月14日 星期二提前休息");
     expect(screen.getByText("提前休息", { exact: true })).toBeInTheDocument();
     expect(screen.queryByText("营业状态", { exact: true })).not.toBeInTheDocument();
     expect(screen.getByText("营业额", { exact: true }).parentElement).toHaveTextContent("营业额€100");
@@ -111,8 +111,8 @@ describe("RecordDetailPanel", () => {
   it.each(["营业", "休息", "提前休息"] as const)("shows the actual %s status beside the date heading", (is_open) => {
     renderPanel({ ...record, is_open });
 
-    const heading = screen.getByRole("heading", { name: "2026年7月14日" });
-    expect(heading.parentElement).toHaveTextContent(`2026年7月14日${is_open}`);
+    const heading = screen.getByRole("heading", { name: "2026年7月14日 星期二" });
+    expect(heading.parentElement).toHaveTextContent(`2026年7月14日 星期二${is_open}`);
   });
 
   it.each([

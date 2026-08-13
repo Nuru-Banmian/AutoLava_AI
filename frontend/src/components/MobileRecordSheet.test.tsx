@@ -31,7 +31,7 @@ describe("MobileRecordSheet", () => {
     const dialog = screen.getByRole("dialog", { name: "2026-07-14 营业记录详情" });
     expect(dialog.className).toContain("safe-area-inset-bottom");
     expect(dialog).toHaveClass("h-[calc(100dvh-1rem)]");
-    expect(screen.getByRole("heading", { name: "2026年7月14日" })).toHaveClass("text-2xl");
+    expect(screen.getByRole("heading", { name: "2026年7月14日 星期二" })).toHaveClass("text-2xl");
     expect(screen.getByText("营业", { exact: true })).toHaveClass("text-sm");
     expect(screen.getByText("洗车 8 辆", { exact: true })).toHaveClass("text-sm");
     expect(screen.getByRole("link", { name: "修改这天记录" })).toHaveClass("h-11", "w-full", "text-base");
