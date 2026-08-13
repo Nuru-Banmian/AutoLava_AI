@@ -3,7 +3,7 @@ import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Any, Literal, cast
+from typing import Any, Literal, cast, get_args
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, or_, select
@@ -19,6 +19,98 @@ from app.services.income_config import IncomeConfigService
 
 JsonObject = dict[str, Any]
 SettlementGroup = Literal["company", "opening_month", "status"]
+DailyFilter = Literal[
+    "operating_status",
+    "weekdays",
+    "recorded_weather",
+    "has_event",
+    "wash_count_covered",
+]
+DAILY_FILTERS = cast(tuple[DailyFilter, ...], get_args(DailyFilter))
+OPERATING_STATUSES = ("营业", "休息", "提前休息")
+OPERATING_DAY_STATUSES = {"营业", "提前休息"}
+WEEKDAYS = (
+    "星期一",
+    "星期二",
+    "星期三",
+    "星期四",
+    "星期五",
+    "星期六",
+    "星期日",
+)
+
+
+@dataclass(frozen=True)
+class DailyDimension:
+    filter_name: DailyFilter
+    group_name: str
+    record_key: str
+    schema: JsonObject
+    allowed_values: set[object] | None = None
+    sort_order: tuple[object, ...] | None = None
+
+
+DAILY_DIMENSIONS = (
+    DailyDimension(
+        filter_name="operating_status",
+        group_name="operating_status",
+        record_key="operating_status",
+        schema={
+            "type": "array",
+            "items": {"type": "string", "enum": list(OPERATING_STATUSES)},
+            "uniqueItems": True,
+        },
+        allowed_values=set(OPERATING_STATUSES),
+        sort_order=OPERATING_STATUSES,
+    ),
+    DailyDimension(
+        filter_name="weekdays",
+        group_name="weekday",
+        record_key="weekday",
+        schema={
+            "type": "array",
+            "items": {"type": "string", "enum": list(WEEKDAYS)},
+            "uniqueItems": True,
+        },
+        allowed_values=set(WEEKDAYS),
+        sort_order=WEEKDAYS,
+    ),
+    DailyDimension(
+        filter_name="recorded_weather",
+        group_name="recorded_weather",
+        record_key="recorded_weather",
+        schema={
+            "type": "array",
+            "items": {"type": ["string", "null"]},
+            "uniqueItems": True,
+        },
+    ),
+    DailyDimension(
+        filter_name="has_event",
+        group_name="has_event",
+        record_key="has_event",
+        schema={"type": "boolean"},
+    ),
+    DailyDimension(
+        filter_name="wash_count_covered",
+        group_name="wash_count_coverage",
+        record_key="wash_count_covered",
+        schema={"type": "boolean"},
+    ),
+)
+DAILY_DIMENSIONS_BY_FILTER = {
+    dimension.filter_name: dimension for dimension in DAILY_DIMENSIONS
+}
+DAILY_DIMENSIONS_BY_GROUP = {
+    dimension.group_name: dimension for dimension in DAILY_DIMENSIONS
+}
+DailyGroup = Literal[
+    "operating_status",
+    "weekday",
+    "recorded_weather",
+    "has_event",
+    "wash_count_coverage",
+]
 
 
 @dataclass(frozen=True)
@@ -620,6 +712,215 @@ async def get_income_category_history(
         ),
     }
 
+
+def _daily_summary(records: Sequence[JsonObject]) -> JsonObject:
+    operating_days = [record for record in records if record["is_operating_day"]]
+    covered_operating_days = [
+        record for record in operating_days if record["wash_count_covered"]
+    ]
+    daily_revenue = sum(int(record["daily_ledger_revenue"]) for record in records)
+    operating_revenue = sum(
+        int(record["daily_ledger_revenue"]) for record in operating_days
+    )
+    covered_revenue = sum(
+        int(record["daily_ledger_revenue"]) for record in covered_operating_days
+    )
+    wash_count = sum(int(record["wash_count"]) for record in covered_operating_days)
+    return {
+        "record_count": len(records),
+        "operating_day_count": len(operating_days),
+        "daily_ledger_revenue": daily_revenue,
+        "operating_day_average_revenue": (
+            operating_revenue / len(operating_days) if operating_days else None
+        ),
+        "wash_count_coverage": {
+            "covered_operating_days": len(covered_operating_days),
+            "operating_days": len(operating_days),
+            "wash_count": wash_count,
+        },
+        "average_revenue_per_wash": (
+            covered_revenue / wash_count if wash_count else None
+        ),
+    }
+
+
+def _daily_query(
+    arguments: Mapping[str, Any],
+) -> tuple[dict[str, Any], DailyGroup | None] | str:
+    raw_filters = arguments.get("filters", {})
+    if not isinstance(raw_filters, dict):
+        return "每日台账筛选条件必须是对象"
+    if not set(raw_filters).issubset(DAILY_FILTERS):
+        return "每日台账筛选条件包含不支持的字段"
+    filters = dict(raw_filters)
+    for dimension in DAILY_DIMENSIONS:
+        if dimension.filter_name not in filters:
+            continue
+        values = filters[dimension.filter_name]
+        if dimension.schema["type"] == "boolean":
+            if not isinstance(values, bool):
+                return f"{dimension.filter_name} 筛选值必须是布尔值"
+            continue
+        if not isinstance(values, list) or not values or len(values) > 50:
+            return f"{dimension.filter_name} 筛选值必须是 1 至 50 项的数组"
+        if len(values) != len({json.dumps(value, ensure_ascii=False) for value in values}):
+            return f"{dimension.filter_name} 筛选值不能重复"
+        if dimension.allowed_values is not None and not set(values).issubset(
+            dimension.allowed_values
+        ):
+            return f"{dimension.filter_name} 筛选值无效"
+        if dimension.filter_name == "recorded_weather" and any(
+            value is not None and not isinstance(value, str) for value in values
+        ):
+            return "recorded_weather 筛选值必须是文本或 null"
+
+    raw_group_by = arguments.get("group_by")
+    if raw_group_by is not None and raw_group_by not in DAILY_DIMENSIONS_BY_GROUP:
+        return "每日台账分组方式无效"
+    return filters, cast(DailyGroup | None, raw_group_by)
+
+
+def _matches_daily_filters(record: JsonObject, filters: Mapping[str, Any]) -> bool:
+    return all(
+        (
+            record[DAILY_DIMENSIONS_BY_FILTER[cast(DailyFilter, name)].record_key]
+            in value
+            if isinstance(value, list)
+            else record[DAILY_DIMENSIONS_BY_FILTER[cast(DailyFilter, name)].record_key]
+            == value
+        )
+        for name, value in filters.items()
+    )
+
+
+def _daily_groups(records: Sequence[JsonObject], group_by: DailyGroup) -> list[JsonObject]:
+    dimension = DAILY_DIMENSIONS_BY_GROUP[group_by]
+    grouped: dict[object, list[JsonObject]] = {}
+    for record in records:
+        grouped.setdefault(record[dimension.record_key], []).append(record)
+
+    def sort_key(value: object) -> object:
+        if dimension.sort_order is not None:
+            return dimension.sort_order.index(value)
+        if dimension.group_name == "recorded_weather":
+            return value is None, str(value or "")
+        return bool(value)
+
+    return [
+        {
+            "dimension": group_by,
+            "value": value,
+            "summary": _daily_summary(grouped[value]),
+        }
+        for value in sorted(grouped, key=sort_key)
+    ]
+
+
+async def get_daily_ledger_data(
+    context: AuthorizedToolContext, arguments: Mapping[str, Any]
+) -> JsonObject:
+    resolved = _resolve_period(arguments.get("period"), local_today=context.local_today)
+    if isinstance(resolved, str):
+        return {"status": "error", "error": resolved}
+    query = _daily_query(arguments)
+    if isinstance(query, str):
+        return {"status": "error", "error": query}
+    filters, group_by = query
+    start, end = resolved
+    record_rows = list(
+        (
+            await context.session.execute(
+                select(
+                    StoreDailyRecord.id,
+                    StoreDailyRecord.date,
+                    StoreDailyRecord.daily_revenue,
+                    StoreDailyRecord.is_open,
+                    StoreDailyRecord.wash_count,
+                    StoreDailyRecord.weather,
+                    StoreDailyRecord.activity,
+                )
+                .where(
+                    StoreDailyRecord.store_id == context.store.id,
+                    StoreDailyRecord.date.between(start, end),
+                )
+                .order_by(StoreDailyRecord.date, StoreDailyRecord.id)
+            )
+        ).tuples()
+    )
+    item_rows = list(
+        (
+            await context.session.execute(
+                select(
+                    DailyIncomeItem.record_id,
+                    DailyIncomeItem.category_id,
+                    DailyIncomeItem.category_name,
+                    DailyIncomeItem.include_in_total,
+                    DailyIncomeItem.amount,
+                )
+                .join(StoreDailyRecord, StoreDailyRecord.id == DailyIncomeItem.record_id)
+                .where(
+                    StoreDailyRecord.store_id == context.store.id,
+                    StoreDailyRecord.date.between(start, end),
+                )
+                .order_by(
+                    StoreDailyRecord.date,
+                    DailyIncomeItem.sort_order,
+                    DailyIncomeItem.id,
+                )
+            )
+        ).tuples()
+    )
+    items_by_record: dict[int, list[JsonObject]] = {}
+    for item in item_rows:
+        items_by_record.setdefault(item.record_id, []).append(
+            {
+                "category_id": item.category_id,
+                "category_name": item.category_name,
+                "include_in_total": item.include_in_total,
+                "amount": item.amount,
+            }
+        )
+    records: list[JsonObject] = []
+    for row in record_rows:
+        event = row.activity
+        records.append(
+            {
+                "date": row.date.isoformat(),
+                "weekday": WEEKDAYS[row.date.weekday()],
+                "operating_status": row.is_open,
+                "is_operating_day": row.is_open in OPERATING_DAY_STATUSES,
+                "daily_ledger_revenue": row.daily_revenue,
+                "income_categories": items_by_record.get(row.id, []),
+                "wash_count": row.wash_count,
+                "wash_count_covered": row.wash_count is not None,
+                "recorded_weather": row.weather,
+                "event": event,
+                "has_event": bool(event and event.strip()),
+            }
+        )
+    filtered_records = [
+        record for record in records if _matches_daily_filters(record, filters)
+    ]
+    result = {
+        "status": "success" if records else "empty",
+        "period": {
+            "input": str(arguments["period"]).strip(),
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "timezone": context.store.timezone,
+        },
+        "summary": _daily_summary(filtered_records),
+    }
+    if filters or group_by is not None:
+        result["query"] = {"filters": filters, "group_by": group_by}
+    if group_by is None:
+        result["records"] = filtered_records
+    else:
+        result["groups"] = _daily_groups(filtered_records, group_by)
+    if not filtered_records:
+        result["status"] = "empty"
+    return result
+
 DEFAULT_AGENT_TOOLS = AgentToolRegistry(
     [
         AgentTool(
@@ -694,6 +995,43 @@ DEFAULT_AGENT_TOOLS = AgentToolRegistry(
                 "additionalProperties": False,
             },
             handler=get_income_category_history,
+        ),
+        AgentTool(
+            name="get_daily_ledger_data",
+            description=(
+                "读取后端确认日期范围内的完整每日台账经营字段和由日期派生的星期，"
+                "可按营业状态、星期、记录天气、是否有事件和洗车数量覆盖筛选或分组，"
+                "并计算经营日与有洗车数量覆盖经营日的汇总指标。门店和当地今天由后端锁定。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "period": {
+                        "type": "string",
+                        "description": (
+                            "用户要求的期间，例如上个月、今年、最近三周，或"
+                            "2026-07-01 至 2026-07-31"
+                        ),
+                    },
+                    "filters": {
+                        "type": "object",
+                        "properties": {
+                            dimension.filter_name: dimension.schema
+                            for dimension in DAILY_DIMENSIONS
+                        },
+                        "additionalProperties": False,
+                    },
+                    "group_by": {
+                        "type": "string",
+                        "enum": [
+                            dimension.group_name for dimension in DAILY_DIMENSIONS
+                        ],
+                    },
+                },
+                "required": ["period"],
+                "additionalProperties": False,
+            },
+            handler=get_daily_ledger_data,
         ),
     ]
 )
