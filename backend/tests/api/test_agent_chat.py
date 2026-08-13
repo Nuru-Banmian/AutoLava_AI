@@ -358,3 +358,39 @@ async def test_agent_chat_reports_missing_model_configuration_without_network(
     assert response.json() == {"detail": "AI 模型尚未配置"}
     restored = await client.get(f"/api/agent/stores/{store.id}/conversation")
     assert restored.json() == {"messages": []}
+
+
+async def test_agent_chat_hides_model_service_failure_details(
+    client: AsyncClient,
+    user_factory,
+    store_factory,
+    respx_mock,
+) -> None:
+    await user_factory(username="administrator", password="secret", role="admin")
+    store = await store_factory(name="测试门店")
+    await login(client, "administrator")
+    settings = Settings(
+        _env_file=None,
+        agent_model_endpoint="https://private-model.example/v1",
+        agent_model_region="private-region",
+        agent_model_id="private-model-id",
+        agent_model_api_key="private-api-key",
+    )
+    client._transport.app.state.agent_chat_graph = AgentChatGraph(
+        OpenAICompatibleChatModel(settings)
+    )
+    respx_mock.post("https://private-model.example/v1/chat/completions").mock(
+        return_value=Response(500, text="upstream SQL exception: secret-table")
+    )
+
+    response = await client.post(
+        f"/api/agent/stores/{store.id}/messages",
+        json={"content": "你好"},
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "AI 模型暂时不可用，请稍后重试"}
+    assert "private" not in response.text
+    assert "SQL" not in response.text
+    restored = await client.get(f"/api/agent/stores/{store.id}/conversation")
+    assert restored.json() == {"messages": []}
