@@ -142,7 +142,7 @@ test("desktop record and analysis workspaces share the viewport without outer sc
   const recordWorkspace = analysisWorkspace.locator("xpath=preceding-sibling::*[1]");
   await expect(page.getByRole("table")).toBeVisible();
   await expect(analysisWorkspace).toBeVisible();
-  const detailHeading = page.getByRole("heading", { name: "2026年7月17日" });
+  const detailHeading = page.getByRole("heading", { name: "2026年7月17日 星期五" });
   await expect(detailHeading).toBeVisible();
   await expect(detailHeading.locator("..")).toContainText("营业");
   const detailSummary = page.getByRole("region", { name: "营业摘要" });
@@ -181,6 +181,29 @@ test("desktop record and analysis workspaces share the viewport without outer sc
     }), Math.round((workspaceBox?.y ?? 0) + (workspaceBox?.height ?? 0) - (cardBox?.y ?? 0) - (cardBox?.height ?? 0)));
   }).toEqual({ atEnd: true, bottomGap: 0 });
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(outerScrollBefore);
+});
+
+test("weekday stays inside the date column at the narrow desktop breakpoint", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
+  await page.setViewportSize({ width: 1024, height: 900 });
+  await mockResponsiveApi(page);
+  await page.goto("/database");
+
+  const row = page.getByRole("table").locator("tbody tr").first();
+  await expect(row).toContainText("2026年7月17日 星期五");
+  const [dateBox, statusBox, revenueBox] = await Promise.all([
+    row.locator("td").nth(0).boundingBox(),
+    row.locator("td").nth(1).boundingBox(),
+    row.locator("td").nth(2).boundingBox(),
+  ]);
+  expect(dateBox).not.toBeNull();
+  expect(statusBox).not.toBeNull();
+  expect(revenueBox).not.toBeNull();
+  expect(dateBox!.x + dateBox!.width).toBeLessThanOrEqual(statusBox!.x);
+  expect(statusBox!.x + statusBox!.width).toBeLessThanOrEqual(revenueBox!.x);
+  await expect(row.locator("td").nth(1)).toHaveText("营业");
+  await expect(row.locator("td").nth(2)).toHaveText("€100");
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1024);
 });
 
 test("global store picker switches cleanly between mobile and desktop without header overflow", async ({ page }) => {
@@ -254,13 +277,13 @@ test("320px record list, bottom sheet, and analysis remain reachable without cli
     viewport: window.innerWidth,
   }))).toEqual({ document: 320, body: 320, viewport: 320 });
   await expect(page.getByRole("table")).toBeHidden();
-  await expect(page.getByRole("heading", { name: "2026年7月17日" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "2026年7月17日 星期五" })).toHaveCount(0);
 
   const firstRow = page.locator('main button[aria-label^="2026年7月17日"]').first();
-  await expect(firstRow).toHaveAccessibleName("2026年7月17日，营业，€100");
+  await expect(firstRow).toHaveAccessibleName("2026年7月17日 星期五，营业，€100");
   const visibleFields = firstRow.locator(":scope > span");
   await expect(visibleFields).toHaveCount(3);
-  await expect(visibleFields).toHaveText(["2026年7月17日", "营业", "€100"]);
+  await expect(visibleFields).toHaveText(["2026年7月17日 星期五", "营业", "€100"]);
   await expect(firstRow.getByText("记账事件")).toHaveCount(0);
   const alignedRows = [
     firstRow,
@@ -282,7 +305,7 @@ test("320px record list, bottom sheet, and analysis remain reachable without cli
 
   const sheet = page.getByRole("dialog", { name: "2026-07-17 营业记录详情" });
   await expect(sheet).toBeVisible();
-  const detailHeading = sheet.getByRole("heading", { name: "2026年7月17日" });
+  const detailHeading = sheet.getByRole("heading", { name: "2026年7月17日 星期五" });
   await expect(detailHeading).toBeVisible();
   await expect(detailHeading.locator("..")).toContainText("营业");
   const summary = sheet.getByRole("region", { name: "营业摘要" });
@@ -302,7 +325,7 @@ test("320px record list, bottom sheet, and analysis remain reachable without cli
     bottom: getComputedStyle(node).bottom,
     height: node.getBoundingClientRect().height,
   }))).toEqual({ position: "fixed", top: 16, bottom: "0px", height: 684 });
-  await expect.poll(() => sheet.getByRole("heading", { name: "2026年7月17日" }).evaluate((node) => getComputedStyle(node).fontSize)).toBe("24px");
+  await expect.poll(() => sheet.getByRole("heading", { name: "2026年7月17日 星期五" }).evaluate((node) => getComputedStyle(node).fontSize)).toBe("24px");
   await expect.poll(() => sheet.getByText("€100", { exact: true }).first().evaluate((node) => getComputedStyle(node).fontSize)).toBe("18px");
   await expect.poll(() => sheet.evaluate((node) => node.scrollWidth)).toBeLessThanOrEqual(320);
   await sheet.getByRole("button", { name: "Close" }).click();
@@ -323,7 +346,7 @@ test("320px record list, bottom sheet, and analysis remain reachable without cli
 
   await secondRow.click();
   const restSheet = page.getByRole("dialog", { name: "2026-07-16 营业记录详情" });
-  await expect(restSheet.getByRole("heading", { name: "2026年7月16日" }).locator("..")).toContainText("休息");
+  await expect(restSheet.getByRole("heading", { name: "2026年7月16日 星期四" }).locator("..")).toContainText("休息");
   await expect(restSheet.getByText(/洗车 \d+ 辆/)).toHaveCount(0);
   await restSheet.getByRole("button", { name: "Close" }).click();
   await expect(secondRow).toBeFocused();
@@ -331,7 +354,7 @@ test("320px record list, bottom sheet, and analysis remain reachable without cli
   const thirdRow = page.locator('main button[aria-label^="2026年7月15日"]').first();
   await thirdRow.click();
   const earlyCloseSheet = page.getByRole("dialog", { name: "2026-07-15 营业记录详情" });
-  await expect(earlyCloseSheet.getByRole("heading", { name: "2026年7月15日" }).locator("..")).toContainText("提前休息");
+  await expect(earlyCloseSheet.getByRole("heading", { name: "2026年7月15日 星期三" }).locator("..")).toContainText("提前休息");
   await expect(earlyCloseSheet.getByText(/洗车 \d+ 辆/)).toHaveCount(0);
   await earlyCloseSheet.getByRole("button", { name: "Close" }).click();
   await expect(thirdRow).toBeFocused();
@@ -369,7 +392,7 @@ test("record detail hides a positive wash count when the store setting is disabl
   await mockResponsiveApi(page, { washCountEnabled: false });
   await page.goto("/database");
 
-  await expect(page.getByRole("heading", { name: "2026年7月17日" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "2026年7月17日 星期五" })).toBeVisible();
   await expect(page.getByText(/洗车 \d+ 辆/)).toHaveCount(0);
   await expect(page.getByRole("region", { name: "营业摘要" })).toBeVisible();
 });

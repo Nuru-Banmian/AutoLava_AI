@@ -10,51 +10,6 @@ export interface AuthenticatedUser extends User {
   is_owner: boolean;
 }
 
-export interface AgentSettings {
-  enabled: boolean;
-  model_config_ready: boolean;
-}
-
-export interface AgentCurrentStore {
-  store_id: number;
-  store_name: string;
-}
-
-export interface AgentMessage {
-  id: number;
-  role: "user" | "assistant";
-  content: string;
-  created_at: string;
-}
-
-export type AgentTurnStatus = "running" | "completed" | "failed" | "interrupted";
-
-export interface AgentInvestigationCard {
-  operation: string;
-  range_start: string | null;
-  range_end: string | null;
-  filters: string[];
-  status: "completed" | "empty" | "unavailable" | "failed";
-  error_category?: "timeout" | "temporary" | "permission" | "validation" | "tool_failure" | "expected_unavailable" | null;
-}
-
-export interface AgentTurn {
-  id: number;
-  status: AgentTurnStatus;
-  error_message: string | null;
-  started_at: string;
-  finished_at: string | null;
-  investigation_cards: AgentInvestigationCard[];
-}
-
-export interface AgentConversation {
-  conversation_id: number;
-  store_id: number;
-  store_name: string;
-  messages: AgentMessage[];
-  latest_turn: AgentTurn | null;
-}
-
 export interface AdminUser extends User {
   is_active: boolean;
   store_ids: number[];
