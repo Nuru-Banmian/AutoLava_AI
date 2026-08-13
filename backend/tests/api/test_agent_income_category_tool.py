@@ -55,7 +55,7 @@ class CategoryCompositionFlowModel:
             selected_ids = [
                 category["id"]
                 for category in categories
-                if category["name"] in {"现金新名", "刷卡", "其他数据"}
+                if category["name"] in {"现金新名", "线上支付", "其他数据"}
             ]
             return {
                 "content": "",
@@ -87,15 +87,17 @@ class CategoryCompositionFlowModel:
             return {"content": "已取得由 Tool 计算的组合金额和历史口径。"}
         return {
             "content": (
-                "现金旧名加刷卡旧名按历史口径计入营业额 120 欧元；其他数据 20 "
+                "现金旧名加线上支付旧名按历史口径计入营业额 120 欧元；其他数据 20 "
                 "欧元不计入。另有 70 欧元属于总额记账，无法拆分到分类。"
             )
         }
 
 
-class UnmatchedCategoryFlowModel:
-    def __init__(self, category_id: int) -> None:
+class SingleCategoryQueryFlowModel:
+    def __init__(self, category_id: int, *, analysis: str, answer: str) -> None:
         self.category_id = category_id
+        self.analysis = analysis
+        self.answer = answer
         self.call_number = 0
         self.tool_result: dict[str, object] | None = None
 
@@ -133,8 +135,8 @@ class UnmatchedCategoryFlowModel:
                 message for message in messages if message.get("role") == "tool"
             )
             self.tool_result = json.loads(str(tool_message["content"]))
-            return {"content": "分类无匹配，但期间总额记账仍可确认。"}
-        return {"content": "未找到该分类；可确认这个期间总额记账为 70 欧元。"}
+            return {"content": self.analysis}
+        return {"content": self.answer}
 
 
 async def login(client: AsyncClient, username: str) -> None:
@@ -164,9 +166,9 @@ async def test_agent_uses_current_category_ids_and_historical_snapshots_through_
         is_active=True,
         sort_order=0,
     )
-    card = IncomeCategory(
+    custom = IncomeCategory(
         store_id=store.id,
-        name="刷卡",
+        name="线上支付",
         include_in_total=True,
         is_active=True,
         sort_order=1,
@@ -185,10 +187,10 @@ async def test_agent_uses_current_category_ids_and_historical_snapshots_through_
         is_active=True,
         sort_order=0,
     )
-    db_session.add_all([cash, card, other, foreign])
+    db_session.add_all([cash, custom, other, foreign])
     await db_session.flush()
     cash_id = cash.id
-    card_id = card.id
+    custom_id = custom.id
     other_id = other.id
 
     categorized = StoreDailyRecord(
@@ -232,8 +234,8 @@ async def test_agent_uses_current_category_ids_and_historical_snapshots_through_
             ),
             DailyIncomeItem(
                 record_id=categorized.id,
-                category_id=card.id,
-                category_name="刷卡旧名",
+                category_id=custom.id,
+                category_name="线上支付旧名",
                 include_in_total=True,
                 sort_order=1,
                 amount=40,
@@ -275,7 +277,7 @@ async def test_agent_uses_current_category_ids_and_historical_snapshots_through_
     app.state.agent_chat_graph = AgentChatGraph(model)
     response = await client.post(
         f"/api/agent/stores/{store.id}/messages",
-        json={"content": "今年 7 月现金加刷卡是多少？其他数据是多少？"},
+        json={"content": "今年 7 月现金加线上支付是多少？其他数据是多少？"},
     )
 
     assert response.status_code == 200
@@ -289,8 +291,8 @@ async def test_agent_uses_current_category_ids_and_historical_snapshots_through_
             "is_active": False,
         },
         {
-            "id": card_id,
-            "name": "刷卡",
+            "id": custom_id,
+            "name": "线上支付",
             "include_in_total": True,
             "is_active": True,
         },
@@ -309,7 +311,7 @@ async def test_agent_uses_current_category_ids_and_historical_snapshots_through_
             "end": "2026-07-31",
             "timezone": "Europe/Rome",
         },
-        "requested_category_ids": [cash_id, card_id, other_id],
+        "requested_category_ids": [cash_id, custom_id, other_id],
         "unmatched_category_ids": [],
         "historical_composition": [
             {
@@ -319,8 +321,8 @@ async def test_agent_uses_current_category_ids_and_historical_snapshots_through_
                 "amount": 80,
             },
             {
-                "category_id": card_id,
-                "category_name": "刷卡旧名",
+                "category_id": custom_id,
+                "category_name": "线上支付旧名",
                 "include_in_total": True,
                 "amount": 40,
             },
@@ -380,7 +382,11 @@ async def test_unmatched_category_keeps_confirmed_total_bookkeeping_through_http
     await db_session.commit()
     await login(client, administrator.username)
 
-    model = UnmatchedCategoryFlowModel(foreign_id)
+    model = SingleCategoryQueryFlowModel(
+        foreign_id,
+        analysis="分类无匹配，但期间总额记账仍可确认。",
+        answer="未找到该分类；可确认这个期间总额记账为 70 欧元。",
+    )
     app = client._transport.app
     app.state.agent_clock = lambda: datetime(2026, 8, 13, 10, 0, tzinfo=UTC)
     app.state.agent_chat_graph = AgentChatGraph(model)
@@ -413,3 +419,49 @@ async def test_unmatched_category_keeps_confirmed_total_bookkeeping_through_http
     assert response.json()["message"]["content"] == (
         "未找到该分类；可确认这个期间总额记账为 70 欧元。"
     )
+
+
+async def test_current_category_without_history_is_explained_through_http(
+    client: AsyncClient,
+    db_session,
+    user_factory,
+    store_factory,
+) -> None:
+    administrator = await user_factory(
+        username="no-history-admin", password="secret", role="admin"
+    )
+    store = await store_factory(name="无历史分类门店")
+    category = IncomeCategory(
+        store_id=store.id,
+        name="会员套餐",
+        include_in_total=True,
+        is_active=True,
+        sort_order=0,
+    )
+    db_session.add(category)
+    await db_session.flush()
+    category_id = category.id
+    await db_session.commit()
+    await login(client, administrator.username)
+
+    answer = "会员套餐在该期间没有历史数据，不能把它解释为已记录的 0 欧元。"
+    model = SingleCategoryQueryFlowModel(
+        category_id,
+        analysis="分类存在，但所选期间没有历史条目。",
+        answer=answer,
+    )
+    app = client._transport.app
+    app.state.agent_clock = lambda: datetime(2026, 8, 13, 10, 0, tzinfo=UTC)
+    app.state.agent_chat_graph = AgentChatGraph(model)
+    response = await client.post(
+        f"/api/agent/stores/{store.id}/messages",
+        json={"content": "会员套餐 7 月有多少？"},
+    )
+
+    assert response.status_code == 200
+    assert model.tool_result is not None
+    assert model.tool_result["status"] == "empty"
+    assert model.tool_result["requested_category_ids"] == [category_id]
+    assert model.tool_result["unmatched_category_ids"] == []
+    assert model.tool_result["historical_composition"] == []
+    assert response.json()["message"]["content"] == answer

@@ -37,6 +37,13 @@ class AuthorizedToolContext:
     local_today: date
 
 
+@dataclass(frozen=True)
+class HistoricalCategorySnapshot:
+    category_id: int
+    category_name: str
+    include_in_total: bool
+
+
 ToolHandler = Callable[[AuthorizedToolContext, Mapping[str, Any]], Awaitable[JsonObject]]
 
 
@@ -551,24 +558,28 @@ async def get_income_category_history(
     )
     known_ids.update(row.category_id for row in item_rows)
 
-    totals: dict[tuple[int, str, bool], int] = {}
+    totals: dict[HistoricalCategorySnapshot, int] = {}
     for row in item_rows:
-        key = (row.category_id, row.category_name, row.include_in_total)
+        key = HistoricalCategorySnapshot(
+            category_id=row.category_id,
+            category_name=row.category_name,
+            include_in_total=row.include_in_total,
+        )
         totals[key] = totals.get(key, 0) + row.amount
     requested_order = {category_id: index for index, category_id in enumerate(category_ids)}
     historical_composition = [
         {
-            "category_id": category_id,
-            "category_name": category_name,
-            "include_in_total": include_in_total,
+            "category_id": snapshot.category_id,
+            "category_name": snapshot.category_name,
+            "include_in_total": snapshot.include_in_total,
             "amount": amount,
         }
-        for (category_id, category_name, include_in_total), amount in sorted(
+        for snapshot, amount in sorted(
             totals.items(),
             key=lambda item: (
-                requested_order[item[0][0]],
-                item[0][1],
-                not item[0][2],
+                requested_order[item[0].category_id],
+                item[0].category_name,
+                not item[0].include_in_total,
             ),
         )
     ]
