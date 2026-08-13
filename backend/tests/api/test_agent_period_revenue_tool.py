@@ -203,7 +203,7 @@ async def test_period_revenue_is_composed_and_store_scoped_through_http(
     )
 
     assert response.status_code == 200
-    assert model.call_number == 3
+    assert model.call_number == 4
     assert model.tools is not None
     period_tool = next(
         tool

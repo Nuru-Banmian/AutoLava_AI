@@ -12,7 +12,7 @@ from sqlalchemy.orm.attributes import InstrumentedAttribute
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.identity import Store
-from app.models.ledger import IncomeCategory, StoreDailyRecord
+from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
 from app.models.settlement import SettlementCompany, SettlementRecord
 from app.services.access import require_fresh_store_access
 from app.services.income_config import IncomeConfigService
@@ -219,6 +219,7 @@ async def get_store_data_catalog(
         },
         "income_categories": [
             {
+                "id": category.id,
                 "name": category.name,
                 "include_in_total": category.include_in_total,
                 "is_active": category.is_active,
@@ -479,6 +480,135 @@ async def get_period_revenue(
     }
 
 
+def _category_ids(value: object) -> list[int] | str:
+    if not isinstance(value, list) or not value:
+        return "分类 ID 必须是非空数组"
+    if len(value) > 50:
+        return "一次最多查询 50 个分类"
+    if any(not isinstance(item, int) or isinstance(item, bool) for item in value):
+        return "分类 ID 必须是整数"
+    if len(value) != len(set(value)):
+        return "分类 ID 不能重复"
+    return value
+
+
+async def get_income_category_history(
+    context: AuthorizedToolContext, arguments: Mapping[str, Any]
+) -> JsonObject:
+    resolved = _resolve_period(arguments.get("period"), local_today=context.local_today)
+    if isinstance(resolved, str):
+        return {"status": "error", "error": resolved}
+    category_ids = _category_ids(arguments.get("category_ids"))
+    if isinstance(category_ids, str):
+        return {"status": "error", "error": category_ids}
+    start, end = resolved
+
+    records = list(
+        (
+            await context.session.execute(
+                select(
+                    StoreDailyRecord.id,
+                    StoreDailyRecord.income_mode,
+                    StoreDailyRecord.daily_revenue,
+                )
+                .where(
+                    StoreDailyRecord.store_id == context.store.id,
+                    StoreDailyRecord.date.between(start, end),
+                )
+                .order_by(StoreDailyRecord.date, StoreDailyRecord.id)
+            )
+        ).tuples()
+    )
+    item_rows = list(
+        (
+            await context.session.execute(
+                select(
+                    DailyIncomeItem.category_id,
+                    DailyIncomeItem.category_name,
+                    DailyIncomeItem.include_in_total,
+                    DailyIncomeItem.amount,
+                )
+                .join(
+                    StoreDailyRecord,
+                    StoreDailyRecord.id == DailyIncomeItem.record_id,
+                )
+                .where(
+                    StoreDailyRecord.store_id == context.store.id,
+                    StoreDailyRecord.date.between(start, end),
+                    DailyIncomeItem.category_id.in_(category_ids),
+                )
+                .order_by(StoreDailyRecord.date, DailyIncomeItem.sort_order)
+            )
+        ).tuples()
+    )
+    known_ids = set(
+        await context.session.scalars(
+            select(IncomeCategory.id).where(
+                IncomeCategory.store_id == context.store.id,
+                IncomeCategory.id.in_(category_ids),
+            )
+        )
+    )
+    known_ids.update(row.category_id for row in item_rows)
+
+    totals: dict[tuple[int, str, bool], int] = {}
+    for row in item_rows:
+        key = (row.category_id, row.category_name, row.include_in_total)
+        totals[key] = totals.get(key, 0) + row.amount
+    requested_order = {category_id: index for index, category_id in enumerate(category_ids)}
+    historical_composition = [
+        {
+            "category_id": category_id,
+            "category_name": category_name,
+            "include_in_total": include_in_total,
+            "amount": amount,
+        }
+        for (category_id, category_name, include_in_total), amount in sorted(
+            totals.items(),
+            key=lambda item: (
+                requested_order[item[0][0]],
+                item[0][1],
+                not item[0][2],
+            ),
+        )
+    ]
+    categorized = [record for record in records if record.income_mode == "composed"]
+    total_only = [record for record in records if record.income_mode == "legacy_total"]
+    selected_total = sum(row.amount for row in item_rows)
+    selected_included = sum(
+        row.amount for row in item_rows if row.include_in_total
+    )
+    return {
+        "status": "success" if item_rows else "partial" if records else "empty",
+        "period": {
+            "input": str(arguments["period"]).strip(),
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "timezone": context.store.timezone,
+        },
+        "requested_category_ids": category_ids,
+        "unmatched_category_ids": [
+            category_id for category_id in category_ids if category_id not in known_ids
+        ],
+        "historical_composition": historical_composition,
+        "selected_categories_total": selected_total,
+        "selected_included_revenue": selected_included,
+        "selected_other_data": selected_total - selected_included,
+        "categorized_bookkeeping": {
+            "record_count": len(categorized),
+            "daily_ledger_revenue": sum(
+                record.daily_revenue for record in categorized
+            ),
+        },
+        "total_bookkeeping": {
+            "record_count": len(total_only),
+            "daily_ledger_revenue": sum(record.daily_revenue for record in total_only),
+        },
+        "period_daily_ledger_revenue": sum(
+            record.daily_revenue for record in records
+        ),
+    }
+
 DEFAULT_AGENT_TOOLS = AgentToolRegistry(
     [
         AgentTool(
@@ -520,6 +650,37 @@ DEFAULT_AGENT_TOOLS = AgentToolRegistry(
                 "additionalProperties": False,
             },
             handler=get_period_revenue,
+        ),
+        AgentTool(
+            name="get_income_category_history",
+            description=(
+                "按分类 ID 查询指定期间的历史收入构成，由后端使用每条每日台账保存的"
+                "分类名称和计入口径计算组合金额，并区分分类记账、总额记账、收入分类"
+                "与其他数据。调用前先用门店数据目录取得当前分类 ID。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "period": {
+                        "type": "string",
+                        "description": (
+                            "用户要求的期间，例如上个月、今年、最近三周，或"
+                            "2026-07-01 至 2026-07-31"
+                        ),
+                    },
+                    "category_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "minItems": 1,
+                        "maxItems": 50,
+                        "uniqueItems": True,
+                        "description": "从当前门店数据目录取得的分类 ID。",
+                    },
+                },
+                "required": ["period", "category_ids"],
+                "additionalProperties": False,
+            },
+            handler=get_income_category_history,
         ),
     ]
 )

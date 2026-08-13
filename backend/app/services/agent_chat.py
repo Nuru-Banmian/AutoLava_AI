@@ -125,6 +125,7 @@ ANALYSIS_PROMPT = """你是 AutoLava 的分析 Agent。依据下方版本化 Ski
 {skill}
 """
 ANSWER_PROMPT = """你是 AutoLava 的回答 Agent。根据普通对话消息、理解 Agent 消息、分析 Agent 消息和 Tool Messages 组织简洁可靠的最终中文回答。没有 Tool 数据时也可以正常回答普通问题。需要必要信息时直接向用户追问。不要声称访问了未提供的数据。"""
+MAX_ANALYSIS_TOOL_ROUNDS = 4
 
 
 def _model_message(response: Mapping[str, object] | str) -> ChatMessage:
@@ -161,21 +162,25 @@ class AgentChatGraph:
 
         async def analyze(state: ChatState) -> dict[str, object]:
             understanding = {**state["understanding"], "name": "understanding_agent"}
-            response = await model.complete(
-                [
-                    {
-                        "role": "system",
-                        "content": ANALYSIS_PROMPT.format(skill=skill),
-                    },
-                    *state["messages"],
-                    understanding,
-                ],
-                tools=tool_registry.schemas,
-            )
-            analysis = _model_message(response)
-            analysis_messages = [analysis]
-            tool_calls = analysis.get("tool_calls", [])
-            if isinstance(tool_calls, list):
+            analysis_messages: list[ChatMessage] = []
+            for _ in range(MAX_ANALYSIS_TOOL_ROUNDS):
+                response = await model.complete(
+                    [
+                        {
+                            "role": "system",
+                            "content": ANALYSIS_PROMPT.format(skill=skill),
+                        },
+                        *state["messages"],
+                        understanding,
+                        *analysis_messages,
+                    ],
+                    tools=tool_registry.schemas,
+                )
+                analysis = _model_message(response)
+                analysis_messages.append(analysis)
+                tool_calls = analysis.get("tool_calls", [])
+                if not isinstance(tool_calls, list) or not tool_calls:
+                    break
                 for tool_call in tool_calls:
                     if isinstance(tool_call, Mapping):
                         analysis_messages.append(

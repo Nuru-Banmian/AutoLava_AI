@@ -62,7 +62,14 @@ class CatalogFlowModel:
             "company_settlement_enabled": False,
             "revenue_formula": "营业额 = 现金；\u201c其他数据\u201d只记录，不计入营业额",
         }
-        assert catalog["income_categories"] == [
+        assert all(
+            isinstance(category["id"], int)
+            for category in catalog["income_categories"]
+        )
+        assert [
+            {key: value for key, value in category.items() if key != "id"}
+            for category in catalog["income_categories"]
+        ] == [
             {
                 "name": "现金",
                 "include_in_total": True,
@@ -187,11 +194,12 @@ async def test_three_node_agent_uses_the_authorized_store_catalog_through_http(
             "content": "当前门店采用分类记账，现金计入营业额，其他数据不计入。",
         }
     }
-    assert len(model.calls) == 3
+    assert len(model.calls) == 4
     system_prompts = [call["messages"][0]["content"] for call in model.calls]
     assert "理解 Agent" in system_prompts[0]
     assert "分析 Agent" in system_prompts[1]
-    assert "回答 Agent" in system_prompts[2]
+    assert "分析 Agent" in system_prompts[2]
+    assert "回答 Agent" in system_prompts[3]
 
 
 async def test_a_registered_tool_is_available_without_changing_the_three_node_graph(
@@ -235,4 +243,4 @@ async def test_a_registered_tool_is_available_without_changing_the_three_node_gr
 
     assert response.status_code == 200
     assert response.json()["message"]["content"] == "新增工具已执行。"
-    assert model.call_number == 3
+    assert model.call_number == 4
