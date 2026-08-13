@@ -22,6 +22,9 @@ async function mockAgentApi(page: Page) {
         company_settlement_enabled: false,
       }]);
     }
+    if (path === "/api/agent/stores/1/conversation" && request.method() === "GET") {
+      return json({ messages: [] });
+    }
     if (path === "/api/agent/stores/1/messages" && request.method() === "POST") {
       return json({ message: { role: "assistant", content: "您好" } });
     }
