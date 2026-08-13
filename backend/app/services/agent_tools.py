@@ -667,7 +667,7 @@ DEFAULT_AGENT_TOOLS = AgentToolRegistry(
             description=(
                 "按分类 ID 查询指定期间的历史收入构成，由后端使用每条每日台账保存的"
                 "分类名称和计入口径计算组合金额，并区分分类记账、总额记账、收入分类"
-                "与其他数据。调用前先用门店数据目录取得当前分类 ID。"
+                "与其他数据。使用可信的当前分类 ID；尚未取得时可查询门店数据目录。"
             ),
             parameters={
                 "type": "object",
@@ -685,7 +685,9 @@ DEFAULT_AGENT_TOOLS = AgentToolRegistry(
                         "minItems": 1,
                         "maxItems": 50,
                         "uniqueItems": True,
-                        "description": "从当前门店数据目录取得的分类 ID。",
+                        "description": (
+                            "当前门店的可信分类 ID；缺少当前映射时可先查询门店数据目录。"
+                        ),
                     },
                 },
                 "required": ["period", "category_ids"],
