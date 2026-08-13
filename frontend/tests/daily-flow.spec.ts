@@ -426,7 +426,7 @@ for (const viewport of [
     if (mobile) await firstCurrentRow.click();
     const detail = mobile
       ? page.getByRole("dialog", { name: "2026-07-17 营业记录详情" })
-      : page.getByRole("heading", { name: "2026年7月17日" }).locator("../..");
+      : page.getByRole("heading", { name: "2026年7月17日 星期五" }).locator("../..");
     await expect(detail.getByText("€100", { exact: true }).first()).toBeVisible();
     await expect(detail.getByRole("link", { name: "修改这天记录" })).toBeVisible();
     if (mobile) {
@@ -454,7 +454,7 @@ for (const viewport of [
       await expect(pageTwoFirst).toHaveAttribute("aria-pressed", "true");
       await page.getByRole("button", { name: "Close" }).click();
     } else {
-      await expect(page.getByRole("heading", { name: "2026年7月2日" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "2026年7月2日 星期四" })).toBeVisible();
     }
 
     await page.getByRole("button", { name: "前一月", exact: true }).click();
@@ -466,7 +466,7 @@ for (const viewport of [
       await expect(previousMonthFirst).toHaveAttribute("aria-pressed", "true");
       await page.getByRole("button", { name: "Close" }).click();
     } else {
-      await expect(page.getByRole("heading", { name: "2026年6月30日" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "2026年6月30日 星期二" })).toBeVisible();
     }
 
     await expect(page.getByText("第 1 / 2 页")).toBeVisible();
@@ -562,7 +562,7 @@ test("desktop: multi-date ledger snapshots, markers, dirty guards, and permanent
   await expect.poll(() => flow.ledgerDeletes).toContain("2026-07-15");
   await expect(page.getByRole("table").locator("tbody tr").filter({ hasText: "2026年7月15日" })).toContainText("未录入");
   await expect.poll(() => flow.chartRequests.length).toBeGreaterThan(chartRequestsBeforeDelete);
-  await expect(page.getByRole("heading", { name: "2026年7月15日" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "2026年7月15日 星期三" })).toHaveCount(0);
 
   await navigation.getByRole("link", { name: "记账" }).click();
   await page.getByRole("button", { name: "选择台账日期：2026年7月17日" }).click();

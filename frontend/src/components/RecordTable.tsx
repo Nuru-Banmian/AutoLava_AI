@@ -1,7 +1,7 @@
-import { format, parseISO } from "date-fns";
 import type { KeyboardEvent } from "react";
 
 import type { RecordSnapshot } from "@/api/types";
+import { formatBusinessRecordDate } from "@/lib/business-record-date";
 import { formatWholeEuro } from "@/lib/user-api";
 
 export type RecordTableRow = RecordSnapshot | { id: null; date: string };
@@ -34,7 +34,7 @@ export function RecordTable({ records, selectedDate, loading, error, onSelect, o
         </thead>
         <tbody>
           {records.map((record) => {
-            const dateLabel = format(parseISO(record.date), "yyyy年M月d日");
+            const dateLabel = formatBusinessRecordDate(record.date);
             const isUnrecorded = record.id === null;
             const selected = record.date === selectedDate;
             return (
@@ -46,7 +46,7 @@ export function RecordTable({ records, selectedDate, loading, error, onSelect, o
                 onKeyDown={(event) => activateFromKeyboard(event, record)}
                 className={selected ? "cursor-pointer border-l-4 border-primary bg-primary/10" : "cursor-pointer border-l-4 border-transparent hover:bg-muted/60"}
               >
-                <td className="px-3 py-3">{dateLabel}</td>
+                <td className="whitespace-normal break-keep px-3 py-3">{dateLabel}</td>
                 <td className="px-3 py-3">{isUnrecorded ? "未录入" : record.is_open}</td>
                 <td className="px-3 py-3">{isUnrecorded ? "—" : formatWholeEuro(record.daily_revenue)}</td>
                 <td className="px-3 py-3">{isUnrecorded ? "—" : record.weather ?? "—"}</td>

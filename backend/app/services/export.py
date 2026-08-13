@@ -5,6 +5,8 @@ from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.cell import WriteOnlyCell
 
+_WEEKDAYS = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
+
 
 def _safe_text(value: object) -> object:
     if isinstance(value, str) and value.startswith(("=", "+", "-", "@")):
@@ -18,14 +20,14 @@ def build_ledger_workbook(
     records = list(records)
     workbook = Workbook(write_only=True)
     summary = workbook.create_sheet(title="经营记录")
-    summary_headers = ["日期", "状态", "总收入"]
+    summary_headers = ["日期", "星期", "状态", "总营业额"]
     if include_wash_count:
         summary_headers.append("洗车")
     summary_headers.extend(["天气", "事件", "记录人", "最后修改人"])
     summary.append(summary_headers)
 
     detail = workbook.create_sheet(title="收入明细")
-    detail.append(["日期", "收入项目", "计入总额", "排序", "金额"])
+    detail.append(["日期", "星期", "收入项目", "计入总额", "排序", "金额"])
 
     def money_cell(sheet, value: int) -> WriteOnlyCell:
         cell = WriteOnlyCell(sheet, value=int(value))
@@ -33,8 +35,10 @@ def build_ledger_workbook(
         return cell
 
     for record in records:
+        record_date = date.fromisoformat(record["date"])
         summary_row = [
-            date.fromisoformat(record["date"]),
+            record_date,
+            _WEEKDAYS[record_date.weekday()],
             record["is_open"],
             money_cell(summary, record["daily_revenue"]),
         ]
@@ -54,7 +58,8 @@ def build_ledger_workbook(
         ):
             detail.append(
                 [
-                    date.fromisoformat(record["date"]),
+                    record_date,
+                    _WEEKDAYS[record_date.weekday()],
                     _safe_text(item["category_name"]),
                     item["include_in_total"],
                     item["sort_order"],
