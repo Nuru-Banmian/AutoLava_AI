@@ -10,15 +10,31 @@ from app.services.agent_chat import AgentChatGraph, OpenAICompatibleChatModel
 
 class RecordingChatModel:
     def __init__(self) -> None:
-        self.calls: list[list[Mapping[str, str]]] = []
+        self.calls: list[list[Mapping[str, object]]] = []
+        self.answer_count = 0
 
-    async def complete(self, messages: Sequence[Mapping[str, str]]) -> str:
+    async def complete(
+        self,
+        messages: Sequence[Mapping[str, object]],
+        *,
+        tools: Sequence[Mapping[str, object]] | None = None,
+    ) -> str:
         self.calls.append(list(messages))
-        return f"回答{len(self.calls)}"
+        if tools is not None:
+            return "无需工具"
+        if str(messages[0]["content"]).startswith("你是 AutoLava 的理解 Agent"):
+            return "已理解"
+        self.answer_count += 1
+        return f"回答{self.answer_count}"
 
 
 class LongChatModel:
-    async def complete(self, messages: Sequence[Mapping[str, str]]) -> str:
+    async def complete(
+        self,
+        messages: Sequence[Mapping[str, object]],
+        *,
+        tools: Sequence[Mapping[str, object]] | None = None,
+    ) -> str:
         return "长" * 4001
 
 
@@ -41,7 +57,8 @@ async def test_administrator_chat_is_saved_and_restored_through_http(
     store_id = store.id
     await db_session.commit()
     await login(client, "administrator")
-    client._transport.app.state.agent_chat_graph = AgentChatGraph(RecordingChatModel())
+    model = RecordingChatModel()
+    client._transport.app.state.agent_chat_graph = AgentChatGraph(model)
 
     response = await client.post(
         f"/api/agent/stores/{store_id}/messages",
@@ -52,6 +69,9 @@ async def test_administrator_chat_is_saved_and_restored_through_http(
     assert response.json() == {
         "message": {"role": "assistant", "content": "回答1"}
     }
+    assert len(model.calls) == 3
+    assert model.calls[1][0]["role"] == "system"
+    assert "分析 Agent" in str(model.calls[1][0]["content"])
     restored = await client.get(f"/api/agent/stores/{store_id}/conversation")
     assert restored.status_code == 200
     assert restored.json() == {
@@ -240,9 +260,11 @@ async def test_model_receives_only_the_latest_twenty_saved_messages(
 
     latest_context = model.calls[-1]
     assert latest_context[0]["role"] == "system"
-    assert len(latest_context[1:]) == 20
+    assert len(latest_context[1:]) == 22
     assert latest_context[1] == {"role": "assistant", "content": "回答1"}
-    assert latest_context[-1] == {"role": "user", "content": "问题11"}
+    assert latest_context[-3] == {"role": "user", "content": "问题11"}
+    assert latest_context[-2]["name"] == "understanding_agent"
+    assert latest_context[-1] == {"role": "assistant", "content": "无需工具"}
     restored = await client.get(f"/api/agent/stores/{store_id}/conversation")
     assert len(restored.json()["messages"]) == 22
     assert restored.json()["messages"][0]["content"] == "问题1"
@@ -287,19 +309,19 @@ async def test_agent_chat_calls_an_openai_compatible_model_through_langgraph(
         "role": "assistant",
         "content": "第二轮回答",
     }
+    assert len(model_route.calls) == 3
     request = model_route.calls.last.request
     assert request.headers["authorization"] == "Bearer test-key"
     assert request.headers["x-dashscope-region"] == "eu-test-1"
-    assert json.loads(request.content) == {
-        "model": "basic-chat",
-        "messages": [
-            {
-                "role": "system",
-                "content": "你是 AutoLava AI，一个简洁、可靠的中文助手。",
-            },
-            {"role": "user", "content": "第二问"},
-        ],
-    }
+    final_request = json.loads(request.content)
+    assert final_request["model"] == "basic-chat"
+    assert "tools" not in final_request
+    assert "回答 Agent" in final_request["messages"][0]["content"]
+    assert final_request["messages"][1] == {"role": "user", "content": "第二问"}
+    assert final_request["messages"][2]["name"] == "understanding_agent"
+    analysis_request = json.loads(model_route.calls[1].request.content)
+    assert "分析 Agent" in analysis_request["messages"][0]["content"]
+    assert analysis_request["tools"][0]["function"]["name"] == "get_store_data_catalog"
 
 
 async def test_basic_agent_chat_remains_administrator_only(
