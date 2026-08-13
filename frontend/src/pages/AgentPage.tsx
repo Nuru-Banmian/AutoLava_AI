@@ -69,7 +69,7 @@ export function AgentPage() {
         )}
         {messages.map((message, index) => (
           <article
-            className={message.role === "user" ? "ml-auto max-w-[85%] rounded-xl bg-primary px-4 py-3 text-primary-foreground" : "mr-auto max-w-[85%] rounded-xl bg-muted px-4 py-3"}
+            className={message.role === "user" ? "ml-auto w-fit max-w-[85%] break-words rounded-xl bg-primary px-4 py-3 text-primary-foreground" : "mr-auto w-fit max-w-[85%] break-words rounded-xl bg-muted px-4 py-3"}
             key={`${message.role}-${index}`}
           >
             <span className="sr-only">{message.role === "user" ? "你" : "AI"}：</span>
