@@ -14,26 +14,24 @@ import { useStore } from "@/stores/StoreProvider";
 
 function AgentMarkdown({ content }: { content: string }) {
   return (
-    <div className="space-y-2 text-sm [&_a]:text-primary [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:text-base [&_h2]:font-semibold [&_h3]:font-semibold [&_hr]:my-3 [&_li]:ml-5 [&_ol]:list-decimal [&_p]:whitespace-pre-wrap [&_strong]:font-semibold [&_ul]:list-disc">
-      <ReactMarkdown
-        components={{
-          table: ({ children, ...props }) => (
-            <div className="my-2 max-w-full overflow-x-auto rounded-lg border">
-              <table className="w-full min-w-max border-collapse text-left" {...props}>{children}</table>
-            </div>
-          ),
-          th: ({ children, ...props }) => (
-            <th className="border-b border-r bg-background px-3 py-2 font-semibold last:border-r-0" {...props}>{children}</th>
-          ),
-          td: ({ children, ...props }) => (
-            <td className="border-b border-r px-3 py-2 align-top last:border-r-0" {...props}>{children}</td>
-          ),
-        }}
-        remarkPlugins={[remarkGfm]}
-      >
-        {content}
-      </ReactMarkdown>
-    </div>
+    <ReactMarkdown
+      components={{
+        table: ({ children, ...props }) => (
+          <div className="my-2 max-w-full overflow-x-auto rounded-lg border">
+            <table className="w-full min-w-max border-collapse text-left" {...props}>{children}</table>
+          </div>
+        ),
+        th: ({ children, ...props }) => (
+          <th className="border-b border-r bg-background px-3 py-2 font-semibold last:border-r-0" {...props}>{children}</th>
+        ),
+        td: ({ children, ...props }) => (
+          <td className="border-b border-r px-3 py-2 align-top last:border-r-0" {...props}>{children}</td>
+        ),
+      }}
+      remarkPlugins={[remarkGfm]}
+    >
+      {content}
+    </ReactMarkdown>
   );
 }
 
@@ -160,7 +158,7 @@ export function AgentPage() {
         )}
         {messages.map((message, index) => (
           <article
-            className={message.role === "user" ? "ml-auto w-fit max-w-[85%] break-words rounded-xl bg-primary px-4 py-3 text-primary-foreground" : "mr-auto w-fit max-w-[85%] break-words rounded-xl bg-muted px-4 py-3"}
+            className={message.role === "user" ? "ml-auto w-fit max-w-[85%] break-words rounded-xl bg-primary px-4 py-3 text-primary-foreground" : "mr-auto w-fit max-w-[85%] break-words space-y-2 rounded-xl bg-muted px-4 py-3 text-sm [&_a]:text-primary [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:text-base [&_h2]:font-semibold [&_h3]:font-semibold [&_hr]:my-3 [&_li]:ml-5 [&_ol]:list-decimal [&_p]:whitespace-pre-wrap [&_strong]:font-semibold [&_ul]:list-disc"}
             key={`${message.role}-${index}`}
           >
             <span className="sr-only">{message.role === "user" ? "你" : "AI"}：</span>
