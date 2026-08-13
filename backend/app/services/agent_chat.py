@@ -1,6 +1,6 @@
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Protocol, TypedDict
+from typing import Literal, Protocol, TypedDict
 
 import httpx
 from langgraph.graph import END, START, StateGraph
@@ -12,8 +12,26 @@ from app.services.agent_tools import (
     AgentToolRegistry,
 )
 
-ChatMessage = dict[str, Any]
 ToolSchema = Mapping[str, object]
+
+
+class ToolFunctionCall(TypedDict):
+    name: str
+    arguments: str
+
+
+class ToolCall(TypedDict):
+    id: str
+    type: Literal["function"]
+    function: ToolFunctionCall
+
+
+class ChatMessage(TypedDict, total=False):
+    role: Literal["system", "user", "assistant", "tool"]
+    content: str
+    name: str
+    tool_calls: list[ToolCall]
+    tool_call_id: str
 
 
 class ChatState(TypedDict):

@@ -5,6 +5,8 @@ from datetime import date
 from typing import Any
 
 from sqlalchemy import func, select
+from sqlalchemy.sql.elements import ColumnElement
+from sqlalchemy.orm.attributes import InstrumentedAttribute
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.identity import Store
@@ -134,6 +136,24 @@ def _date_value(value: date | None) -> str | None:
     return value.isoformat() if value is not None else None
 
 
+async def _query_coverage(
+    session: AsyncSession,
+    id_column: InstrumentedAttribute[int],
+    date_column: InstrumentedAttribute[date],
+    *conditions: ColumnElement[bool],
+) -> JsonObject:
+    row = (
+        await session.execute(
+            select(
+                func.count(id_column),
+                func.min(date_column),
+                func.max(date_column),
+            ).where(*conditions)
+        )
+    ).one()
+    return _coverage(row)
+
+
 async def get_store_data_catalog(
     context: AuthorizedToolContext, _: Mapping[str, Any]
 ) -> JsonObject:
@@ -149,60 +169,39 @@ async def get_store_data_catalog(
             .order_by(IncomeCategory.sort_order, IncomeCategory.id)
         )
     )
-    daily_coverage = (
-        await session.execute(
-            select(
-                func.count(StoreDailyRecord.id),
-                func.min(StoreDailyRecord.date),
-                func.max(StoreDailyRecord.date),
-            ).where(StoreDailyRecord.store_id == store.id)
-        )
-    ).one()
-    wash_coverage = (
-        await session.execute(
-            select(
-                func.count(StoreDailyRecord.id),
-                func.min(StoreDailyRecord.date),
-                func.max(StoreDailyRecord.date),
-            ).where(
-                StoreDailyRecord.store_id == store.id,
-                StoreDailyRecord.wash_count.is_not(None),
-            )
-        )
-    ).one()
-    weather_coverage = (
-        await session.execute(
-            select(
-                func.count(StoreDailyRecord.id),
-                func.min(StoreDailyRecord.date),
-                func.max(StoreDailyRecord.date),
-            ).where(
-                StoreDailyRecord.store_id == store.id,
-                StoreDailyRecord.weather.is_not(None),
-            )
-        )
-    ).one()
-    event_coverage = (
-        await session.execute(
-            select(
-                func.count(StoreDailyRecord.id),
-                func.min(StoreDailyRecord.date),
-                func.max(StoreDailyRecord.date),
-            ).where(
-                StoreDailyRecord.store_id == store.id,
-                StoreDailyRecord.activity.is_not(None),
-            )
-        )
-    ).one()
-    settlement_coverage = (
-        await session.execute(
-            select(
-                func.count(SettlementRecord.id),
-                func.min(SettlementRecord.opening_month),
-                func.max(SettlementRecord.opening_month),
-            ).where(SettlementRecord.store_id == store.id)
-        )
-    ).one()
+    daily_coverage = await _query_coverage(
+        session,
+        StoreDailyRecord.id,
+        StoreDailyRecord.date,
+        StoreDailyRecord.store_id == store.id,
+    )
+    wash_coverage = await _query_coverage(
+        session,
+        StoreDailyRecord.id,
+        StoreDailyRecord.date,
+        StoreDailyRecord.store_id == store.id,
+        StoreDailyRecord.wash_count.is_not(None),
+    )
+    weather_coverage = await _query_coverage(
+        session,
+        StoreDailyRecord.id,
+        StoreDailyRecord.date,
+        StoreDailyRecord.store_id == store.id,
+        StoreDailyRecord.weather.is_not(None),
+    )
+    event_coverage = await _query_coverage(
+        session,
+        StoreDailyRecord.id,
+        StoreDailyRecord.date,
+        StoreDailyRecord.store_id == store.id,
+        StoreDailyRecord.activity.is_not(None),
+    )
+    settlement_coverage = await _query_coverage(
+        session,
+        SettlementRecord.id,
+        SettlementRecord.opening_month,
+        SettlementRecord.store_id == store.id,
+    )
     config = IncomeConfigService.response(store, categories)
     return {
         "store": {"name": store.name, "timezone": store.timezone},
@@ -233,11 +232,11 @@ async def get_store_data_catalog(
             },
         ],
         "data_coverage": {
-            "daily_records": _coverage(daily_coverage),
-            "wash_count": _coverage(wash_coverage),
-            "recorded_weather": _coverage(weather_coverage),
-            "events": _coverage(event_coverage),
-            "company_settlement": _coverage(settlement_coverage),
+            "daily_records": daily_coverage,
+            "wash_count": wash_coverage,
+            "recorded_weather": weather_coverage,
+            "events": event_coverage,
+            "company_settlement": settlement_coverage,
         },
     }
 
