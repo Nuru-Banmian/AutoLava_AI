@@ -191,15 +191,19 @@ class AgentToolRegistry:
             store_id=context.store_id,
             capability="ledger.view",
         )
-        result = await tool.handler(
-            AuthorizedToolContext(
-                session=context.session,
-                user_id=user.id,
-                store=store,
-                local_today=context.now.astimezone(ZoneInfo(store.timezone)).date(),
-            ),
-            arguments,
-        )
+        try:
+            result = await tool.handler(
+                AuthorizedToolContext(
+                    session=context.session,
+                    user_id=user.id,
+                    store=store,
+                    local_today=context.now.astimezone(ZoneInfo(store.timezone)).date(),
+                ),
+                arguments,
+            )
+        except Exception:
+            await context.session.rollback()
+            return _tool_error(call_id, "工具暂时不可用")
         return {
             "role": "tool",
             "tool_call_id": call_id,
@@ -353,6 +357,8 @@ _EXPLICIT_RANGE = re.compile(
     r"(?P<end>(?:\d{4}(?:-|年)\d{1,2}(?:-|月))?\d{1,2}日?)\s*$"
 )
 _RECENT_WEEKS = re.compile(r"^最近\s*(?P<count>\d+|[一二三四五六七八九十]+)\s*周$")
+_CURRENT_WEEK = {"这周", "本周"}
+_CURRENT_MONTH = {"这个月", "本月"}
 _CHINESE_DIGITS = {
     "一": 1,
     "二": 2,
@@ -405,6 +411,10 @@ def _resolve_period(value: object, *, local_today: date) -> tuple[date, date] | 
     if not isinstance(value, str) or not value.strip():
         return "期间必须是非空文本"
     period = value.strip()
+    if period in _CURRENT_WEEK:
+        return local_today - timedelta(days=local_today.weekday()), local_today
+    if period in _CURRENT_MONTH:
+        return _month_start(local_today), local_today
     if period == "上个月":
         return _previous_month(local_today)
     if period == "今年":
@@ -420,7 +430,7 @@ def _resolve_period(value: object, *, local_today: date) -> tuple[date, date] | 
         return local_today - timedelta(days=count * 7 - 1), local_today
     explicit = _EXPLICIT_RANGE.fullmatch(period)
     if explicit is None:
-        return "无法识别期间，请使用上个月、今年、最近若干周或明确起止日期"
+        return "无法识别期间，请使用这周、本月、上个月、今年、最近若干周或明确起止日期"
     try:
         start = _parse_date(explicit["start"])
         end = _parse_date(
@@ -949,7 +959,7 @@ DEFAULT_AGENT_TOOLS = AgentToolRegistry(
                     "period": {
                         "type": "string",
                         "description": (
-                            "用户要求的期间，例如上个月、今年、最近三周，或"
+                            "用户要求的期间，例如这周、本月、上个月、今年、最近三周，或"
                             "2026-07-01 至 2026-07-31"
                         ),
                     },
@@ -976,7 +986,7 @@ DEFAULT_AGENT_TOOLS = AgentToolRegistry(
                     "period": {
                         "type": "string",
                         "description": (
-                            "用户要求的期间，例如上个月、今年、最近三周，或"
+                            "用户要求的期间，例如这周、本月、上个月、今年、最近三周，或"
                             "2026-07-01 至 2026-07-31"
                         ),
                     },
@@ -1009,7 +1019,7 @@ DEFAULT_AGENT_TOOLS = AgentToolRegistry(
                     "period": {
                         "type": "string",
                         "description": (
-                            "用户要求的期间，例如上个月、今年、最近三周，或"
+                            "用户要求的期间，例如这周、本月、上个月、今年、最近三周，或"
                             "2026-07-01 至 2026-07-31"
                         ),
                     },

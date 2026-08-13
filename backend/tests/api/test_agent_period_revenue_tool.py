@@ -260,6 +260,10 @@ async def test_relative_and_explicit_periods_return_normal_empty_results_through
     app = client._transport.app
     app.state.agent_clock = lambda: datetime(2026, 8, 13, 10, 0, tzinfo=UTC)
     cases = [
+        ("这周", "2026-08-10", "2026-08-13"),
+        ("本周", "2026-08-10", "2026-08-13"),
+        ("这个月", "2026-08-01", "2026-08-13"),
+        ("本月", "2026-08-01", "2026-08-13"),
         ("今年", "2026-01-01", "2026-08-13"),
         ("最近三周", "2026-07-24", "2026-08-13"),
         ("2026年7月1日至31日", "2026-07-01", "2026-07-31"),
@@ -412,7 +416,10 @@ async def test_invalid_periods_fail_safely_at_the_agent_http_seam(
     cases = [
         ("2026-08-14 至 2026-08-20", "期间结束日期不能晚于门店当地今天"),
         ("2026-08-10 至 2026-08-01", "期间起始日期不能晚于结束日期"),
-        ("前阵子", "无法识别期间，请使用上个月、今年、最近若干周或明确起止日期"),
+        (
+            "前阵子",
+            "无法识别期间，请使用这周、本月、上个月、今年、最近若干周或明确起止日期",
+        ),
     ]
 
     for period, expected_error in cases:
