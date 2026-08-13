@@ -48,6 +48,10 @@ Do not run a production build on the 2-core/2-GB server. The Web image consumes 
 1. Copy `.env.example` to `.env`.
 2. Replace every `change-me` value. Use a long random JWT secret and a strong bootstrap password;
    do not commit `.env`.
+   For basic AI chat, also set `AUTOLAVA_AGENT_MODEL_ENDPOINT`,
+   `AUTOLAVA_AGENT_MODEL_ID`, and `AUTOLAVA_AGENT_MODEL_API_KEY`. Providers that
+   require a region header can use `AUTOLAVA_AGENT_MODEL_REGION`. The endpoint
+   must expose an OpenAI-compatible chat completions API.
 3. Load both images, then run `docker compose up -d --no-build`.
 4. Run the external HTTPS reverse proxy on the same host and forward it to `127.0.0.1:80`.
 

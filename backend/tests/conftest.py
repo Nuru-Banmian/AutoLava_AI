@@ -1,7 +1,6 @@
 # ruff: noqa: E402
 
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
-from contextlib import asynccontextmanager
 from decimal import Decimal
 import os
 from pathlib import Path
@@ -23,7 +22,6 @@ from app.models.base import Base
 from app.models.identity import Store, User
 from app.services.weather import OpenMeteoProvider, WeatherService
 import app.models.ledger  # noqa: F401
-import app.models.agent  # noqa: F401
 import app.models.operations  # noqa: F401
 import app.models.settlement  # noqa: F401
 
@@ -100,12 +98,6 @@ async def client(
     app = create_app()
     app.state.weather_service = weather_stub
     app.state.open_meteo_provider = weather_stub
-
-    @asynccontextmanager
-    async def agent_session() -> AsyncIterator[AsyncSession]:
-        yield db_session
-
-    app.state.agent_session_factory = agent_session
 
     async def override_session() -> AsyncIterator[AsyncSession]:
         yield db_session

@@ -1,225 +1,118 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
-import { beforeEach, expect, it, vi } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { http, HttpResponse } from "msw";
+import { setupServer } from "msw/node";
+import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 
-import {
-  useAgentConversation,
-  useAgentCurrentStore,
-  useResetAgentConversation,
-  useSendAgentMessage,
-} from "@/lib/agent";
 import { AgentPage } from "@/pages/AgentPage";
 import { useStore } from "@/stores/StoreProvider";
 
-vi.mock("@/lib/agent", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/agent")>();
-  return {
-    ...actual,
-    useAgentConversation: vi.fn(),
-    useAgentCurrentStore: vi.fn(),
-    useResetAgentConversation: vi.fn(),
-    useSendAgentMessage: vi.fn(),
-  };
-});
 vi.mock("@/stores/StoreProvider", () => ({ useStore: vi.fn() }));
 
-beforeEach(() => {
+const server = setupServer();
+
+beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
+
+it("lets an administrator exchange a basic AI chat message", async () => {
   vi.mocked(useStore).mockReturnValue({
-    selected: { id: 7, name: "经营背景门店", timezone: "Europe/Rome" },
+    selected: { id: 7, name: "测试门店", timezone: "Europe/Rome" },
   } as ReturnType<typeof useStore>);
-  vi.mocked(useAgentCurrentStore).mockReturnValue({
-    data: { store_id: 7, store_name: "经营背景门店" },
-    isPending: false,
-    isError: false,
-  } as unknown as ReturnType<typeof useAgentCurrentStore>);
-  vi.mocked(useAgentConversation).mockReturnValue({
-    data: {
-      conversation_id: 3,
-      store_id: 7,
-      store_name: "经营背景门店",
-      messages: [],
-      latest_turn: {
-        id: 9,
-        status: "completed",
-        error_message: null,
-        started_at: "2026-07-29T10:00:00",
-        finished_at: "2026-07-29T10:00:01",
-        investigation_cards: [
-          {
-            operation: "按经营背景分组",
-            range_start: "2026-07-06",
-            range_end: "2026-07-09",
-            filters: ["分组维度：记录天气"],
-            status: "completed",
-            error_category: null,
-          },
-        ],
-      },
-    },
-    isPending: false,
-    isError: false,
-  } as unknown as ReturnType<typeof useAgentConversation>);
-  vi.mocked(useSendAgentMessage).mockReturnValue({
-    isPending: false,
-    isError: false,
-    mutate: vi.fn(),
-  } as unknown as ReturnType<typeof useSendAgentMessage>);
-  vi.mocked(useResetAgentConversation).mockReturnValue({
-    isPending: false,
-    isError: false,
-    mutate: vi.fn(),
-  } as unknown as ReturnType<typeof useResetAgentConversation>);
-});
-
-it("shows investigation ranges and filters without event or reasoning content", () => {
-  render(<AgentPage />);
-
-  const cards = screen.getByRole("region", { name: "调查过程" });
-  expect(within(cards).getByText("按经营背景分组")).toBeInTheDocument();
-  expect(within(cards).getByText("2026-07-06 至 2026-07-09"))
-    .toBeInTheDocument();
-  expect(within(cards).getByText("分组维度：记录天气")).toBeInTheDocument();
-  expect(within(cards).queryByText(/学校活动|道路施工|分类推理/))
-    .not.toBeInTheDocument();
-});
-
-it("shows investigation cards received during the live turn", () => {
-  vi.mocked(useSendAgentMessage).mockReturnValue({
-    isPending: false,
-    isError: false,
-    mutate: vi.fn(({ onEvent }) => {
-      onEvent({
-        type: "investigation_card",
-        turn_id: 10,
-        card: {
-          operation: "查看每日台账明细",
-          range_start: "2026-07-01",
-          range_end: "2026-07-31",
-          filters: ["仅有事件"],
-          status: "completed",
-          error_category: null,
-        },
-      });
-    }),
-  } as unknown as ReturnType<typeof useSendAgentMessage>);
-  render(<AgentPage />);
-
-  fireEvent.change(screen.getByRole("textbox", { name: "向 Agent 提问" }), {
-    target: { value: "调查本月事件" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: "发送" }));
-
-  const cards = screen.getByRole("region", { name: "调查过程" });
-  expect(within(cards).getByText("查看每日台账明细")).toBeInTheDocument();
-  expect(within(cards).getByText("2026-07-01 至 2026-07-31"))
-    .toBeInTheDocument();
-  expect(within(cards).getByText("仅有事件")).toBeInTheDocument();
-});
-
-it("shows safe failure categories without internal error details", () => {
-  vi.mocked(useAgentConversation).mockReturnValue({
-    data: {
-      conversation_id: 3,
-      store_id: 7,
-      store_name: "经营背景门店",
-      messages: [],
-      latest_turn: {
-        id: 10,
-        status: "completed",
-        error_message: null,
-        started_at: "2026-07-30T10:00:00",
-        finished_at: "2026-07-30T10:00:01",
-        investigation_cards: [
-          {
-            operation: "汇总经营表现",
-            range_start: null,
-            range_end: null,
-            filters: [],
-            status: "failed",
-            error_category: "timeout",
-          },
-          {
-            operation: "完成派生计算",
-            range_start: null,
-            range_end: null,
-            filters: [],
-            status: "unavailable",
-            error_category: "expected_unavailable",
-          },
-        ],
-      },
-    },
-    isPending: false,
-    isError: false,
-  } as unknown as ReturnType<typeof useAgentConversation>);
+  server.use(http.post("/api/agent/stores/7/messages", async ({ request }) => {
+    expect(await request.json()).toEqual({
+      messages: [{ role: "user", content: "你好" }],
+    });
+    return HttpResponse.json({
+      message: { role: "assistant", content: "你好，我是 AutoLava AI。" },
+    });
+  }));
 
   render(<AgentPage />);
+  await userEvent.type(screen.getByRole("textbox", { name: "消息" }), "你好");
+  await userEvent.click(screen.getByRole("button", { name: "发送" }));
 
-  const cards = screen.getByRole("region", { name: "调查过程" });
-  expect(within(cards).getByText("数据工具处理超时")).toBeInTheDocument();
-  expect(within(cards).getByText("计算结果预期不可用")).toBeInTheDocument();
-  expect(within(cards).queryByText(/secret|exception|参数值/))
-    .not.toBeInTheDocument();
+  expect(await screen.findByText("你好，我是 AutoLava AI。")).toBeInTheDocument();
+  expect(screen.getByText("你好")).toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: "消息" })).toHaveValue("");
 });
 
-it("sends with Enter while preserving Shift+Enter for a new line", () => {
-  const mutate = vi.fn();
-  vi.mocked(useSendAgentMessage).mockReturnValue({
-    isPending: false,
-    isError: false,
-    mutate,
-  } as unknown as ReturnType<typeof useSendAgentMessage>);
+it("does not carry chat history into another store", async () => {
+  vi.mocked(useStore).mockReturnValue({
+    selected: { id: 7, name: "一店", timezone: "Europe/Rome" },
+  } as ReturnType<typeof useStore>);
+  server.use(http.post("/api/agent/stores/7/messages", () => HttpResponse.json({
+    message: { role: "assistant", content: "一店回答" },
+  })));
+  const view = render(<AgentPage />);
+  await userEvent.type(screen.getByRole("textbox", { name: "消息" }), "一店问题");
+  await userEvent.click(screen.getByRole("button", { name: "发送" }));
+  expect(await screen.findByText("一店回答")).toBeInTheDocument();
+
+  vi.mocked(useStore).mockReturnValue({
+    selected: { id: 8, name: "二店", timezone: "Europe/Rome" },
+  } as ReturnType<typeof useStore>);
+  view.rerender(<AgentPage />);
+
+  expect(screen.queryByText("一店问题")).not.toBeInTheDocument();
+  expect(screen.queryByText("一店回答")).not.toBeInTheDocument();
+});
+
+it("ignores an old store reply that finishes after the store changes", async () => {
+  let releaseReply: (() => void) | undefined;
+  const delayedReply = new Promise<void>((resolve) => { releaseReply = resolve; });
+  vi.mocked(useStore).mockReturnValue({
+    selected: { id: 7, name: "一店", timezone: "Europe/Rome" },
+  } as ReturnType<typeof useStore>);
+  server.use(http.post("/api/agent/stores/7/messages", async () => {
+    await delayedReply;
+    return HttpResponse.json({
+      message: { role: "assistant", content: "迟到的一店回答" },
+    });
+  }));
+  const view = render(<AgentPage />);
+  await userEvent.type(screen.getByRole("textbox", { name: "消息" }), "一店问题");
+  await userEvent.click(screen.getByRole("button", { name: "发送" }));
+
+  vi.mocked(useStore).mockReturnValue({
+    selected: { id: 8, name: "二店", timezone: "Europe/Rome" },
+  } as ReturnType<typeof useStore>);
+  view.rerender(<AgentPage />);
+  releaseReply?.();
+
+  await waitFor(() => expect(screen.queryByText("迟到的一店回答")).not.toBeInTheDocument());
+  expect(screen.queryByText("一店问题")).not.toBeInTheDocument();
+});
+
+it("keeps chatting after ten exchanges by sending only the recent context", async () => {
+  vi.mocked(useStore).mockReturnValue({
+    selected: { id: 7, name: "测试门店", timezone: "Europe/Rome" },
+  } as ReturnType<typeof useStore>);
+  const requestBodies: Array<{ messages: Array<{ role: string; content: string }> }> = [];
+  server.use(http.post("/api/agent/stores/7/messages", async ({ request }) => {
+    requestBodies.push(await request.json() as typeof requestBodies[number]);
+    return HttpResponse.json({
+      message: { role: "assistant", content: `回答${requestBodies.length}` },
+    });
+  }));
   render(<AgentPage />);
 
-  const input = screen.getByRole("textbox", { name: "向 Agent 提问" });
-  fireEvent.change(input, { target: { value: "分析本月营业额" } });
-  fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
-  expect(mutate).not.toHaveBeenCalled();
+  for (let turn = 1; turn <= 11; turn += 1) {
+    await userEvent.type(screen.getByRole("textbox", { name: "消息" }), `问题${turn}`);
+    await userEvent.click(screen.getByRole("button", { name: "发送" }));
+    await screen.findByText(`回答${turn}`);
+  }
 
-  fireEvent.keyDown(input, { key: "Enter" });
-  expect(mutate).toHaveBeenCalledOnce();
-  expect(mutate).toHaveBeenCalledWith(
-    expect.objectContaining({ content: "分析本月营业额" }),
-    expect.any(Object),
+  expect(requestBodies).toHaveLength(11);
+  expect(requestBodies.at(-1)?.messages).toHaveLength(19);
+  expect(requestBodies.at(-1)?.messages.at(0)?.role).toBe("user");
+  expect(requestBodies.at(-1)?.messages.map((message) => message.role)).toEqual(
+    Array.from({ length: 19 }, (_, index) => index % 2 === 0 ? "user" : "assistant"),
   );
-});
-
-it("keeps the message editor at a fixed size", () => {
-  render(<AgentPage />);
-
-  expect(screen.getByRole("textbox", { name: "向 Agent 提问" }))
-    .toHaveClass("h-24", "resize-none");
-});
-
-it("does not let Enter bypass the one-active-turn guard", () => {
-  const mutate = vi.fn();
-  vi.mocked(useAgentConversation).mockReturnValue({
-    data: {
-      conversation_id: 3,
-      store_id: 7,
-      store_name: "经营背景门店",
-      messages: [],
-      latest_turn: {
-        id: 9,
-        status: "running",
-        error_message: null,
-        started_at: "2026-07-29T10:00:00",
-        finished_at: null,
-        investigation_cards: [],
-      },
-    },
-    isPending: false,
-    isError: false,
-  } as unknown as ReturnType<typeof useAgentConversation>);
-  vi.mocked(useSendAgentMessage).mockReturnValue({
-    isPending: false,
-    isError: false,
-    mutate,
-  } as unknown as ReturnType<typeof useSendAgentMessage>);
-  render(<AgentPage />);
-
-  const input = screen.getByRole("textbox", { name: "向 Agent 提问" });
-  fireEvent.change(input, { target: { value: "再发一条" } });
-  fireEvent.keyDown(input, { key: "Enter" });
-
-  expect(mutate).not.toHaveBeenCalled();
+  expect(requestBodies.at(-1)?.messages.at(-1)).toEqual({
+    role: "user",
+    content: "问题11",
+  });
+  expect(screen.getByText("问题1")).toBeInTheDocument();
+  expect(screen.getByText("回答11")).toBeInTheDocument();
 });

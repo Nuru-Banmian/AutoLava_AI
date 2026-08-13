@@ -1,331 +1,100 @@
-import { FormEvent, KeyboardEvent, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import { friendlyApiError } from "@/api/client";
-import type { AgentInvestigationCard } from "@/api/types";
-import {
-  AlertDialog,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
-  AgentStreamEndedError,
-  type AgentTurnEvent,
-  useAgentConversation,
-  useAgentCurrentStore,
-  useResetAgentConversation,
-  useSendAgentMessage,
-} from "@/lib/agent";
+  sendAgentChatMessage,
+  type AgentChatMessage,
+} from "@/lib/agent-chat";
 import { useStore } from "@/stores/StoreProvider";
-
-const SAFE_INVESTIGATION_MESSAGES: Record<
-  NonNullable<AgentInvestigationCard["error_category"]>,
-  string
-> = {
-  timeout: "数据工具处理超时",
-  temporary: "数据工具暂时不可用",
-  permission: "当前权限不足",
-  validation: "参数或业务规则不符合要求",
-  tool_failure: "数据工具处理失败",
-  expected_unavailable: "计算结果预期不可用",
-};
-
-function AgentConversationPanel({ storeId }: { storeId: number }) {
-  const [draft, setDraft] = useState("");
-  const [resetOpen, setResetOpen] = useState(false);
-  const [liveAnswer, setLiveAnswer] = useState("");
-  const [livePhase, setLivePhase] = useState<string | null>(null);
-  const [liveCards, setLiveCards] = useState<AgentInvestigationCard[]>([]);
-  const conversation = useAgentConversation(storeId);
-  const send = useSendAgentMessage(storeId);
-  const reset = useResetAgentConversation(storeId);
-  const running = conversation.data?.latest_turn?.status === "running";
-  const canSend = Boolean(draft.trim()) && !send.isPending && !running;
-
-  useEffect(() => {
-    setDraft("");
-    setLiveAnswer("");
-    setLivePhase(null);
-    setLiveCards([]);
-  }, [storeId]);
-
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    const content = draft.trim();
-    if (!canSend) return;
-    setLiveAnswer("");
-    setLivePhase("正在开始本轮分析…");
-    setLiveCards([]);
-    send.mutate({
-      content,
-      onEvent: (streamEvent: AgentTurnEvent) => {
-        if (streamEvent.type === "started") {
-          setLivePhase("正在查询数据…");
-        } else if (streamEvent.type === "phase") {
-          setLivePhase({
-            querying_data: "正在查询数据…",
-            processing_data: "正在处理数据…",
-            preparing_answer: "正在准备回答…",
-          }[streamEvent.phase]);
-        } else if (streamEvent.type === "answer_delta") {
-          setLiveAnswer((current) => current + streamEvent.delta);
-        } else if (streamEvent.type === "investigation_card") {
-          setLivePhase(streamEvent.card.operation);
-          setLiveCards((current) => [...current, streamEvent.card]);
-        } else if (streamEvent.type === "completed") {
-          setLivePhase("回答已完成");
-        } else {
-          setLivePhase(null);
-        }
-      },
-    }, {
-      onSuccess: () => setDraft(""),
-    });
-  }
-
-  function sendOnEnter(event: KeyboardEvent<HTMLTextAreaElement>) {
-    const isDesktop = !window.matchMedia
-      || window.matchMedia("(min-width: 768px)").matches;
-    if (
-      !isDesktop
-      || event.key !== "Enter"
-      || event.shiftKey
-      || event.nativeEvent.isComposing
-    ) {
-      return;
-    }
-    event.preventDefault();
-    event.currentTarget.form?.requestSubmit();
-  }
-
-  if (conversation.isPending) {
-    return <p role="status">正在恢复 Agent 会话…</p>;
-  }
-  if (conversation.isError) {
-    return (
-      <p className="text-destructive" role="alert">
-        {friendlyApiError(conversation.error, "Agent 会话加载失败，请重试")}
-      </p>
-    );
-  }
-
-  const latestAnswer = [...conversation.data.messages]
-    .reverse()
-    .find((message) => message.role === "assistant")?.content;
-  const showLiveAnswer = Boolean(
-    liveAnswer && liveAnswer !== latestAnswer && (send.isPending || running),
-  );
-  const persistedFailure = conversation.data.latest_turn
-    && ["failed", "interrupted"].includes(conversation.data.latest_turn.status)
-    ? conversation.data.latest_turn.error_message
-    : null;
-  const investigationCards = liveCards.length > 0
-    ? liveCards
-    : (conversation.data.latest_turn?.investigation_cards ?? []);
-
-  return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3">
-      <div
-        aria-label="Agent 对话内容"
-        className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto rounded-lg border bg-background p-4"
-        role="region"
-      >
-        <div aria-label="Agent 会话" className="grid gap-3">
-          {conversation.data.messages.length === 0
-            ? (
-                <p className="text-sm text-muted-foreground">
-                  还没有消息，可以从当前门店的经营问题开始。
-                </p>
-              )
-            : conversation.data.messages.map((message) => (
-                <article
-                  className={message.role === "user"
-                    ? "ml-auto max-w-[85%] rounded-lg bg-primary px-3 py-2 text-primary-foreground"
-                    : "mr-auto max-w-[85%] rounded-lg bg-muted px-3 py-2"}
-                  key={message.id}
-                >
-                  <p className="mb-1 text-xs font-medium">
-                    {message.role === "user" ? "你" : "Agent"}
-                  </p>
-                  <p className="whitespace-pre-wrap text-sm">{message.content}</p>
-                </article>
-              ))}
-          {showLiveAnswer && (
-            <article className="mr-auto max-w-[85%] rounded-lg bg-muted px-3 py-2">
-              <p className="mb-1 text-xs font-medium">Agent</p>
-              <p className="whitespace-pre-wrap text-sm">{liveAnswer}</p>
-            </article>
-          )}
-        </div>
-
-        {investigationCards.length > 0 && (
-          <section
-            aria-label="调查过程"
-            className="grid gap-2 rounded-lg border bg-muted/30 p-4"
-          >
-            <h2 className="text-sm font-semibold">调查过程</h2>
-            <ol className="grid gap-2">
-              {investigationCards.map((card, index) => (
-                <li
-                  className="rounded-md border bg-background px-3 py-2"
-                  key={[
-                    card.operation,
-                    card.range_start,
-                    card.range_end,
-                    ...card.filters,
-                    card.error_category,
-                    index,
-                  ].join("|")}
-                >
-                  <p className="text-sm font-medium">{card.operation}</p>
-                  {card.error_category && (
-                    <p className="text-xs text-muted-foreground">
-                      {SAFE_INVESTIGATION_MESSAGES[card.error_category]}
-                    </p>
-                  )}
-                  {card.range_start && card.range_end && (
-                    <p className="text-xs text-muted-foreground">
-                      {card.range_start} 至 {card.range_end}
-                    </p>
-                  )}
-                  {card.filters.length > 0 && (
-                    <ul className="mt-1 flex flex-wrap gap-1">
-                      {card.filters.map((filter) => (
-                        <li
-                          className="rounded bg-muted px-2 py-0.5 text-xs"
-                          key={filter}
-                        >
-                          {filter}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </li>
-              ))}
-            </ol>
-          </section>
-        )}
-
-        {(running || send.isPending) && (
-          <p className="text-sm text-muted-foreground" role="status">
-            {livePhase ?? "后台处理中，正在恢复结果…"}
-          </p>
-        )}
-      </div>
-      <form className="grid shrink-0 gap-2" onSubmit={submit}>
-        <label className="text-sm font-medium" htmlFor="agent-message">
-          向 Agent 提问
-        </label>
-        <textarea
-          aria-label="向 Agent 提问"
-          className="h-24 resize-none rounded-md border bg-background px-3 py-2 text-sm"
-          id="agent-message"
-          maxLength={4000}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={sendOnEnter}
-          placeholder="例如：上个月的经营情况怎么样？"
-          value={draft}
-        />
-        {(send.isError || reset.isError || persistedFailure) && (
-          <p className="text-sm text-destructive" role="alert">
-            {send.error instanceof AgentStreamEndedError
-              ? "实时连接已断开，后台仍会继续处理；页面正在恢复结果。"
-              : persistedFailure ?? friendlyApiError(
-                send.error ?? reset.error,
-                send.isError ? "消息发送失败，请重试" : "会话重置失败，请重试",
-              )}
-          </p>
-        )}
-        <div className="flex flex-wrap justify-end gap-2">
-          <Button
-            disabled={reset.isPending}
-            onClick={() => setResetOpen(true)}
-            type="button"
-            variant="outline"
-          >
-            重置会话
-          </Button>
-          <Button
-            disabled={!canSend}
-            type="submit"
-          >
-            {send.isPending || running ? "正在回答…" : "发送"}
-          </Button>
-        </div>
-      </form>
-      <AlertDialog open={resetOpen} onOpenChange={setResetOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>确认重置 Agent 会话？</AlertDialogTitle>
-            <AlertDialogDescription>
-              当前门店的 Agent 消息和派生资料会被删除，门店业务记录不会改变。
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={reset.isPending}>取消</AlertDialogCancel>
-            <Button
-              disabled={reset.isPending}
-              onClick={() => reset.mutate(undefined, {
-                onSuccess: () => {
-                  setLiveCards([]);
-                  setResetOpen(false);
-                },
-              })}
-              type="button"
-              variant="destructive"
-            >
-              {reset.isPending ? "正在重置…" : "确认重置"}
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
-  );
-}
 
 export function AgentPage() {
   const { selected } = useStore();
-  const access = useAgentCurrentStore(selected?.id);
+  const [messages, setMessages] = useState<AgentChatMessage[]>([]);
+  const [draft, setDraft] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const storeVersion = useRef(0);
 
-  if (!selected) {
-    return (
-      <section>
-        <h1 className="text-2xl font-semibold">数据分析 Agent</h1>
-        <p role="status">请先选择门店。</p>
-      </section>
-    );
-  }
-  if (access.isPending) {
-    return <p role="status">正在进入 Agent 当前门店…</p>;
-  }
-  if (access.isError) {
-    return (
-      <section className="space-y-3">
-        <h1 className="text-2xl font-semibold">数据分析 Agent</h1>
-        <p className="text-destructive" role="alert">
-          {friendlyApiError(access.error, "当前无法进入数据分析 Agent")}
-        </p>
-        <Link className="text-sm text-primary underline" to="/">返回首页</Link>
-      </section>
-    );
+  useEffect(() => {
+    storeVersion.current += 1;
+    setMessages([]);
+    setDraft("");
+    setError(null);
+    setIsSending(false);
+  }, [selected?.id]);
+
+  async function send(event: FormEvent) {
+    event.preventDefault();
+    const content = draft.trim();
+    if (!selected || !content || isSending) return;
+    const nextMessages: AgentChatMessage[] = [
+      ...messages,
+      { role: "user", content },
+    ];
+    setMessages(nextMessages);
+    setDraft("");
+    setError(null);
+    setIsSending(true);
+    const requestStoreVersion = storeVersion.current;
+    try {
+      const response = await sendAgentChatMessage(selected.id, nextMessages.slice(-19));
+      if (requestStoreVersion === storeVersion.current) {
+        setMessages([...nextMessages, response.message]);
+      }
+    } catch (caught) {
+      if (requestStoreVersion === storeVersion.current) {
+        setError(friendlyApiError(caught, "AI 回复失败，请稍后重试"));
+      }
+    } finally {
+      if (requestStoreVersion === storeVersion.current) {
+        setIsSending(false);
+      }
+    }
   }
 
   return (
-    <section
-      aria-label="Agent 工作区"
-      className="flex h-full min-h-0 w-full flex-1 flex-col gap-4"
-    >
-      <div className="shrink-0">
-        <h1 className="text-2xl font-semibold">数据分析 Agent</h1>
-        <p className="mt-2 text-sm text-muted-foreground">Agent 当前门店</p>
-        <p className="text-lg font-medium">{access.data.store_name}</p>
+    <section className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4">
+      <div>
+        <h1 className="text-2xl font-semibold">AI 对话</h1>
+        <p className="text-sm text-muted-foreground">当前为基础对话，刷新页面后记录会清空。</p>
       </div>
-      <AgentConversationPanel storeId={access.data.store_id} />
+      <div
+        aria-label="对话消息"
+        className="min-h-64 flex-1 space-y-3 rounded-xl border bg-background p-4"
+        role="log"
+      >
+        {messages.length === 0 && (
+          <p className="text-sm text-muted-foreground">发送一条消息开始对话。</p>
+        )}
+        {messages.map((message, index) => (
+          <article
+            className={message.role === "user" ? "ml-auto max-w-[85%] rounded-xl bg-primary px-4 py-3 text-primary-foreground" : "mr-auto max-w-[85%] rounded-xl bg-muted px-4 py-3"}
+            key={`${message.role}-${index}`}
+          >
+            <span className="sr-only">{message.role === "user" ? "你" : "AI"}：</span>
+            <p className="whitespace-pre-wrap text-sm">{message.content}</p>
+          </article>
+        ))}
+        {isSending && <p className="text-sm text-muted-foreground" role="status">AI 正在回复…</p>}
+      </div>
+      <form className="grid gap-2" onSubmit={(event) => { void send(event); }}>
+        <label className="sr-only" htmlFor="agent-message">消息</label>
+        <textarea
+          aria-label="消息"
+          className="h-24 resize-none rounded-xl border bg-background p-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          disabled={!selected || isSending}
+          id="agent-message"
+          maxLength={4000}
+          onChange={(event) => setDraft(event.target.value)}
+          placeholder={selected ? "输入消息…" : "请先选择门店"}
+          value={draft}
+        />
+        <div className="flex items-center justify-between gap-3">
+          <div>{error && <p className="text-sm text-destructive" role="alert">{error}</p>}</div>
+          <Button disabled={!selected || !draft.trim() || isSending} type="submit">发送</Button>
+        </div>
+      </form>
     </section>
   );
 }
