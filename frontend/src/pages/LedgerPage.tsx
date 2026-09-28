@@ -23,12 +23,21 @@ export function LedgerPage() {
   const [searchParams, setSearchParams] = useSearchParams(); const hasDateParameter = searchParams.has("date"); const parameterDate = validDateParameter(searchParams.get("date"));
   const today = selected ? storeLocalToday(selected) : ""; const allowedParameterDate = today && parameterDate && parameterDate <= today ? parameterDate : null; const [dateSelection, setDateSelection] = useState<{ storeId: number | null; date: string }>({ storeId: null, date: "" }); const storedDate = dateSelection.storeId === selected?.id && dateSelection.date <= today ? dateSelection.date : ""; const date = hasDateParameter ? allowedParameterDate ?? today : storedDate || today; const [visibleMonth, setVisibleMonth] = useState(() => date.slice(0, 7)); const [calendarOpen, setCalendarOpen] = useState(false); const [message, setMessage] = useState(""); const [savedSubmission, setSavedSubmission] = useState<{ revision: number; storeId: number; date: string; body: LedgerBody; canonicalRequested: boolean; canonicalReady: boolean } | null>(null);
   const scopeRef = useRef({ storeId: selected?.id ?? null, date }); scopeRef.current = { storeId: selected?.id ?? null, date };
+  const [expected, setExpected] = useState<{ scope: string; identity: string | null; revision: number | null } | null>(null);
+  const [conflict, setConflict] = useState<{ current: RecordSnapshot | null } | null>(null);
   useEffect(() => setDateSelection({ storeId: selected?.id ?? null, date }), [selected?.id, date]);
   useEffect(() => setVisibleMonth(date.slice(0, 7)), [selected?.id, date]);
   useEffect(() => { setMessage(""); setSavedSubmission(null); }, [selected?.id, date]);
   const catalog = useQuery({ queryKey: selected ? categoryCatalogKey(selected.id, date) : ["categoryCatalog", "none"], enabled: Boolean(selected && date), queryFn: () => api<DatabaseResponse>(`/database/${selected!.id}/records?start=${date}&end=${date}&page=1&page_size=1`) });
   const config = useQuery({ queryKey: selected ? incomeConfigKey(selected.id) : ["income-config", "none", "current"], enabled: Boolean(selected), queryFn: () => api<IncomeConfigResponse>(`/income-config/${selected!.id}/current`) });
   const record = useQuery({ queryKey: selected && date ? ledgerRecordKey(selected.id, date) : ["ledger", "record", "none"], enabled: Boolean(selected && date), queryFn: async () => { try { return await api<RecordSnapshot>(`/ledger/${selected!.id}/${date}`); } catch (error) { if (error instanceof ApiError && error.status === 404) return null; throw error; } } });
+  const writeScope = `${selected?.id ?? "none"}:${date}`;
+  useEffect(() => {
+    if (record.isSuccess && expected?.scope !== writeScope) {
+      setExpected({ scope: writeScope, identity: record.data?.identity ?? null, revision: record.data?.revision ?? null });
+      setConflict(null);
+    }
+  }, [record.isSuccess, record.data, expected?.scope, writeScope]);
   const monthRecords = useQuery<DatabaseResponse>({ queryKey: selected && visibleMonth ? ledgerMonthKey(selected.id, visibleMonth) : ["ledgerMonth", "none"], enabled: Boolean(selected && visibleMonth && calendarOpen), queryFn: ({ signal }) => {
     const monthDate = parseISO(`${visibleMonth}-01`);
     const start = format(startOfMonth(monthDate), "yyyy-MM-dd");
@@ -52,10 +61,12 @@ export function LedgerPage() {
     });
   });
   const save = useMutation({
-    mutationFn: ({ storeId, date: targetDate, body }: { storeId: number; date: string; body: LedgerBody }) => api<LedgerSaveResponse>(`/ledger/${storeId}/${targetDate}`, { method: "PUT", body: JSON.stringify(body) }),
-    onSuccess: async (_data, variables) => {
+    mutationFn: ({ storeId, date: targetDate, body, identity, revision }: { storeId: number; date: string; body: LedgerBody; identity: string | null; revision: number | null }) => api<LedgerSaveResponse>(`/ledger/${storeId}/${targetDate}`, { method: "PUT", body: JSON.stringify({ ...body, expected_identity: identity, expected_revision: revision }) }),
+    onSuccess: async (data, variables) => {
       const isCurrentScope = scopeRef.current.storeId === variables.storeId && scopeRef.current.date === variables.date;
       if (isCurrentScope) {
+        setExpected({ scope: `${variables.storeId}:${variables.date}`, identity: data.identity, revision: data.revision });
+        setConflict(null);
         setSavedSubmission((previous) => ({ revision: (previous?.revision ?? 0) + 1, storeId: variables.storeId, date: variables.date, body: variables.body, canonicalRequested: false, canonicalReady: false }));
         setMessage("保存成功");
       }
@@ -73,7 +84,16 @@ export function LedgerPage() {
       }
     },
     onError: (error, variables) => {
-      if (scopeRef.current.storeId === variables.storeId && scopeRef.current.date === variables.date) setMessage(friendlyApiError(error, "保存失败，请重试"));
+      if (scopeRef.current.storeId !== variables.storeId || scopeRef.current.date !== variables.date) return;
+      const detail = error instanceof ApiError && typeof error.responseBody === "object" && error.responseBody !== null && "detail" in error.responseBody ? error.responseBody.detail : null;
+      if (error instanceof ApiError && error.status === 409 && typeof detail === "object" && detail !== null && "code" in detail && detail.code === "ledger_revision_conflict") {
+        setConflict({ current: "current" in detail ? detail.current as RecordSnapshot | null : null });
+        setMessage("每日台账已变化，草稿已保留。请核对最新记录后再决定是否继续保存。");
+      } else if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+        setMessage("当前没有记账权限，草稿已保留。请重新登录或联系管理员。");
+      } else if (error instanceof ApiError && (error.status === 422 || error.status === 428)) {
+        setMessage("提交参数有误，草稿已保留。请重新加载页面后核对。");
+      } else setMessage(friendlyApiError(error, "保存失败，草稿已保留，请重试"));
     },
   });
   if (!selected) return <section><h1 className="text-2xl font-semibold">记账</h1><p role="status">请先选择门店。</p></section>;
@@ -81,7 +101,16 @@ export function LedgerPage() {
     <div className="mx-auto grid w-full max-w-4xl min-w-0 gap-4">
       <header className="flex min-w-0 flex-wrap items-center justify-between gap-3"><h1 className="text-2xl font-semibold">记账</h1><LedgerDatePicker value={date || today} today={today} recordedDates={recordedDates} onChange={chooseDate} onMonthChange={setVisibleMonth} onOpenChange={setCalendarOpen} /></header>
       <div role="region" aria-label="记账录入" className="grid min-w-0 gap-4 rounded-xl border bg-card p-4 text-card-foreground shadow-sm sm:p-6">
-        {selected.is_active === false ? <p role="status">该门店已归档，台账仅供查看；可在历史记录和经营分析中查看数据。</p> : catalog.isLoading || config.isLoading || record.isLoading || weatherOptions.isLoading ? <p role="status">加载台账…</p> : config.error || weatherOptions.error ? <div role="alert"><span>{friendlyApiError(config.error ?? weatherOptions.error, "记账选项加载失败，请稍后重试")}</span><button className="ml-2 underline" onClick={() => { if (config.error) void config.refetch(); if (weatherOptions.error) void weatherOptions.refetch(); }}>{config.error ? "重试收入配置" : "重试天气选项"}</button></div> : catalog.error || (record.error && !record.data && !currentSavedSubmission) ? <p role="alert">{friendlyApiError(catalog.error ?? record.error, "台账加载失败，请稍后重试")}</p> : <LedgerForm key={`${selected.id}:${date}`} categories={catalog.data?.categories ?? []} config={config.data!} record={record.data ?? undefined} recordRevision={record.dataUpdatedAt} weather={weather.data} weatherOptions={weatherOptions.data ?? []} washCountEnabled={selected.wash_count_enabled ?? true} saving={save.isPending} submitLabel={record.data ? "保存修改" : date === today ? "保存今日记录" : "补记历史记录"} savedSubmission={currentSavedSubmission} onDirtyChange={markDirty} onSave={(body) => { setMessage(""); save.mutate({ storeId: selected.id, date, body }); }} />}
+        {selected.is_active === false ? <p role="status">该门店已归档，台账仅供查看；可在历史记录和经营分析中查看数据。</p> : catalog.isLoading || config.isLoading || record.isLoading || weatherOptions.isLoading ? <p role="status">加载台账…</p> : config.error || weatherOptions.error ? <div role="alert"><span>{friendlyApiError(config.error ?? weatherOptions.error, "记账选项加载失败，请稍后重试")}</span><button className="ml-2 underline" onClick={() => { if (config.error) void config.refetch(); if (weatherOptions.error) void weatherOptions.refetch(); }}>{config.error ? "重试收入配置" : "重试天气选项"}</button></div> : catalog.error || (record.error && !record.data && !currentSavedSubmission) ? <p role="alert">{friendlyApiError(catalog.error ?? record.error, "台账加载失败，请稍后重试")}</p> : <LedgerForm key={`${selected.id}:${date}`} categories={catalog.data?.categories ?? []} config={config.data!} record={record.data ?? undefined} recordRevision={record.dataUpdatedAt} weather={weather.data} weatherOptions={weatherOptions.data ?? []} washCountEnabled={selected.wash_count_enabled ?? true} saving={save.isPending} submitLabel={record.data ? "保存修改" : date === today ? "保存今日记录" : "补记历史记录"} savedSubmission={currentSavedSubmission} onDirtyChange={markDirty} onSave={(body) => { if (expected?.scope !== writeScope || conflict) return; setMessage(""); save.mutate({ storeId: selected.id, date, body, identity: expected.identity, revision: expected.revision }); }} />}
+        {conflict && <div role="group" aria-label="最新每日台账" className="space-y-2 rounded-md border p-3">
+          {conflict.current ? <>
+            <p>{`最新记录：${conflict.current.is_open}，营业额 ${conflict.current.daily_revenue} 欧元，修订号 ${conflict.current.revision}`}</p>
+            <p>洗车数量：{conflict.current.wash_count ?? "未记录"}；天气：{conflict.current.weather ?? "未记录"}</p>
+            <p>事件：{conflict.current.activity ?? "无"}</p>
+            {conflict.current.items.length > 0 && <ul>{conflict.current.items.map((item) => <li key={item.category_id}>{item.category_name}：{item.amount} 欧元</li>)}</ul>}
+          </> : <p>最新记录：该日期暂无记录，原记录可能已删除。</p>}
+          <button type="button" className="underline" onClick={() => { setExpected({ scope: writeScope, identity: conflict.current?.identity ?? null, revision: conflict.current?.revision ?? null }); setConflict(null); setMessage("已确认最新状态。请核对草稿后再次保存。"); }}>确认最新状态并继续编辑</button>
+        </div>}
         {record.error && (record.data || currentSavedSubmission) && <p role="alert">台账刷新失败，请稍后重试<button className="ml-2 underline" onClick={() => void record.refetch()}>重试台账</button></p>}
         {message && <p role={message === "保存成功" ? "status" : "alert"}>{message}</p>}
       </div>

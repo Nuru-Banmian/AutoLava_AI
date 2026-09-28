@@ -74,6 +74,8 @@ async def ledger_context(db_session, user_factory, store_factory) -> LedgerConte
 
 def composed_payload(context: LedgerContext, *, cash: int = 100, agency: int = 50) -> dict:
     return {
+        "expected_identity": None,
+        "expected_revision": None,
         "is_open": "营业",
         "daily_revenue": None,
         "wash_count": 3,
@@ -100,7 +102,7 @@ async def test_composed_total_sums_only_included_integer_items(
     assert [item.amount for item in result.record.items] == [100, 50]
 
 
-async def test_second_write_directly_overwrites_existing_record(
+async def test_second_write_with_matching_revision_updates_existing_record(
     ledger_context: LedgerContext,
 ) -> None:
     service = LedgerService(ledger_context.session)
@@ -113,7 +115,7 @@ async def test_second_write_directly_overwrites_existing_record(
     second = await service.upsert(
         store_id=ledger_context.store_id,
         record_date=ledger_context.today,
-        payload=composed_payload(ledger_context, cash=175),
+        payload=composed_payload(ledger_context, cash=175) | {"expected_identity": first.record.identity, "expected_revision": first.record.revision},
         actor_id=ledger_context.user_id,
     )
     assert second.created is False
@@ -125,7 +127,7 @@ async def test_existing_snapshot_survives_current_category_edits(
     ledger_context: LedgerContext,
 ) -> None:
     service = LedgerService(ledger_context.session)
-    await service.upsert(
+    first = await service.upsert(
         store_id=ledger_context.store_id,
         record_date=ledger_context.today,
         payload=composed_payload(ledger_context),
@@ -142,7 +144,7 @@ async def test_existing_snapshot_survives_current_category_edits(
     result = await service.upsert(
         store_id=ledger_context.store_id,
         record_date=ledger_context.today,
-        payload=composed_payload(ledger_context, cash=125, agency=75),
+        payload=composed_payload(ledger_context, cash=125, agency=75) | {"expected_identity": first.record.identity, "expected_revision": first.record.revision},
         actor_id=ledger_context.user_id,
     )
 
@@ -196,7 +198,7 @@ async def test_legacy_total_uses_integer_and_rejects_items(
     result = await LedgerService(db_session).upsert(
         store_id=store_id,
         record_date=datetime.now(ZoneInfo(timezone)).date(),
-        payload={"is_open": "营业", "daily_revenue": 125, "items": []},
+        payload={"expected_identity": None, "expected_revision": None, "is_open": "营业", "daily_revenue": 125, "items": []},
         actor_id=user_id,
     )
     assert result.record.income_mode == "legacy_total"
@@ -244,6 +246,8 @@ async def test_delete_removes_current_record(ledger_context: LedgerContext) -> N
         store_id=ledger_context.store_id,
         record_date=ledger_context.today,
         actor_id=ledger_context.user_id,
+        expected_identity=result.record.identity,
+        expected_revision=result.record.revision,
     )
     assert event.operation == "deleted"
     assert await ledger_context.session.get(StoreDailyRecord, record_id) is None
@@ -279,12 +283,13 @@ async def test_same_day_creates_are_serialized_to_one_current_record() -> None:
             return await LedgerService(session).upsert(
                 store_id=store_id,
                 record_date=datetime.now(ZoneInfo(timezone)).date(),
-                payload={"is_open": "营业", "daily_revenue": total, "items": []},
+                payload={"expected_identity": None, "expected_revision": None, "is_open": "营业", "daily_revenue": total, "items": []},
                 actor_id=user_id,
             )
 
-    results = await asyncio.gather(write(100), write(200))
-    assert sorted(result.created for result in results) == [False, True]
+    results = await asyncio.gather(write(100), write(200), return_exceptions=True)
+    assert sum(not isinstance(result, BaseException) and result.created for result in results) == 1
+    assert sum(isinstance(result, HTTPException) and result.status_code == 409 for result in results) == 1
     async with async_session_factory() as verify:
         assert await verify.scalar(select(func.count()).select_from(StoreDailyRecord)) == 1
 
@@ -339,6 +344,8 @@ async def test_new_record_reloads_composed_config_after_waiting_for_lock() -> No
             store_id=store_id,
             record_date=datetime.now(ZoneInfo(timezone)).date(),
             payload={
+                "expected_identity": None,
+                "expected_revision": None,
                 "is_open": "营业",
                 "daily_revenue": None,
                 "items": [

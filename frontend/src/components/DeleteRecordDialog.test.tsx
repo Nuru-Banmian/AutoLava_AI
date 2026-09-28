@@ -9,7 +9,7 @@ import { DeleteRecordDialog } from "@/components/DeleteRecordDialog";
 
 const server = setupServer();
 const record = {
-  id: 4, store_id: 1, date: "2026-07-14", daily_revenue: 100, income_mode: "composed",
+  id: 4, identity: "record-4", revision: 1, store_id: 1, date: "2026-07-14", daily_revenue: 100, income_mode: "composed",
   wash_count: 8, is_open: "营业", weather: "晴", weather_auto: "晴", weather_code: 1,
   temperature_max: "20.0", temperature_min: "10.0", precipitation: "0.0",
   activity: null, weather_edited: false, scanned: false, created_by: 1, updated_by: 1,
@@ -37,7 +37,7 @@ afterEach(() => { server.resetHandlers(); vi.restoreAllMocks(); });
 afterAll(() => server.close());
 
 describe("DeleteRecordDialog", () => {
-  it("permanently deletes without version, history, or rollback requests and invalidates dependants", async () => {
+  it("permanently deletes with identity and revision and invalidates dependants", async () => {
     const requests: string[] = [];
     server.use(
       http.all("/api/*", ({ request }) => {
@@ -82,6 +82,19 @@ describe("DeleteRecordDialog", () => {
     expect(screen.getByRole("alertdialog", { name: "确认永久删除记录？" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "确认永久删除" }));
     await waitFor(() => expect(requests).toBe(2));
+  });
+
+  it("blocks deletion when the stable conflict says the record was removed", async () => {
+    let requests = 0;
+    server.use(http.delete("/api/ledger/1/2026-07-14", () => {
+      requests += 1;
+      return HttpResponse.json({ detail: { code: "ledger_revision_conflict", message: "changed", current: null } }, { status: 409 });
+    }));
+    renderDialog();
+    fireEvent.click(screen.getByRole("button", { name: "确认永久删除" }));
+    expect(await screen.findByText("最新记录：该日期暂无记录。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "确认永久删除" })).toBeDisabled();
+    expect(requests).toBe(1);
   });
 
   it("prevents duplicate actions while permanent deletion is pending", async () => {

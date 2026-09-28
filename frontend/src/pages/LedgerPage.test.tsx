@@ -70,7 +70,7 @@ async function chooseRecordWeather(value: string) {
 
 function recordSnapshot(amount: number, activity: string | null = null, weather: string | null = null) {
   return {
-    id: 9, store_id: 1, date: "2026-07-15", daily_revenue: amount, income_mode: "composed",
+    id: 9, identity: "record-9", revision: 1, store_id: 1, date: "2026-07-15", daily_revenue: amount, income_mode: "composed",
     wash_count: null, is_open: "营业", weather, weather_auto: weather, weather_code: null, temperature_max: null, temperature_min: null, precipitation: null,
     activity, weather_edited: false, scanned: false, created_by: 1, updated_by: 1, created_at: "2026-07-15T08:00:00", updated_at: "2026-07-15T08:00:00",
     items: [
@@ -256,6 +256,7 @@ describe("LedgerPage", () => {
     fillBlankLedgerAmounts();
     fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
     await waitFor(() => expect(submitted).toEqual({
+      expected_identity: "record-9", expected_revision: 1,
       is_open: "提前休息", daily_revenue: null,
       wash_count: 17, weather: "中雨", weather_edited: false, activity: "周末促销",
       items: [{ category_id: 1, amount: 100 }, { category_id: 2, amount: 12 }, { category_id: 3, amount: 5 }],
@@ -842,6 +843,26 @@ describe("LedgerPage", () => {
     fireEvent.click(saveButton);
     expect(await screen.findByRole("alert")).toHaveTextContent("数据已经发生变化，请刷新后重试");
     expect(screen.queryByText(/覆盖已有记录/)).not.toBeInTheDocument();
+  });
+
+  it("keeps the draft on a revision conflict until the user confirms the current record", async () => {
+    const submitted: unknown[] = [];
+    server.use(http.put("/api/ledger/1/:date", async ({ request }) => {
+      submitted.push(await request.json());
+      if (submitted.length === 1) return HttpResponse.json({ detail: { code: "ledger_revision_conflict", message: "changed", current: recordSnapshot(100) } }, { status: 409 });
+      return HttpResponse.json({ id: 9, identity: "record-9", revision: 2, date: "2026-07-15", daily_revenue: 77 });
+    }));
+    renderLedger();
+    fireEvent.change(await screen.findByLabelText("现金"), { target: { value: "77" } });
+    fillBlankLedgerAmounts();
+    fireEvent.click(screen.getByRole("button", { name: "保存今日记录" }));
+    expect(await screen.findByRole("group", { name: "最新每日台账" })).toHaveTextContent("营业额 100 欧元");
+    expect(screen.getByLabelText("现金")).toHaveValue("77");
+    expect(submitted).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "确认最新状态并继续编辑" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存今日记录" }));
+    await waitFor(() => expect(submitted).toHaveLength(2));
+    expect(submitted[1]).toMatchObject({ expected_identity: "record-9", expected_revision: 1 });
   });
 
 });

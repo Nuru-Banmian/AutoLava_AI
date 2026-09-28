@@ -82,6 +82,23 @@ def today_for(assigned_store: AssignedStore) -> date:
     return datetime.now(ZoneInfo(assigned_store.timezone)).date()
 
 
+async def put_ledger(client: AsyncClient, path: str, *, json: dict):
+    current = await client.get(path)
+    expected = current.json() if current.status_code == 200 else None
+    return await client.put(path, json=json | {
+        "expected_identity": expected["identity"] if expected else None,
+        "expected_revision": expected["revision"] if expected else None,
+    })
+
+
+async def delete_ledger(client: AsyncClient, path: str):
+    current = (await client.get(path)).json()
+    return await client.request("DELETE", path, json={
+        "expected_identity": current["identity"],
+        "expected_revision": current["revision"],
+    })
+
+
 async def test_put_releases_dependency_transaction_before_weather(
     auth_client: AsyncClient,
     assigned_store: AssignedStore,
@@ -97,7 +114,7 @@ async def test_put_releases_dependency_transaction_before_weather(
 
     auth_client._transport.app.state.weather_service = TransactionObservingWeather()
 
-    response = await auth_client.put(
+    response = await put_ledger(auth_client,
         f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}",
         json=ledger_payload,
     )
@@ -114,7 +131,7 @@ async def test_amount_input_requires_json_integer(
     amount,
 ) -> None:
     ledger_payload["items"][0]["amount"] = amount
-    response = await auth_client.put(
+    response = await put_ledger(auth_client,
         f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}",
         json=ledger_payload,
     )
@@ -130,7 +147,7 @@ async def test_direct_total_requires_json_integer(
 ) -> None:
     assigned_store.store.income_items_enabled = False
     await db_session.commit()
-    response = await auth_client.put(
+    response = await put_ledger(auth_client,
         f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}",
         json={"is_open": "营业", "daily_revenue": daily_revenue, "items": []},
     )
@@ -141,14 +158,14 @@ async def test_second_put_overwrites_without_compatibility_parameters(
     auth_client: AsyncClient, assigned_store: AssignedStore, ledger_payload: dict
 ) -> None:
     path = f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}"
-    first = await auth_client.put(path, json=ledger_payload)
+    first = await put_ledger(auth_client, path, json=ledger_payload)
     second_payload = ledger_payload | {
         "items": [
             {"category_id": assigned_store.cash_id, "amount": 321},
             {"category_id": assigned_store.excluded_id, "amount": 90},
         ]
     }
-    second = await auth_client.put(path, json=second_payload)
+    second = await put_ledger(auth_client, path, json=second_payload)
     assert first.status_code == 201
     assert second.status_code == 200
     assert second.json()["daily_revenue"] == 321
@@ -162,8 +179,8 @@ async def test_record_card_returns_persisted_bookkeeping_events_only_on_database
 ) -> None:
     path = f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}"
 
-    created = await auth_client.put(path, json=ledger_payload)
-    updated = await auth_client.put(
+    created = await put_ledger(auth_client, path, json=ledger_payload)
+    updated = await put_ledger(auth_client,
         path,
         json=ledger_payload
         | {
@@ -213,7 +230,7 @@ async def test_record_snapshot_is_retained_after_current_category_edits(
     db_session: AsyncSession,
 ) -> None:
     path = f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}"
-    assert (await auth_client.put(path, json=ledger_payload)).status_code == 201
+    assert (await put_ledger(auth_client, path, json=ledger_payload)).status_code == 201
     assigned_store.cash.name = "Renamed"
     assigned_store.cash.include_in_total = False
     assigned_store.cash.sort_order = 8
@@ -222,7 +239,7 @@ async def test_record_snapshot_is_retained_after_current_category_edits(
     assigned_store.excluded.sort_order = 9
     await db_session.commit()
 
-    updated = await auth_client.put(
+    updated = await put_ledger(auth_client,
         path,
         json=ledger_payload
         | {
@@ -248,7 +265,7 @@ async def test_existing_record_accepts_a_newly_enabled_income_category(
     db_session: AsyncSession,
 ) -> None:
     path = f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}"
-    assert (await auth_client.put(path, json=ledger_payload)).status_code == 201
+    assert (await put_ledger(auth_client, path, json=ledger_payload)).status_code == 201
     added = IncomeCategory(
         store_id=assigned_store.id,
         name="Added later",
@@ -268,7 +285,7 @@ async def test_existing_record_accepts_a_newly_enabled_income_category(
         added_id,
     ]
 
-    updated = await auth_client.put(
+    updated = await put_ledger(auth_client,
         path,
         json=ledger_payload
         | {
@@ -293,7 +310,7 @@ async def test_put_and_get_return_integer_money(
     auth_client: AsyncClient, assigned_store: AssignedStore, ledger_payload: dict
 ) -> None:
     path = f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}"
-    created = await auth_client.put(path, json=ledger_payload)
+    created = await put_ledger(auth_client, path, json=ledger_payload)
     fetched = await auth_client.get(path)
     assert created.status_code == 201
     assert created.json()["daily_revenue"] == 200
@@ -306,7 +323,7 @@ async def test_early_close_preserves_values_while_rest_normalizes_them(
 ) -> None:
     path = f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}"
 
-    early_close = await auth_client.put(
+    early_close = await put_ledger(auth_client,
         path,
         json=ledger_payload | {"is_open": "提前休息"},
     )
@@ -318,7 +335,7 @@ async def test_early_close_preserves_values_while_rest_normalizes_them(
     assert early_close_record.json()["wash_count"] == 12
     assert [item["amount"] for item in early_close_record.json()["items"]] == [200, 80]
 
-    rest = await auth_client.put(path, json=ledger_payload | {"is_open": "休息"})
+    rest = await put_ledger(auth_client, path, json=ledger_payload | {"is_open": "休息"})
     rest_record = await auth_client.get(path)
 
     assert rest.status_code == 200
@@ -333,7 +350,7 @@ async def test_recent_uses_store_local_window(
 ) -> None:
     today = today_for(assigned_store)
     for target in (today - timedelta(days=7), today - timedelta(days=2), today):
-        response = await auth_client.put(
+        response = await put_ledger(auth_client,
             f"/api/ledger/{assigned_store.id}/{target.isoformat()}", json=ledger_payload
         )
         assert response.status_code == 201
@@ -349,14 +366,14 @@ async def test_recent_uses_store_local_window(
 async def test_future_and_invalid_status_are_422(
     auth_client: AsyncClient, assigned_store: AssignedStore, ledger_payload: dict
 ) -> None:
-    future = await auth_client.put(
+    future = await put_ledger(auth_client,
         f"/api/ledger/{assigned_store.id}/2999-01-01", json=ledger_payload
     )
-    invalid = await auth_client.put(
+    invalid = await put_ledger(auth_client,
         f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}",
         json=ledger_payload | {"is_open": "unknown"},
     )
-    legacy = await auth_client.put(
+    legacy = await put_ledger(auth_client,
         f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}",
         json=ledger_payload | {"is_open": "天气停业"},
     )
@@ -374,8 +391,8 @@ async def test_delete_returns_204(
     user.role = "admin"
     await db_session.commit()
     path = f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}"
-    assert (await auth_client.put(path, json=ledger_payload)).status_code == 201
-    deleted = await auth_client.delete(path)
+    assert (await put_ledger(auth_client, path, json=ledger_payload)).status_code == 201
+    deleted = await delete_ledger(auth_client, path)
     assert deleted.status_code == 204
     assert (await auth_client.get(path)).status_code == 404
 
@@ -390,9 +407,9 @@ async def test_record_weather_contract_rejects_new_unknown_values_without_writin
     assert options.json() == list(RECORD_WEATHER_OPTIONS)
     assert len(options.json()) == 28
     for label in options.json():
-        assert (await auth_client.put(path, json=ledger_payload | {"weather": label})).status_code in (200, 201)
-    assert (await auth_client.put(path, json=ledger_payload | {"weather": None})).status_code == 200
-    invalid = await auth_client.put(path, json=ledger_payload | {
+        assert (await put_ledger(auth_client, path, json=ledger_payload | {"weather": label})).status_code in (200, 201)
+    assert (await put_ledger(auth_client, path, json=ledger_payload | {"weather": None})).status_code == 200
+    invalid = await put_ledger(auth_client, path, json=ledger_payload | {
         "weather": "供应商未知天气",
         "items": [{"category_id": assigned_store.cash_id, "amount": 999},
                   {"category_id": assigned_store.excluded_id, "amount": 80}],
@@ -409,7 +426,7 @@ async def test_legacy_weather_reads_exports_and_analysis_until_corrected(
 ) -> None:
     target = today_for(assigned_store).isoformat()
     path = f"/api/ledger/{assigned_store.id}/{target}"
-    assert (await auth_client.put(path, json=ledger_payload)).status_code == 201
+    assert (await put_ledger(auth_client, path, json=ledger_payload)).status_code == 201
     record = await db_session.scalar(select(StoreDailyRecord).where(StoreDailyRecord.store_id == assigned_store.id))
     assert record is not None
     record.weather = "旧版任意天气"
@@ -429,9 +446,9 @@ async def test_legacy_weather_reads_exports_and_analysis_until_corrected(
     assert exported.status_code == 200
     rows = load_workbook(BytesIO(exported.content), read_only=True)["经营记录"].values
     assert "历史旧值：旧版任意天气" in next(row for row in rows if target in str(row[0]))
-    assert (await auth_client.put(path, json=ledger_payload | {"weather": "旧版任意天气"})).status_code == 422
-    assert (await auth_client.put(path, json={key: value for key, value in ledger_payload.items() if key != "weather"})).status_code == 422
-    assert (await auth_client.put(path, json=ledger_payload | {"weather": None, "weather_edited": True})).status_code == 200
+    assert (await put_ledger(auth_client, path, json=ledger_payload | {"weather": "旧版任意天气"})).status_code == 422
+    assert (await put_ledger(auth_client, path, json={key: value for key, value in ledger_payload.items() if key != "weather"})).status_code == 422
+    assert (await put_ledger(auth_client, path, json=ledger_payload | {"weather": None, "weather_edited": True})).status_code == 200
     corrected = (await auth_client.get(path)).json()
     assert corrected["weather"] is None
     assert corrected["weather_legacy"] is False
@@ -450,7 +467,7 @@ async def test_explicit_clear_with_auto_weather_stays_cleared(
 ) -> None:
     target = today_for(assigned_store).isoformat()
     path = f"/api/ledger/{assigned_store.id}/{target}"
-    assert (await auth_client.put(path, json=ledger_payload)).status_code == 201
+    assert (await put_ledger(auth_client, path, json=ledger_payload)).status_code == 201
     record = await db_session.scalar(select(StoreDailyRecord).where(StoreDailyRecord.store_id == assigned_store.id))
     assert record is not None
     record.weather = None
@@ -464,7 +481,7 @@ async def test_explicit_clear_with_auto_weather_stays_cleared(
 
     auth_client._transport.app.state.weather_service = FreshWeather()
 
-    clear = await auth_client.put(path, json=ledger_payload | {"weather": None, "weather_edited": False})
+    clear = await put_ledger(auth_client, path, json=ledger_payload | {"weather": None, "weather_edited": False})
     assert clear.status_code == 200
     saved = (await auth_client.get(path)).json()
     assert saved["weather"] is None
@@ -477,14 +494,14 @@ async def test_untouched_empty_weather_can_still_be_auto_filled(
     path = f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}"
     body = {key: value for key, value in ledger_payload.items() if key != "weather"}
     body["weather_edited"] = False
-    assert (await auth_client.put(path, json=body)).status_code == 201
+    assert (await put_ledger(auth_client, path, json=body)).status_code == 201
 
     class FreshWeather:
         async def get_daily(self, store, requested_date):
             return WeatherResult("晴", 0, 20.0, 10.0, 0.0)
 
     auth_client._transport.app.state.weather_service = FreshWeather()
-    assert (await auth_client.put(path, json=body)).status_code == 200
+    assert (await put_ledger(auth_client, path, json=body)).status_code == 200
     saved = (await auth_client.get(path)).json()
     assert saved["weather"] == "晴"
     assert saved["weather_edited"] is False

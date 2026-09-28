@@ -23,6 +23,8 @@ type TestInitialEntry = string | { pathname: string; state?: unknown };
 
 const record: RecordSnapshot = {
   id: 4,
+  identity: "record-4",
+  revision: 1,
   store_id: 1,
   date: "2026-07-14",
   daily_revenue: 100,

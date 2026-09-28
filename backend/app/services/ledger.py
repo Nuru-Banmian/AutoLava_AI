@@ -4,6 +4,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -19,6 +20,7 @@ from app.models.ledger import (
 )
 from app.models.operations import UTC_TIMESTAMP_CONTRACT
 from app.services.access import require_fresh_store_access
+from app.services.record_payload import record_payload
 from app.services.weather import RECORD_WEATHER_VALUES, is_legacy_weather
 
 _MAX_MONEY = 9_999_999_999
@@ -45,6 +47,18 @@ class LedgerWriteResult:
 class LedgerService:
     def __init__(self, session: AsyncSession):
         self.session = session
+
+    @staticmethod
+    def _check_expected(record: StoreDailyRecord | None, identity: str | None, revision: int | None) -> None:
+        if record is None and identity is None and revision is None:
+            return
+        if record is not None and record.identity == identity and record.revision == revision:
+            return
+        raise HTTPException(409, {
+            "code": "ledger_revision_conflict",
+            "message": "每日台账已变化，请核对最新记录后重新操作",
+            "current": jsonable_encoder(record_payload(record)) if record is not None else None,
+        })
 
     @staticmethod
     def _local_today(store: Store) -> date:
@@ -125,6 +139,8 @@ class LedgerService:
             )
             return {
                 "store_id": store.id,
+                "identity": record.identity,
+                "revision": record.revision,
                 "enabled": record.income_mode == "composed",
                 "items": sorted(
                     items, key=lambda item: (item["sort_order"], item["category_id"])
@@ -142,6 +158,8 @@ class LedgerService:
         )
         return {
             "store_id": store.id,
+            "identity": None,
+            "revision": None,
             "enabled": store.income_items_enabled,
             "items": [
                 {
@@ -172,6 +190,7 @@ class LedgerService:
         actor_id: int,
     ) -> tuple[bool, int, date]:
         record = await self._find_record(store_id=store.id, record_date=record_date)
+        self._check_expected(record, payload["expected_identity"], payload["expected_revision"])
         created = record is None
         if record is not None and is_legacy_weather(record.weather) and "weather" not in payload:
             raise HTTPException(422, "Historical weather must be corrected or cleared")
@@ -257,6 +276,7 @@ class LedgerService:
             self.session.add(record)
         else:
             record.updated_by = actor_id
+            record.revision += 1
             record.items.clear()
             await self.session.flush()
 
@@ -329,7 +349,7 @@ class LedgerService:
         payload: dict[str, Any],
         actor_id: int,
     ) -> LedgerWriteResult:
-        async with sqlite_short_write(self.session):
+        async with sqlite_short_write(self.session, begin_immediate=True):
             _, fresh_store = await require_fresh_store_access(
                 self.session,
                 user_id=actor_id,
@@ -366,8 +386,10 @@ class LedgerService:
         store_id: int,
         record_date: date,
         actor_id: int,
+        expected_identity: str,
+        expected_revision: int,
     ) -> LedgerChanged:
-        async with sqlite_short_write(self.session):
+        async with sqlite_short_write(self.session, begin_immediate=True):
             await require_fresh_store_access(
                 self.session,
                 user_id=actor_id,
@@ -377,8 +399,8 @@ class LedgerService:
             record = await self._find_record(
                 store_id=store_id, record_date=record_date
             )
-            if record is None:
-                raise HTTPException(404, "Record not found")
+            self._check_expected(record, expected_identity, expected_revision)
+            assert record is not None
             event = LedgerChanged(
                 store_id=store_id,
                 record_id=record.id,

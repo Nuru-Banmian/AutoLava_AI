@@ -207,6 +207,8 @@ async def test_reset_deletes_only_the_current_user_store_conversation(
     business_record = await client.put(
         f"/api/ledger/{first_store_id}/2026-01-15",
         json={
+            "expected_identity": None,
+            "expected_revision": None,
             "is_open": "营业",
             "daily_revenue": 12300,
             "wash_count": 5,

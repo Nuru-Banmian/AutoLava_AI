@@ -25,6 +25,8 @@ const composedConfig = {
 function savedRecord(overrides: Partial<RecordSnapshot> = {}): RecordSnapshot {
   return {
     id: 11,
+    identity: "record-11",
+    revision: 1,
     store_id: 2,
     date: "2026-07-15",
     daily_revenue: 12,
