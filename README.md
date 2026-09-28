@@ -45,6 +45,21 @@ docker compose up -d --no-build
 Do not run a production build on the 2-core/2-GB server. The Web image consumes an already-built
 `frontend/dist`; it does not run Node during its image build.
 
+Run the manual **Build release images** workflow for a release commit, or run
+`bash scripts/build-release-images.sh` on a Linux build machine with Docker and Node 22. The API
+build uses `backend/uv.lock` with `uv sync --locked --no-dev --no-editable`; a mismatch between the
+lock and `pyproject.toml` fails the build. The script builds the Web bundle with `npm ci`, labels
+both images with the source commit, starts the API image against a disposable Docker volume, checks
+health and the migrated Alembic revision, and compares the packages actually installed in the
+Linux/Python image with the target-selected production dependency tree from the lock. The manual
+workflow saves the two images and this evidence as one artifact.
+The dependency list describes the target image; the full multi-platform lock file is not an
+installed-package list. The script excludes test tools and Windows-only `tzdata` from that image.
+This image check does not cover the browser login and ledger flow; that requires a separate
+release validation. Build from a clean committed checkout. Load the saved images on the production
+server, set `AUTOLAVA_API_IMAGE` and `AUTOLAVA_WEB_IMAGE` to the commit-tagged images, and keep using
+`docker compose up -d --no-build`.
+
 1. Copy `.env.example` to `.env`.
 2. Replace every `change-me` value. Use a long random JWT secret and a strong bootstrap password;
    do not commit `.env`.
@@ -108,6 +123,6 @@ npx playwright install chromium
 npx playwright test
 ```
 
-CI builds `frontend/dist`, builds the API and prebuilt Web images, validates
-`docker compose config`, starts them with `docker compose up -d --no-build`, and checks Nginx plus
-the proxied API health endpoint.
+The normal PR CI runs backend and frontend checks, including the locked backend install and
+`npm ci`. The separate manual image workflow builds both images and checks API startup and
+migration with a disposable volume. It does not validate the complete user flow.
