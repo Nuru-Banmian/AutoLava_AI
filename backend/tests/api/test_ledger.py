@@ -1,9 +1,11 @@
 from dataclasses import dataclass
+from io import BytesIO
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
 from httpx import AsyncClient
+from openpyxl import load_workbook
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +13,7 @@ from app.models.identity import Store, StoreMember, User
 from app.models.ledger import IncomeCategory, StoreDailyRecord
 from app.services.scheduler import apply_refreshed_weather
 from app.services.weather import WeatherResult
+from app.services.weather import RECORD_WEATHER_OPTIONS
 
 
 @dataclass
@@ -375,3 +378,113 @@ async def test_delete_returns_204(
     deleted = await auth_client.delete(path)
     assert deleted.status_code == 204
     assert (await auth_client.get(path)).status_code == 404
+
+
+async def test_record_weather_contract_rejects_new_unknown_values_without_writing(
+    auth_client: AsyncClient, assigned_store: AssignedStore, ledger_payload: dict,
+) -> None:
+    target = today_for(assigned_store).isoformat()
+    path = f"/api/ledger/{assigned_store.id}/{target}"
+    options = await auth_client.get("/api/ledger/weather-options")
+    assert options.status_code == 200
+    assert options.json() == list(RECORD_WEATHER_OPTIONS)
+    assert len(options.json()) == 28
+    for label in options.json():
+        assert (await auth_client.put(path, json=ledger_payload | {"weather": label})).status_code in (200, 201)
+    assert (await auth_client.put(path, json=ledger_payload | {"weather": None})).status_code == 200
+    invalid = await auth_client.put(path, json=ledger_payload | {
+        "weather": "供应商未知天气",
+        "items": [{"category_id": assigned_store.cash_id, "amount": 999},
+                  {"category_id": assigned_store.excluded_id, "amount": 80}],
+    })
+    assert invalid.status_code == 422
+    saved = (await auth_client.get(path)).json()
+    assert saved["weather"] is None
+    assert saved["daily_revenue"] == 200
+
+
+async def test_legacy_weather_reads_exports_and_analysis_until_corrected(
+    auth_client: AsyncClient, assigned_store: AssignedStore, ledger_payload: dict,
+    db_session: AsyncSession,
+) -> None:
+    target = today_for(assigned_store).isoformat()
+    path = f"/api/ledger/{assigned_store.id}/{target}"
+    assert (await auth_client.put(path, json=ledger_payload)).status_code == 201
+    record = await db_session.scalar(select(StoreDailyRecord).where(StoreDailyRecord.store_id == assigned_store.id))
+    assert record is not None
+    record.weather = "旧版任意天气"
+    record.weather_edited = False
+    await db_session.commit()
+
+    read = await auth_client.get(path)
+    assert read.status_code == 200
+    assert read.json()["weather"] == "旧版任意天气"
+    assert read.json()["weather_legacy"] is True
+    listing = await auth_client.get(f"/api/database/{assigned_store.id}/records")
+    assert listing.json()["items"][0]["weather_legacy"] is True
+    chart = await auth_client.get(f"/api/charts/{assigned_store.id}", params={"start": target, "end": target})
+    assert chart.status_code == 200
+    assert chart.json()["weather"] == [{"weather": "历史未规范天气", "average_revenue": 200}]
+    exported = await auth_client.get(f"/api/database/{assigned_store.id}/export.xlsx")
+    assert exported.status_code == 200
+    rows = load_workbook(BytesIO(exported.content), read_only=True)["经营记录"].values
+    assert "历史旧值：旧版任意天气" in next(row for row in rows if target in str(row[0]))
+    assert (await auth_client.put(path, json=ledger_payload | {"weather": "旧版任意天气"})).status_code == 422
+    assert (await auth_client.put(path, json={key: value for key, value in ledger_payload.items() if key != "weather"})).status_code == 422
+    assert (await auth_client.put(path, json=ledger_payload | {"weather": None, "weather_edited": True})).status_code == 200
+    corrected = (await auth_client.get(path)).json()
+    assert corrected["weather"] is None
+    assert corrected["weather_legacy"] is False
+    assert corrected["weather_edited"] is True
+    apply_refreshed_weather(record, WeatherResult("晴", 0, 20.0, 10.0, 0.0))
+    await db_session.commit()
+    after_refresh = (await auth_client.get(path)).json()
+    assert after_refresh["weather"] is None
+    assert after_refresh["weather_auto"] == "晴"
+
+
+@pytest.mark.parametrize("cached", [False, True])
+async def test_explicit_clear_with_auto_weather_stays_cleared(
+    auth_client: AsyncClient, assigned_store: AssignedStore, ledger_payload: dict,
+    db_session: AsyncSession, cached: bool,
+) -> None:
+    target = today_for(assigned_store).isoformat()
+    path = f"/api/ledger/{assigned_store.id}/{target}"
+    assert (await auth_client.put(path, json=ledger_payload)).status_code == 201
+    record = await db_session.scalar(select(StoreDailyRecord).where(StoreDailyRecord.store_id == assigned_store.id))
+    assert record is not None
+    record.weather = None
+    record.weather_auto = "晴" if cached else None
+    record.weather_edited = False
+    await db_session.commit()
+
+    class FreshWeather:
+        async def get_daily(self, store, requested_date):
+            return WeatherResult("晴", 0, 20.0, 10.0, 0.0)
+
+    auth_client._transport.app.state.weather_service = FreshWeather()
+
+    clear = await auth_client.put(path, json=ledger_payload | {"weather": None, "weather_edited": False})
+    assert clear.status_code == 200
+    saved = (await auth_client.get(path)).json()
+    assert saved["weather"] is None
+    assert saved["weather_edited"] is True
+
+
+async def test_untouched_empty_weather_can_still_be_auto_filled(
+    auth_client: AsyncClient, assigned_store: AssignedStore, ledger_payload: dict,
+) -> None:
+    path = f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}"
+    body = {key: value for key, value in ledger_payload.items() if key != "weather"}
+    body["weather_edited"] = False
+    assert (await auth_client.put(path, json=body)).status_code == 201
+
+    class FreshWeather:
+        async def get_daily(self, store, requested_date):
+            return WeatherResult("晴", 0, 20.0, 10.0, 0.0)
+
+    auth_client._transport.app.state.weather_service = FreshWeather()
+    assert (await auth_client.put(path, json=body)).status_code == 200
+    saved = (await auth_client.get(path)).json()
+    assert saved["weather"] == "晴"
+    assert saved["weather_edited"] is False

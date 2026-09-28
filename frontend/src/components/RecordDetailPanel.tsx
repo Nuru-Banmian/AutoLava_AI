@@ -85,7 +85,7 @@ export function RecordDetailPanel({
       <CardContent className={mobile ? "grid gap-5 p-1 pt-0" : "grid gap-5 p-5 pt-0"}>
         <section aria-label="营业摘要" className="grid grid-cols-2 gap-3 text-sm">
           <div className={summaryItemClass}><p className="text-muted-foreground">营业额</p><p className={summaryValueClass}>{isUnrecorded ? "—" : formatWholeEuro(record.daily_revenue)}</p></div>
-          <div className={summaryItemClass}><p className="text-muted-foreground">天气</p><p className={summaryValueClass}>{isUnrecorded ? "—" : record.weather ?? "—"}</p></div>
+          <div className={summaryItemClass}><p className="text-muted-foreground">天气</p><p className={summaryValueClass}>{isUnrecorded ? "—" : record.weather_legacy ? `历史旧值：${record.weather}` : record.weather ?? "—"}</p></div>
         </section>
 
         {showWashCount && <p className="text-sm font-medium text-muted-foreground">洗车 {record.wash_count} 辆</p>}

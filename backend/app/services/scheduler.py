@@ -17,19 +17,21 @@ from app.models.operations import ScheduledTaskLog, UTC_TIMESTAMP_CONTRACT
 from app.services.briefing import BriefingService
 from app.services.operations_retention import prune_operational_rows
 from app.services.sqlite_backup import backup_sqlite
-from app.services.weather import WeatherResult, WeatherService
+from app.services.weather import WeatherResult, WeatherService, is_valid_weather_result
 
 
 logger = logging.getLogger(__name__)
 
 
 def apply_refreshed_weather(record: StoreDailyRecord, result: WeatherResult) -> None:
+    if not is_valid_weather_result(result):
+        return
     record.weather_auto = result.weather
     record.weather_code = result.weather_code
     record.temperature_max = result.temperature_max
     record.temperature_min = result.temperature_min
     record.precipitation = result.precipitation
-    if not record.weather_edited:
+    if not record.weather_edited and record.weather is None:
         record.weather = result.weather
 
 

@@ -5,6 +5,8 @@ from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.cell import WriteOnlyCell
 
+from app.services.weather import is_legacy_weather
+
 _WEEKDAYS = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
 
 
@@ -46,7 +48,11 @@ def build_ledger_workbook(
             summary_row.append(record["wash_count"])
         summary_row.extend(
             [
-                _safe_text(record["weather"]),
+                _safe_text(
+                    f"历史旧值：{record['weather']}"
+                    if is_legacy_weather(record["weather"])
+                    else record["weather"]
+                ),
                 _safe_text(record["activity"]),
                 _safe_text(record["created_by_name"]),
                 _safe_text(record["updated_by_name"]),

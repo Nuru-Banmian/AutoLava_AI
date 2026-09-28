@@ -21,9 +21,19 @@ from app.services.access import Capability, require_fresh_store_access
 from app.services.briefing import BriefingService
 from app.services.ledger import LedgerService
 from app.services.record_payload import record_payload
-from app.services.weather import FrozenWeatherLocation, WeatherService
+from app.services.weather import (
+    FrozenWeatherLocation,
+    RECORD_WEATHER_OPTIONS,
+    WeatherService,
+    is_valid_weather_result,
+)
 
 router = APIRouter(prefix="/ledger", tags=["ledger"])
+
+
+@router.get("/weather-options", dependencies=[Depends(require_capability("ledger.view"))])
+async def get_weather_options() -> list[str]:
+    return list(RECORD_WEATHER_OPTIONS)
 
 
 async def _refresh_briefing_after_commit(
@@ -182,7 +192,7 @@ async def put_record(
         )
     except Exception:
         result = None
-    if result is not None:
+    if result is not None and is_valid_weather_result(result):
         payload.update(
             {
                 "weather_auto": result.weather,
@@ -192,6 +202,8 @@ async def put_record(
                 "precipitation": result.precipitation,
             }
         )
+    else:
+        result = None
     write = await LedgerService(session).upsert(
         store_id=store_id,
         record_date=record_date,

@@ -102,7 +102,7 @@ export interface LedgerBody {
   is_open: LedgerStatus;
   daily_revenue: number | null;
   wash_count: number | null;
-  weather: string | null;
+  weather?: string | null;
   weather_edited: boolean;
   activity: string | null;
   items: IncomeItemBody[];
@@ -113,7 +113,7 @@ export interface BookkeepingEvent { id: number; action: "created" | "updated"; a
 export interface RecordSnapshot {
   id: number; store_id: number; date: string; daily_revenue: number; wash_count?: number | null; is_open: LedgerStatus;
   income_mode: IncomeMode;
-  weather: string | null; weather_auto: string | null; weather_code: number | null; temperature_max: string | null;
+  weather: string | null; weather_legacy?: boolean; weather_auto: string | null; weather_code: number | null; temperature_max: string | null;
   temperature_min: string | null; precipitation: string | null; activity: string | null; weather_edited: boolean; scanned: boolean;
   created_by: number; updated_by: number; created_at: string; updated_at: string; items: RecordItem[];
   created_by_name?: string; updated_by_name?: string;

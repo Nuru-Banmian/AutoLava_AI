@@ -44,6 +44,17 @@ def test_refreshed_weather_preserves_user_edited_final_value() -> None:
     assert record.weather_auto == "晴"
 
 
+def test_unknown_provider_code_cannot_create_a_record_weather() -> None:
+    record = SimpleNamespace(
+        weather=None, weather_auto=None, weather_code=None,
+        temperature_max=None, temperature_min=None, precipitation=None,
+        weather_edited=False,
+    )
+    apply_refreshed_weather(record, WeatherResult("供应商未知天气", 500, 30.0, 20.0, 0.0))
+    assert record.weather is None
+    assert record.weather_auto is None
+
+
 async def test_background_refresh_is_bounded_and_can_be_stopped() -> None:
     async def hang() -> None:
         await asyncio.sleep(60)
@@ -211,7 +222,8 @@ async def test_sqlite_maintenance_runs_retention_after_successful_backup(
         assert task.status == "success"
 
 
-async def test_refresh_rechecks_weather_edited_after_network_wait() -> None:
+@pytest.mark.parametrize("manual_weather", ["用户手工天气", None])
+async def test_refresh_rechecks_weather_edited_after_network_wait(manual_weather: str | None) -> None:
     await _reset_database()
     async with async_session_factory() as setup:
         user = User(
@@ -262,7 +274,7 @@ async def test_refresh_rechecks_weather_edited_after_network_wait() -> None:
     async with async_session_factory() as editor:
         current = await editor.get(StoreDailyRecord, record_id)
         assert current is not None
-        current.weather = "用户手工天气"
+        current.weather = manual_weather
         current.weather_edited = True
         await editor.commit()
     release_weather.set()
@@ -272,7 +284,7 @@ async def test_refresh_rechecks_weather_edited_after_network_wait() -> None:
         refreshed = await verify.get(StoreDailyRecord, record_id)
         assert refreshed is not None
         assert refreshed.weather_edited is True
-        assert refreshed.weather == "用户手工天气"
+        assert refreshed.weather == manual_weather
         assert refreshed.weather_auto == "晴"
 
 

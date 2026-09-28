@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { weatherOptions } from "../src/test/weather-options";
 
 const today = "2026-07-17";
 const categories = Array.from({ length: 13 }, (_, index) => ({
@@ -9,12 +10,12 @@ const categories = Array.from({ length: 13 }, (_, index) => ({
   sort_order: index + 1,
 }));
 
-function snapshot(id: number, date: string, amount = id, washCount: number | null = null) {
+function snapshot(id: number, date: string, amount = id, washCount: number | null = null, weather: string | null = null) {
   const now = `${date}T12:00:00`;
   return {
     id, store_id: 1, date, daily_revenue: amount, wash_count: washCount, is_open: "营业",
     income_mode: "composed",
-    weather: null, weather_auto: null, weather_code: null, temperature_max: null,
+    weather, weather_legacy: weather === "旧版任意天气", weather_auto: null, weather_code: null, temperature_max: null,
     temperature_min: null, precipitation: null, activity: null, weather_edited: false,
     scanned: false, created_by: 1, updated_by: 1, created_at: now, updated_at: now,
     items: [{
@@ -43,7 +44,8 @@ async function mockMergedFlow(
     washCountEnabled = true,
     currentWashCount,
     incomeMode = "composed",
-  }: { washCountEnabled?: boolean; currentWashCount?: number; incomeMode?: "composed" | "direct" } = {},
+    legacyWeather = false,
+  }: { washCountEnabled?: boolean; currentWashCount?: number; incomeMode?: "composed" | "direct"; legacyWeather?: boolean } = {},
 ) {
   let washCountSetting = washCountEnabled;
   let records = [...monthRecords("07", 16, 100), ...monthRecords("06", 18, 200)];
@@ -52,6 +54,9 @@ async function mockMergedFlow(
       snapshot(999, today, 100, currentWashCount),
       ...records.filter((record) => record.date !== today),
     ];
+  }
+  if (legacyWeather) {
+    records = [snapshot(999, today, 100, null, "旧版任意天气"), ...records.filter((record) => record.date !== today)];
   }
   const databaseRequests: URL[] = [];
   const chartRequests: URL[] = [];
@@ -80,6 +85,7 @@ async function mockMergedFlow(
     if (path === "/api/auth/me") return json({ id: 1, username: "administrator", role: "admin", is_owner: true });
     if (path === "/api/stores/accessible") return json([{ id: 1, name: "Berlin", timezone: "Europe/Berlin", wash_count_enabled: washCountSetting }]);
     if (path === "/api/dashboard/1") return json([]);
+    if (path === "/api/ledger/weather-options") return json(weatherOptions);
     if (path === "/api/income-config/1/current") return json({
       store_id: 1,
       enabled: incomeMode === "composed",
@@ -233,6 +239,35 @@ async function fillNewRecordAmounts(page: Page, firstAmount: string) {
     await page.getByLabel(category.name).fill("0");
   }
 }
+
+test("record weather offers every WMO type and permits an explicit clear", async ({ page }) => {
+  await page.clock.install({ time: new Date(`${today}T12:00:00Z`) });
+  const flow = await mockMergedFlow(page);
+  await page.goto(`/ledger?date=${today}`);
+  await page.getByRole("combobox", { name: "天气" }).click();
+  await expect(page.getByRole("option")).toHaveCount(29);
+  await page.getByRole("option", { name: "雷雨伴大冰雹" }).click();
+  await page.locator('input[inputmode="numeric"]').first().fill("100");
+  await page.getByRole("button", { name: "保存今日记录" }).click();
+  await expect.poll(() => flow.ledgerWrites.at(-1)?.body.weather).toBe("雷雨伴大冰雹");
+  await page.getByRole("combobox", { name: "天气" }).click();
+  await page.getByRole("option", { name: "清空天气" }).click();
+  await page.getByRole("button", { name: "保存修改" }).click();
+  await expect.poll(() => flow.ledgerWrites.at(-1)?.body).toMatchObject({ weather: null, weather_edited: true });
+});
+
+test("historical weather is identified and must be corrected before saving", async ({ page }) => {
+  await page.clock.install({ time: new Date(`${today}T12:00:00Z`) });
+  const flow = await mockMergedFlow(page, { legacyWeather: true });
+  await page.goto(`/ledger?date=${today}`);
+  await expect(page.getByRole("combobox", { name: "天气" })).toContainText("历史旧值：旧版任意天气");
+  await page.getByRole("button", { name: "保存修改" }).click();
+  expect(flow.ledgerWrites).toHaveLength(0);
+  await page.getByRole("combobox", { name: "天气" }).click();
+  await page.getByRole("option", { name: "清空天气" }).click();
+  await page.getByRole("button", { name: "保存修改" }).click();
+  await expect.poll(() => flow.ledgerWrites.at(-1)?.body).toMatchObject({ weather: null, weather_edited: true });
+});
 
 test("disabled wash count stays hidden and historical values return after re-enabling", async ({ page }) => {
   await page.clock.install({ time: new Date(`${today}T12:00:00Z`) });

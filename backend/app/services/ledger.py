@@ -19,6 +19,7 @@ from app.models.ledger import (
 )
 from app.models.operations import UTC_TIMESTAMP_CONTRACT
 from app.services.access import require_fresh_store_access
+from app.services.weather import RECORD_WEATHER_VALUES, is_legacy_weather
 
 _MAX_MONEY = 9_999_999_999
 
@@ -172,6 +173,8 @@ class LedgerService:
     ) -> tuple[bool, int, date]:
         record = await self._find_record(store_id=store.id, record_date=record_date)
         created = record is None
+        if record is not None and is_legacy_weather(record.weather) and "weather" not in payload:
+            raise HTTPException(422, "Historical weather must be corrected or cleared")
         income_mode = (
             "composed" if store.income_items_enabled else "legacy_total"
         ) if record is None else record.income_mode
@@ -268,8 +271,19 @@ class LedgerService:
             )
         elif created:
             record.wash_count = None
-        record.weather = payload.get("weather")
-        record.weather_edited = payload.get("weather_edited", False)
+        previous_weather = record.weather
+        previous_edited = record.weather_edited
+        if "weather" in payload or created:
+            record.weather = payload.get("weather")
+        record.weather_edited = (
+            previous_edited
+            or payload.get("weather_edited", False)
+            or (
+                not created
+                and "weather" in payload
+                and (record.weather is None or record.weather != previous_weather)
+            )
+        )
         for field in (
             "weather_auto",
             "weather_code",
@@ -279,7 +293,7 @@ class LedgerService:
         ):
             if field in payload:
                 setattr(record, field, payload[field])
-        if not record.weather_edited and not record.weather and record.weather_auto:
+        if not record.weather_edited and not record.weather and record.weather_auto in RECORD_WEATHER_VALUES:
             record.weather = record.weather_auto
         record.activity = payload.get("activity")
         if "scanned" in payload:
