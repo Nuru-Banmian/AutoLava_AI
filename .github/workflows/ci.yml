@@ -81,21 +81,14 @@ jobs:
       - name: Run backend tests
         run: >-
           uv run --frozen pytest
-          -n 2
+          -n 4
           --dist loadscope
           --cov=app
           --cov-report=
+          --durations=20
 
-      - name: Preserve core coverage
-        run: mv .coverage .coverage.core
-
-      - name: Upload core coverage
-        uses: actions/upload-artifact@v7
-        with:
-          name: backend-coverage-core
-          path: backend/.coverage.core
-          include-hidden-files: true
-          retention-days: 1
+      - name: Enforce backend coverage
+        run: uv run --frozen coverage report --fail-under=85
 
   frontend-unit-build:
     name: Frontend unit and build
@@ -171,56 +164,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Check out repository
-        if: ${{ needs.backend-core.result == 'success' }}
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        if: ${{ needs.backend-core.result == 'success' }}
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-
-      - name: Set up uv
-        if: ${{ needs.backend-core.result == 'success' }}
-        uses: astral-sh/setup-uv@v7
-        with:
-          version: "0.11.26"
-          enable-cache: true
-          cache-dependency-glob: backend/uv.lock
-
-      - name: Install locked dependencies
-        if: ${{ needs.backend-core.result == 'success' }}
-        working-directory: backend
-        run: uv sync --locked --extra dev
-
-      - name: Download backend coverage
-        if: ${{ needs.backend-core.result == 'success' }}
-        uses: actions/download-artifact@v8
-        with:
-          pattern: backend-coverage-*
-          path: backend
-          merge-multiple: true
-
-      - name: Enforce combined backend coverage
-        if: ${{ needs.backend-core.result == 'success' }}
-        working-directory: backend
-        run: |
-          uv run --frozen coverage combine
-          uv run --frozen coverage report --fail-under=85
-
       - name: Require every CI lane
         env:
-          NEEDS_JSON: ${{ toJSON(needs) }}
-        shell: python
+          BACKEND_QUALITY: ${{ needs.backend-quality.result }}
+          BACKEND_CORE: ${{ needs.backend-core.result }}
+          FRONTEND_UNIT_BUILD: ${{ needs.frontend-unit-build.result }}
+          FRONTEND_E2E: ${{ needs.frontend-e2e.result }}
+        shell: bash
         run: |
-          import json
-          import os
-          import sys
-
-          results = {
-              name: lane["result"]
-              for name, lane in json.loads(os.environ["NEEDS_JSON"]).items()
-          }
-          print(json.dumps(results, sort_keys=True))
-          sys.exit(0 if all(result == "success" for result in results.values()) else 1)
+          printf 'Backend quality: %s\nBackend core tests: %s\nFrontend unit and build: %s\nFrontend end-to-end: %s\n' \
+            "$BACKEND_QUALITY" "$BACKEND_CORE" "$FRONTEND_UNIT_BUILD" "$FRONTEND_E2E"
+          test "$BACKEND_QUALITY" = success
+          test "$BACKEND_CORE" = success
+          test "$FRONTEND_UNIT_BUILD" = success
+          test "$FRONTEND_E2E" = success
