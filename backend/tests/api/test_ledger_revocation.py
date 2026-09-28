@@ -102,6 +102,8 @@ async def _logged_in_client(username: str) -> AsyncClient:
 
 def _payload(category_id: int, amount: int) -> dict:
     return {
+        "expected_identity": None,
+        "expected_revision": None,
         "is_open": "营业",
         "daily_revenue": None,
         "items": [{"category_id": category_id, "amount": amount}],
@@ -141,12 +143,13 @@ async def test_update_rejects_membership_removed_during_weather() -> None:
     await _reset_database()
     user_id, store_id, category_id, target = await _setup_ledger(with_record=True)
     client = await _logged_in_client("ledger-user")
+    current = (await client.get(f"/api/ledger/{store_id}/{target.isoformat()}")).json()
     weather = PausedWeather()
     client._transport.app.state.weather_service = weather
     request = asyncio.create_task(
         client.put(
             f"/api/ledger/{store_id}/{target.isoformat()}",
-            json=_payload(category_id, 250),
+            json=_payload(category_id, 250) | {"expected_identity": current["identity"], "expected_revision": current["revision"]},
         )
     )
     await weather.entered.wait()
@@ -178,10 +181,11 @@ async def test_delete_rejects_store_archived_while_waiting_for_lock() -> None:
         role="admin", with_record=True
     )
     client = await _logged_in_client("ledger-admin")
+    current = (await client.get(f"/api/ledger/{store_id}/{target.isoformat()}")).json()
     await SQLITE_WRITE_LOCK.acquire()
     try:
         request = asyncio.create_task(
-            client.delete(f"/api/ledger/{store_id}/{target.isoformat()}")
+            client.request("DELETE", f"/api/ledger/{store_id}/{target.isoformat()}", json={"expected_identity": current["identity"], "expected_revision": current["revision"]})
         )
         while not SQLITE_WRITE_LOCK._waiters:
             await asyncio.sleep(0)

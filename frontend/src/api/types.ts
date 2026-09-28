@@ -107,11 +107,11 @@ export interface LedgerBody {
   activity: string | null;
   items: IncomeItemBody[];
 }
-export interface LedgerSaveResponse { id: number; date: string; daily_revenue: number }
+export interface LedgerSaveResponse { id: number; identity: string; revision: number; date: string; daily_revenue: number }
 export interface RecordItem extends IncomeItemBody { id: number; category_name: string; include_in_total: boolean; sort_order: number; created_at: string; updated_at: string }
 export interface BookkeepingEvent { id: number; action: "created" | "updated"; actor_id: number; actor_name: string; occurred_at: string | null; timestamp_status: "utc" | "legacy_unknown" }
 export interface RecordSnapshot {
-  id: number; store_id: number; date: string; daily_revenue: number; wash_count?: number | null; is_open: LedgerStatus;
+  id: number; identity: string; revision: number; store_id: number; date: string; daily_revenue: number; wash_count?: number | null; is_open: LedgerStatus;
   income_mode: IncomeMode;
   weather: string | null; weather_legacy?: boolean; weather_auto: string | null; weather_code: number | null; temperature_max: string | null;
   temperature_min: string | null; precipitation: string | null; activity: string | null; weather_edited: boolean; scanned: boolean;

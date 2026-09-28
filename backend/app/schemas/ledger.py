@@ -19,6 +19,8 @@ class IncomeItemBody(BaseModel):
 
 
 class LedgerBody(BaseModel):
+    expected_identity: str | None = None
+    expected_revision: int | None = Field(default=None, ge=1)
     is_open: Literal["营业", "休息", "提前休息"]
     daily_revenue: MoneyAmount | None = None
     wash_count: int | None = Field(default=None, ge=0)
@@ -26,3 +28,8 @@ class LedgerBody(BaseModel):
     weather_edited: bool = False
     activity: str | None = Field(default=None, max_length=2000)
     items: list[IncomeItemBody] = []
+
+
+class LedgerDeleteBody(BaseModel):
+    expected_identity: str | None = None
+    expected_revision: int | None = Field(default=None, ge=1)

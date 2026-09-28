@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 
 import asyncio
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 
 from app.api.deps import (
@@ -16,7 +16,7 @@ from app.api.deps import (
 )
 from app.api.routes.dashboard import get_weather_service
 from app.core.database import end_read_transaction, sqlite_short_write
-from app.schemas.ledger import LedgerBody
+from app.schemas.ledger import LedgerBody, LedgerDeleteBody
 from app.services.access import Capability, require_fresh_store_access
 from app.services.briefing import BriefingService
 from app.services.ledger import LedgerService
@@ -181,6 +181,8 @@ async def put_record(
     session: Session,
     access: StoreAccess = Depends(require_store_access),
 ) -> Response:
+    if not {"expected_identity", "expected_revision"}.issubset(body.model_fields_set):
+        raise HTTPException(428, "请重新加载每日台账后重试")
     actor_id = access.user.id
     location = FrozenWeatherLocation.from_store(access.store)
     payload = body.model_dump(mode="json", exclude_unset=True)
@@ -213,6 +215,8 @@ async def put_record(
     record, created = write
     response_content = {
         "id": record.id,
+        "identity": record.identity,
+        "revision": record.revision,
         "date": record.date.isoformat(),
         "daily_revenue": record.daily_revenue,
     }
@@ -244,14 +248,21 @@ async def delete_record(
     record_date: date,
     request: Request,
     session: Session,
+    body: LedgerDeleteBody | None = None,
     access: StoreAccess = Depends(require_store_access),
 ) -> Response:
+    if body is None or not {"expected_identity", "expected_revision"}.issubset(body.model_fields_set):
+        raise HTTPException(428, "请重新加载每日台账后重试")
+    if body.expected_identity is None or body.expected_revision is None:
+        raise HTTPException(422, "删除已有每日台账需提供身份和修订号")
     actor_id = access.user.id
     location = FrozenWeatherLocation.from_store(access.store)
     event = await LedgerService(session).delete(
         store_id=store_id,
         record_date=record_date,
         actor_id=actor_id,
+        expected_identity=body.expected_identity,
+        expected_revision=body.expected_revision,
     )
     await _safely_refresh_briefing(
         request,

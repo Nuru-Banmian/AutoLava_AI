@@ -9,6 +9,8 @@ def record_payload(
 ) -> dict[str, Any]:
     payload = {
         "id": record.id,
+        "identity": record.identity,
+        "revision": record.revision,
         "store_id": record.store_id,
         "date": record.date.isoformat(),
         "daily_revenue": record.daily_revenue,

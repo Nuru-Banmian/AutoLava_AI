@@ -5,8 +5,9 @@ from contextvars import ContextVar
 from pathlib import Path
 
 from sqlalchemy import event
+from sqlalchemy import text
 from sqlalchemy.engine import URL
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import get_settings
 
@@ -23,7 +24,9 @@ async def end_read_transaction(session: AsyncSession) -> None:
 
 
 @asynccontextmanager
-async def sqlite_short_write(session: AsyncSession) -> AsyncIterator[None]:
+async def sqlite_short_write(
+    session: AsyncSession, *, begin_immediate: bool = False
+) -> AsyncIterator[None]:
     """Run one fresh, process-serialized write transaction."""
     if _SQLITE_WRITE_ACTIVE.get():
         raise RuntimeError("Nested SQLite write transaction is not allowed")
@@ -31,6 +34,9 @@ async def sqlite_short_write(session: AsyncSession) -> AsyncIterator[None]:
     async with SQLITE_WRITE_LOCK:
         active_token = _SQLITE_WRITE_ACTIVE.set(True)
         try:
+            # Ledger compare-and-write must reserve the SQLite writer before its read.
+            if begin_immediate and isinstance(getattr(session, "bind", None), AsyncEngine):
+                await session.execute(text("BEGIN IMMEDIATE"))
             yield
             await session.commit()
         except BaseException:

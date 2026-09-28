@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from uuid import uuid4
 from decimal import Decimal
 from typing import Literal
 
@@ -40,6 +41,8 @@ class IncomeCategory(Base):
 class StoreDailyRecord(Base):
     __tablename__ = "store_daily_records"
     id: Mapped[int] = mapped_column(primary_key=True)
+    identity: Mapped[str] = mapped_column(String(36), unique=True, default=lambda: str(uuid4()))
+    revision: Mapped[int] = mapped_column(Integer, default=1)
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"))
     date: Mapped[date] = mapped_column(Date)
     daily_revenue: Mapped[int] = mapped_column(Integer, default=0)

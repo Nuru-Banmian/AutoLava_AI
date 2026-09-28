@@ -59,6 +59,8 @@ async def test_migrated_legacy_weather_remains_available_through_public_endpoint
         assert record.status_code == 200
         assert record.json()["weather"] == "旧版任意天气"
         assert record.json()["weather_legacy"] is True
+        assert record.json()["identity"]
+        assert record.json()["revision"] == 1
         chart = await client.get("/api/charts/1", params={"start": "2026-07-28", "end": "2026-07-28"})
         assert chart.status_code == 200
         assert chart.json()["weather"] == [{"weather": "历史未规范天气", "average_revenue": 940}]
@@ -201,9 +203,9 @@ def test_blank_sqlite_schema_enforces_money_and_status_constraints(tmp_path: Pat
             connection.execute(
                 """
                 INSERT INTO store_daily_records (
-                    store_id, date, daily_revenue, income_mode, is_open, weather_edited,
+                    identity, store_id, date, daily_revenue, income_mode, is_open, weather_edited,
                     scanned, created_by, updated_by
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (hex(randomblob(16)), ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (1, "2026-07-19", -1, "legacy_total", "营业", 0, 0, 1, 1),
             )
@@ -211,9 +213,9 @@ def test_blank_sqlite_schema_enforces_money_and_status_constraints(tmp_path: Pat
         connection.execute(
             """
             INSERT INTO store_daily_records (
-                store_id, date, daily_revenue, income_mode, is_open, weather_edited,
+                identity, store_id, date, daily_revenue, income_mode, is_open, weather_edited,
                 scanned, created_by, updated_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (hex(randomblob(16)), ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (1, "2026-07-19", 0, "legacy_total", "营业", 0, 0, 1, 1),
         )
@@ -221,9 +223,9 @@ def test_blank_sqlite_schema_enforces_money_and_status_constraints(tmp_path: Pat
             connection.execute(
                 """
                 INSERT INTO store_daily_records (
-                    store_id, date, daily_revenue, income_mode, is_open, weather_edited,
+                    identity, store_id, date, daily_revenue, income_mode, is_open, weather_edited,
                     scanned, created_by, updated_by
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (hex(randomblob(16)), ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (1, f"2026-07-{day}", 0, "legacy_total", status, 0, 0, 1, 1),
             )
@@ -231,9 +233,9 @@ def test_blank_sqlite_schema_enforces_money_and_status_constraints(tmp_path: Pat
             connection.execute(
                 """
                 INSERT INTO store_daily_records (
-                    store_id, date, daily_revenue, income_mode, is_open, weather_edited,
+                    identity, store_id, date, daily_revenue, income_mode, is_open, weather_edited,
                     scanned, created_by, updated_by
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (hex(randomblob(16)), ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (1, "2026-07-22", 0, "legacy_total", "天气停业", 0, 0, 1, 1),
             )
@@ -351,7 +353,7 @@ def test_applied_revision_0004_upgrades_without_losing_existing_data(tmp_path: P
 
     with closing(sqlite3.connect(database_path)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0018",
+            "0019",
         )
         assert connection.execute("SELECT username FROM users").fetchall() == [
             ("existing-admin",)
@@ -529,7 +531,7 @@ def test_reused_legacy_revision_0010_upgrades_to_new_agent_schema(
 
     with closing(sqlite3.connect(database_path)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0018",
+            "0019",
         )
         tables = {
             name

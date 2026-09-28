@@ -6,6 +6,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.identity import StoreMember, User
 
 
+async def put_ledger(client: AsyncClient, path: str, *, json: dict):
+    current = await client.get(path)
+    expected = current.json() if current.status_code == 200 else None
+    return await client.put(path, json=json | {
+        "expected_identity": expected["identity"] if expected else None,
+        "expected_revision": expected["revision"] if expected else None,
+    })
+
+
 @pytest.fixture
 async def admin_client(
     client: AsyncClient, user_factory, db_session: AsyncSession
@@ -93,7 +102,7 @@ async def test_write_rules_preserve_history_while_setting_is_disabled(
         "items": [],
     }
 
-    assert (await admin_client.put(first_path, json=body)).status_code == 201
+    assert (await put_ledger(admin_client, first_path, json=body)).status_code == 201
     assert (
         await admin_client.patch(
             f"/api/admin/stores/{store.id}",
@@ -101,13 +110,13 @@ async def test_write_rules_preserve_history_while_setting_is_disabled(
         )
     ).status_code == 200
     assert (
-        await admin_client.put(
+        await put_ledger(admin_client,
             first_path,
             json=body | {"daily_revenue": 180, "wash_count": 99},
         )
     ).status_code == 200
     assert (
-        await admin_client.put(second_path, json=body | {"wash_count": 19})
+        await put_ledger(admin_client, second_path, json=body | {"wash_count": 19})
     ).status_code == 201
 
     assert (await admin_client.get(first_path)).json()["wash_count"] == 7
@@ -136,7 +145,7 @@ async def test_rest_clears_historical_wash_count_while_setting_is_disabled(
         "activity": None,
         "items": [],
     }
-    assert (await admin_client.put(path, json=body)).status_code == 201
+    assert (await put_ledger(admin_client, path, json=body)).status_code == 201
     assert (
         await admin_client.patch(
             f"/api/admin/stores/{store.id}",
@@ -144,7 +153,7 @@ async def test_rest_clears_historical_wash_count_while_setting_is_disabled(
         )
     ).status_code == 200
 
-    rested = await admin_client.put(path, json=body | {"is_open": "休息"})
+    rested = await put_ledger(admin_client, path, json=body | {"is_open": "休息"})
 
     assert rested.status_code == 200
     assert (
@@ -171,9 +180,9 @@ async def test_enabled_new_record_defaults_wash_count_to_zero_and_rejects_negati
         "items": [],
     }
 
-    assert (await admin_client.put(path, json=body)).status_code == 201
+    assert (await put_ledger(admin_client, path, json=body)).status_code == 201
     assert (await admin_client.get(path)).json()["wash_count"] == 0
-    negative = await admin_client.put(
+    negative = await put_ledger(admin_client,
         f"/api/ledger/{store.id}/2026-07-21",
         json=body | {"wash_count": -1},
     )
