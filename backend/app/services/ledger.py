@@ -264,7 +264,7 @@ class LedgerService:
         elif store.wash_count_enabled:
             submitted_wash_count = payload.get("wash_count")
             record.wash_count = (
-                0 if created and submitted_wash_count is None else submitted_wash_count
+                0 if created and "wash_count" not in payload else submitted_wash_count
             )
         elif created:
             record.wash_count = None

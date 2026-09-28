@@ -173,7 +173,7 @@ async def put_record(
 ) -> Response:
     actor_id = access.user.id
     location = FrozenWeatherLocation.from_store(access.store)
-    payload = body.model_dump(mode="json")
+    payload = body.model_dump(mode="json", exclude_unset=True)
     weather_service: WeatherService = get_weather_service(request)
     await end_read_transaction(session)
     try:

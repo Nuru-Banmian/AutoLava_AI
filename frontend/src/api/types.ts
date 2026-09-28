@@ -142,7 +142,7 @@ export interface ChartComparisonKpis { start: string; end: string; total_revenue
 export interface IncomeSummary { daily_ledger_revenue: number; confirmed_settlement_income: number; total_income: number; includes_settlement_income: boolean }
 export interface MonthlyRevenue { month: string; revenue: number; daily_ledger_revenue: number; confirmed_settlement_income: number; monthly_total_income: number }
 export interface ChartsResponse {
-  kpis: { total_revenue: number; record_days: number; open_days: number; average_revenue: number; primary_categories: CategoryComposition[]; total_wash_count: number | null; average_ticket: number | null };
+  kpis: { total_revenue: number; record_days: number; open_days: number; average_revenue: number; primary_categories: CategoryComposition[]; total_wash_count: number | null; wash_count_covered_days: number | null; wash_count_coverage_status: "no_operating_days" | "missing" | "partial" | "complete" | null; average_ticket: number | null };
   range: { start: string; end: string; bucket: ChartBucket };
   comparison_kpis: ChartComparisonKpis | null;
   income_summary: IncomeSummary;

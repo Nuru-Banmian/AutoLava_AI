@@ -191,6 +191,8 @@ async def test_charts_returns_stable_empty_result(auth_client, db_session, store
             "average_revenue": 0,
             "primary_categories": [],
             "total_wash_count": None,
+            "wash_count_covered_days": 0,
+            "wash_count_coverage_status": "no_operating_days",
             "average_ticket": None,
         },
         "range": {"start": "2026-07-01", "end": "2026-07-31", "bucket": "day"},
@@ -394,8 +396,12 @@ async def test_charts_wash_kpis_follow_each_store_setting(
     assert disabled_response.status_code == enabled_response.status_code == 200
     assert disabled_response.json()["kpis"]["total_wash_count"] is None
     assert disabled_response.json()["kpis"]["average_ticket"] is None
+    assert disabled_response.json()["kpis"]["wash_count_covered_days"] is None
+    assert disabled_response.json()["kpis"]["wash_count_coverage_status"] is None
     assert enabled_response.json()["kpis"]["total_wash_count"] == 5
     assert enabled_response.json()["kpis"]["average_ticket"] == 25
+    assert enabled_response.json()["kpis"]["wash_count_covered_days"] == 1
+    assert enabled_response.json()["kpis"]["wash_count_coverage_status"] == "complete"
 
     disabled_store.wash_count_enabled = True
     await db_session.flush()
@@ -405,6 +411,7 @@ async def test_charts_wash_kpis_follow_each_store_setting(
 
     assert reenabled_response.json()["kpis"]["total_wash_count"] == 5
     assert reenabled_response.json()["kpis"]["average_ticket"] == 25
+    assert reenabled_response.json()["kpis"]["wash_count_covered_days"] == 1
 
 
 async def test_charts_partial_month_includes_confirmed_settlement_for_overlapping_month(
@@ -538,10 +545,9 @@ async def test_charts_uses_the_same_operating_days_for_current_and_comparison_ra
             "monthly_total_income": 200,
         }
     ]
-    assert payload["weather"] == [{"weather": "晴", "average_revenue": 50}]
+    assert payload["weather"] == [{"weather": "晴", "average_revenue": 67}]
     assert payload["weekday"] == [
         {"weekday": 0, "average_revenue": 50},
-        {"weekday": 1, "average_revenue": 0},
         {"weekday": 2, "average_revenue": 0},
         {"weekday": 6, "average_revenue": 150},
     ]
@@ -552,3 +558,62 @@ async def test_charts_uses_the_same_operating_days_for_current_and_comparison_ra
         "open_days": 2,
         "average_revenue": 45,
     }
+
+
+async def test_charts_public_writes_keep_wash_sample_separate_from_settlement(
+    auth_client, db_session, store_factory
+) -> None:
+    store = await _assigned_store(auth_client, db_session, store_factory)
+    store.company_settlement_enabled = True
+    await db_session.commit()
+
+    async def save(day: str, revenue: int, wash_count: int | None, state: str = "营业"):
+        response = await auth_client.put(
+            f"/api/ledger/{store.id}/{day}",
+            json={"is_open": state, "daily_revenue": revenue, "wash_count": wash_count,
+                  "weather": "晴", "weather_edited": True, "items": []},
+        )
+        assert response.status_code in {200, 201}, response.text
+
+    async def charts():
+        response = await auth_client.get(
+            f"/api/charts/{store.id}?start=2026-07-10&end=2026-07-20"
+        )
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    await save("2026-07-12", 150, 3)
+    await save("2026-07-13", 50, None, "提前休息")
+    await save("2026-07-14", 0, 0, "休息")
+    partial = await charts()
+    assert partial["kpis"]["average_ticket"] == 50
+    assert partial["kpis"]["wash_count_covered_days"] == 1
+    assert partial["kpis"]["open_days"] == 2
+    assert partial["kpis"]["wash_count_coverage_status"] == "partial"
+    assert partial["weather"] == [{"weather": "晴", "average_revenue": 100}]
+
+    company = await auth_client.post(
+        f"/api/settlements/{store.id}/companies", json={"name": "Acme"}
+    )
+    assert company.status_code == 201, company.text
+    record = await auth_client.post(
+        f"/api/settlements/{store.id}/records",
+        json={"company_id": company.json()["id"], "opening_month": "2026-07", "amount": 300},
+    )
+    assert record.status_code == 201, record.text
+    confirmed = await auth_client.post(
+        f"/api/settlements/{store.id}/records/{record.json()['id']}/confirm",
+        json={"revision": record.json()["revision"]},
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    with_settlement = await charts()
+    assert with_settlement["income_summary"]["total_income"] == 500
+    assert with_settlement["kpis"]["average_ticket"] == 50
+    assert with_settlement["kpis"]["average_revenue"] == 100
+
+    revoked = await auth_client.post(
+        f"/api/settlements/{store.id}/records/{record.json()['id']}/revoke-confirmation",
+        json={"revision": confirmed.json()["revision"]},
+    )
+    assert revoked.status_code == 200, revoked.text
+    assert (await charts())["income_summary"]["total_income"] == 200
