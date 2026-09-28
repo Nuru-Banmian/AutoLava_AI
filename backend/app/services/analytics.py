@@ -12,6 +12,8 @@ from app.models.identity import Store
 from app.models.ledger import StoreDailyRecord
 from app.models.settlement import SettlementRecord
 
+OPERATING_STATES = frozenset({"营业", "提前休息"})
+
 
 def _rounded_average(total: int, count: int) -> int:
     """Round fractional euro averages to a whole euro using ROUND_HALF_UP."""
@@ -51,7 +53,7 @@ def _composition_rows(totals: dict[CompositionKey, int]) -> list[dict]:
 def _revenue_kpis(records: list[StoreDailyRecord]) -> dict:
     total = sum(record.daily_revenue for record in records)
     operating_records = [
-        record for record in records if record.is_open in {"营业", "提前休息"}
+        record for record in records if record.is_open in OPERATING_STATES
     ]
     operating_day_count = len(operating_records)
     operating_revenue = sum(record.daily_revenue for record in operating_records)
@@ -188,15 +190,28 @@ class AnalyticsService:
                 if selected_ids is not None and item.category_id in selected_ids:
                     selected_totals[key] += item.amount
             monthly_totals[record.date.strftime("%Y-%m")] += record.daily_revenue
-            weather_totals[record.weather or "未记录"].append(record.daily_revenue)
-            weekday_totals[record.date.weekday()].append(record.daily_revenue)
+            if record.is_open in OPERATING_STATES:
+                weather_totals[record.weather or "未记录"].append(record.daily_revenue)
+                weekday_totals[record.date.weekday()].append(record.daily_revenue)
 
-        recorded_wash = (
-            [record.wash_count for record in records if record.wash_count is not None]
-            if wash_count_enabled
-            else []
-        )
-        total_wash = sum(recorded_wash) if recorded_wash else None
+        operating_records = [
+            record for record in records if record.is_open in OPERATING_STATES
+        ]
+        covered_records = [
+            record for record in operating_records if record.wash_count is not None
+        ] if wash_count_enabled else []
+        total_wash = sum(record.wash_count for record in covered_records) if covered_records else None
+        covered_revenue = sum(record.daily_revenue for record in covered_records)
+        coverage_status = None
+        if wash_count_enabled:
+            if not operating_records:
+                coverage_status = "no_operating_days"
+            elif not covered_records:
+                coverage_status = "missing"
+            elif len(covered_records) == len(operating_records):
+                coverage_status = "complete"
+            else:
+                coverage_status = "partial"
         included_rows = _composition_rows(included_totals)
         excluded_rows = _composition_rows(excluded_totals)
         compositions = (
@@ -228,8 +243,10 @@ class AnalyticsService:
             {
                 "primary_categories": primary_categories,
                 "total_wash_count": total_wash,
+                "wash_count_covered_days": len(covered_records) if wash_count_enabled else None,
+                "wash_count_coverage_status": coverage_status,
                 "average_ticket": (
-                    _rounded_average(daily_ledger_revenue, total_wash)
+                    _rounded_average(covered_revenue, total_wash)
                     if total_wash is not None and total_wash > 0
                     else None
                 ),

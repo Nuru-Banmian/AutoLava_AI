@@ -12,7 +12,7 @@ const server = setupServer();
 
 function payload(overrides: Partial<ChartsResponse> = {}): ChartsResponse {
   return {
-    kpis: { total_revenue: 100, record_days: 2, open_days: 2, average_revenue: 50, primary_categories: [], total_wash_count: null, average_ticket: null },
+    kpis: { total_revenue: 100, record_days: 2, open_days: 2, average_revenue: 50, primary_categories: [], total_wash_count: null, wash_count_covered_days: 0, wash_count_coverage_status: "missing", average_ticket: null },
     range: { start: "2026-07-01", end: "2026-07-17", bucket: "day" },
     comparison_kpis: { start: "2026-06-01", end: "2026-06-17", total_revenue: 80, open_days: 2, average_revenue: 40 },
     income_summary: { daily_ledger_revenue: 100, confirmed_settlement_income: 0, total_income: 100, includes_settlement_income: false },

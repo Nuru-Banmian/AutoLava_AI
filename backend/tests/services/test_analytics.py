@@ -116,8 +116,8 @@ async def test_analytics_returns_expected_groups(db_session: AsyncSession) -> No
     assert result["kpis"]["record_days"] == 2
     assert result["kpis"]["open_days"] == 1
     assert result["kpis"]["average_revenue"] == 150
-    assert result["kpis"]["total_wash_count"] == 5
-    assert result["kpis"]["average_ticket"] == 70
+    assert result["kpis"]["total_wash_count"] == 3
+    assert result["kpis"]["average_ticket"] == 50
     assert result["daily"][0] == {"date": "2026-07-12", "revenue": 150}
     assert result["monthly"] == [
         {
@@ -128,8 +128,8 @@ async def test_analytics_returns_expected_groups(db_session: AsyncSession) -> No
             "monthly_total_income": 350,
         }
     ]
-    assert {item["weather"] for item in result["weather"]} == {"晴", "未记录"}
-    assert [item["weekday"] for item in result["weekday"]] == [0, 6]
+    assert {item["weather"] for item in result["weather"]} == {"晴"}
+    assert [item["weekday"] for item in result["weekday"]] == [6]
 
 
 async def test_total_only_records_affect_trend_not_composition(
@@ -358,8 +358,8 @@ async def test_wash_metrics_follow_the_requested_store_setting(
         category_ids=category_ids,
     )
 
-    assert reenabled["kpis"]["total_wash_count"] == 5
-    assert reenabled["kpis"]["average_ticket"] == 70
+    assert reenabled["kpis"]["total_wash_count"] == 3
+    assert reenabled["kpis"]["average_ticket"] == 50
 
 
 async def test_reenabled_wash_metrics_restore_historical_zero_values(
@@ -543,7 +543,7 @@ async def test_operating_day_average_uses_open_and_early_close_records(
     assert result["kpis"]["record_days"] == 4
     assert result["income_summary"]["daily_ledger_revenue"] == 200
     assert result["kpis"]["total_wash_count"] == 3
-    assert result["kpis"]["average_ticket"] == 67
+    assert result["kpis"]["average_ticket"] == 50
     assert result["daily"] == [
         {"date": "2026-07-12", "revenue": 150},
         {"date": "2026-07-13", "revenue": 0},
@@ -565,10 +565,9 @@ async def test_operating_day_average_uses_open_and_early_close_records(
     ]
     assert result["weather"] == [
         {"weather": "晴", "average_revenue": 150},
-        {"weather": "未记录", "average_revenue": 17},
+        {"weather": "未记录", "average_revenue": 25},
     ]
     assert result["weekday"] == [
-        {"weekday": 0, "average_revenue": 0},
         {"weekday": 1, "average_revenue": 50},
         {"weekday": 2, "average_revenue": 0},
         {"weekday": 6, "average_revenue": 150},

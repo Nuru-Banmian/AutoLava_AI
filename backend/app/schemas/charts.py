@@ -16,6 +16,8 @@ class ChartKpis(BaseModel):
     average_revenue: int
     primary_categories: list[PrimaryCategory]
     total_wash_count: int | None
+    wash_count_covered_days: int | None
+    wash_count_coverage_status: Literal["no_operating_days", "missing", "partial", "complete"] | None
     average_ticket: int | None
 
 
