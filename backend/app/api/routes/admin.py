@@ -29,6 +29,7 @@ from app.services.briefing import BriefingService
 from app.services.access import require_fresh_store_access, require_fresh_user
 from app.services.income_config import IncomeConfigService
 from app.services.owner import is_owner, owner_username
+from app.services.sessions import revoke_all
 from app.services.weather import FrozenWeatherLocation
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -255,6 +256,7 @@ async def patch_user(
                     409, "At least one active administrator is required"
                 )
         previous_store_ids = await _user_store_ids(session, user.id)
+        demotes_administrator = user.role == "admin" and body.role == "user"
         includes_access_change = (
             body.role is not None or body.store_ids is not None
         )
@@ -278,6 +280,14 @@ async def patch_user(
                 StoreMember(store_id=store_id, user_id=user.id)
                 for store_id in next_store_ids
             )
+        removes_store_access = bool(set(previous_store_ids) - set(next_store_ids))
+        if (
+            next_password_hash is not None
+            or body.is_active is False
+            or demotes_administrator
+            or removes_store_access
+        ):
+            await revoke_all(session, user.auth_identity)
         response = _managed_user_payload(user, next_store_ids)
     return response
 
@@ -312,6 +322,7 @@ async def delete_unused_user(
         await session.execute(
             delete(StoreMember).where(StoreMember.user_id == user.id)
         )
+        await revoke_all(session, user.auth_identity)
         await session.delete(user)
 
 

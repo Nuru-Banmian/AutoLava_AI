@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.identity import Store, StoreMember, User
 from app.services.owner import is_administrator
+from app.services.sessions import current_credentials, request_auth_required, require_credentials
 
 
 Capability = Literal[
@@ -43,7 +44,15 @@ async def require_fresh_user(
     user_id: int,
     capability: Capability | None = None,
 ) -> User:
-    user = await session.get(User, user_id, populate_existing=True)
+    credentials = current_credentials.get()
+    if request_auth_required.get() and credentials is None:
+        raise HTTPException(401, "Authentication required")
+    if credentials is not None:
+        user = await require_credentials(session, *credentials)
+        if user.id != user_id:
+            raise HTTPException(401, "Authentication required")
+    else:
+        user = await session.get(User, user_id, populate_existing=True)
     if user is None or not user.is_active:
         raise HTTPException(401, "Authentication required")
     if capability is not None and not has_capability(user, capability):

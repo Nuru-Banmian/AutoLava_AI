@@ -7,10 +7,12 @@ from sqlalchemy import (
     ForeignKey,
     Numeric,
     String,
+    DateTime,
     UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
+from secrets import token_hex
 
 from app.models.base import Base
 
@@ -18,6 +20,7 @@ from app.models.base import Base
 class User(Base):
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(primary_key=True)
+    auth_identity: Mapped[str] = mapped_column(String(64), unique=True, default=lambda: token_hex(32))
     username: Mapped[str] = mapped_column(String(80), unique=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(10))
@@ -25,6 +28,14 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
     __table_args__ = (CheckConstraint("role in ('admin','user')", name="role"),)
+
+
+class LoginSession(Base):
+    __tablename__ = "login_sessions"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    auth_identity: Mapped[str] = mapped_column(String(64), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
 
 
 class Store(Base):

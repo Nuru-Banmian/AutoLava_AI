@@ -11,6 +11,7 @@ import app.models.settlement  # noqa: F401
 def test_final_tables_are_registered() -> None:
     assert set(Base.metadata.tables) == {
         "users",
+        "login_sessions",
         "agent_conversations",
         "agent_messages",
         "stores",

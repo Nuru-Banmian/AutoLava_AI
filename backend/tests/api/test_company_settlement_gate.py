@@ -164,13 +164,17 @@ async def test_all_store_roles_can_read_enabled_company_settlement(
     )
     await db_session.commit()
 
-    for user in (member, admin, final_administrator):
+    identities = [
+        (user.username, user is final_administrator)
+        for user in (member, admin, final_administrator)
+    ]
+    for username, is_final_administrator in identities:
         login = await client.post(
             "/api/auth/login",
-            json={"username": user.username, "password": "secret"},
+            json={"username": username, "password": "secret"},
         )
         assert login.status_code == 200
-        if user is final_administrator:
+        if is_final_administrator:
             assert login.json()["role"] == "admin"
             assert login.json()["is_owner"] is True
 

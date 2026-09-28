@@ -15,6 +15,7 @@ from app.models.base import Base
 from app.models.identity import Store, StoreMember, User
 from app.models.ledger import StoreDailyRecord
 from app.models.settlement import SettlementAuditEvent, SettlementCompany, SettlementRecord
+from app.services.sessions import new_session
 
 
 @pytest.fixture
@@ -584,10 +585,11 @@ async def test_concurrent_confirm_and_revoke_requests_each_apply_once() -> None:
             updated_by=user.id,
         )
         setup.add(record)
+        login_session = await new_session(setup, user)
         await setup.commit()
-        user_id, store_id, record_id = user.id, store.id, record.id
+        store_id, record_id = store.id, record.id
 
-    token, _ = create_access_token(user_id)
+    token, _ = create_access_token(user.auth_identity, login_session.id)
     path = f"/api/settlements/{store_id}/records/{record_id}"
     app = create_app()
     async with AsyncClient(

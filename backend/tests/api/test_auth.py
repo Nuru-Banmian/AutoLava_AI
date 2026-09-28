@@ -136,10 +136,11 @@ def test_password_and_jwt_primitives() -> None:
     assert security.verify_password("secret", password_hash)
     assert not security.verify_password("incorrect", password_hash)
 
-    token, max_age = security.create_access_token(42)
+    identity, session_id = "a" * 64, "b" * 64
+    token, max_age = security.create_access_token(identity, session_id)
     assert max_age == 24 * 60 * 60
     assert jwt.get_unverified_header(token)["alg"] == "HS256"
-    assert security.decode_access_token(token) == 42
+    assert security.decode_access_token(token) == (identity, session_id)
 
 
 async def test_login_openapi_schema_has_only_username_and_password(client) -> None:
@@ -227,7 +228,7 @@ def test_decode_normalizes_malformed_subject() -> None:
 def test_decode_rejects_expired_token() -> None:
     security = load_feature_module("app.core.security")
     secret = get_settings().jwt_secret.get_secret_value()
-    token = jwt.encode({"sub": "42", "exp": 0}, secret, algorithm="HS256")
+    token = jwt.encode({"sub": "a" * 64, "sid": "b" * 64, "exp": 0}, secret, algorithm="HS256")
 
     with pytest.raises(jwt.ExpiredSignatureError):
         security.decode_access_token(token)
@@ -427,4 +428,4 @@ async def test_current_user_does_not_mask_unexpected_decoder_errors(
 
     monkeypatch.setattr(deps, "decode_access_token", broken_decoder)
     with pytest.raises(ValueError, match="decoder configuration failure"):
-        await deps.get_current_user(db_session, "token")
+        await anext(deps.get_current_user(db_session, "token"))
