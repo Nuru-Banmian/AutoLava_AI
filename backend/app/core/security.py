@@ -32,24 +32,29 @@ def verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
-def create_access_token(user_id: int) -> tuple[str, int]:
+def create_access_token(auth_identity: str, session_id: str) -> tuple[str, int]:
     payload = {
-        "sub": str(user_id),
+        "sub": auth_identity,
+        "sid": session_id,
         "exp": datetime.now(UTC) + timedelta(seconds=ACCESS_TOKEN_SECONDS),
     }
     secret = get_settings().jwt_secret.get_secret_value()
     return jwt.encode(payload, secret, algorithm="HS256"), ACCESS_TOKEN_SECONDS
 
 
-def decode_access_token(token: str) -> int:
+def decode_access_token(token: str) -> tuple[str, str]:
     secret = get_settings().jwt_secret.get_secret_value()
     payload = jwt.decode(
         token,
         secret,
         algorithms=["HS256"],
-        options={"require": ["sub", "exp"]},
+        options={"require": ["sub", "sid", "exp"]},
     )
-    try:
-        return int(payload["sub"])
-    except (KeyError, TypeError, ValueError) as exc:
-        raise jwt.InvalidTokenError("Invalid subject claim") from exc
+    identity, session_id = payload["sub"], payload["sid"]
+    if not all(
+        isinstance(value, str) and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+        for value in (identity, session_id)
+    ):
+        raise jwt.InvalidTokenError("Invalid identity or session claim")
+    return identity, session_id

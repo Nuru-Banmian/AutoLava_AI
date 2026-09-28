@@ -10,6 +10,7 @@ import pytest
 
 EXPECTED_TABLES = {
     "users",
+    "login_sessions",
     "stores",
     "store_members",
     "income_categories",
@@ -82,8 +83,8 @@ def test_blank_sqlite_file_migrates_to_final_schema(tmp_path: Path) -> None:
         assert "UNIQUE INDEX" in company_index_sql[0]
 
         connection.execute(
-            "INSERT INTO users (username, password_hash, role, is_active) VALUES (?, ?, ?, ?)",
-            ("admin", "hash", "admin", 1),
+            "INSERT INTO users (username, password_hash, role, is_active, auth_identity) VALUES (?, ?, ?, ?, ?)",
+            ("admin", "hash", "admin", 1, "a" * 64),
         )
         connection.execute(
             """
@@ -121,8 +122,8 @@ def test_blank_sqlite_schema_enforces_money_and_status_constraints(tmp_path: Pat
     with closing(sqlite3.connect(database_path)) as connection:
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute(
-            "INSERT INTO users (username, password_hash, role, is_active) VALUES (?, ?, ?, ?)",
-            ("operator", "hash", "admin", 1),
+            "INSERT INTO users (username, password_hash, role, is_active, auth_identity) VALUES (?, ?, ?, ?, ?)",
+            ("operator", "hash", "admin", 1, "b" * 64),
         )
         connection.execute(
             """
@@ -287,7 +288,7 @@ def test_applied_revision_0004_upgrades_without_losing_existing_data(tmp_path: P
 
     with closing(sqlite3.connect(database_path)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0017",
+            "0018",
         )
         assert connection.execute("SELECT username FROM users").fetchall() == [
             ("existing-admin",)
@@ -462,7 +463,7 @@ def test_reused_legacy_revision_0010_upgrades_to_new_agent_schema(
 
     with closing(sqlite3.connect(database_path)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0017",
+            "0018",
         )
         tables = {
             name

@@ -1,8 +1,8 @@
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Annotated
 
-from fastapi import Cookie, Depends, HTTPException
+from fastapi import Cookie, Depends, HTTPException, Request
 from jwt import InvalidTokenError
 from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,19 +12,36 @@ from app.core.security import decode_access_token
 from app.models.identity import Store, StoreMember, User
 from app.services.access import Capability, has_capability
 from app.services.owner import is_administrator, is_owner
+from app.services.sessions import current_credentials, request_auth_required, require_credentials
 
-Session = Annotated[AsyncSession, Depends(get_session)]
 
-
-async def get_current_user(session: Session, access_token: str | None = Cookie(None)) -> User:
+async def request_session(
+    request: Request, session: Annotated[AsyncSession, Depends(get_session)]
+) -> AsyncIterator[AsyncSession]:
+    """Mark public HTTP calls so write revalidation cannot use an ID-only fallback."""
+    token = request_auth_required.set(True)
     try:
-        user_id = decode_access_token(access_token or "")
+        yield session
+    finally:
+        request_auth_required.reset(token)
+
+
+Session = Annotated[AsyncSession, Depends(request_session)]
+
+
+async def get_current_user(
+    session: Session, access_token: str | None = Cookie(None)
+) -> AsyncIterator[User]:
+    try:
+        auth_identity, session_id = decode_access_token(access_token or "")
     except InvalidTokenError as exc:
         raise HTTPException(401, "Authentication required") from exc
-    user = await session.get(User, user_id)
-    if user is None or not user.is_active:
-        raise HTTPException(401, "Authentication required")
-    return user
+    user = await require_credentials(session, auth_identity, session_id)
+    token = current_credentials.set((auth_identity, session_id))
+    try:
+        yield user
+    finally:
+        current_credentials.reset(token)
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
