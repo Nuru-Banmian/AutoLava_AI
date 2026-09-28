@@ -124,6 +124,73 @@ afterEach(() => {
 afterAll(() => server.close());
 
 describe("BusinessRecordsPage", () => {
+  it("waits for the current window before showing missing dates and retries an initial failure", async () => {
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    let requests = 0;
+    server.use(
+      http.get("/api/database/1/records", async () => {
+        requests += 1;
+        if (requests === 1) {
+          await pending;
+          return HttpResponse.json({ detail: "offline" }, { status: 500 });
+        }
+        return HttpResponse.json(databaseResponse([]));
+      }),
+      http.get("/api/charts/1", () => HttpResponse.json(chartsPayload)),
+    );
+    renderPage();
+    expect(screen.getByText("正在加载记录…")).toHaveAttribute("role", "status");
+    expect(screen.queryByText("未录入")).not.toBeInTheDocument();
+    release();
+    expect(await screen.findByText("加载记录失败，请重试。")).toBeInTheDocument();
+    expect(screen.queryByText("未录入")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    expect(await screen.findByRole("button", { name: "2026年7月17日 星期五，未录入，—" })).toBeInTheDocument();
+  });
+
+  it("keeps returned records and missing dates visible when a refresh fails", async () => {
+    let requests = 0;
+    server.use(
+      http.get("/api/database/1/records", () => {
+        requests += 1;
+        return requests === 1
+          ? HttpResponse.json(databaseResponse([record]))
+          : HttpResponse.json({ detail: "offline" }, { status: 500 });
+      }),
+      http.get("/api/charts/1", () => HttpResponse.json(chartsPayload)),
+    );
+    const view = renderPage();
+    await screen.findByRole("heading", { name: "2026年7月14日 星期二" });
+    await view.client.invalidateQueries({ queryKey: ["database", "records", 1] });
+    expect(await screen.findByText("刷新记录失败，当前显示上次取得的数据。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "2026年7月14日 星期二，营业，€100" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "2026年7月17日 星期五，未录入，—" })).toBeInTheDocument();
+  });
+
+  it("does not show the previous month's dates while another window loads", async () => {
+    let releaseJune!: () => void;
+    const pendingJune = new Promise<void>((resolve) => { releaseJune = resolve; });
+    server.use(
+      http.get("/api/database/1/records", async ({ request }) => {
+        const start = new URL(request.url).searchParams.get("start");
+        if (start === "2026-06-01") {
+          await pendingJune;
+          return HttpResponse.json(databaseResponse([]));
+        }
+        return HttpResponse.json(databaseResponse([record]));
+      }),
+      http.get("/api/charts/1", () => HttpResponse.json(chartsPayload)),
+    );
+    renderPage();
+    await screen.findByRole("button", { name: "2026年7月17日 星期五，未录入，—" });
+    fireEvent.click(within(screen.getByLabelText("记录筛选")).getByRole("button", { name: "前一月" }));
+    expect(screen.getByText("正在加载记录…")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /未录入/ })).not.toBeInTheDocument();
+    releaseJune();
+    expect(await screen.findByRole("button", { name: "2026年6月30日 星期二，未录入，—" })).toBeInTheDocument();
+  });
+
   it("loads and exports the selected date range without status filtering", async () => {
     const recordRequests: URL[] = [];
     server.use(
@@ -424,6 +491,8 @@ describe("BusinessRecordsPage", () => {
 
     expect(screen.queryByRole("heading", { name: "2026年7月14日 星期二" })).not.toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "2026年7月16日 星期四" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "2026年7月14日 星期二，营业，€100" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "2026年7月14日 星期二，未录入，—" })).toBeInTheDocument();
     expect(storeTwoRequests[0].pathname + storeTwoRequests[0].search).toBe("/api/database/2/records?start=2026-07-01&end=2026-07-31&page=1&page_size=200");
     expect(screen.queryByRole("dialog", { name: "2026-07-14 营业记录详情" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "确认永久删除记录？" })).not.toBeInTheDocument();

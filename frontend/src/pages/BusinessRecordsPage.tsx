@@ -124,9 +124,9 @@ export function BusinessRecordsPage() {
     return () => cancelAnimationFrame(frame);
   }, [records.isSuccess, restored]);
 
-  const selectedRecordFromResponse = records.data?.items.find((item) => (
+  const selectedRecordFromResponse = recordStateReady ? records.data?.items.find((item) => (
     item.date === selectedDate && item.store_id === selected?.id
-  )) ?? null;
+  )) ?? null : null;
   if (!selectedRecordFromResponse) {
     selectedRecordRef.current = null;
   } else if (
@@ -138,14 +138,16 @@ export function BusinessRecordsPage() {
     selectedRecordRef.current = selectedRecordFromResponse;
   }
   const selectedRecord = selectedRecordRef.current;
-  const visibleRecords = records.data?.items.filter((item) => item.store_id === selected?.id) ?? [];
+  const hasWindowData = recordStateReady && records.data !== undefined;
+  const visibleRecords = hasWindowData ? records.data.items.filter((item) => item.store_id === selected?.id) : [];
   const tableRows = useMemo<RecordTableRow[]>(() => {
+    if (!hasWindowData) return [];
     const byDate = new Map(visibleRecords.map((record) => [record.date, record]));
     const tableEnd = range.end > today ? today : range.end;
     return eachDayOfInterval({ start: parseISO(range.start), end: parseISO(tableEnd) })
       .map((day) => byDate.get(format(day, "yyyy-MM-dd")) ?? { id: null, date: format(day, "yyyy-MM-dd") })
       .reverse();
-  }, [range.end, range.start, today, visibleRecords]);
+  }, [hasWindowData, range.end, range.start, today, visibleRecords]);
   const selectedTableRow = tableRows.find((record) => record.date === selectedDate) ?? null;
   const pagedTableRows = tableRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const exportMutation = useMutation({
@@ -190,30 +192,44 @@ export function BusinessRecordsPage() {
   return (
     <section className="grid w-full gap-4 lg:min-h-0 lg:flex-1 lg:grid-rows-[auto_auto_minmax(0,1fr)]">
       <header><h1 className="text-2xl font-semibold">营业记录</h1></header>
-      <RecordFilters
-        mode={recordMode}
-        range={range}
-        today={today}
-        exporting={exportMutation.isPending}
-        exportError={exportError}
-        onChange={handleRecordRangeChange}
-        onExport={() => exportMutation.mutate({
-          storeId: selected.id,
-          requestedRange: range,
-        })}
-      />
+      <div className="grid gap-2">
+        <RecordFilters
+          mode={recordMode}
+          range={range}
+          today={today}
+          exporting={exportMutation.isPending}
+          exportError={exportError}
+          onChange={handleRecordRangeChange}
+          onExport={() => exportMutation.mutate({
+            storeId: selected.id,
+            requestedRange: range,
+          })}
+        />
+        {records.isError && (
+          <div role="alert" className="grid gap-2 rounded-md border border-destructive p-4">
+            <p>{hasWindowData ? "刷新记录失败，当前显示上次取得的数据。" : "加载记录失败，请重试。"}</p>
+            <button type="button" onClick={() => void records.refetch()} className="w-fit rounded-md border border-border px-3 py-2">重试</button>
+          </div>
+        )}
+        {!hasWindowData && !records.isError && (
+          <div role="status" className="animate-pulse rounded-md bg-muted p-4">正在加载记录…</div>
+        )}
+        {hasWindowData && records.isFetching && !records.isError && (
+          <div role="status" className="rounded-md border border-border p-3">正在刷新记录…</div>
+        )}
+      </div>
       <div className="grid gap-4 lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_minmax(30rem,32rem)]">
         <div className="min-w-0 overflow-x-hidden lg:flex lg:min-h-0 lg:flex-col">
-          <div className="hidden lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:block">
+          {hasWindowData && <div className="hidden lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:block">
             <RecordTable
               records={pagedTableRows}
               selectedDate={selectedDate}
-              loading={records.isLoading}
-              error={records.error}
+              loading={false}
+              error={null}
               onSelect={(nextRecord) => setSelectedDate(nextRecord.date)}
               onRetry={() => void records.refetch()}
             />
-          </div>
+          </div>}
           <div className="lg:hidden">
             <MobileRecordList
               records={pagedTableRows}
@@ -224,22 +240,22 @@ export function BusinessRecordsPage() {
                 setReturnFocusTo(trigger);
               }}
             />
-            {records.isSuccess && visibleRecords.length === 0 && (
+            {hasWindowData && visibleRecords.length === 0 && (
               <div className="grid gap-2 rounded-md border border-dashed p-4">
                 <p>暂无可查看记录</p>
                 <Link className="w-fit text-primary underline-offset-4 hover:underline" to={`/ledger?date=${today}`} onClick={(event) => { event.preventDefault(); editRecord(today); }}>补记记录</Link>
               </div>
             )}
           </div>
-          <RecordPagination
+          {hasWindowData && <RecordPagination
             page={page}
             total={tableRows.length}
             pageSize={PAGE_SIZE}
             onPageChange={handlePageChange}
-          />
+          />}
         </div>
         <aside className="grid gap-4 lg:min-h-0 lg:overflow-y-auto">
-          <div className="hidden lg:block">
+          {hasWindowData && <div className="hidden lg:block">
             {selectedTableRow ? (
               <RecordDetailPanel
                 record={selectedTableRow}
@@ -257,16 +273,16 @@ export function BusinessRecordsPage() {
             ) : (
               <div className="grid gap-2 rounded-md border border-dashed p-4">
                 <p>暂无可查看记录</p>
-                {!records.isLoading && !records.error && (
+                {hasWindowData && (
                   <Link className="w-fit text-primary underline-offset-4 hover:underline" to={`/ledger?date=${today}`} onClick={(event) => { event.preventDefault(); editRecord(today); }}>补记记录</Link>
                 )}
               </div>
             )}
-          </div>
+          </div>}
           {recordStateReady && <BusinessAnalysisCard key={selected.id} storeId={selected.id} range={range} />}
         </aside>
       </div>
-      {mobileRecord && (mobileRecord.id === null || mobileRecord.store_id === selected.id) && (
+      {hasWindowData && mobileRecord && (mobileRecord.id === null || mobileRecord.store_id === selected.id) && (
         <MobileRecordSheet
           open
           record={mobileRecord}

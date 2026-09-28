@@ -174,3 +174,67 @@ test("loads every record page for a long custom month range", async ({ page }) =
     request.start === "2025-01-01" && request.end === "2025-12-31"
   )).map((request) => request.page)).toEqual([1, 2]);
 });
+
+for (const width of [390, 1280]) {
+  test(`records request states stay truthful at ${width}px`, async ({ page }) => {
+    await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
+    await page.setViewportSize({ width, height: 800 });
+    await mockBusinessRecords(page, { records: [], charts: [] });
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    let requests = 0;
+    let allowSuccess = false;
+    await page.route(/^http:\/\/127\.0\.0\.1:4173\/api\/database\/1\/records/, async (route) => {
+      requests += 1;
+      if (requests === 1) {
+        await pending;
+        return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ detail: "offline" }) });
+      }
+      if (!allowSuccess) {
+        return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ detail: "offline" }) });
+      }
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], categories: [], sum_daily_revenue: 0, total: 0, page: 1, page_size: 200 }) });
+    });
+    await page.goto("/database");
+    await expect(page.getByText("正在加载记录…")).toBeVisible();
+    await expect(page.getByText("未录入", { exact: true })).toHaveCount(0);
+    release();
+    await expect(page.getByText("加载记录失败，请重试。")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("未录入", { exact: true })).toHaveCount(0);
+    allowSuccess = true;
+    await page.getByRole("button", { name: "重试", exact: true }).click();
+    if (width < 1024) {
+      await expect(page.getByRole("button", { name: /未录入/ }).first()).toBeVisible();
+    } else {
+      await expect(page.getByRole("table").getByText("未录入", { exact: true }).first()).toBeVisible();
+    }
+  });
+
+  test(`late old-month response cannot create missing dates at ${width}px`, async ({ page }) => {
+    await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
+    await page.setViewportSize({ width, height: 800 });
+    await mockBusinessRecords(page, { records: [], charts: [] });
+    let releaseJuly!: () => void;
+    const pendingJuly = new Promise<void>((resolve) => { releaseJuly = resolve; });
+    let markJulyResponded!: () => void;
+    const julyResponded = new Promise<void>((resolve) => { markJulyResponded = resolve; });
+    await page.route(/^http:\/\/127\.0\.0\.1:4173\/api\/database\/1\/records/, async (route) => {
+      const start = new URL(route.request().url()).searchParams.get("start");
+      if (start === "2026-07-01") await pendingJuly;
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], categories: [], sum_daily_revenue: 0, total: 0, page: 1, page_size: 200 }) });
+      if (start === "2026-07-01") markJulyResponded();
+    });
+    await page.goto("/database");
+    await expect(page.getByText("正在加载记录…")).toBeVisible();
+    await page.getByRole("region", { name: "记录筛选" }).getByRole("button", { name: "前一月" }).click();
+    const juneDate = width < 1024
+      ? page.getByRole("button", { name: "2026年6月30日 星期二，未录入，—" })
+      : page.getByRole("table").getByRole("row", { name: /2026年6月30日 星期二 未录入/ });
+    await expect(juneDate).toBeVisible();
+    releaseJuly();
+    await julyResponded;
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await expect(juneDate).toBeVisible();
+    await expect(page.getByText("2026年7月17日 星期五")).toHaveCount(0);
+  });
+}

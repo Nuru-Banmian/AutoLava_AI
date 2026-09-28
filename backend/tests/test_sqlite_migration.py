@@ -50,6 +50,11 @@ async def test_migrated_legacy_weather_remains_available_through_public_endpoint
     app.dependency_overrides[get_session] = migrated_session
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         assert (await client.post("/api/auth/login", json={"username": "legacy-admin", "password": "secret"})).status_code == 200
+        empty_window = await client.get("/api/database/1/records", params={"start": "2026-06-01", "end": "2026-06-30"})
+        partial_window = await client.get("/api/database/1/records", params={"start": "2026-07-01", "end": "2026-07-31"})
+        assert empty_window.status_code == partial_window.status_code == 200
+        assert empty_window.json()["items"] == []
+        assert [(item["date"], item["daily_revenue"]) for item in partial_window.json()["items"]] == [("2026-07-28", 940)]
         record = await client.get("/api/ledger/1/2026-07-28")
         assert record.status_code == 200
         assert record.json()["weather"] == "旧版任意天气"
