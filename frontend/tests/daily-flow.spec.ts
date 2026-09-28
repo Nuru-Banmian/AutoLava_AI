@@ -13,7 +13,7 @@ const categories = Array.from({ length: 13 }, (_, index) => ({
 function snapshot(id: number, date: string, amount = id, washCount: number | null = null, weather: string | null = null) {
   const now = `${date}T12:00:00`;
   return {
-    id, store_id: 1, date, daily_revenue: amount, wash_count: washCount, is_open: "营业",
+    id, store_id: 1, date, identity: `record-${id}`, revision: 1, daily_revenue: amount, wash_count: washCount, is_open: "营业",
     income_mode: "composed",
     weather, weather_legacy: weather === "旧版任意天气", weather_auto: null, weather_code: null, temperature_max: null,
     temperature_min: null, precipitation: null, activity: null, weather_edited: false,
@@ -116,6 +116,7 @@ async function mockMergedFlow(
       const amount = body.daily_revenue ?? body.items.find((item) => item.category_id === 1)?.amount ?? 0;
       const existing = records.find((item) => item.date === targetDate);
       const saved = snapshot(existing?.id ?? 999, targetDate, amount);
+      saved.revision = (existing?.revision ?? 0) + 1;
       saved.is_open = body.is_open;
       saved.wash_count = washCountSetting ? body.wash_count : existing?.wash_count ?? null;
       saved.items = body.items.map((item, index) => ({
