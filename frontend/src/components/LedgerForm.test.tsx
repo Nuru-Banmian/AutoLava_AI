@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { IncomeConfigResponse, LedgerBody, RecordSnapshot } from "@/api/types";
 import { LedgerForm } from "@/components/LedgerForm";
+import { weatherOptions } from "@/test/weather-options";
 
 const directConfig = {
   store_id: 2,
@@ -59,7 +60,7 @@ function savedRecord(overrides: Partial<RecordSnapshot> = {}): RecordSnapshot {
 
 describe("LedgerForm", () => {
   it("uses direct total when configuration is disabled", () => {
-    render(<LedgerForm categories={[]} config={directConfig} onSave={vi.fn()} />);
+    render(<LedgerForm weatherOptions={weatherOptions} categories={[]} config={directConfig} onSave={vi.fn()} />);
 
     const input = screen.getByLabelText("当日营业额");
     expect(input).toHaveAttribute("type", "text");
@@ -70,7 +71,7 @@ describe("LedgerForm", () => {
   it("新建总额记账默认留空，并在保存时将空数值补为零", () => {
     const onSave = vi.fn<(body: LedgerBody) => void>();
     const directDirty = vi.fn();
-    render(<LedgerForm categories={[]} config={directConfig} onDirtyChange={directDirty} onSave={onSave} />);
+    render(<LedgerForm weatherOptions={weatherOptions} categories={[]} config={directConfig} onDirtyChange={directDirty} onSave={onSave} />);
 
     expect(screen.getByLabelText("当日营业额")).toHaveValue("");
     expect(screen.getByLabelText("洗车数量")).toHaveValue("");
@@ -90,7 +91,7 @@ describe("LedgerForm", () => {
   it("新建分类记账在提前休息时保持空白，并在保存时将空值补零", () => {
     const onSave = vi.fn<(body: LedgerBody) => void>();
     const onDirtyChange = vi.fn();
-    render(<LedgerForm categories={[]} config={composedConfig} onDirtyChange={onDirtyChange} onSave={onSave} />);
+    render(<LedgerForm weatherOptions={weatherOptions} categories={[]} config={composedConfig} onDirtyChange={onDirtyChange} onSave={onSave} />);
 
     expect(screen.getByLabelText("现金")).toHaveValue("");
     expect(screen.getByLabelText("不计入")).toHaveValue("");
@@ -115,7 +116,7 @@ describe("LedgerForm", () => {
 
   it("submits early-close operating values without normalizing them", () => {
     const onSave = vi.fn<(body: LedgerBody) => void>();
-    render(<LedgerForm categories={[]} config={composedConfig} onSave={onSave} />);
+    render(<LedgerForm weatherOptions={weatherOptions} categories={[]} config={composedConfig} onSave={onSave} />);
 
     fireEvent.change(screen.getByLabelText("状态"), { target: { value: "提前休息" } });
     fireEvent.change(screen.getByLabelText("现金"), { target: { value: "125" } });
@@ -132,7 +133,7 @@ describe("LedgerForm", () => {
 
   it("accepts only whole non-negative money input", () => {
     const onSave = vi.fn();
-    render(<LedgerForm categories={[]} config={directConfig} onSave={onSave} />);
+    render(<LedgerForm weatherOptions={weatherOptions} categories={[]} config={directConfig} onSave={onSave} />);
 
     for (const value of ["-1", "1.2", "1e2", " 1", "1 "]) {
       fireEvent.change(screen.getByLabelText("当日营业额"), { target: { value } });
@@ -148,7 +149,7 @@ describe("LedgerForm", () => {
 
   it("sums only included categories and saves no version fields", () => {
     const onSave = vi.fn<(body: LedgerBody) => void>();
-    render(<LedgerForm categories={[]} config={composedConfig} onSave={onSave} />);
+    render(<LedgerForm weatherOptions={weatherOptions} categories={[]} config={composedConfig} onSave={onSave} />);
 
     fireEvent.change(screen.getByLabelText("现金"), { target: { value: "12" } });
     fireEvent.change(screen.getByLabelText("不计入"), { target: { value: "99" } });
@@ -172,7 +173,7 @@ describe("LedgerForm", () => {
         { id: 21, category_id: 5, category_name: "历史第一项", include_in_total: true, sort_order: 1, amount: 15, created_at: "", updated_at: "" },
       ],
     });
-    render(<LedgerForm categories={[]} config={{
+    render(<LedgerForm weatherOptions={weatherOptions} categories={[]} config={{
       ...composedConfig,
       items: [{ ...composedConfig.items[0], name: "当前已改名", include_in_total: false, sort_order: 3 }],
     }} record={record} onSave={vi.fn()} />);
@@ -186,7 +187,7 @@ describe("LedgerForm", () => {
 
   it("preserves a direct-mode saved record even when current configuration is composed", () => {
     const onSave = vi.fn();
-    render(<LedgerForm categories={[]} config={composedConfig} record={savedRecord({
+    render(<LedgerForm weatherOptions={weatherOptions} categories={[]} config={composedConfig} record={savedRecord({
       daily_revenue: 98,
       income_mode: "legacy_total",
       items: [],
@@ -218,7 +219,7 @@ describe("LedgerForm", () => {
   });
 
   it("keeps the latest valid categorized total while showing a specific input error", () => {
-    render(<LedgerForm categories={[]} config={composedConfig} onSave={vi.fn()} />);
+    render(<LedgerForm weatherOptions={weatherOptions} categories={[]} config={composedConfig} onSave={vi.fn()} />);
 
     fireEvent.change(screen.getByLabelText("现金"), { target: { value: "15" } });
     expect(screen.getByText("合计金额 €15")).toBeInTheDocument();
@@ -250,7 +251,7 @@ describe("LedgerForm", () => {
 
   it("keeps wash count and event visible, validates wash count, and saves blank events as empty", () => {
     const onSave = vi.fn();
-    render(<LedgerForm categories={[]} config={directConfig} onSave={onSave} />);
+    render(<LedgerForm weatherOptions={weatherOptions} categories={[]} config={directConfig} onSave={onSave} />);
 
     const washCount = screen.getByLabelText("洗车数量");
     expect(washCount).toHaveAttribute("type", "text");
@@ -326,14 +327,14 @@ describe("LedgerForm", () => {
   });
 
   it("absorbs late automatic weather while the form is clean", () => {
-    const view = render(<LedgerForm categories={[]} config={directConfig} onSave={vi.fn()} />);
-    view.rerender(<LedgerForm categories={[]} config={directConfig} weather={{ weather: "晴", weather_code: 1, temperature_max: 20, temperature_min: 10, precipitation: 0 }} onSave={vi.fn()} />);
+    const view = render(<LedgerForm weatherOptions={weatherOptions} categories={[]} config={directConfig} onSave={vi.fn()} />);
+    view.rerender(<LedgerForm weatherOptions={weatherOptions} categories={[]} config={directConfig} weather={{ weather: "晴", weather_code: 1, temperature_max: 20, temperature_min: 10, precipitation: 0 }} onSave={vi.fn()} />);
     expect(screen.getByRole("combobox", { name: "天气" })).toHaveTextContent("晴");
   });
 
   it("shows record weather as a select and can save before weather is known", () => {
     const onSave = vi.fn();
-    render(<LedgerForm categories={[]} config={directConfig} onSave={onSave} />);
+    render(<LedgerForm weatherOptions={weatherOptions} categories={[]} config={directConfig} onSave={onSave} />);
 
     expect(screen.getByRole("combobox", { name: "天气" })).toHaveTextContent("请选择天气");
     fireEvent.change(screen.getByLabelText("当日营业额"), { target: { value: "12" } });
@@ -342,30 +343,35 @@ describe("LedgerForm", () => {
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ weather: null }));
   });
 
-  it("offers only the ten configured record weather values for manual selection", async () => {
-    render(<LedgerForm categories={[]} config={directConfig} onSave={vi.fn()} />);
+  it("omits untouched empty weather even when a new automatic suggestion is displayed", () => {
+    const onSave = vi.fn();
+    render(<LedgerForm weatherOptions={weatherOptions} categories={[]} config={directConfig} record={savedRecord({ income_mode: "legacy_total", weather: null, weather_edited: false })} weather={{ weather: "晴", weather_code: 0, temperature_max: 20, temperature_min: 10, precipitation: 0 }} onSave={onSave} />);
+    expect(screen.getByRole("combobox", { name: "天气" })).toHaveTextContent("晴");
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ weather: undefined, weather_edited: false }));
+  });
+
+  it("offers the full record weather contract and a clear action", async () => {
+    render(<LedgerForm weatherOptions={weatherOptions} categories={[]} config={directConfig} onSave={vi.fn()} />);
 
     fireEvent.pointerDown(screen.getByRole("combobox", { name: "天气" }), { button: 0, ctrlKey: false, pointerType: "mouse" });
 
-    await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(10));
-    const weatherOptions = [...document.querySelectorAll('[role="option"]')];
-    expect(weatherOptions.map((option) => option.textContent)).toEqual([
-      "晴", "少云", "多云", "阴", "雾", "小雨", "中雨", "大雨", "阵雨", "雷雨",
-    ]);
-    expect(weatherOptions.some((option) => /未选择|请选择天气/.test(option.textContent ?? ""))).toBe(false);
+    await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(29));
+    const renderedOptions = [...document.querySelectorAll('[role="option"]')];
+    expect(renderedOptions.map((option) => option.textContent)).toEqual(["清空天气", ...weatherOptions]);
   });
 
   it.each([
     { source: "saved record", props: { record: savedRecord({ weather: "大雪" }) } },
     { source: "automatic weather", props: { weather: { weather: "大雪", weather_code: 75, temperature_max: 2, temperature_min: -1, precipitation: 8 } } },
-  ])("displays and preserves weather outside manual options from $source", async ({ props }) => {
+  ])("displays and preserves all valid weather from $source", async ({ props }) => {
     const onSave = vi.fn();
-    render(<LedgerForm categories={[]} config={directConfig} {...props} onSave={onSave} />);
+    render(<LedgerForm weatherOptions={weatherOptions} categories={[]} config={directConfig} {...props} onSave={onSave} />);
 
     expect(screen.getByRole("combobox", { name: "天气" })).toHaveTextContent("大雪");
     fireEvent.pointerDown(screen.getByRole("combobox", { name: "天气" }), { button: 0, ctrlKey: false, pointerType: "mouse" });
-    await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(10));
-    expect([...document.querySelectorAll('[role="option"]')].map((option) => option.textContent)).not.toContain("大雪");
+    await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(29));
+    expect([...document.querySelectorAll('[role="option"]')].map((option) => option.textContent)).toContain("大雪");
     fireEvent.keyDown(screen.getByRole("listbox"), { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("listbox")).not.toBeInTheDocument());
 
@@ -373,5 +379,17 @@ describe("LedgerForm", () => {
     if (directAmount) fireEvent.change(directAmount, { target: { value: "12" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ weather: "大雪", weather_edited: false }));
+  });
+
+  it("requires correction of a historical weather value and saves an explicit clear", async () => {
+    const onSave = vi.fn();
+    render(<LedgerForm weatherOptions={weatherOptions} categories={[]} config={directConfig} record={savedRecord({ weather: "旧版任意天气", weather_legacy: true, income_mode: "legacy_total" })} onSave={onSave} />);
+    expect(screen.getByRole("combobox", { name: "天气" })).toHaveTextContent("历史旧值：旧版任意天气");
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(onSave).not.toHaveBeenCalled();
+    fireEvent.pointerDown(screen.getByRole("combobox", { name: "天气" }), { button: 0, ctrlKey: false, pointerType: "mouse" });
+    fireEvent.click(await screen.findByRole("option", { name: "清空天气" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ weather: null, weather_edited: true }));
   });
 });

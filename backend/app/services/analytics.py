@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.models.identity import Store
 from app.models.ledger import StoreDailyRecord
 from app.models.settlement import SettlementRecord
+from app.services.weather import LEGACY_WEATHER_LABEL, is_legacy_weather
 
 OPERATING_STATES = frozenset({"营业", "提前休息"})
 
@@ -191,7 +192,11 @@ class AnalyticsService:
                     selected_totals[key] += item.amount
             monthly_totals[record.date.strftime("%Y-%m")] += record.daily_revenue
             if record.is_open in OPERATING_STATES:
-                weather_totals[record.weather or "未记录"].append(record.daily_revenue)
+                weather_group = (
+                    LEGACY_WEATHER_LABEL if is_legacy_weather(record.weather)
+                    else record.weather or "未记录"
+                )
+                weather_totals[weather_group].append(record.daily_revenue)
                 weekday_totals[record.date.weekday()].append(record.daily_revenue)
 
         operating_records = [

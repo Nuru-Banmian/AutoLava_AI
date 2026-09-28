@@ -1,6 +1,7 @@
 from typing import Any
 
 from app.models.ledger import StoreDailyRecord
+from app.services.weather import is_legacy_weather
 
 
 def record_payload(
@@ -14,6 +15,7 @@ def record_payload(
         "income_mode": record.income_mode,
         "is_open": record.is_open,
         "weather": record.weather,
+        "weather_legacy": is_legacy_weather(record.weather),
         "weather_auto": record.weather_auto,
         "weather_code": record.weather_code,
         "temperature_max": record.temperature_max,

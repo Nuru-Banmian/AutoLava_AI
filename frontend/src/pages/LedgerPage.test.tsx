@@ -8,9 +8,10 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { LedgerPage } from "@/pages/LedgerPage";
 import { StoreProvider, useStore } from "@/stores/StoreProvider";
 import { LedgerForm } from "@/components/LedgerForm";
+import { weatherOptions } from "@/test/weather-options";
 import { incomeConfigKey, ledgerMonthKey, storeLocalToday } from "@/lib/user-api";
 
-const server = setupServer();
+const server = setupServer(http.get("/api/ledger/weather-options", () => HttpResponse.json(weatherOptions)));
 function StoreControls() { const { select } = useStore(); return <><button onClick={() => select(1)}>choose1</button><button onClick={() => select(2)}>choose2</button></>; }
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 beforeEach(() => {
@@ -45,6 +46,7 @@ function renderLedger(extra: Parameters<typeof server.use> = [], initialEntry: T
       { id: 3, name: "暗钱", include_in_total: false, is_active: true, sort_order: 3 },
     ], sum_daily_revenue: 0, total: 0, page: 1, page_size: 1 })),
     http.get("/api/ledger/1/recent", () => HttpResponse.json([])),
+    http.get("/api/ledger/weather-options", () => HttpResponse.json(weatherOptions)),
     http.get("/api/weather/1/:date", () => HttpResponse.json({ weather: null, weather_code: null, temperature_max: null, temperature_min: null, precipitation: null })),
     http.get("/api/ledger/1/:date", () => HttpResponse.json({ detail: "not found" }, { status: 404 })),
   );
@@ -60,7 +62,7 @@ function fillBlankLedgerAmounts() {
 
 async function chooseRecordWeather(value: string) {
   fireEvent.pointerDown(screen.getByRole("combobox", { name: "天气" }), { button: 0, ctrlKey: false, pointerType: "mouse" });
-  await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(10));
+  await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(29));
   const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((candidate) => candidate.textContent === value);
   expect(option).toBeDefined();
   fireEvent.click(option!);
@@ -564,9 +566,9 @@ describe("LedgerPage", () => {
 
   it("keeps a manually selected weather value when delayed automatic weather arrives", async () => {
     const props = { config: singleConfig, categories: [{ id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1 }], onSave: () => undefined };
-    const view = render(<LedgerForm {...props} />);
+    const view = render(<LedgerForm {...props} weatherOptions={weatherOptions} />);
     await chooseRecordWeather("中雨");
-    view.rerender(<LedgerForm {...props} weather={{ weather: "晴", weather_code: 1, temperature_max: 20, temperature_min: 10, precipitation: 0 }} />);
+    view.rerender(<LedgerForm {...props} weatherOptions={weatherOptions} weather={{ weather: "晴", weather_code: 1, temperature_max: 20, temperature_min: 10, precipitation: 0 }} />);
     expect(screen.getByRole("combobox", { name: "天气" })).toHaveTextContent("中雨");
   });
 

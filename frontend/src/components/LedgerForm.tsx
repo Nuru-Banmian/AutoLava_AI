@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CategoryDescriptor, IncomeConfigResponse, LedgerBody, LedgerStatus, RecordSnapshot, WeatherResponse } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatWholeEuro, parseWholeAmount } from "@/lib/user-api";
 
-const MANUAL_RECORD_WEATHER_OPTIONS = ["晴", "少云", "多云", "阴", "雾", "小雨", "中雨", "大雨", "阵雨", "雷雨"] as const;
 const LEDGER_FIELD_CLASS = "min-h-11 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-base shadow-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 export interface LedgerFormProps {
@@ -12,6 +11,7 @@ export interface LedgerFormProps {
   config?: IncomeConfigResponse;
   record?: RecordSnapshot;
   weather?: WeatherResponse;
+  weatherOptions?: string[];
   onSave(body: LedgerBody): void;
   onDirtyChange?(dirty: boolean): void;
   saving?: boolean;
@@ -46,7 +46,7 @@ function normalizedWashCount(washCountEnabled: boolean, status: LedgerStatus, wa
   return "value" in result ? result.value : null;
 }
 
-export function LedgerForm({ categories, config, record, weather, onSave, onDirtyChange, saving = false, submitLabel = "保存", savedSubmission, recordRevision, washCountEnabled = true }: LedgerFormProps) {
+export function LedgerForm({ categories, config, record, weather, weatherOptions = [], onSave, onDirtyChange, saving = false, submitLabel = "保存", savedSubmission, recordRevision, washCountEnabled = true }: LedgerFormProps) {
   const resolvedConfig = useMemo(() => config ?? ({
     store_id: record?.store_id ?? 0,
     enabled: record?.income_mode === "composed",
@@ -87,6 +87,7 @@ export function LedgerForm({ categories, config, record, weather, onSave, onDirt
   const [wash, setWash] = useState(loadedWash);
   const [weatherValue, setWeatherValue] = useState(record?.weather ?? weather?.weather ?? "");
   const [weatherEdited, setWeatherEdited] = useState(record?.weather_edited ?? false);
+  const submittedWeather = useRef<string | null>(record?.weather ?? weather?.weather ?? null);
   const [activity, setActivity] = useState(record?.activity ?? "");
   const loadedDirectTotal = record ? String(record.daily_revenue) : "";
   const [directTotal, setDirectTotal] = useState(loadedDirectTotal);
@@ -122,7 +123,7 @@ export function LedgerForm({ categories, config, record, weather, onSave, onDirt
     is_open: body.is_open,
     daily_revenue: body.daily_revenue,
     wash_count: body.wash_count,
-    weather: body.weather,
+    weather: body.weather === undefined ? submittedWeather.current : body.weather,
     weather_edited: body.weather_edited,
     activity: body.activity,
     items: body.items.map((item) => [item.category_id, item.amount]),
@@ -183,15 +184,16 @@ export function LedgerForm({ categories, config, record, weather, onSave, onDirt
   const washError = washCountEnabled && status !== "休息" && !legacyEmptyWash && "error" in washResult
     ? washResult.error
     : "";
-  const validationError = amountError || totalError || washError;
+  const legacyWeather = Boolean(weatherValue && weatherOptions.length && !weatherOptions.includes(weatherValue));
+  const validationError = amountError || totalError || washError || (legacyWeather ? "历史旧值需改选有效天气或清空" : "");
   function changeStatus(next: LedgerStatus) {
     setStatus(next);
     if (next === "休息" && wash !== "") setWash("0");
   }
-  return <form className="grid min-w-0 gap-5" onSubmit={(event) => { event.preventDefault(); if (validationError) return; const items = amountResults.map(({ category, result }) => ({ category_id: category.id, amount: status === "休息" ? 0 : (result as { value: number }).value })); if (composed) setAmounts(Object.fromEntries(effectiveCategories.map((category) => [category.id, amounts[category.id] || "0"]))); else if (directTotal === "") setDirectTotal("0"); if (!record && wash === "") setWash("0"); onSave({ is_open: status, daily_revenue: composed ? null : status === "休息" ? 0 : (directResult as { value: number }).value, wash_count: normalizedFormWashCount(status, wash), weather: weatherValue || null, weather_edited: weatherEdited, activity: normalizedActivity(activity), items: composed ? items : [] }); }}>
+  return <form className="grid min-w-0 gap-5" onSubmit={(event) => { event.preventDefault(); if (validationError) return; const items = amountResults.map(({ category, result }) => ({ category_id: category.id, amount: status === "休息" ? 0 : (result as { value: number }).value })); if (composed) setAmounts(Object.fromEntries(effectiveCategories.map((category) => [category.id, amounts[category.id] || "0"]))); else if (directTotal === "") setDirectTotal("0"); if (!record && wash === "") setWash("0"); submittedWeather.current = weatherValue || null; onSave({ is_open: status, daily_revenue: composed ? null : status === "休息" ? 0 : (directResult as { value: number }).value, wash_count: normalizedFormWashCount(status, wash), weather: record && !weatherEdited && record.weather === null ? undefined : weatherValue || null, weather_edited: weatherEdited, activity: normalizedActivity(activity), items: composed ? items : [] }); }}>
     <section role="group" aria-label="状态与天气" className="grid min-w-0 gap-4 md:grid-cols-2">
       <label className="grid min-w-0 gap-1.5 font-medium">状态<select aria-label="状态" value={status} onChange={(event) => changeStatus(event.target.value as LedgerStatus)} className={LEDGER_FIELD_CLASS}><option>营业</option><option>休息</option><option>提前休息</option></select></label>
-      <div className="grid min-w-0 gap-1.5"><span className="font-medium">天气</span><Select value={weatherValue} onValueChange={(value) => { setWeatherValue(value); setWeatherEdited(true); }}><SelectTrigger aria-label="天气" className="h-11 text-base"><SelectValue placeholder="请选择天气">{weatherValue || undefined}</SelectValue></SelectTrigger><SelectContent>{MANUAL_RECORD_WEATHER_OPTIONS.map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectContent></Select></div>
+      <div className="grid min-w-0 gap-1.5"><span className="font-medium">天气</span><Select value={weatherValue} onValueChange={(value) => { setWeatherValue(value === "__clear_weather__" ? "" : value); setWeatherEdited(true); }}><SelectTrigger aria-label="天气" className="h-11 text-base"><SelectValue placeholder="请选择天气">{legacyWeather ? `历史旧值：${weatherValue}` : weatherValue || undefined}</SelectValue></SelectTrigger><SelectContent><SelectItem value="__clear_weather__">清空天气</SelectItem>{weatherOptions.map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectContent></Select>{legacyWeather && <p className="text-sm text-destructive">历史旧值：{weatherValue}。重新保存前请选择有效天气或清空。</p>}</div>
     </section>
     {composed ? <fieldset aria-label="收入项目" disabled={status === "休息"} className="grid min-w-0 gap-3"><legend className="font-semibold">收入项目</legend><div className="grid min-w-0 gap-4 md:grid-cols-2">{effectiveCategories.map((category) => <label className="grid min-w-0 gap-1.5 font-medium" key={category.id}>{category.name}<input aria-label={category.name} inputMode="numeric" type="text" value={amounts[category.id] ?? ""} onChange={(event) => setAmounts((old) => ({ ...old, [category.id]: event.target.value }))} className={LEDGER_FIELD_CLASS} /></label>)}</div></fieldset> : <label className="grid min-w-0 gap-1.5 font-medium">当日营业额<input aria-label="当日营业额" inputMode="numeric" type="text" disabled={status === "休息"} value={directTotal} onChange={(event) => setDirectTotal(event.target.value)} className={LEDGER_FIELD_CLASS} /></label>}
     <section className={`grid min-w-0 gap-4 rounded-lg border bg-background p-4 ${washCountEnabled ? "md:grid-cols-2" : ""}`}>

@@ -8,6 +8,64 @@ from pathlib import Path
 import pytest
 
 
+@pytest.mark.asyncio
+async def test_migrated_legacy_weather_remains_available_through_public_endpoints(tmp_path: Path) -> None:
+    import bcrypt
+    from httpx import ASGITransport, AsyncClient
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.core.database import get_session, sqlite_url
+    from app.main import create_app
+
+    database_path = tmp_path / "legacy-weather.sqlite3"
+    environment = os.environ | {"AUTOLAVA_DATABASE_PATH": str(database_path)}
+    backend = Path(__file__).parents[1]
+    subprocess.run([sys.executable, "-m", "alembic", "upgrade", "0015"], cwd=backend, env=environment, check=True)
+    password_hash = bcrypt.hashpw(b"secret", bcrypt.gensalt()).decode()
+    with closing(sqlite3.connect(database_path)) as connection:
+        connection.execute(
+            "INSERT INTO users (username, password_hash, role, is_active) VALUES (?, ?, ?, ?)",
+            ("legacy-admin", password_hash, "admin", 1),
+        )
+        connection.execute(
+            "INSERT INTO stores (name, address, latitude, longitude, timezone, is_active, income_items_enabled) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("Legacy", "Address", 45, 9, "Europe/Rome", 1, 0),
+        )
+        connection.execute("INSERT INTO store_members (store_id, user_id) VALUES (1, 1)")
+        connection.execute(
+            "INSERT INTO store_daily_records (store_id, date, daily_revenue, income_mode, is_open, weather, weather_edited, scanned, created_by, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (1, "2026-07-28", 940, "legacy_total", "营业", "旧版任意天气", 0, 0, 1, 1),
+        )
+        connection.commit()
+    subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], cwd=backend, env=environment, check=True)
+
+    migrated_engine = create_async_engine(sqlite_url(database_path))
+    sessions = async_sessionmaker(migrated_engine, expire_on_commit=False)
+    app = create_app()
+
+    async def migrated_session():
+        async with sessions() as session:
+            yield session
+
+    app.dependency_overrides[get_session] = migrated_session
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        assert (await client.post("/api/auth/login", json={"username": "legacy-admin", "password": "secret"})).status_code == 200
+        record = await client.get("/api/ledger/1/2026-07-28")
+        assert record.status_code == 200
+        assert record.json()["weather"] == "旧版任意天气"
+        assert record.json()["weather_legacy"] is True
+        chart = await client.get("/api/charts/1", params={"start": "2026-07-28", "end": "2026-07-28"})
+        assert chart.status_code == 200
+        assert chart.json()["weather"] == [{"weather": "历史未规范天气", "average_revenue": 940}]
+        exported = await client.get("/api/database/1/export.xlsx")
+        assert exported.status_code == 200
+        from io import BytesIO
+        from openpyxl import load_workbook
+        weather_cells = list(load_workbook(BytesIO(exported.content), read_only=True)["经营记录"].values)
+        assert any("历史旧值：旧版任意天气" in row for row in weather_cells)
+    await migrated_engine.dispose()
+
+
 EXPECTED_TABLES = {
     "users",
     "login_sessions",
@@ -334,11 +392,11 @@ def test_previous_agent_data_is_retired_without_touching_business_data(tmp_path:
         connection.execute(
             """
             INSERT INTO store_daily_records (
-                store_id, date, daily_revenue, income_mode, is_open,
+                store_id, date, daily_revenue, income_mode, is_open, weather,
                 weather_edited, scanned, created_by, updated_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (1, "2026-07-28", 940, "legacy_total", "营业", 0, 0, 1, 1),
+            (1, "2026-07-28", 940, "legacy_total", "营业", "旧版任意天气", 0, 0, 1, 1),
         )
         connection.execute(
             "INSERT INTO agent_system_settings (id, enabled) VALUES (?, ?)",
@@ -374,6 +432,9 @@ def test_previous_agent_data_is_retired_without_touching_business_data(tmp_path:
     )
 
     with closing(sqlite3.connect(database_path)) as connection:
+        assert connection.execute(
+            "SELECT weather FROM store_daily_records WHERE date = '2026-07-28'"
+        ).fetchone() == ("旧版任意天气",)
         tables = {
             name
             for (name,) in connection.execute(
