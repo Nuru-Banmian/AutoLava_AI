@@ -223,6 +223,8 @@ def test_ci_runs_parallel_deterministic_lanes() -> None:
     assert any("alembic upgrade head" in command for command in quality_commands)
     assert any("ruff check ." in command for command in quality_commands)
     assert any("pytest" in command for command in core_commands)
+    assert any("-n 4" in command and "--cov=app" in command for command in core_commands)
+    assert any("coverage report --fail-under=85" in command for command in core_commands)
     assert all(any(contract in command for command in unit_commands) for contract in (
         "npm ci",
         "npm test",
@@ -244,9 +246,11 @@ def test_ci_runs_parallel_deterministic_lanes() -> None:
     gate = jobs["ci-gate"]
     assert set(gate["needs"]) == lane_names
     assert gate["if"] == "${{ always() }}"
-    assert any("coverage combine" in command for command in gate_commands)
-    assert any("coverage report --fail-under=85" in command for command in gate_commands)
-    assert any("all(result == \"success\"" in command for command in gate_commands)
+    assert len(gate_commands) == 1
+    assert all(f'test "${name}" = success' in gate_commands[0] for name in (
+        "BACKEND_QUALITY", "BACKEND_CORE", "FRONTEND_UNIT_BUILD", "FRONTEND_E2E"
+    ))
+    assert all("uv sync" not in command for command in gate_commands)
     assert (ROOT / "backend" / "uv.lock").is_file()
 
 
