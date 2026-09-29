@@ -97,6 +97,57 @@ afterEach(() => {
 afterAll(() => server.close());
 
 describe("CompanySettlementPage record corrections", () => {
+  it("keeps a newer company name when the earlier creation completes", async () => {
+    let release!: () => void;
+    let started!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const requested = new Promise<void>((resolve) => { started = resolve; });
+    const { client } = renderPage([
+      http.post("/api/settlements/1/companies", async () => {
+        started();
+        await pending;
+        return HttpResponse.json({ id: 12, name: "Old", is_active: true });
+      }),
+    ]);
+
+    fireEvent.click(await screen.findByRole("button", { name: "结算公司管理" }));
+    const input = await screen.findByPlaceholderText("输入结算公司名称");
+    fireEvent.change(input, { target: { value: "Old" } });
+    fireEvent.click(screen.getByRole("button", { name: "新增结算公司" }));
+    await requested;
+    fireEvent.change(input, { target: { value: "New draft" } });
+    release();
+
+    await waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ["settlement-companies"] }).some((query) => query.state.dataUpdateCount > 1)).toBe(true));
+    expect(screen.getByPlaceholderText("输入结算公司名称")).toHaveValue("New draft");
+  });
+
+  it("keeps the next invoice draft when an earlier save completes", async () => {
+    let release!: () => void;
+    let started!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const requested = new Promise<void>((resolve) => { started = resolve; });
+    const { client } = renderPage([
+      http.post("/api/settlements/1/records", async () => {
+        started();
+        await pending;
+        return HttpResponse.json(record({ id: 22, amount: 120 }));
+      }),
+    ]);
+
+    await screen.findByRole("option", { name: "Alpha" });
+    fireEvent.change(screen.getByLabelText("结算公司", { exact: true }), { target: { value: "10" } });
+    const amount = screen.getByLabelText("金额（整数欧元）");
+    fireEvent.change(amount, { target: { value: "120" } });
+    fireEvent.click(screen.getByRole("button", { name: "登记待到账记录" }));
+    await requested;
+    fireEvent.change(amount, { target: { value: "250" } });
+    release();
+
+    await waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ["settlement-month"] }).some((query) => query.state.dataUpdateCount > 1)).toBe(true));
+    expect(screen.getByLabelText("金额（整数欧元）")).toHaveValue(250);
+  });
+
   it("navigates adjacent opening months and stops at the current month", async () => {
     const requestedMonths: string[] = [];
     renderPage([

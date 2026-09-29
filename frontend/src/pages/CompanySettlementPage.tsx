@@ -4,6 +4,7 @@ import { ChevronDown, ChevronLeft, ChevronRight, Ellipsis, MoreHorizontal } from
 import { Link } from "react-router-dom";
 
 import { api, ApiError, friendlyApiError } from "@/api/client";
+import { assertSessionScope, currentSessionScope } from "@/auth/sessionScope";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -87,6 +88,9 @@ function validAmount(value: string) {
 
 interface CompanyMutation {
   storeId: number;
+  scopeId: number;
+  authScope: number;
+  draftVersion: number;
   path: string;
   method: string;
   body?: string;
@@ -96,16 +100,25 @@ interface CompanyMutation {
 interface RecordTarget {
   storeId: number;
   month: string;
+  scopeId: number;
+  authScope: number;
+  operationId: number;
   recordId: number;
   revision: number;
 }
 
 interface RecordEditVariables extends RecordTarget {
+  draftVersion: number;
   companyId: number;
   amount: number;
 }
 
 type RecordTransitionKind = "confirm" | "revoke";
+
+type RecordAction =
+  | { kind: "edit" | "delete"; record: SettlementRecord }
+  | { kind: RecordTransitionKind; record: SettlementRecord }
+  | null;
 
 interface RecordTransition extends RecordTarget { kind: RecordTransitionKind }
 
@@ -143,8 +156,15 @@ function canonicalConflictRecord(error: unknown): SettlementRecord | null {
   const current = detail.current_record;
   if (
     typeof current !== "object" || current === null
-    || !("id" in current) || typeof current.id !== "number"
-    || !("revision" in current) || typeof current.revision !== "number"
+    || !("id" in current) || !Number.isInteger(current.id)
+    || !("company_id" in current) || !Number.isInteger(current.company_id)
+    || !("company_name" in current) || typeof current.company_name !== "string"
+    || !("opening_month" in current) || typeof current.opening_month !== "string"
+    || !/^\d{4}-(0[1-9]|1[0-2])$/.test(current.opening_month)
+    || !("amount" in current) || !Number.isSafeInteger(current.amount)
+    || !("status" in current) || (current.status !== "pending" && current.status !== "confirmed")
+    || !("revision" in current) || !Number.isInteger(current.revision)
+    || !("created_at" in current) || typeof current.created_at !== "string"
   ) return null;
   return current as SettlementRecord;
 }
@@ -345,6 +365,7 @@ function CompanyList({ companies, archived, busy, onRename, onLifecycle, onDelet
 }) {
   const [editing, setEditing] = useState<number | null>(null);
   const [names, setNames] = useState<Record<number, string>>({});
+  const draftVersion = useRef(0);
   const listRef = useRef<HTMLUListElement>(null);
   const runRemovingAction = async (company: SettlementCompany, action: (company: SettlementCompany) => Promise<boolean>) => {
     const companyIndex = companies.findIndex((candidate) => candidate.id === company.id);
@@ -361,13 +382,14 @@ function CompanyList({ companies, archived, busy, onRename, onLifecycle, onDelet
     {companies.map((company) => <li className="relative min-w-0 rounded-md border px-2 py-1" key={company.id}>
       {editing === company.id ? <form className="flex min-w-0 flex-wrap gap-2" onSubmit={(event) => {
         event.preventDefault();
+        const submittedVersion = draftVersion.current;
         void onRename(company, names[company.id] ?? company.name).then((saved) => {
-          if (saved) setEditing(null);
+          if (saved && draftVersion.current === submittedVersion) setEditing(null);
         });
       }}>
         <label className="min-w-0 flex-1">
           <span className="sr-only">重命名{company.name}</span>
-          <Input autoFocus maxLength={120} value={names[company.id] ?? company.name} onChange={(event) => setNames((current) => ({ ...current, [company.id]: event.target.value }))} />
+          <Input autoFocus maxLength={120} value={names[company.id] ?? company.name} onChange={(event) => { draftVersion.current += 1; setNames((current) => ({ ...current, [company.id]: event.target.value })); }} />
         </label>
         <Button disabled={busy} type="submit">保存名称</Button>
         <Button onClick={() => setEditing(null)} type="button" variant="outline">取消</Button>
@@ -382,6 +404,7 @@ function CompanyList({ companies, archived, busy, onRename, onLifecycle, onDelet
           }}
           onLifecycle={() => { void runRemovingAction(company, onLifecycle); }}
           onRename={() => {
+            draftVersion.current += 1;
             setNames((current) => ({ ...current, [company.id]: current[company.id] ?? company.name }));
             setEditing(company.id);
           }}
@@ -402,77 +425,107 @@ export function CompanySettlementPage() {
   const [amount, setAmount] = useState("");
   const [recordError, setRecordError] = useState("");
   const [recordMessage, setRecordMessage] = useState("");
-  const [editingRecord, setEditingRecord] = useState<SettlementRecord | null>(null);
+  const [recordAction, setRecordAction] = useState<RecordAction>(null);
+  const editingRecord = recordAction?.kind === "edit" ? recordAction.record : null;
+  const recordToDelete = recordAction?.kind === "delete" ? recordAction.record : null;
+  const recordTransition = recordAction?.kind === "confirm" || recordAction?.kind === "revoke" ? recordAction : null;
+  const setEditingRecord = (record: SettlementRecord | null) => setRecordAction(record ? { kind: "edit", record } : null);
+  const setRecordToDelete = (record: SettlementRecord | null) => setRecordAction(record ? { kind: "delete", record } : null);
+  const setRecordTransition = (transition: { record: SettlementRecord; kind: RecordTransitionKind } | null) => setRecordAction(transition);
   const [editCompanyId, setEditCompanyId] = useState("");
   const [editAmount, setEditAmount] = useState("");
-  const [recordToDelete, setRecordToDelete] = useState<SettlementRecord | null>(null);
   const [companyManagementStoreId, setCompanyManagementStoreId] = useState<number | null>(null);
   const [companyTab, setCompanyTab] = useState<"active" | "archived">("active");
-  const [recordTransition, setRecordTransition] = useState<{
-    record: SettlementRecord;
-    kind: RecordTransitionKind;
-  } | null>(null);
+  const authScope = currentSessionScope();
+  const scopeRef = useRef({ storeId: selected?.id, month, authScope, id: 0 });
+  if (scopeRef.current.storeId !== selected?.id || scopeRef.current.month !== month || scopeRef.current.authScope !== authScope) {
+    scopeRef.current = { storeId: selected?.id, month, authScope, id: scopeRef.current.id + 1 };
+  }
+  const nameVersion = useRef(0);
+  const recordDraftVersion = useRef(0);
+  const editDraftVersion = useRef(0);
+  const operationId = useRef(0);
+  const isCurrent = (variables: { storeId: number; scopeId: number; authScope: number }) =>
+    variables.authScope === currentSessionScope()
+    && variables.storeId === scopeRef.current.storeId
+    && variables.scopeId === scopeRef.current.id;
   const enabled = selected?.company_settlement_enabled === true;
   const companyManagementOpen = companyManagementStoreId === selected?.id;
   const currentMonth = selected ? monthInTimezone(selected.timezone) : "";
   const workspace = useQuery({
-    queryKey: ["settlements", selected?.id],
-    queryFn: () => api<SettlementWorkspace>(`/settlements/${selected!.id}`),
+    queryKey: ["settlements", authScope, selected?.id],
+    queryFn: () => { assertSessionScope(authScope); return api<SettlementWorkspace>(`/settlements/${selected!.id}`); },
+    retry: false,
     enabled: Boolean(selected && enabled),
   });
   const active = useQuery({
-    queryKey: ["settlement-companies", selected?.id, "active"],
-    queryFn: () => api<SettlementCompany[]>(`/settlements/${selected!.id}/companies`),
+    queryKey: ["settlement-companies", authScope, selected?.id, "active"],
+    queryFn: () => { assertSessionScope(authScope); return api<SettlementCompany[]>(`/settlements/${selected!.id}/companies`); },
+    retry: false,
     enabled: Boolean(selected && enabled && workspace.data),
   });
   const archived = useQuery({
-    queryKey: ["settlement-companies", selected?.id, "archived"],
-    queryFn: () => api<SettlementCompany[]>(`/settlements/${selected!.id}/companies?archived=true`),
+    queryKey: ["settlement-companies", authScope, selected?.id, "archived"],
+    queryFn: () => { assertSessionScope(authScope); return api<SettlementCompany[]>(`/settlements/${selected!.id}/companies?archived=true`); },
+    retry: false,
     enabled: Boolean(selected && enabled && workspace.data && companyManagementOpen),
   });
   const monthSummary = useQuery({
-    queryKey: ["settlement-month", selected?.id, month],
-    queryFn: () => api<SettlementMonth>(`/settlements/${selected!.id}/months/${month}`),
+    queryKey: ["settlement-month", authScope, selected?.id, month],
+    queryFn: () => { assertSessionScope(authScope); return api<SettlementMonth>(`/settlements/${selected!.id}/months/${month}`); },
+    retry: false,
     enabled: Boolean(selected && enabled && workspace.data && month),
   });
-  const refresh = async (storeId: number) => {
-    await queryClient.invalidateQueries({ queryKey: ["settlement-companies", storeId] });
+  const refresh = async (storeId: number, scope: number) => {
+    if (scope !== currentSessionScope()) return;
+    await queryClient.invalidateQueries({ queryKey: ["settlement-companies", scope, storeId] });
   };
   const companyMutation = useMutation({
-    mutationFn: ({ path, method, body }: CompanyMutation) => api<SettlementCompany | void>(path, { method, body }),
+    mutationFn: ({ path, method, body, authScope: scope }: CompanyMutation) => {
+      assertSessionScope(scope);
+      return api<SettlementCompany | void>(path, { method, body });
+    },
     onSuccess: async (_result, variables) => {
-      if (selected?.id === variables.storeId) {
+      if (isCurrent(variables) && (variables.draftVersion < 0 || variables.draftVersion === nameVersion.current)) {
         setMessage("");
         setFailedAction(null);
-        if (variables.method === "POST" && variables.path.endsWith("/companies")) setName("");
+        if (variables.method === "POST" && variables.path.endsWith("/companies")) {
+          nameVersion.current += 1;
+          setName("");
+        }
       }
-      await refresh(variables.storeId);
+      await refresh(variables.storeId, variables.authScope);
     },
     onError: (error, variables) => {
-      if (selected?.id !== variables.storeId) return;
+      if (!isCurrent(variables) || (variables.draftVersion >= 0 && variables.draftVersion !== nameVersion.current)) return;
       setMessage(friendlyApiError(error, "操作失败，请重试"));
       setFailedAction(() => variables.retry);
     },
   });
   const recordMutation = useMutation({
-    mutationFn: (variables: { storeId: number; month: string; companyId: number; amount: number }) =>
-      api<SettlementRecord>(`/settlements/${variables.storeId}/records`, {
+    mutationFn: (variables: { storeId: number; month: string; scopeId: number; authScope: number; draftVersion: number; companyId: number; amount: number }) => {
+      assertSessionScope(variables.authScope);
+      return api<SettlementRecord>(`/settlements/${variables.storeId}/records`, {
         method: "POST",
         body: JSON.stringify({ company_id: variables.companyId, opening_month: variables.month, amount: variables.amount }),
-      }),
+      });
+    },
     onSuccess: async (_record, variables) => {
-      if (selected?.id === variables.storeId) {
+      if (isCurrent(variables) && variables.draftVersion === recordDraftVersion.current) {
+        recordDraftVersion.current += 1;
         setAmount("");
         setRecordError("");
       }
-      await queryClient.invalidateQueries({ queryKey: ["settlement-month", variables.storeId, variables.month] });
+      if (variables.authScope === currentSessionScope()) await queryClient.invalidateQueries({ queryKey: ["settlement-month", variables.authScope, variables.storeId, variables.month] });
     },
     onError: (error, variables) => {
-      if (selected?.id === variables.storeId) setRecordError(friendlyApiError(error, "开票记录保存失败，请重试"));
+      if (isCurrent(variables) && variables.draftVersion === recordDraftVersion.current) setRecordError(friendlyApiError(error, "开票记录保存失败，请重试"));
     },
   });
   const editRecordMutation = useMutation({
-    mutationFn: (variables: RecordEditVariables) => api<SettlementRecord>(
+    mutationFn: (variables: RecordEditVariables) => {
+      assertSessionScope(variables.authScope);
+      return api<SettlementRecord>(
       `/settlements/${variables.storeId}/records/${variables.recordId}`,
       {
         method: "PATCH",
@@ -482,50 +535,57 @@ export function CompanySettlementPage() {
           revision: variables.revision,
         }),
       },
-    ),
+      );
+    },
     onSuccess: async (_record, variables) => {
-      if (selected?.id === variables.storeId) {
+      if (isCurrent(variables) && variables.operationId === operationId.current && variables.draftVersion === editDraftVersion.current) {
+        operationId.current += 1;
         setEditingRecord(null);
         setRecordError("");
         setRecordMessage("开票记录已修改");
       }
-      await queryClient.invalidateQueries({ queryKey: ["settlement-month", variables.storeId, variables.month] });
+      if (variables.authScope === currentSessionScope()) await queryClient.invalidateQueries({ queryKey: ["settlement-month", variables.authScope, variables.storeId, variables.month] });
     },
     onError: async (error, variables) => {
-      if (selected?.id === variables.storeId) {
+      if (isCurrent(variables) && variables.operationId === operationId.current && variables.draftVersion === editDraftVersion.current) {
         const current = canonicalConflictRecord(error);
         if (current?.id === variables.recordId) setEditingRecord(current);
         setRecordError(friendlyApiError(error, "开票记录修改失败，请重试"));
         setRecordMessage("");
       }
-      await queryClient.invalidateQueries({ queryKey: ["settlement-month", variables.storeId, variables.month] });
+      if (variables.authScope === currentSessionScope()) await queryClient.invalidateQueries({ queryKey: ["settlement-month", variables.authScope, variables.storeId, variables.month] });
     },
   });
   const deleteRecordMutation = useMutation({
-    mutationFn: (variables: RecordTarget) => api<void>(
+    mutationFn: (variables: RecordTarget) => {
+      assertSessionScope(variables.authScope);
+      return api<void>(
       `/settlements/${variables.storeId}/records/${variables.recordId}`,
       { method: "DELETE", body: JSON.stringify({ revision: variables.revision }) },
-    ),
+      );
+    },
     onSuccess: async (_result, variables) => {
-      if (selected?.id === variables.storeId) {
+      if (isCurrent(variables) && variables.operationId === operationId.current) {
+        operationId.current += 1;
         setRecordToDelete(null);
         setRecordError("");
         setRecordMessage("开票记录已永久删除");
       }
-      await queryClient.invalidateQueries({ queryKey: ["settlement-month", variables.storeId, variables.month] });
+      if (variables.authScope === currentSessionScope()) await queryClient.invalidateQueries({ queryKey: ["settlement-month", variables.authScope, variables.storeId, variables.month] });
     },
     onError: async (error, variables) => {
-      if (selected?.id === variables.storeId) {
+      if (isCurrent(variables) && variables.operationId === operationId.current) {
         const current = canonicalConflictRecord(error);
         if (current?.id === variables.recordId) setRecordToDelete(current);
         setRecordError(friendlyApiError(error, "开票记录删除失败，请重试"));
         setRecordMessage("");
       }
-      await queryClient.invalidateQueries({ queryKey: ["settlement-month", variables.storeId, variables.month] });
+      if (variables.authScope === currentSessionScope()) await queryClient.invalidateQueries({ queryKey: ["settlement-month", variables.authScope, variables.storeId, variables.month] });
     },
   });
   const transitionRecordMutation = useMutation({
     mutationFn: (variables: RecordTransition) => {
+      assertSessionScope(variables.authScope);
       const config = recordTransitionConfig[variables.kind];
       return api<SettlementRecord>(
         `/settlements/${variables.storeId}/records/${variables.recordId}/${config.path}`,
@@ -533,13 +593,14 @@ export function CompanySettlementPage() {
       );
     },
     onSuccess: async (_record, variables) => {
-      if (selected?.id === variables.storeId) {
+      if (isCurrent(variables) && variables.operationId === operationId.current) {
+        operationId.current += 1;
         setRecordTransition(null);
         setRecordError("");
         setRecordMessage(recordTransitionConfig[variables.kind].successMessage);
       }
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["settlement-month", variables.storeId, variables.month] }),
+      if (variables.authScope === currentSessionScope()) await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["settlement-month", variables.authScope, variables.storeId, variables.month] }),
         queryClient.invalidateQueries({ queryKey: ["charts", variables.storeId] }),
       ]);
     },
@@ -548,8 +609,9 @@ export function CompanySettlementPage() {
       const current = canonicalConflictRecord(error);
       const targetReached = current?.id === variables.recordId
         && current.status === config.targetStatus;
-      if (selected?.id === variables.storeId) {
+      if (isCurrent(variables) && variables.operationId === operationId.current) {
         if (targetReached) {
+          operationId.current += 1;
           setRecordTransition(null);
           setRecordError("");
           setRecordMessage(config.syncMessage);
@@ -561,8 +623,8 @@ export function CompanySettlementPage() {
           setRecordMessage("");
         }
       }
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["settlement-month", variables.storeId, variables.month] }),
+      if (variables.authScope === currentSessionScope()) await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["settlement-month", variables.authScope, variables.storeId, variables.month] }),
         ...(targetReached
           ? [queryClient.invalidateQueries({ queryKey: ["charts", variables.storeId] })]
           : []),
@@ -570,6 +632,10 @@ export function CompanySettlementPage() {
     },
   });
   useEffect(() => {
+    nameVersion.current += 1;
+    recordDraftVersion.current += 1;
+    editDraftVersion.current += 1;
+    operationId.current += 1;
     setName("");
     setMessage("");
     setFailedAction(null);
@@ -593,6 +659,10 @@ export function CompanySettlementPage() {
   }, [selected?.id]);
 
   const openRecordEditor = (record: SettlementRecord) => {
+    operationId.current += 1;
+    editDraftVersion.current += 1;
+    setRecordToDelete(null);
+    setRecordTransition(null);
     setEditingRecord(record);
     setEditCompanyId(String(record.company_id));
     setEditAmount(String(record.amount));
@@ -602,6 +672,9 @@ export function CompanySettlementPage() {
   };
 
   const openRecordTransition = (record: SettlementRecord, kind: RecordTransitionKind) => {
+    operationId.current += 1;
+    setEditingRecord(null);
+    setRecordToDelete(null);
     setRecordError("");
     setRecordMessage("");
     transitionRecordMutation.reset();
@@ -613,6 +686,10 @@ export function CompanySettlementPage() {
     editRecordMutation.mutate({
       storeId: selected.id,
       month: editingRecord.opening_month,
+      scopeId: scopeRef.current.id,
+      authScope,
+      operationId: operationId.current,
+      draftVersion: editDraftVersion.current,
       recordId: editingRecord.id,
       companyId: Number(editCompanyId),
       amount: Number(editAmount),
@@ -625,6 +702,9 @@ export function CompanySettlementPage() {
     deleteRecordMutation.mutate({
       storeId: selected.id,
       month: recordToDelete.opening_month,
+      scopeId: scopeRef.current.id,
+      authScope,
+      operationId: operationId.current,
       recordId: recordToDelete.id,
       revision: recordToDelete.revision,
     });
@@ -634,15 +714,22 @@ export function CompanySettlementPage() {
     transitionRecordMutation.mutate({
       storeId: selected.id,
       month: recordTransition.record.opening_month,
+      scopeId: scopeRef.current.id,
+      authScope,
+      operationId: operationId.current,
       recordId: recordTransition.record.id,
       revision: recordTransition.record.revision,
       kind: recordTransition.kind,
     });
   };
-  const submitCreate = (storeId: number, submittedName: string) => {
-    const retry = () => submitCreate(storeId, submittedName);
+  const submitCreate = (storeId: number, submittedName: string, scopeId = scopeRef.current.id, draftVersion = nameVersion.current, scope = authScope) => {
+    if (!isCurrent({ storeId, scopeId, authScope: scope }) || nameVersion.current !== draftVersion) return;
+    const retry = () => submitCreate(storeId, submittedName, scopeId, draftVersion, scope);
     companyMutation.mutate({
       storeId,
+      scopeId,
+      authScope: scope,
+      draftVersion,
       path: `/settlements/${storeId}/companies`,
       method: "POST",
       body: JSON.stringify({ name: submittedName }),
@@ -655,13 +742,28 @@ export function CompanySettlementPage() {
     submitCreate(selected.id, name);
   };
   const runCompanyAction = async (storeId: number, path: string, method: string, body?: object) => {
-    const retry = () => void runCompanyAction(storeId, path, method, body);
+    const scopeId = scopeRef.current.id;
+    const scope = authScope;
+    const retry = () => {
+      if (isCurrent({ storeId, scopeId, authScope: scope })) void runCompanyAction(storeId, path, method, body);
+    };
     try {
-      await companyMutation.mutateAsync({ storeId, path, method, body: body ? JSON.stringify(body) : undefined, retry });
-      return true;
+      await companyMutation.mutateAsync({ storeId, scopeId, authScope: scope, draftVersion: -1, path, method, body: body ? JSON.stringify(body) : undefined, retry });
+      return isCurrent({ storeId, scopeId, authScope: scope });
     } catch {
       return false;
     }
+  };
+
+  const changeMonth = (next: string) => {
+    recordDraftVersion.current += 1;
+    operationId.current += 1;
+    setMonth(next);
+    setRecordError("");
+    setRecordMessage("");
+    setEditingRecord(null);
+    setRecordToDelete(null);
+    setRecordTransition(null);
   };
 
   if (isLoading) return <p role="status">正在加载门店…</p>;
@@ -685,14 +787,14 @@ export function CompanySettlementPage() {
         <p className="mt-1 text-sm text-muted-foreground">按开票月份登记记录并跟踪到账状态。</p>
       </div>
       {workspace.data && <div className="flex min-w-0 items-end gap-2" role="group" aria-label="月份导航">
-        <Button aria-label="前一月" onClick={() => setMonth((value) => shiftMonth(value, -1))} size="icon" type="button" variant="outline">
+        <Button aria-label="前一月" onClick={() => changeMonth(shiftMonth(month, -1))} size="icon" type="button" variant="outline">
           <ChevronLeft aria-hidden="true" />
         </Button>
         <label className="grid min-w-0 gap-1 text-sm font-medium">
           开票月份
-          <Input aria-label="开票月份" className="min-w-0" max={currentMonth} onChange={(event) => setMonth(event.target.value)} required type="month" value={month} />
+          <Input aria-label="开票月份" className="min-w-0" max={currentMonth} onChange={(event) => changeMonth(event.target.value)} required type="month" value={month} />
         </label>
-        <Button aria-label="后一月" disabled={!month || month >= currentMonth} onClick={() => setMonth((value) => shiftMonth(value, 1))} size="icon" type="button" variant="outline">
+        <Button aria-label="后一月" disabled={!month || month >= currentMonth} onClick={() => changeMonth(shiftMonth(month, 1))} size="icon" type="button" variant="outline">
           <ChevronRight aria-hidden="true" />
         </Button>
       </div>}
@@ -713,25 +815,25 @@ export function CompanySettlementPage() {
           event.preventDefault();
           if (!selected || !month || !companyId || !validAmount(amount)) return;
           setRecordError("");
-          recordMutation.mutate({ storeId: selected.id, month, companyId: Number(companyId), amount: Number(amount) });
+          recordMutation.mutate({ storeId: selected.id, month, scopeId: scopeRef.current.id, authScope, draftVersion: recordDraftVersion.current, companyId: Number(companyId), amount: Number(amount) });
         }}>
           <label className="grid min-w-0 gap-1 text-sm font-medium">
             结算公司
-            <select aria-label="结算公司" className="h-9 min-w-0 rounded-md border border-input bg-transparent px-3 text-sm" onChange={(event) => setCompanyId(event.target.value)} required value={companyId}>
+            <select aria-label="结算公司" className="h-9 min-w-0 rounded-md border border-input bg-transparent px-3 text-sm" onChange={(event) => { recordDraftVersion.current += 1; setCompanyId(event.target.value); setRecordError(""); }} required value={companyId}>
               <option value="">请选择使用中的结算公司</option>
               {(active.data ?? []).map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
             </select>
           </label>
           <label className="grid min-w-0 gap-1 text-sm font-medium">
             金额（整数欧元）
-            <Input aria-label="金额（整数欧元）" inputMode="numeric" max={MAX_SETTLEMENT_AMOUNT} min="1" onChange={(event) => setAmount(event.target.value)} pattern="[0-9]+" required step="1" type="number" value={amount} />
+            <Input aria-label="金额（整数欧元）" inputMode="numeric" max={MAX_SETTLEMENT_AMOUNT} min="1" onChange={(event) => { recordDraftVersion.current += 1; setAmount(event.target.value); setRecordError(""); }} pattern="[0-9]+" required step="1" type="number" value={amount} />
           </label>
           <div className="flex items-end">
             <Button className="w-full lg:w-auto" disabled={recordMutation.isPending || !month || !companyId || !validAmount(amount)} type="submit">登记待到账记录</Button>
           </div>
         </form>
         {recordError && <div role="alert">{recordError}<Button className="ml-2" disabled={recordMutation.isPending} onClick={() => {
-          if (recordMutation.isError && selected && month && companyId && validAmount(amount)) recordMutation.mutate({ storeId: selected.id, month, companyId: Number(companyId), amount: Number(amount) });
+          if (recordMutation.isError && selected && month && companyId && validAmount(amount)) recordMutation.mutate({ storeId: selected.id, month, scopeId: scopeRef.current.id, authScope, draftVersion: recordDraftVersion.current, companyId: Number(companyId), amount: Number(amount) });
         }} type="button" variant="outline">重试保存</Button></div>}
       </section>
       <section className="grid gap-4 rounded-xl border bg-card p-4 shadow-sm" aria-labelledby="records-title">
@@ -757,6 +859,9 @@ export function CompanySettlementPage() {
                 <RecordActionsMenu
                   disabled={actionsDisabled}
                   onDelete={() => {
+                    operationId.current += 1;
+                    setEditingRecord(null);
+                    setRecordTransition(null);
                     setRecordError("");
                     setRecordMessage("");
                     deleteRecordMutation.reset();
@@ -784,13 +889,13 @@ export function CompanySettlementPage() {
           </DialogHeader>
           <label className="grid gap-1 text-sm font-medium">
             编辑结算公司
-            <select aria-label="编辑结算公司" className="h-9 rounded-md border border-input bg-transparent px-3 text-sm" disabled={editRecordMutation.isPending} onChange={(event) => setEditCompanyId(event.target.value)} value={editCompanyId}>
+            <select aria-label="编辑结算公司" className="h-9 rounded-md border border-input bg-transparent px-3 text-sm" disabled={editRecordMutation.isPending} onChange={(event) => { editDraftVersion.current += 1; setEditCompanyId(event.target.value); setRecordError(""); }} value={editCompanyId}>
               {(active.data ?? []).map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
             </select>
           </label>
           <label className="grid gap-1 text-sm font-medium">
             编辑金额（整数欧元）
-            <Input aria-label="编辑金额（整数欧元）" disabled={editRecordMutation.isPending} inputMode="numeric" max={MAX_SETTLEMENT_AMOUNT} min="1" onChange={(event) => setEditAmount(event.target.value)} pattern="[0-9]+" required step="1" type="number" value={editAmount} />
+            <Input aria-label="编辑金额（整数欧元）" disabled={editRecordMutation.isPending} inputMode="numeric" max={MAX_SETTLEMENT_AMOUNT} min="1" onChange={(event) => { editDraftVersion.current += 1; setEditAmount(event.target.value); setRecordError(""); }} pattern="[0-9]+" required step="1" type="number" value={editAmount} />
           </label>
           {editingRecord && recordError && <div role="alert">{recordError}</div>}
           <DialogFooter>
@@ -863,7 +968,7 @@ export function CompanySettlementPage() {
             <form className="mb-2 flex min-w-0 flex-wrap gap-2" onSubmit={create}>
               <label className="min-w-0 flex-1">
                 <span className="sr-only">新结算公司名称</span>
-                <Input maxLength={120} placeholder="输入结算公司名称" value={name} onChange={(event) => setName(event.target.value)} />
+                <Input maxLength={120} placeholder="输入结算公司名称" value={name} onChange={(event) => { nameVersion.current += 1; setName(event.target.value); setMessage(""); setFailedAction(null); }} />
               </label>
               <Button disabled={companyMutation.isPending} type="submit">新增结算公司</Button>
             </form>

@@ -3,6 +3,7 @@ import { createContext, type PropsWithChildren, useContext } from "react";
 
 import { api, ApiError } from "@/api/client";
 import type { AuthenticatedUser } from "@/api/types";
+import { advanceSessionScope } from "@/auth/sessionScope";
 
 export const authQueryKey = ["auth", "me"] as const;
 
@@ -26,8 +27,8 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: PropsWithChildren) {
   const queryClient = useQueryClient();
+  const userQuery = (query: { queryKey: readonly unknown[] }) => query.queryKey[0] !== "auth";
   async function removeUserQueries() {
-    const userQuery = (query: { queryKey: readonly unknown[] }) => query.queryKey[0] !== "auth";
     await queryClient.cancelQueries({ predicate: userQuery });
     queryClient.removeQueries({ predicate: userQuery });
   }
@@ -44,7 +45,13 @@ export function AuthProvider({ children }: PropsWithChildren) {
     retry: false,
   });
   const loginMutation = useMutation({
-    onMutate: () => queryClient.cancelQueries({ queryKey: authQueryKey, exact: true }),
+    onMutate: async () => {
+      advanceSessionScope();
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: authQueryKey, exact: true }),
+        queryClient.cancelQueries({ predicate: userQuery }),
+      ]);
+    },
     mutationFn: (input: LoginInput) =>
       api<AuthenticatedUser>("/auth/login", { method: "POST", body: JSON.stringify(input) }),
     onSuccess: async (user) => {
@@ -53,6 +60,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
     },
   });
   const logoutMutation = useMutation({
+    onMutate: async () => {
+      advanceSessionScope();
+      await queryClient.cancelQueries({ predicate: userQuery });
+    },
     mutationFn: () => api<void>("/auth/logout", { method: "POST" }),
     onSuccess: async () => {
       await removeUserQueries();

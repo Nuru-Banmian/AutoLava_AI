@@ -236,6 +236,37 @@ describe("authenticated application shell", () => {
     expect(await within(memberDesktopPicker).findByRole("option", { name: "Member Store" })).toBeInTheDocument();
   });
 
+  it("ignores an old store response released after another account logs in", async () => {
+    let releaseOld!: () => void;
+    let oldRequested!: () => void;
+    let memberLoggedIn = false;
+    const pendingOld = new Promise<void>((resolve) => { releaseOld = resolve; });
+    const requestedOld = new Promise<void>((resolve) => { oldRequested = resolve; });
+    server.use(
+      http.get("/api/auth/me", () => HttpResponse.json(admin)),
+      http.get("/api/stores/accessible", async () => {
+        if (memberLoggedIn) return HttpResponse.json([{ id: 8, name: "Member Store", timezone: "Europe/Rome" }]);
+        oldRequested();
+        await pendingOld;
+        return HttpResponse.json([{ id: 7, name: "Admin Store", timezone: "Europe/Rome" }]);
+      }),
+      http.post("/api/auth/logout", () => new HttpResponse(null, { status: 204 })),
+      http.post("/api/auth/login", () => { memberLoggedIn = true; return HttpResponse.json(member); }),
+    );
+    renderTestRouter("/");
+    await requestedOld;
+
+    fireEvent.click(await screen.findByRole("button", { name: "退出登录" }));
+    fireEvent.change(await screen.findByLabelText("用户名"), { target: { value: "member" } });
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "long-password" } });
+    fireEvent.click(screen.getByRole("button", { name: "登录" }));
+
+    const picker = await screen.findByTestId("desktop-store-picker");
+    expect(await within(picker).findByRole("option", { name: "Member Store" })).toBeInTheDocument();
+    releaseOld();
+    await waitFor(() => expect(within(picker).queryByRole("option", { name: "Admin Store" })).not.toBeInTheDocument());
+  });
+
   it("automatically selects the only accessible store", async () => {
     server.use(
       http.get("/api/stores/accessible", () =>
