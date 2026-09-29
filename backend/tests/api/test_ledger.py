@@ -85,9 +85,12 @@ def today_for(assigned_store: AssignedStore) -> date:
 async def put_ledger(client: AsyncClient, path: str, *, json: dict):
     current = await client.get(path)
     expected = current.json() if current.status_code == 200 else None
+    store_id, record_date = path.rsplit("/", 2)[-2:]
+    form = (await client.get(f"/api/ledger/{store_id}/{record_date}/form-config")).json()
     return await client.put(path, json=json | {
         "expected_identity": expected["identity"] if expected else None,
         "expected_revision": expected["revision"] if expected else None,
+        "expected_config_revision": form["config_revision"],
     })
 
 

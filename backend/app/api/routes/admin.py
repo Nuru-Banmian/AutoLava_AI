@@ -4,7 +4,7 @@ from decimal import Decimal
 from typing import Annotated, Any
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from sqlalchemy import delete, exists, func, select
 from sqlalchemy.exc import IntegrityError
 
@@ -28,6 +28,7 @@ from app.schemas.time import timestamp_status, trusted_utc
 from app.services.briefing import BriefingService
 from app.services.access import require_fresh_store_access, require_fresh_user
 from app.services.income_config import IncomeConfigService
+from app.schemas.income_config import IncomeCategoryVersionBody
 from app.services.owner import is_owner, owner_username
 from app.services.sessions import revoke_all
 from app.services.weather import FrozenWeatherLocation
@@ -559,15 +560,18 @@ async def create_income_category(
 ) -> dict[str, Any]:
     actor_id = actor.id
     async with sqlite_short_write(session):
-        await require_fresh_store_access(
+        _, store = await require_fresh_store_access(
             session,
             user_id=actor_id,
             store_id=body.store_id,
             capability="income_config.manage",
         )
-        category = IncomeCategory(**body.model_dump())
+        service = IncomeConfigService(session)
+        await service.check_revision(store, body.expected_revision)
+        category = IncomeCategory(**body.model_dump(exclude={"expected_revision"}))
         session.add(category)
         await session.flush()
+        service.advance(store)
         response_payload = _category_payload(category)
     return response_payload
 
@@ -585,6 +589,8 @@ async def patch_income_category(
         category, store = await _require_fresh_category_manager(
             session, actor_id=actor_id, category_id=category_id
         )
+        service = IncomeConfigService(session)
+        await service.check_revision(store, body.expected_revision)
         record_dates = set()
         include_changed = (
             body.include_in_total is not None
@@ -601,8 +607,9 @@ async def patch_income_category(
                     .where(DailyIncomeItem.category_id == category.id)
                 )
             )
-        for field, value in body.model_dump(exclude_none=True).items():
+        for field, value in body.model_dump(exclude_none=True, exclude={"expected_revision"}).items():
             setattr(category, field, value)
+        service.advance(store)
         await session.flush()
         response_payload = _category_payload(category)
         location = FrozenWeatherLocation.from_store(store)
@@ -652,14 +659,18 @@ async def patch_income_category(
 
 @router.delete("/income-categories/{category_id}", status_code=204)
 async def delete_unused_category(
-    category_id: int, session: Session, actor: IncomeConfigManager
+    category_id: int, session: Session, actor: IncomeConfigManager,
+    body: IncomeCategoryVersionBody | None = Body(default=None),
 ) -> None:
     actor_id = actor.id
     async with sqlite_short_write(session):
-        await _require_fresh_category_manager(
+        _, store = await _require_fresh_category_manager(
             session, actor_id=actor_id, category_id=category_id
         )
-        await IncomeConfigService(session).delete_unused(category_id)
+        service = IncomeConfigService(session)
+        await service.check_revision(store, body.expected_revision if body else None)
+        await service.delete_unused(category_id)
+        service.advance(store)
 
 
 @router.get("/alerts", dependencies=[Depends(require_admin)])

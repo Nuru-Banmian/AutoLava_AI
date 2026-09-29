@@ -848,6 +848,7 @@ async def test_admin_can_create_list_and_patch_current_income_categories(
         json={
             "store_id": store.id,
             "name": "Later",
+            "expected_revision": 1,
             "include_in_total": False,
             "sort_order": 5,
         },
@@ -857,6 +858,7 @@ async def test_admin_can_create_list_and_patch_current_income_categories(
         json={
             "store_id": store.id,
             "name": "First",
+            "expected_revision": 2,
             "include_in_total": True,
         },
     )
@@ -867,7 +869,7 @@ async def test_admin_can_create_list_and_patch_current_income_categories(
     )
     patched = await admin_client.patch(
         f"/api/admin/income-categories/{later.json()['id']}",
-        json={"name": "Updated", "is_active": False, "sort_order": 1},
+        json={"name": "Updated", "is_active": False, "sort_order": 1, "expected_revision": 3},
     )
 
     assert [item["name"] for item in listed.json()] == ["First", "Later"]
@@ -927,16 +929,16 @@ async def test_category_archive_restore_delete_and_reference_protection(
     used_id, unused_id = used.id, unused.id
 
     archived = await admin_client.post(
-        f"/api/admin/income-categories/{used_id}/archive"
+        f"/api/admin/income-categories/{used_id}/archive", json={"expected_revision": 1}
     )
     restored = await admin_client.post(
-        f"/api/admin/income-categories/{used_id}/restore"
+        f"/api/admin/income-categories/{used_id}/restore", json={"expected_revision": 2}
     )
-    protected = await admin_client.delete(
-        f"/api/admin/income-categories/{used_id}"
+    protected = await admin_client.request(
+        "DELETE", f"/api/admin/income-categories/{used_id}", json={"expected_revision": 3}
     )
-    deleted = await admin_client.delete(
-        f"/api/admin/income-categories/{unused_id}"
+    deleted = await admin_client.request(
+        "DELETE", f"/api/admin/income-categories/{unused_id}", json={"expected_revision": 3}
     )
 
     assert archived.status_code == 200
@@ -1015,6 +1017,7 @@ async def test_category_patch_preserves_snapshot_and_refreshes_current_briefing(
         f"/api/admin/income-categories/{category.id}",
         json={
             "name": "Renamed",
+            "expected_revision": 1,
             "include_in_total": False,
             "sort_order": 9,
         },

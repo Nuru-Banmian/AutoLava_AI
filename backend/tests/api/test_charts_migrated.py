@@ -71,6 +71,7 @@ async def test_migrated_analysis_sample_and_setting_round_trip(tmp_path: Path) -
                     json={
                         "expected_identity": None,
                         "expected_revision": None,
+                        "expected_config_revision": 1,
                         "is_open": "营业",
                         "daily_revenue": revenue,
                         "wash_count": count,
@@ -109,7 +110,7 @@ async def test_migrated_analysis_sample_and_setting_round_trip(tmp_path: Path) -
             for day, state, count in (("14", "营业", 0), ("15", "营业", None), ("16", "休息", 0)):
                 saved = await client.put(
                     f"/api/ledger/{store_id}/2026-07-{day}",
-                    json={"expected_identity": None, "expected_revision": None, "is_open": state, "daily_revenue": 0, "wash_count": count, "items": []},
+                    json={"expected_identity": None, "expected_revision": None, "expected_config_revision": 1, "is_open": state, "daily_revenue": 0, "wash_count": count, "items": []},
                 )
                 assert saved.status_code == 201, saved.text
             for day, expected in (

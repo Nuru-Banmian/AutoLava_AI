@@ -104,6 +104,7 @@ def _payload(category_id: int, amount: int) -> dict:
     return {
         "expected_identity": None,
         "expected_revision": None,
+        "expected_config_revision": 1,
         "is_open": "营业",
         "daily_revenue": None,
         "items": [{"category_id": category_id, "amount": amount}],

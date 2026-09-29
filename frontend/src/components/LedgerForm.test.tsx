@@ -7,6 +7,7 @@ import { weatherOptions } from "@/test/weather-options";
 
 const directConfig = {
   store_id: 2,
+  revision: 1,
   enabled: false,
   formula: "",
   items: [],
@@ -14,6 +15,7 @@ const directConfig = {
 
 const composedConfig = {
   store_id: 2,
+  revision: 1,
   enabled: true,
   formula: "营业额 = 现金",
   items: [

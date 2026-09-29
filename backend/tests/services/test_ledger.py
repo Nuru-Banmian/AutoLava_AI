@@ -76,6 +76,7 @@ def composed_payload(context: LedgerContext, *, cash: int = 100, agency: int = 5
     return {
         "expected_identity": None,
         "expected_revision": None,
+        "expected_config_revision": 1,
         "is_open": "营业",
         "daily_revenue": None,
         "wash_count": 3,
@@ -198,7 +199,7 @@ async def test_legacy_total_uses_integer_and_rejects_items(
     result = await LedgerService(db_session).upsert(
         store_id=store_id,
         record_date=datetime.now(ZoneInfo(timezone)).date(),
-        payload={"expected_identity": None, "expected_revision": None, "is_open": "营业", "daily_revenue": 125, "items": []},
+        payload={"expected_identity": None, "expected_revision": None, "expected_config_revision": 1, "is_open": "营业", "daily_revenue": 125, "items": []},
         actor_id=user_id,
     )
     assert result.record.income_mode == "legacy_total"
@@ -283,7 +284,7 @@ async def test_same_day_creates_are_serialized_to_one_current_record() -> None:
             return await LedgerService(session).upsert(
                 store_id=store_id,
                 record_date=datetime.now(ZoneInfo(timezone)).date(),
-                payload={"expected_identity": None, "expected_revision": None, "is_open": "营业", "daily_revenue": total, "items": []},
+                payload={"expected_identity": None, "expected_revision": None, "expected_config_revision": 1, "is_open": "营业", "daily_revenue": total, "items": []},
                 actor_id=user_id,
             )
 
@@ -294,7 +295,7 @@ async def test_same_day_creates_are_serialized_to_one_current_record() -> None:
         assert await verify.scalar(select(func.count()).select_from(StoreDailyRecord)) == 1
 
 
-async def test_new_record_reloads_composed_config_after_waiting_for_lock() -> None:
+async def test_new_record_rejects_stale_config_before_using_fresh_rules() -> None:
     async with engine.begin() as connection:
         for table in reversed(Base.metadata.sorted_tables):
             await connection.execute(table.delete())
@@ -340,19 +341,30 @@ async def test_new_record_reloads_composed_config_after_waiting_for_lock() -> No
                 await config_session.commit()
 
         timezone = stale_store.timezone
+        payload = {
+            "expected_identity": None,
+            "expected_revision": None,
+            "expected_config_revision": 1,
+            "is_open": "营业",
+            "daily_revenue": None,
+            "items": [
+                {"category_id": configured.items[0].id, "amount": 200},
+                {"category_id": configured.items[1].id, "amount": 80},
+            ],
+        }
+        with pytest.raises(HTTPException) as conflict:
+            await LedgerService(ledger_session).upsert(
+                store_id=store_id,
+                record_date=datetime.now(ZoneInfo(timezone)).date(),
+                payload=payload,
+                actor_id=user_id,
+            )
+        assert conflict.value.status_code == 409
+        assert conflict.value.detail["code"] == "income_config_revision_conflict"
         result = await LedgerService(ledger_session).upsert(
             store_id=store_id,
             record_date=datetime.now(ZoneInfo(timezone)).date(),
-            payload={
-                "expected_identity": None,
-                "expected_revision": None,
-                "is_open": "营业",
-                "daily_revenue": None,
-                "items": [
-                    {"category_id": configured.items[0].id, "amount": 200},
-                    {"category_id": configured.items[1].id, "amount": 80},
-                ],
-            },
+            payload=payload | {"expected_config_revision": 2},
             actor_id=user_id,
         )
 

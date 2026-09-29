@@ -33,6 +33,7 @@ async def test_current_config_has_only_current_categories(
     configured = await admin_client.put(
         f"/api/admin/stores/{store.id}/income-config",
         json={
+            "expected_revision": 1,
             "enabled": True,
             "items": [
                 {"name": "现金", "include_in_total": True},
@@ -57,6 +58,7 @@ async def test_current_config_has_only_current_categories(
     assert current.status_code == 200
     assert current.json() == {
         "store_id": store.id,
+        "revision": 2,
         "enabled": True,
         "formula": "营业额 = 现金；“代收款”只记录，不计入营业额",
         "items": [
@@ -140,10 +142,10 @@ async def test_used_category_can_be_archived_but_not_permanently_deleted(
 
     category_id = category.id
     archived = await admin_client.post(
-        f"/api/admin/income-categories/{category_id}/archive"
+        f"/api/admin/income-categories/{category_id}/archive", json={"expected_revision": 1}
     )
-    rejected = await admin_client.delete(
-        f"/api/admin/income-categories/{category_id}"
+    rejected = await admin_client.request(
+        "DELETE", f"/api/admin/income-categories/{category_id}", json={"expected_revision": 2}
     )
 
     assert rejected.status_code == 409
@@ -192,6 +194,7 @@ async def test_current_category_patch_preserves_historical_total_and_item_snapsh
     response = await admin_client.patch(
         f"/api/admin/income-categories/{category.id}",
         json={
+            "expected_revision": 1,
             "name": "Renamed current category",
             "include_in_total": False,
             "sort_order": 9,
@@ -239,6 +242,7 @@ async def test_income_configuration_writes_wait_for_active_ledger_write_lock(
         request = admin_client.put(
             f"/api/admin/stores/{store.id}/income-config",
             json={
+                "expected_revision": 1,
                 "enabled": True,
                 "items": [
                     {
@@ -251,14 +255,15 @@ async def test_income_configuration_writes_wait_for_active_ledger_write_lock(
         )
     elif operation in {"archive", "restore"}:
         request = admin_client.post(
-            f"/api/admin/income-categories/{category.id}/{operation}"
+            f"/api/admin/income-categories/{category.id}/{operation}", json={"expected_revision": 1}
         )
     elif operation == "delete":
-        request = admin_client.delete(f"/api/admin/income-categories/{category.id}")
+        request = admin_client.request("DELETE", f"/api/admin/income-categories/{category.id}", json={"expected_revision": 1})
     elif operation == "create":
         request = admin_client.post(
             "/api/admin/income-categories",
             json={
+                "expected_revision": 1,
                 "store_id": store.id,
                 "name": "Created",
                 "include_in_total": False,
@@ -267,7 +272,7 @@ async def test_income_configuration_writes_wait_for_active_ledger_write_lock(
     else:
         request = admin_client.patch(
             f"/api/admin/income-categories/{category.id}",
-            json={"name": "After"},
+            json={"name": "After", "expected_revision": 1},
         )
 
     await SQLITE_WRITE_LOCK.acquire()

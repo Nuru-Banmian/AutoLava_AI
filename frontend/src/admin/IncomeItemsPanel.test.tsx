@@ -10,6 +10,7 @@ import { IncomeItemsPanel } from "@/admin/IncomeItemsPanel";
 
 const current = {
   store_id: 9,
+  revision: 1,
   enabled: true,
   formula: "总收入 = 现金 + 刷卡",
   items: [
@@ -48,6 +49,33 @@ function mockReads(categories: CategoryFixture[] = [
 }
 
 describe("IncomeItemsPanel", () => {
+  it("keeps an old configuration draft until the manager checks the latest revision", async () => {
+    const submissions: unknown[] = [];
+    mockReads();
+    server.use(http.put("/api/admin/stores/9/income-config", async ({ request }) => {
+      submissions.push(await request.json());
+      if (submissions.length === 1) return HttpResponse.json({ detail: {
+        code: "income_config_revision_conflict", message: "changed",
+        current_config: { ...current, revision: 2, enabled: false }, current_record: null,
+      } }, { status: 409 });
+      return HttpResponse.json({ ...current, revision: 3 });
+    }));
+    const user = userEvent.setup();
+    renderPanel();
+    const name = await screen.findByRole("textbox", { name: "项目名称 现金" });
+    await user.clear(name);
+    await user.type(name, "现金收款");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    expect(await screen.findByRole("group", { name: "最新收入配置" })).toHaveTextContent("修订号：2");
+    expect(name).toHaveValue("现金收款");
+    expect(submissions).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "已核对最新配置，继续编辑草稿" }));
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(submissions).toHaveLength(2));
+    expect(submissions[0]).toMatchObject({ expected_revision: 1 });
+    expect(submissions[1]).toMatchObject({ expected_revision: 2 });
+  });
+
   it("keeps edits local, previews the formula, reindexes moves, and publishes once", async () => {
     let publishCount = 0;
     let published: unknown;
@@ -79,6 +107,7 @@ describe("IncomeItemsPanel", () => {
     await waitFor(() => expect(publishCount).toBe(1));
     await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(false));
     expect(published).toEqual({
+      expected_revision: 1,
       enabled: true,
       items: [
         { category_id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 0 },
@@ -182,6 +211,36 @@ describe("IncomeItemsPanel", () => {
     await waitFor(() => expect(configReads).toBeGreaterThan(1));
     expect(screen.getByDisplayValue("现金收款")).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "项目名称 其他" })).not.toBeInTheDocument();
+  });
+
+  it("requires review when another publish lands between archive and refresh", async () => {
+    let configReads = 0;
+    const submittedRevisions: number[] = [];
+    server.use(
+      http.get("/api/income-config/9/current", () => HttpResponse.json(configReads++ === 0 ? current : { ...current, revision: 3, items: [{ ...current.items[0], include_in_total: false }] })),
+      http.get("/api/admin/income-categories", () => HttpResponse.json([])),
+      http.post("/api/admin/income-categories/3/archive", () => HttpResponse.json({ ...current.items[2], archived_at: "2026-07-16T12:00:00", is_active: false })),
+      http.put("/api/admin/stores/9/income-config", async ({ request }) => {
+        const body = await request.json() as { expected_revision: number };
+        submittedRevisions.push(body.expected_revision);
+        return HttpResponse.json({ ...current, revision: 4 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderPanel();
+    const cash = await screen.findByRole("textbox", { name: "项目名称 现金" });
+    await user.clear(cash);
+    await user.type(cash, "现金收款");
+    await user.click(screen.getByRole("button", { name: "归档 其他" }));
+    const latest = await screen.findByRole("group", { name: "最新收入配置" });
+    expect(latest).toHaveTextContent("修订号：3");
+    expect(latest).toHaveTextContent("不计入营业额");
+    expect(cash).toHaveValue("现金收款");
+    expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
+    expect(submittedRevisions).toEqual([]);
+    await user.click(screen.getByRole("button", { name: "已核对最新配置，继续编辑草稿" }));
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(submittedRevisions).toEqual([3]));
   });
 
   it("locks draft controls during publish and hides a stale error after an external store switch", async () => {

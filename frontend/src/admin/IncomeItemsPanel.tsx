@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
-import { api, friendlyApiError } from "@/api/client";
+import { api, ApiError, friendlyApiError } from "@/api/client";
 import type { IncomeCategory, IncomeConfigResponse } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -60,6 +60,8 @@ export function IncomeItemsPanel({ storeId, onDirtyChange }: IncomeItemsPanelPro
   const [items, setItems] = useState<DraftItem[]>([]);
   const [draftStoreId, setDraftStoreId] = useState<number | null>(null);
   const [draftEnabled, setDraftEnabled] = useState(false);
+  const [draftRevision, setDraftRevision] = useState<number | null>(null);
+  const [conflictingConfig, setConflictingConfig] = useState<IncomeConfigResponse | null>(null);
   const [isDirty, setIsDirty] = useState(false);
   const [newName, setNewName] = useState("");
   const [operation, setOperation] = useState<OperationState | null>(null);
@@ -77,6 +79,8 @@ export function IncomeItemsPanel({ storeId, onDirtyChange }: IncomeItemsPanelPro
     setItems([]);
     setDraftStoreId(null);
     setDraftEnabled(false);
+    setDraftRevision(null);
+    setConflictingConfig(null);
     setIsDirty(false);
     setNewName("");
     setOperation(null);
@@ -87,6 +91,7 @@ export function IncomeItemsPanel({ storeId, onDirtyChange }: IncomeItemsPanelPro
       setItems(configItems(currentConfig.data));
       setDraftStoreId(currentConfig.data.store_id);
       setDraftEnabled(currentConfig.data.enabled);
+      setDraftRevision(currentConfig.data.revision);
     }
   }, [currentConfig.data, isDirty, storeId]);
 
@@ -109,6 +114,16 @@ export function IncomeItemsPanel({ storeId, onDirtyChange }: IncomeItemsPanelPro
       queryClient.invalidateQueries({ queryKey: categoriesKey(storeId), exact: true }),
       invalidateUserData(queryClient, storeId),
     ]);
+    return queryClient.getQueryData<IncomeConfigResponse>(configKey(storeId));
+  }
+
+  function handleConflict(error: unknown) {
+    if (!(error instanceof ApiError) || error.status !== 409) return;
+    const detail = typeof error.responseBody === "object" && error.responseBody !== null && "detail" in error.responseBody ? error.responseBody.detail : null;
+    if (typeof detail !== "object" || detail === null || !("code" in detail) || detail.code !== "income_config_revision_conflict") return;
+    if ("current_config" in detail && typeof detail.current_config === "object" && detail.current_config !== null) {
+      setConflictingConfig(detail.current_config as IncomeConfigResponse);
+    }
   }
 
   function beginOperation(capturedStoreId: number) {
@@ -137,6 +152,7 @@ export function IncomeItemsPanel({ storeId, onDirtyChange }: IncomeItemsPanelPro
       const config = await api<IncomeConfigResponse>(`/admin/stores/${capturedStoreId}/income-config`, {
       method: "PUT",
       body: JSON.stringify({
+        expected_revision: draftRevision,
         enabled: capturedEnabled,
         items: capturedDraft.map(({ category_id, name, include_in_total, is_active }, sort_order) => ({
           category_id,
@@ -153,33 +169,44 @@ export function IncomeItemsPanel({ storeId, onDirtyChange }: IncomeItemsPanelPro
         setItems(configItems(config));
         setDraftStoreId(config.store_id);
         setDraftEnabled(config.enabled);
+        setDraftRevision(config.revision);
+        setConflictingConfig(null);
         setIsDirty(false);
       }
       finishOperation(requestId, capturedStoreId);
     } catch (error) {
+      if (isCurrentRequest(requestId, capturedStoreId)) handleConflict(error);
       finishOperation(requestId, capturedStoreId, error);
     }
   }
 
   async function archiveCategory(categoryId: number) {
     const capturedStoreId = storeId;
+    const expectedRevision = draftRevision;
     const requestId = beginOperation(capturedStoreId);
     try {
-      const category = await api<CategoryWithArchive>(`/admin/income-categories/${categoryId}/archive`, { method: "POST" });
+      const category = await api<CategoryWithArchive>(`/admin/income-categories/${categoryId}/archive`, { method: "POST", body: JSON.stringify({ expected_revision: expectedRevision }) });
       if (isCurrentRequest(requestId, capturedStoreId)) {
         setItems((current) => current.filter((item) => item.category_id !== category.id).map((item, sort_order) => ({ ...item, sort_order })));
+        setIsDirty(true);
       }
-      await refreshStore(capturedStoreId);
+      const latest = await refreshStore(capturedStoreId);
+      if (isCurrentRequest(requestId, capturedStoreId) && expectedRevision !== null) {
+        setDraftRevision(expectedRevision + 1);
+        if (latest && latest.revision > expectedRevision + 1) setConflictingConfig(latest);
+      }
       finishOperation(requestId, capturedStoreId);
     } catch (error) {
+      if (isCurrentRequest(requestId, capturedStoreId)) handleConflict(error);
       finishOperation(requestId, capturedStoreId, error);
     }
   }
 
   async function restoreCategory(categoryId: number, capturedStoreId: number) {
+    const expectedRevision = draftRevision;
     const requestId = beginOperation(capturedStoreId);
     try {
-      const category = await api<CategoryWithArchive>(`/admin/income-categories/${categoryId}/restore`, { method: "POST" });
+      const category = await api<CategoryWithArchive>(`/admin/income-categories/${categoryId}/restore`, { method: "POST", body: JSON.stringify({ expected_revision: expectedRevision }) });
       if (isCurrentRequest(requestId, capturedStoreId)) {
         setItems((current) => current.some((item) => item.category_id === category.id) ? current : [
           ...current,
@@ -188,19 +215,32 @@ export function IncomeItemsPanel({ storeId, onDirtyChange }: IncomeItemsPanelPro
         setIsDirty(true);
       }
       await queryClient.invalidateQueries({ queryKey: categoriesKey(capturedStoreId), exact: true });
+      const latest = await refreshStore(capturedStoreId);
+      if (isCurrentRequest(requestId, capturedStoreId) && expectedRevision !== null) {
+        setDraftRevision(expectedRevision + 1);
+        if (latest && latest.revision > expectedRevision + 1) setConflictingConfig(latest);
+      }
       finishOperation(requestId, capturedStoreId);
     } catch (error) {
+      if (isCurrentRequest(requestId, capturedStoreId)) handleConflict(error);
       finishOperation(requestId, capturedStoreId, error);
     }
   }
 
   async function deleteCategory(categoryId: number, capturedStoreId: number) {
+    const expectedRevision = draftRevision;
     const requestId = beginOperation(capturedStoreId);
     try {
-      await api<void>(`/admin/income-categories/${categoryId}`, { method: "DELETE" });
-      await refreshStore(capturedStoreId);
+      await api<void>(`/admin/income-categories/${categoryId}`, { method: "DELETE", body: JSON.stringify({ expected_revision: expectedRevision }) });
+      if (isCurrentRequest(requestId, capturedStoreId)) setIsDirty(true);
+      const latest = await refreshStore(capturedStoreId);
+      if (isCurrentRequest(requestId, capturedStoreId) && expectedRevision !== null) {
+        setDraftRevision(expectedRevision + 1);
+        if (latest && latest.revision > expectedRevision + 1) setConflictingConfig(latest);
+      }
       finishOperation(requestId, capturedStoreId);
     } catch (error) {
+      if (isCurrentRequest(requestId, capturedStoreId)) handleConflict(error);
       finishOperation(requestId, capturedStoreId, error);
     }
   }
@@ -246,6 +286,11 @@ export function IncomeItemsPanel({ storeId, onDirtyChange }: IncomeItemsPanelPro
   return <section className="space-y-4 rounded-lg border bg-card p-4" aria-labelledby="income-items-title">
     <h2 id="income-items-title" className="font-medium">收入项目</h2>
     <ErrorMessage error={currentConfig.error ?? categories.error ?? mutationError} />
+    {conflictingConfig && <div role="group" aria-label="最新收入配置" className="space-y-2 rounded-md border p-3">
+      <p>收入配置已变化，草稿已保留。最新修订号：{conflictingConfig.revision}；记账方式：{conflictingConfig.enabled ? "分类记账" : "总额记账"}。</p>
+      <p>最新项目：</p><ol>{[...conflictingConfig.items].sort((left, right) => left.sort_order - right.sort_order).map((item) => <li key={item.id}>{item.sort_order + 1}. {item.name}；{item.include_in_total ? "计入营业额" : "不计入营业额"}；{item.is_active ? "启用" : "停用"}{item.archived_at ? "；已归档" : ""}</li>)}</ol>
+      <button type="button" className="underline" onClick={() => { setDraftRevision(conflictingConfig.revision); setConflictingConfig(null); setOperation(null); }}>已核对最新配置，继续编辑草稿</button>
+    </div>}
     <>
       <label className="flex items-center gap-2">
         <input aria-label="启用收入项目明细" checked={draftEnabled} disabled={operationPending || currentConfig.isLoading || draftStoreId !== storeId} type="checkbox" onChange={(event) => {
@@ -278,7 +323,7 @@ export function IncomeItemsPanel({ storeId, onDirtyChange }: IncomeItemsPanelPro
           </div>
         </li>)}
       </ol>}
-      <Button aria-busy={operationPending || undefined} disabled={operationPending || currentConfig.isLoading || draftStoreId !== storeId || items.some((item) => !item.name.trim())} type="button" onClick={() => void publishDraft()}>保存</Button>
+      <Button aria-busy={operationPending || undefined} disabled={operationPending || conflictingConfig !== null || currentConfig.isLoading || draftStoreId !== storeId || items.some((item) => !item.name.trim())} type="button" onClick={() => void publishDraft()}>保存</Button>
       {archived.length > 0 && <section className="space-y-2 rounded-lg border p-4" aria-label="已归档收入项目">
         <h2 className="font-medium">已归档项目</h2>
         <ul className="space-y-2">{archived.map((category) => <li className="flex flex-wrap items-center justify-between gap-2" key={category.id}>

@@ -264,6 +264,7 @@ async def test_agent_uses_current_category_ids_and_historical_snapshots_through_
     changed = await client.patch(
         f"/api/admin/income-categories/{cash_id}",
         json={
+            "expected_revision": 1,
             "name": "现金新名",
             "include_in_total": False,
             "is_active": False,

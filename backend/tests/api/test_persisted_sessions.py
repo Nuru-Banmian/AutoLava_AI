@@ -221,7 +221,7 @@ async def test_weather_wait_cannot_commit_after_session_revocation(tmp_path: Pat
         pending = asyncio.create_task(
             first.put(
                 f"/api/ledger/{store_id}/{target}",
-                json={"expected_identity": None, "expected_revision": None, "is_open": "营业", "items": [{"category_id": category_id, "amount": 125}]},
+                json={"expected_identity": None, "expected_revision": None, "expected_config_revision": 1, "is_open": "营业", "items": [{"category_id": category_id, "amount": 125}]},
             )
         )
         await asyncio.wait_for(weather.entered.wait(), timeout=5)

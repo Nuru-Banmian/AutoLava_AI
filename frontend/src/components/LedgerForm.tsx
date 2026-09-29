@@ -49,6 +49,7 @@ function normalizedWashCount(washCountEnabled: boolean, status: LedgerStatus, wa
 export function LedgerForm({ categories, config, record, weather, weatherOptions = [], onSave, onDirtyChange, saving = false, submitLabel = "保存", savedSubmission, recordRevision, washCountEnabled = true }: LedgerFormProps) {
   const resolvedConfig = useMemo(() => config ?? ({
     store_id: record?.store_id ?? 0,
+    revision: record?.config_revision ?? 1,
     enabled: record?.income_mode === "composed",
     formula: "",
     items: categories.map((category) => ({ ...category, store_id: record?.store_id ?? 0, archived_at: null })),
