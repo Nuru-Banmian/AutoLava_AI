@@ -194,6 +194,19 @@ function canonicalConflictRecord(error: unknown): SettlementRecord | null {
   return current as SettlementRecord;
 }
 
+function conflictForRecord(
+  error: unknown,
+  target: RecordTarget,
+): SettlementRecord | null | undefined {
+  if (!(error instanceof ApiError) || error.status !== 409) return undefined;
+  const current = canonicalConflictRecord(error);
+  return current?.id === target.recordId &&
+    current.opening_month === target.month &&
+    current.revision > target.revision
+    ? current
+    : null;
+}
+
 function RecordActionsMenu({
   record,
   disabled,
@@ -568,6 +581,9 @@ export function CompanySettlementPage() {
   const [amount, setAmount] = useState("");
   const [recordError, setRecordError] = useState("");
   const [recordMessage, setRecordMessage] = useState("");
+  const [recordConflict, setRecordConflict] = useState<SettlementRecord | null | undefined>(
+    undefined,
+  );
   const [recordAction, setRecordAction] = useState<RecordAction>(null);
   const editingRecord = recordAction?.kind === "edit" ? recordAction.record : null;
   const recordToDelete = recordAction?.kind === "delete" ? recordAction.record : null;
@@ -732,6 +748,7 @@ export function CompanySettlementPage() {
       ) {
         operationId.current += 1;
         setEditingRecord(null);
+        setRecordConflict(undefined);
         setRecordError("");
         setRecordMessage("开票记录已修改");
       }
@@ -746,8 +763,7 @@ export function CompanySettlementPage() {
         variables.operationId === operationId.current &&
         variables.draftVersion === editDraftVersion.current
       ) {
-        const current = canonicalConflictRecord(error);
-        if (current?.id === variables.recordId) setEditingRecord(current);
+        setRecordConflict(conflictForRecord(error, variables));
         setRecordError(friendlyApiError(error, "开票记录修改失败，请重试"));
         setRecordMessage("");
       }
@@ -769,6 +785,7 @@ export function CompanySettlementPage() {
       if (isCurrent(variables) && variables.operationId === operationId.current) {
         operationId.current += 1;
         setRecordToDelete(null);
+        setRecordConflict(undefined);
         setRecordError("");
         setRecordMessage("开票记录已永久删除");
       }
@@ -779,8 +796,7 @@ export function CompanySettlementPage() {
     },
     onError: async (error, variables) => {
       if (isCurrent(variables) && variables.operationId === operationId.current) {
-        const current = canonicalConflictRecord(error);
-        if (current?.id === variables.recordId) setRecordToDelete(current);
+        setRecordConflict(conflictForRecord(error, variables));
         setRecordError(friendlyApiError(error, "开票记录删除失败，请重试"));
         setRecordMessage("");
       }
@@ -803,6 +819,7 @@ export function CompanySettlementPage() {
       if (isCurrent(variables) && variables.operationId === operationId.current) {
         operationId.current += 1;
         setRecordTransition(null);
+        setRecordConflict(undefined);
         setRecordError("");
         setRecordMessage(recordTransitionConfig[variables.kind].successMessage);
       }
@@ -823,12 +840,11 @@ export function CompanySettlementPage() {
         if (targetReached) {
           operationId.current += 1;
           setRecordTransition(null);
+          setRecordConflict(undefined);
           setRecordError("");
           setRecordMessage(config.syncMessage);
         } else {
-          if (current?.id === variables.recordId) {
-            setRecordTransition({ record: current, kind: variables.kind });
-          }
+          setRecordConflict(conflictForRecord(error, variables));
           setRecordError(friendlyApiError(error, config.errorMessage));
           setRecordMessage("");
         }
@@ -857,6 +873,7 @@ export function CompanySettlementPage() {
     setAmount("");
     setRecordError("");
     setRecordMessage("");
+    setRecordConflict(undefined);
     setEditingRecord(null);
     setEditCompanyId("");
     setEditAmount("");
@@ -881,6 +898,7 @@ export function CompanySettlementPage() {
     setEditAmount(String(record.amount));
     setRecordError("");
     setRecordMessage("");
+    setRecordConflict(undefined);
     editRecordMutation.reset();
   };
 
@@ -890,12 +908,20 @@ export function CompanySettlementPage() {
     setRecordToDelete(null);
     setRecordError("");
     setRecordMessage("");
+    setRecordConflict(undefined);
     transitionRecordMutation.reset();
     setRecordTransition({ record, kind });
   };
 
   const submitRecordEdit = () => {
-    if (!selected || !editingRecord || !validAmount(editAmount) || !editCompanyId) return;
+    if (
+      !selected ||
+      !editingRecord ||
+      recordConflict !== undefined ||
+      !validAmount(editAmount) ||
+      !editCompanyId
+    )
+      return;
     editRecordMutation.mutate({
       storeId: selected.id,
       month: editingRecord.opening_month,
@@ -911,7 +937,7 @@ export function CompanySettlementPage() {
   };
 
   const submitRecordDelete = () => {
-    if (!selected || !recordToDelete) return;
+    if (!selected || !recordToDelete || recordConflict !== undefined) return;
     deleteRecordMutation.mutate({
       storeId: selected.id,
       month: recordToDelete.opening_month,
@@ -923,7 +949,7 @@ export function CompanySettlementPage() {
     });
   };
   const submitRecordTransition = () => {
-    if (!selected || !recordTransition) return;
+    if (!selected || !recordTransition || recordConflict !== undefined) return;
     transitionRecordMutation.mutate({
       storeId: selected.id,
       month: recordTransition.record.opening_month,
@@ -985,12 +1011,46 @@ export function CompanySettlementPage() {
     }
   };
 
+  const conflictReview = (allowedStatus: SettlementRecord["status"]) =>
+    recordConflict !== undefined && (
+      <div aria-label="冲突最新记录" className="grid gap-2 rounded-md border p-3" role="group">
+        {recordConflict ? (
+          <>
+            <p>
+              最新记录：{recordConflict.company_name}，{euro(recordConflict.amount)}，
+              {recordConflict.status === "pending" ? "待到账" : "已确认"}，版本{" "}
+              {recordConflict.revision}。
+            </p>
+            {recordConflict.status === allowedStatus ? (
+              <Button
+                onClick={() => {
+                  if (!recordAction || !recordConflict) return;
+                  setRecordAction({ ...recordAction, record: recordConflict });
+                  setRecordConflict(undefined);
+                  setRecordError("");
+                }}
+                type="button"
+                variant="outline"
+              >
+                已核对最新记录，使用新版本
+              </Button>
+            ) : (
+              <p>记录状态已改变，此操作不能继续。请关闭后重新选择。</p>
+            )}
+          </>
+        ) : (
+          <p>记录已删除或最新状态无法读取。请关闭并刷新列表。</p>
+        )}
+      </div>
+    );
+
   const changeMonth = (next: string) => {
     recordDraftVersion.current += 1;
     operationId.current += 1;
     setMonth(next);
     setRecordError("");
     setRecordMessage("");
+    setRecordConflict(undefined);
     setEditingRecord(null);
     setRecordToDelete(null);
     setRecordTransition(null);
@@ -1304,6 +1364,7 @@ export function CompanySettlementPage() {
                                     setRecordTransition(null);
                                     setRecordError("");
                                     setRecordMessage("");
+                                    setRecordConflict(undefined);
                                     deleteRecordMutation.reset();
                                     setRecordToDelete(record);
                                   }}
@@ -1328,7 +1389,13 @@ export function CompanySettlementPage() {
           <Dialog
             open={editingRecord !== null}
             onOpenChange={(open) => {
-              if (!open && !editRecordMutation.isPending) setEditingRecord(null);
+              if (!open && !editRecordMutation.isPending) {
+                operationId.current += 1;
+                setEditingRecord(null);
+                setRecordConflict(undefined);
+                setRecordError("");
+                editRecordMutation.reset();
+              }
             }}
           >
             <DialogContent aria-label="修改开票记录">
@@ -1379,6 +1446,7 @@ export function CompanySettlementPage() {
                 />
               </label>
               {editingRecord && recordError && <div role="alert">{recordError}</div>}
+              {editingRecord && conflictReview("pending")}
               <DialogFooter>
                 <DialogClose asChild>
                   <Button disabled={editRecordMutation.isPending} type="button" variant="outline">
@@ -1387,7 +1455,7 @@ export function CompanySettlementPage() {
                 </DialogClose>
                 {editRecordMutation.isError && (
                   <Button
-                    disabled={editRecordMutation.isPending}
+                    disabled={editRecordMutation.isPending || recordConflict !== undefined}
                     onClick={submitRecordEdit}
                     type="button"
                     variant="outline"
@@ -1397,7 +1465,10 @@ export function CompanySettlementPage() {
                 )}
                 <Button
                   disabled={
-                    editRecordMutation.isPending || !editCompanyId || !validAmount(editAmount)
+                    editRecordMutation.isPending ||
+                    recordConflict !== undefined ||
+                    !editCompanyId ||
+                    !validAmount(editAmount)
                   }
                   onClick={submitRecordEdit}
                   type="button"
@@ -1410,7 +1481,13 @@ export function CompanySettlementPage() {
           <AlertDialog
             open={recordToDelete !== null}
             onOpenChange={(open) => {
-              if (!open && !deleteRecordMutation.isPending) setRecordToDelete(null);
+              if (!open && !deleteRecordMutation.isPending) {
+                operationId.current += 1;
+                setRecordToDelete(null);
+                setRecordConflict(undefined);
+                setRecordError("");
+                deleteRecordMutation.reset();
+              }
             }}
           >
             <AlertDialogContent aria-label="永久删除开票记录？">
@@ -1421,13 +1498,14 @@ export function CompanySettlementPage() {
                 </AlertDialogDescription>
               </AlertDialogHeader>
               {recordToDelete && recordError && <div role="alert">{recordError}</div>}
+              {recordToDelete && conflictReview("pending")}
               <AlertDialogFooter>
                 <AlertDialogCancel disabled={deleteRecordMutation.isPending}>
                   取消删除
                 </AlertDialogCancel>
                 <Button
                   aria-label="确认永久删除开票记录"
-                  disabled={deleteRecordMutation.isPending}
+                  disabled={deleteRecordMutation.isPending || recordConflict !== undefined}
                   onClick={submitRecordDelete}
                   type="button"
                   variant="destructive"
@@ -1442,6 +1520,7 @@ export function CompanySettlementPage() {
             onOpenChange={(open) => {
               if (!open && !transitionRecordMutation.isPending) {
                 setRecordTransition(null);
+                setRecordConflict(undefined);
                 setRecordError("");
                 transitionRecordMutation.reset();
               }
@@ -1466,12 +1545,14 @@ export function CompanySettlementPage() {
                 </AlertDialogDescription>
               </AlertDialogHeader>
               {recordTransition && recordError && <div role="alert">{recordError}</div>}
+              {recordTransition &&
+                conflictReview(recordTransition.kind === "confirm" ? "pending" : "confirmed")}
               <AlertDialogFooter>
                 <AlertDialogCancel disabled={transitionRecordMutation.isPending}>
                   取消
                 </AlertDialogCancel>
                 <Button
-                  disabled={transitionRecordMutation.isPending}
+                  disabled={transitionRecordMutation.isPending || recordConflict !== undefined}
                   onClick={submitRecordTransition}
                   type="button"
                   variant={

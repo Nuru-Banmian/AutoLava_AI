@@ -20,7 +20,7 @@ afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
 function createClient() {
-  return new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  return new QueryClient({ defaultOptions: { queries: { retry: false, retryDelay: 0 }, mutations: { retry: false } } });
 }
 
 function renderTestRouter(path: string) {
@@ -291,7 +291,7 @@ describe("authenticated application shell", () => {
       http.get("/api/auth/me", () => HttpResponse.json(admin)),
       http.get("/api/stores/accessible", () => {
         requests += 1;
-        if (requests === 1) return HttpResponse.json({ detail: "Stores unavailable" }, { status: 500 });
+        if (requests <= 4) return HttpResponse.json({ detail: "Stores unavailable" }, { status: 500 });
         return HttpResponse.json([{ id: 7, name: "Recovered Store", timezone: "Europe/Rome" }]);
       }),
     );
@@ -302,7 +302,7 @@ describe("authenticated application shell", () => {
     expect(within(desktopPicker).getByRole("combobox", { name: "门店" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "重试门店" }));
     expect(await within(desktopPicker).findByRole("option", { name: "Recovered Store" })).toBeInTheDocument();
-    expect(requests).toBe(2);
+    expect(requests).toBe(5);
   });
 
   it("hides admin navigation and redirects a non-admin from the admin route", async () => {

@@ -84,7 +84,14 @@ def main() -> None:
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=5)
-        temporary.cleanup()
+        for attempt in range(10):
+            try:
+                temporary.cleanup()
+                break
+            except PermissionError:
+                if attempt == 9:
+                    raise
+                time.sleep(0.2)
 
 
 if __name__ == "__main__":

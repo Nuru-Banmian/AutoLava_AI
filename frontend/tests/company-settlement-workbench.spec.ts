@@ -392,6 +392,48 @@ test("320px workbench wraps summaries and controls without horizontal overflow",
 });
 
 for (const width of [390, 1280]) {
+  test(`${width}px reviews a changed record before retrying edit, delete, confirm, or revoke`, async ({ page }) => {
+    await openSettlementWorkbench(page, width, 844);
+    const attempts: Record<string, number[]> = { edit: [], delete: [], confirm: [], revoke: [] };
+    await page.route(/^http:\/\/127\.0\.0\.1:4173\/api\/settlements\/1\/records\/2[01](?:\/(?:confirm|revoke-confirmation))?$/, async (route) => {
+      const url = new URL(route.request().url());
+      const action = url.pathname.endsWith("/confirm") ? "confirm"
+        : url.pathname.endsWith("/revoke-confirmation") ? "revoke"
+        : route.request().method() === "PATCH" ? "edit" : "delete";
+      const revision = (route.request().postDataJSON() as { revision: number }).revision;
+      attempts[action].push(revision);
+      const original = action === "revoke" ? records[1] : records[0];
+      const latest = { ...original, amount: original.amount + 80, revision: original.revision + 1 };
+      if (attempts[action].length === 1) {
+        await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({
+          detail: { code: "settlement_record_revision_conflict", message: "开票记录已被其他用户修改", current_record: latest },
+        }) });
+      } else {
+        await route.fulfill({ status: action === "delete" ? 204 : 200, contentType: "application/json", body: action === "delete" ? "" : JSON.stringify(latest) });
+      }
+    });
+
+    for (const action of ["edit", "delete", "confirm", "revoke"] as const) {
+      if (action === "confirm") {
+        await page.getByRole("button", { name: "确认Alpha Fleet Services开票记录到账" }).click();
+      } else {
+        await page.getByRole("button", { name: `${action === "revoke" ? "Beta Logistics" : "Alpha Fleet Services"}开票记录更多操作` }).click();
+        await page.getByRole("menuitem", { name: action === "edit" ? "编辑Alpha Fleet Services开票记录" : action === "delete" ? "删除Alpha Fleet Services开票记录" : "撤销Beta Logistics开票记录到账确认" }).click();
+      }
+      if (action === "edit") await page.getByLabel("编辑金额（整数欧元）").fill("250");
+      const submit = page.getByRole("button", { name: action === "edit" ? "保存开票记录修改" : action === "delete" ? "确认永久删除开票记录" : action === "confirm" ? "确认到账" : "确认撤销到账确认" });
+      await submit.click();
+      const review = page.getByRole("group", { name: "冲突最新记录" });
+      await expect(review).toBeVisible();
+      await expect(review).toContainText(action === "revoke" ? "€3,530" : "€200");
+      await expect(submit).toBeDisabled();
+      if (action === "edit") await expect(page.getByLabel("编辑金额（整数欧元）")).toHaveValue("250");
+      await review.getByRole("button", { name: "已核对最新记录，使用新版本" }).click();
+      await submit.click();
+      await expect.poll(() => attempts[action]).toEqual(action === "revoke" ? [2, 3] : [1, 2]);
+    }
+  });
+
   test(`${width}px keeps new drafts after delayed settlement saves`, async ({ page }) => {
     await page.clock.install({ time: new Date("2026-07-21T10:00:00Z") });
     await page.setViewportSize({ width, height: 900 });
