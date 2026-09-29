@@ -97,6 +97,57 @@ afterEach(() => {
 afterAll(() => server.close());
 
 describe("CompanySettlementPage record corrections", () => {
+  it("keeps a newer company name when the earlier creation completes", async () => {
+    let release!: () => void;
+    let started!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const requested = new Promise<void>((resolve) => { started = resolve; });
+    const { client } = renderPage([
+      http.post("/api/settlements/1/companies", async () => {
+        started();
+        await pending;
+        return HttpResponse.json({ id: 12, name: "Old", is_active: true });
+      }),
+    ]);
+
+    fireEvent.click(await screen.findByRole("button", { name: "结算公司管理" }));
+    const input = await screen.findByPlaceholderText("输入结算公司名称");
+    fireEvent.change(input, { target: { value: "Old" } });
+    fireEvent.click(screen.getByRole("button", { name: "新增结算公司" }));
+    await requested;
+    fireEvent.change(input, { target: { value: "New draft" } });
+    release();
+
+    await waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ["settlement-companies"] }).some((query) => query.state.dataUpdateCount > 1)).toBe(true));
+    expect(screen.getByPlaceholderText("输入结算公司名称")).toHaveValue("New draft");
+  });
+
+  it("keeps the next invoice draft when an earlier save completes", async () => {
+    let release!: () => void;
+    let started!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const requested = new Promise<void>((resolve) => { started = resolve; });
+    const { client } = renderPage([
+      http.post("/api/settlements/1/records", async () => {
+        started();
+        await pending;
+        return HttpResponse.json(record({ id: 22, amount: 120 }));
+      }),
+    ]);
+
+    await screen.findByRole("option", { name: "Alpha" });
+    fireEvent.change(screen.getByLabelText("结算公司", { exact: true }), { target: { value: "10" } });
+    const amount = screen.getByLabelText("金额（整数欧元）");
+    fireEvent.change(amount, { target: { value: "120" } });
+    fireEvent.click(screen.getByRole("button", { name: "登记待到账记录" }));
+    await requested;
+    fireEvent.change(amount, { target: { value: "250" } });
+    release();
+
+    await waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ["settlement-month"] }).some((query) => query.state.dataUpdateCount > 1)).toBe(true));
+    expect(screen.getByLabelText("金额（整数欧元）")).toHaveValue(250);
+  });
+
   it("navigates adjacent opening months and stops at the current month", async () => {
     const requestedMonths: string[] = [];
     renderPage([
@@ -208,7 +259,7 @@ describe("CompanySettlementPage record corrections", () => {
     expect(client.getQueryState(chartsQueryKey)?.isInvalidated).toBe(true);
   });
 
-  it("adopts an already-confirmed canonical state after a concurrent confirmation", async () => {
+  it("shows an already-confirmed canonical state for review without retrying confirmation", async () => {
     let current = record();
     const { client } = renderPage([
       http.get("/api/settlements/1/months/:month", () => HttpResponse.json(monthResponse([current]))),
@@ -229,11 +280,64 @@ describe("CompanySettlementPage record corrections", () => {
     fireEvent.click(await screen.findByRole("button", { name: "确认Alpha开票记录到账" }));
     fireEvent.click(screen.getByRole("button", { name: "确认到账" }));
 
-    expect(await screen.findByRole("status")).toHaveTextContent("记录状态已同步：已确认到账");
-    expect(screen.queryByRole("alertdialog", { name: "确认整笔到账？" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("group", { name: "冲突最新记录" })).toHaveTextContent("已确认");
+    expect(screen.getByRole("button", { name: "确认到账" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "已核对最新记录，使用新版本" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
     await openRecordActions("Alpha");
     expect(screen.getByRole("menuitem", { name: "撤销Alpha开票记录到账确认" })).toBeInTheDocument();
     expect(client.getQueryState(chartsQueryKey)?.isInvalidated).toBe(true);
+  });
+
+  it("requires reviewing a changed pending record before retrying confirmation", async () => {
+    const submitted: unknown[] = [];
+    renderPage([
+      http.post("/api/settlements/1/records/20/confirm", async ({ request }) => {
+        submitted.push(await request.json());
+        if (submitted.length === 1) return HttpResponse.json({
+          detail: {
+            code: "settlement_record_revision_conflict",
+            message: "开票记录已被其他用户修改",
+            current_record: record({ amount: 200, revision: 2 }),
+          },
+        }, { status: 409 });
+        return HttpResponse.json(record({ amount: 200, status: "confirmed", revision: 3 }));
+      }),
+    ]);
+
+    fireEvent.click(await screen.findByRole("button", { name: "确认Alpha开票记录到账" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认到账" }));
+    expect(await screen.findByRole("group", { name: "冲突最新记录" })).toHaveTextContent("€200");
+    expect(screen.getByRole("button", { name: "确认到账" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "已核对最新记录，使用新版本" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认到账" }));
+    await waitFor(() => expect(submitted).toEqual([{ revision: 1 }, { revision: 2 }]));
+  });
+
+  it("requires reviewing the latest confirmed record before retrying revocation", async () => {
+    const submitted: unknown[] = [];
+    renderPage([
+      http.get("/api/settlements/1/months/:month", () =>
+        HttpResponse.json(monthResponse([record({ status: "confirmed", revision: 2 })]))),
+      http.post("/api/settlements/1/records/20/revoke-confirmation", async ({ request }) => {
+        submitted.push(await request.json());
+        if (submitted.length === 1) return HttpResponse.json({ detail: {
+          code: "settlement_record_revision_conflict",
+          message: "开票记录已被其他用户修改",
+          current_record: record({ status: "confirmed", amount: 200, revision: 3 }),
+        } }, { status: 409 });
+        return HttpResponse.json(record({ status: "pending", amount: 200, revision: 4 }));
+      }),
+    ]);
+
+    await openRecordActions("Alpha");
+    fireEvent.click(screen.getByRole("menuitem", { name: "撤销Alpha开票记录到账确认" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认撤销到账确认" }));
+    expect(await screen.findByRole("group", { name: "冲突最新记录" })).toHaveTextContent("€200");
+    expect(screen.getByRole("button", { name: "确认撤销到账确认" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "已核对最新记录，使用新版本" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认撤销到账确认" }));
+    await waitFor(() => expect(submitted).toEqual([{ revision: 2 }, { revision: 3 }]));
   });
 
   it("keeps a failed revocation open for a safe retry", async () => {
@@ -311,7 +415,7 @@ describe("CompanySettlementPage record corrections", () => {
     await waitFor(() => expect(requests).toBe(2));
   });
 
-  it("adopts the canonical revision after an edit conflict while preserving the draft", async () => {
+  it("requires reviewing the canonical revision after an edit conflict while preserving the draft", async () => {
     const submitted: unknown[] = [];
     renderPage([
       http.patch("/api/settlements/1/records/20", async ({ request }) => {
@@ -337,6 +441,9 @@ describe("CompanySettlementPage record corrections", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("开票记录已被其他用户修改");
     expect(screen.getByLabelText("编辑金额（整数欧元）")).toHaveValue(250);
+    expect(screen.getByRole("group", { name: "冲突最新记录" })).toHaveTextContent("€200");
+    expect(screen.getByRole("button", { name: "重试修改" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "已核对最新记录，使用新版本" }));
     fireEvent.click(screen.getByRole("button", { name: "重试修改" }));
 
     await waitFor(() => expect(submitted).toEqual([
@@ -344,6 +451,52 @@ describe("CompanySettlementPage record corrections", () => {
       { company_id: 10, amount: 250, revision: 2 },
     ]));
     expect(await screen.findByRole("status")).toHaveTextContent("开票记录已修改");
+  });
+
+  it("blocks retry when a conflicting edit is now confirmed and clears review on close", async () => {
+    let requests = 0;
+    renderPage([http.patch("/api/settlements/1/records/20", () => {
+      requests += 1;
+      return HttpResponse.json({ detail: {
+        code: "settlement_record_state_conflict",
+        message: "开票记录状态已变化",
+        current_record: record({ status: "confirmed", revision: 2 }),
+      } }, { status: 409 });
+    })]);
+
+    await openRecordActions("Alpha");
+    fireEvent.click(screen.getByRole("menuitem", { name: "编辑Alpha开票记录" }));
+    fireEvent.change(screen.getByLabelText("编辑金额（整数欧元）"), { target: { value: "250" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存开票记录修改" }));
+    expect(await screen.findByRole("group", { name: "冲突最新记录" })).toHaveTextContent("已确认");
+    expect(screen.getByLabelText("编辑金额（整数欧元）")).toHaveValue(250);
+    expect(screen.queryByRole("button", { name: "已核对最新记录，使用新版本" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重试修改" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "取消修改" }));
+    await openRecordActions("Alpha");
+    fireEvent.click(screen.getByRole("menuitem", { name: "编辑Alpha开票记录" }));
+    expect(screen.queryByRole("group", { name: "冲突最新记录" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("编辑金额（整数欧元）")).toHaveValue(120);
+    expect(requests).toBe(1);
+  });
+
+  it("blocks deletion retry when the conflicting record no longer exists", async () => {
+    let requests = 0;
+    renderPage([http.delete("/api/settlements/1/records/20", () => {
+      requests += 1;
+      return HttpResponse.json({ detail: {
+        code: "settlement_record_revision_conflict",
+        message: "开票记录已删除",
+        current_record: null,
+      } }, { status: 409 });
+    })]);
+    await openRecordActions("Alpha");
+    fireEvent.click(screen.getByRole("menuitem", { name: "删除Alpha开票记录" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认永久删除开票记录" }));
+    expect(await screen.findByRole("group", { name: "冲突最新记录" })).toHaveTextContent("记录已删除");
+    expect(screen.getByRole("button", { name: "确认永久删除开票记录" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "已核对最新记录，使用新版本" })).not.toBeInTheDocument();
+    expect(requests).toBe(1);
   });
 
   it("permanently deletes only after confirmation and sends the current revision", async () => {
@@ -369,7 +522,7 @@ describe("CompanySettlementPage record corrections", () => {
     expect(await screen.findByText("本月暂无开票记录。")).toBeInTheDocument();
   });
 
-  it("adopts the canonical revision before retrying a conflicted deletion", async () => {
+  it("requires reviewing the canonical revision before retrying a conflicted deletion", async () => {
     const submitted: unknown[] = [];
     renderPage([
       http.delete("/api/settlements/1/records/20", async ({ request }) => {
@@ -391,6 +544,8 @@ describe("CompanySettlementPage record corrections", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "删除Alpha开票记录" }));
     fireEvent.click(screen.getByRole("button", { name: "确认永久删除开票记录" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("开票记录已被其他用户修改");
+    expect(screen.getByRole("button", { name: "确认永久删除开票记录" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "已核对最新记录，使用新版本" }));
     fireEvent.click(screen.getByRole("button", { name: "确认永久删除开票记录" }));
 
     await waitFor(() => expect(submitted).toEqual([{ revision: 1 }, { revision: 2 }]));

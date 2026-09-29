@@ -1,3 +1,5 @@
+import { assertSessionScope, currentSessionScope } from "@/auth/sessionScope";
+
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
@@ -50,6 +52,7 @@ export async function apiRequest(
   path: string,
   init: RequestInit = {},
 ): Promise<Response> {
+  const scope = currentSessionScope();
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   const headers = new Headers(init.headers);
   if (init.body != null && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
@@ -58,6 +61,7 @@ export async function apiRequest(
     credentials: "include",
     headers,
   });
+  assertSessionScope(scope);
 
   if (!response.ok) {
     const contentType = response.headers.get("content-type") ?? "";

@@ -3,6 +3,7 @@ import { createContext, type PropsWithChildren, useContext, useEffect, useMemo, 
 
 import { api } from "@/api/client";
 import type { AccessibleStore } from "@/api/types";
+import { assertSessionScope, currentSessionScope } from "@/auth/sessionScope";
 import { UnsavedChangesProvider, useUnsavedChanges } from "@/navigation/UnsavedChanges";
 
 export const accessibleStoresKey = ["stores", "accessible"] as const;
@@ -44,10 +45,12 @@ interface StoreProviderProps extends PropsWithChildren {
 }
 
 function StoreStateProvider({ children, userId }: StoreProviderProps) {
+  const authScope = currentSessionScope();
   const { requestTransition, resetUnsavedChanges } = useUnsavedChanges();
   const { data: stores = [], isLoading, isSuccess, error, refetch } = useQuery({
     queryKey: accessibleStoresKeyFor(userId),
-    queryFn: () => api<AccessibleStore[]>("/stores/accessible"),
+    queryFn: () => { assertSessionScope(authScope); return api<AccessibleStore[]>("/stores/accessible"); },
+    retry: (failureCount) => authScope === currentSessionScope() && failureCount < 3,
   });
   const [selection, setSelection] = useState<{ userId: number | undefined; storeId: number | null; snapshot: AccessibleStore | null }>(() => ({ userId, storeId: readStoredSelection(userId), snapshot: null }));
   const reconciliationRef = useRef<string | null>(null);

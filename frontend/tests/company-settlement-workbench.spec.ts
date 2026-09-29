@@ -390,3 +390,173 @@ test("320px workbench wraps summaries and controls without horizontal overflow",
   await expectWorkbenchOrder(page);
   await expectNoHorizontalOverflow(page);
 });
+
+for (const width of [390, 1280]) {
+  test(`${width}px reviews a changed record before retrying edit, delete, confirm, or revoke`, async ({ page }) => {
+    await openSettlementWorkbench(page, width, 844);
+    const attempts: Record<string, number[]> = { edit: [], delete: [], confirm: [], revoke: [] };
+    await page.route(/^http:\/\/127\.0\.0\.1:4173\/api\/settlements\/1\/records\/2[01](?:\/(?:confirm|revoke-confirmation))?$/, async (route) => {
+      const url = new URL(route.request().url());
+      const action = url.pathname.endsWith("/confirm") ? "confirm"
+        : url.pathname.endsWith("/revoke-confirmation") ? "revoke"
+        : route.request().method() === "PATCH" ? "edit" : "delete";
+      const revision = (route.request().postDataJSON() as { revision: number }).revision;
+      attempts[action].push(revision);
+      const original = action === "revoke" ? records[1] : records[0];
+      const latest = { ...original, amount: original.amount + 80, revision: original.revision + 1 };
+      if (attempts[action].length === 1) {
+        await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({
+          detail: { code: "settlement_record_revision_conflict", message: "开票记录已被其他用户修改", current_record: latest },
+        }) });
+      } else {
+        await route.fulfill({ status: action === "delete" ? 204 : 200, contentType: "application/json", body: action === "delete" ? "" : JSON.stringify(latest) });
+      }
+    });
+
+    for (const action of ["edit", "delete", "confirm", "revoke"] as const) {
+      if (action === "confirm") {
+        await page.getByRole("button", { name: "确认Alpha Fleet Services开票记录到账" }).click();
+      } else {
+        await page.getByRole("button", { name: `${action === "revoke" ? "Beta Logistics" : "Alpha Fleet Services"}开票记录更多操作` }).click();
+        await page.getByRole("menuitem", { name: action === "edit" ? "编辑Alpha Fleet Services开票记录" : action === "delete" ? "删除Alpha Fleet Services开票记录" : "撤销Beta Logistics开票记录到账确认" }).click();
+      }
+      if (action === "edit") await page.getByLabel("编辑金额（整数欧元）").fill("250");
+      const submit = page.getByRole("button", { name: action === "edit" ? "保存开票记录修改" : action === "delete" ? "确认永久删除开票记录" : action === "confirm" ? "确认到账" : "确认撤销到账确认" });
+      await submit.click();
+      const review = page.getByRole("group", { name: "冲突最新记录" });
+      await expect(review).toBeVisible();
+      await expect(review).toContainText(action === "revoke" ? "€3,530" : "€200");
+      await expect(submit).toBeDisabled();
+      if (action === "edit") await expect(page.getByLabel("编辑金额（整数欧元）")).toHaveValue("250");
+      await review.getByRole("button", { name: "已核对最新记录，使用新版本" }).click();
+      await submit.click();
+      await expect.poll(() => attempts[action]).toEqual(action === "revoke" ? [2, 3] : [1, 2]);
+    }
+  });
+
+  test(`${width}px keeps new drafts after delayed settlement saves`, async ({ page }) => {
+    await page.clock.install({ time: new Date("2026-07-21T10:00:00Z") });
+    await page.setViewportSize({ width, height: 900 });
+    await mockSettlementWorkbench(page);
+
+    let companyRequested!: () => void;
+    let releaseCompany!: () => void;
+    const companyStarted = new Promise<void>((resolve) => { companyRequested = resolve; });
+    const companyPending = new Promise<void>((resolve) => { releaseCompany = resolve; });
+    await page.route("**/api/settlements/1/companies", async (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      companyRequested();
+      await companyPending;
+      await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ id: 40, name: "Old company", is_active: true }) });
+    });
+
+    let recordRequested!: () => void;
+    let releaseRecord!: () => void;
+    const recordStarted = new Promise<void>((resolve) => { recordRequested = resolve; });
+    const recordPending = new Promise<void>((resolve) => { releaseRecord = resolve; });
+    await page.route("**/api/settlements/1/records", async (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      recordRequested();
+      await recordPending;
+      await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ ...records[0], id: 41 }) });
+    });
+
+    await page.goto("/settlements");
+    await page.getByRole("button", { name: "结算公司管理" }).click();
+    const companyName = page.getByRole("textbox", { name: "新结算公司名称" });
+    await companyName.fill("Old company");
+    await page.getByRole("button", { name: "新增结算公司" }).click();
+    await companyStarted;
+    await companyName.fill("Next company");
+    releaseCompany();
+    await expect(page.getByRole("button", { name: "新增结算公司" })).toBeEnabled();
+    await expect(companyName).toHaveValue("Next company");
+
+    await page.getByRole("combobox", { name: "结算公司", exact: true }).selectOption("10");
+    const amount = page.getByRole("spinbutton", { name: "金额（整数欧元）" });
+    await amount.fill("120");
+    await page.getByRole("button", { name: "登记待到账记录" }).click();
+    await recordStarted;
+    await amount.fill("250");
+    releaseRecord();
+    await expect(page.getByRole("button", { name: "登记待到账记录" })).toBeEnabled();
+    await expect(amount).toHaveValue("250");
+  });
+}
+
+test("a delayed conflict cannot mark a new draft after leaving and returning to the month", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-07-21T10:00:00Z") });
+  await mockSettlementWorkbench(page);
+  let requested!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => { requested = resolve; });
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/settlements/1/records", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    requested();
+    await pending;
+    await route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: { code: "settlement_record_revision_conflict", message: "旧操作冲突" } }),
+    });
+  });
+
+  await page.goto("/settlements");
+  await page.getByRole("combobox", { name: "结算公司", exact: true }).selectOption("10");
+  const amount = page.getByRole("spinbutton", { name: "金额（整数欧元）" });
+  await amount.fill("120");
+  await page.getByRole("button", { name: "登记待到账记录" }).click();
+  await started;
+  await page.getByRole("button", { name: "前一月" }).click();
+  await page.getByRole("button", { name: "后一月" }).click();
+  await amount.fill("250");
+  release();
+  await expect(page.getByRole("button", { name: "登记待到账记录" })).toBeEnabled();
+  await expect(amount).toHaveValue("250");
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+test("an old account's delayed stores response cannot reach the next account", async ({ page }) => {
+  let identity: SettlementIdentity | null = finalAdministrator;
+  let releaseOld!: () => void;
+  let oldRequested!: () => void;
+  const oldPending = new Promise<void>((resolve) => { releaseOld = resolve; });
+  const oldStarted = new Promise<void>((resolve) => { oldRequested = resolve; });
+  let nextAccountStoreReads = 0;
+  await page.route(/^http:\/\/127\.0\.0\.1:4173\/api\//, async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const json = (body: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
+    if (path === "/api/auth/me") return identity ? json(identity) : json({ detail: "Authentication required" }, 401);
+    if (path === "/api/auth/logout") {
+      identity = null;
+      return route.fulfill({ status: 204 });
+    }
+    if (path === "/api/auth/login") {
+      identity = { id: 2, username: "next-user", role: "user", is_owner: false };
+      return json(identity);
+    }
+    if (path === "/api/stores/accessible") {
+      if (identity?.id === 2) {
+        nextAccountStoreReads += 1;
+        return json([{ id: 2, name: "Next Store", timezone: "Europe/Rome", company_settlement_enabled: true }]);
+      }
+      oldRequested();
+      await oldPending;
+      return json([{ id: 1, name: "Old Store", timezone: "Europe/Berlin", company_settlement_enabled: true }]);
+    }
+    return json([]);
+  });
+
+  await page.goto("/");
+  await oldStarted;
+  await page.getByRole("button", { name: "退出登录" }).click();
+  await page.getByLabel("用户名").fill("next-user");
+  await page.getByLabel("密码", { exact: true }).fill("long-password");
+  await page.getByRole("button", { name: "登录" }).click();
+  const picker = page.getByTestId("desktop-store-picker");
+  await expect(picker.getByRole("option", { name: "Next Store" })).toBeAttached();
+  releaseOld();
+  await expect(picker.getByRole("option", { name: "Old Store" })).toHaveCount(0);
+  expect(nextAccountStoreReads).toBe(1);
+});
