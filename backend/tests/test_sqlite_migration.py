@@ -1,20 +1,25 @@
+import asyncio
 import os
 import sqlite3
 import subprocess
 import sys
 from contextlib import closing
 from pathlib import Path
+from threading import Event
 
 import pytest
 
 
 @pytest.mark.asyncio
-async def test_migrated_legacy_weather_remains_available_through_public_endpoints(tmp_path: Path) -> None:
+async def test_migrated_legacy_weather_remains_available_through_public_endpoints(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import bcrypt
     from httpx import ASGITransport, AsyncClient
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     from app.core.database import get_session, sqlite_url
+    from app.core import export_work
     from app.main import create_app
 
     database_path = tmp_path / "legacy-weather.sqlite3"
@@ -68,12 +73,46 @@ async def test_migrated_legacy_weather_remains_available_through_public_endpoint
         chart = await client.get("/api/charts/1", params={"start": "2026-07-28", "end": "2026-07-28"})
         assert chart.status_code == 200
         assert chart.json()["weather"] == [{"weather": "历史未规范天气", "average_revenue": 940}]
+        entered = Event()
+        release = Event()
+        finished = Event()
+        original_builder = export_work.build_ledger_workbook
+
+        def blocked_builder(records, *, include_wash_count):
+            entered.set()
+            try:
+                release.wait(timeout=10)
+                return original_builder(records, include_wash_count=include_wash_count)
+            finally:
+                finished.set()
+
+        monkeypatch.setattr(export_work, "build_ledger_workbook", blocked_builder)
+        cancelled_export = asyncio.create_task(client.get("/api/database/1/export.xlsx"))
+        try:
+            assert await asyncio.to_thread(entered.wait, 10)
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as other_client:
+                assert (await other_client.get("/health")).status_code == 200
+            cancelled_export.cancel()
+            assert isinstance((await asyncio.gather(cancelled_export, return_exceptions=True))[0], asyncio.CancelledError)
+        finally:
+            release.set()
+        assert await asyncio.to_thread(finished.wait, 10)
         exported = await client.get("/api/database/1/export.xlsx")
         assert exported.status_code == 200
         from io import BytesIO
         from openpyxl import load_workbook
         weather_cells = list(load_workbook(BytesIO(exported.content), read_only=True)["经营记录"].values)
         assert any("历史旧值：旧版任意天气" in row for row in weather_cells)
+        def failed_builder(records, *, include_wash_count):
+            raise RuntimeError("test workbook failure")
+
+        monkeypatch.setattr(export_work, "build_ledger_workbook", failed_builder)
+        async with AsyncClient(
+            transport=ASGITransport(app=app, raise_app_exceptions=False),
+            base_url="http://testserver",
+            cookies=client.cookies,
+        ) as failure_client:
+            assert (await failure_client.get("/api/database/1/export.xlsx")).status_code == 500
     await migrated_engine.dispose()
 
 
