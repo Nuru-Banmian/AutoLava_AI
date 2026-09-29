@@ -140,7 +140,6 @@ const recordTransitionConfig = {
     path: "confirm",
     targetStatus: "confirmed",
     successMessage: "开票记录已确认到账",
-    syncMessage: "记录状态已同步：已确认到账",
     errorMessage: "到账确认失败，请重试",
     dialogTitle: "确认整笔到账？",
     actionLabel: "确认到账",
@@ -152,7 +151,6 @@ const recordTransitionConfig = {
     path: "revoke-confirmation",
     targetStatus: "pending",
     successMessage: "已撤销开票记录到账确认",
-    syncMessage: "记录状态已同步：待到账",
     errorMessage: "撤销到账确认失败，请重试",
     dialogTitle: "撤销到账确认？",
     actionLabel: "确认撤销到账确认",
@@ -837,17 +835,9 @@ export function CompanySettlementPage() {
       const targetReached =
         current?.id === variables.recordId && current.status === config.targetStatus;
       if (isCurrent(variables) && variables.operationId === operationId.current) {
-        if (targetReached) {
-          operationId.current += 1;
-          setRecordTransition(null);
-          setRecordConflict(undefined);
-          setRecordError("");
-          setRecordMessage(config.syncMessage);
-        } else {
-          setRecordConflict(conflictForRecord(error, variables));
-          setRecordError(friendlyApiError(error, config.errorMessage));
-          setRecordMessage("");
-        }
+        setRecordConflict(conflictForRecord(error, variables));
+        setRecordError(friendlyApiError(error, config.errorMessage));
+        setRecordMessage("");
       }
       if (variables.authScope === currentSessionScope())
         await Promise.all([

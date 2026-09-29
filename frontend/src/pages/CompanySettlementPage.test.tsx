@@ -259,7 +259,7 @@ describe("CompanySettlementPage record corrections", () => {
     expect(client.getQueryState(chartsQueryKey)?.isInvalidated).toBe(true);
   });
 
-  it("adopts an already-confirmed canonical state after a concurrent confirmation", async () => {
+  it("shows an already-confirmed canonical state for review without retrying confirmation", async () => {
     let current = record();
     const { client } = renderPage([
       http.get("/api/settlements/1/months/:month", () => HttpResponse.json(monthResponse([current]))),
@@ -280,8 +280,10 @@ describe("CompanySettlementPage record corrections", () => {
     fireEvent.click(await screen.findByRole("button", { name: "确认Alpha开票记录到账" }));
     fireEvent.click(screen.getByRole("button", { name: "确认到账" }));
 
-    expect(await screen.findByRole("status")).toHaveTextContent("记录状态已同步：已确认到账");
-    expect(screen.queryByRole("alertdialog", { name: "确认整笔到账？" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("group", { name: "冲突最新记录" })).toHaveTextContent("已确认");
+    expect(screen.getByRole("button", { name: "确认到账" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "已核对最新记录，使用新版本" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
     await openRecordActions("Alpha");
     expect(screen.getByRole("menuitem", { name: "撤销Alpha开票记录到账确认" })).toBeInTheDocument();
     expect(client.getQueryState(chartsQueryKey)?.isInvalidated).toBe(true);
