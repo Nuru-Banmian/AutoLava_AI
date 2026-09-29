@@ -60,6 +60,7 @@ async def test_two_cookie_clients_create_update_and_recreate(tmp_path: Path) -> 
         return {
             "expected_identity": identity,
             "expected_revision": revision,
+            "expected_config_revision": 1,
             "is_open": "营业",
             "daily_revenue": amount,
             "items": [],

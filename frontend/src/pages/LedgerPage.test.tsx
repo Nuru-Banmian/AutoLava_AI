@@ -35,7 +35,7 @@ function renderLedger(extra: Parameters<typeof server.use> = [], initialEntry: T
   server.use(
     ...extra,
     http.get("/api/stores/accessible", () => HttpResponse.json([{ id: 1, name: "Berlin", timezone: "Europe/Berlin" }])),
-    http.get("/api/income-config/1/current", () => HttpResponse.json({ store_id: 1, enabled: true, formula: "现金 + 刷卡", items: [
+    http.get("/api/income-config/1/current", () => HttpResponse.json({ store_id: 1, revision: 1, enabled: true, formula: "现金 + 刷卡", items: [
       { id: 1, store_id: 1, name: "现金", include_in_total: true, is_active: true, sort_order: 1, archived_at: null },
       { id: 2, store_id: 1, name: "刷卡", include_in_total: true, is_active: true, sort_order: 2, archived_at: null },
       { id: 3, store_id: 1, name: "暗钱", include_in_total: false, is_active: true, sort_order: 3, archived_at: null },
@@ -82,6 +82,7 @@ function recordSnapshot(amount: number, activity: string | null = null, weather:
 }
 
 const singleConfig = {
+  revision: 1,
   store_id: 1,
   enabled: true,
   formula: "现金",
@@ -256,7 +257,7 @@ describe("LedgerPage", () => {
     fillBlankLedgerAmounts();
     fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
     await waitFor(() => expect(submitted).toEqual({
-      expected_identity: "record-9", expected_revision: 1,
+      expected_identity: "record-9", expected_revision: 1, expected_config_revision: 1,
       is_open: "提前休息", daily_revenue: null,
       wash_count: 17, weather: "中雨", weather_edited: false, activity: "周末促销",
       items: [{ category_id: 1, amount: 100 }, { category_id: 2, amount: 12 }, { category_id: 3, amount: 5 }],
@@ -863,6 +864,30 @@ describe("LedgerPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存今日记录" }));
     await waitFor(() => expect(submitted).toHaveLength(2));
     expect(submitted[1]).toMatchObject({ expected_identity: "record-9", expected_revision: 1 });
+  });
+
+  it("keeps the old ledger draft when configuration changes before any record exists", async () => {
+    const submitted: unknown[] = [];
+    server.use(http.put("/api/ledger/1/:date", async ({ request }) => {
+      submitted.push(await request.json());
+      if (submitted.length === 1) return HttpResponse.json({ detail: {
+        code: "income_config_revision_conflict", message: "changed", current_record: null,
+        current_config: { ...singleConfig, revision: 2, enabled: false },
+      } }, { status: 409 });
+      return HttpResponse.json({ id: 9, identity: "record-9", revision: 1, config_revision: 2, date: "2026-07-15", daily_revenue: 77 });
+    }));
+    renderLedger();
+    fireEvent.change(await screen.findByLabelText("现金"), { target: { value: "77" } });
+    fillBlankLedgerAmounts();
+    fireEvent.click(screen.getByRole("button", { name: "保存今日记录" }));
+    expect(await screen.findByRole("group", { name: "最新收入配置" })).toHaveTextContent("修订号：2");
+    expect(screen.getByLabelText("现金")).toHaveValue("77");
+    expect(submitted).toHaveLength(1);
+    expect(submitted[0]).toMatchObject({ expected_config_revision: 1 });
+    fireEvent.click(screen.getByRole("button", { name: "确认最新状态并继续编辑" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存今日记录" }));
+    await waitFor(() => expect(submitted).toHaveLength(2));
+    expect(submitted[1]).toMatchObject({ expected_config_revision: 2 });
   });
 
 });

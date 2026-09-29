@@ -570,7 +570,7 @@ async def test_charts_public_writes_keep_wash_sample_separate_from_settlement(
     async def save(day: str, revenue: int, wash_count: int | None, state: str = "营业"):
         response = await auth_client.put(
             f"/api/ledger/{store.id}/{day}",
-            json={"expected_identity": None, "expected_revision": None,
+            json={"expected_identity": None, "expected_revision": None, "expected_config_revision": 1,
                   "is_open": state, "daily_revenue": revenue, "wash_count": wash_count,
                   "weather": "晴", "weather_edited": True, "items": []},
         )

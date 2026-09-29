@@ -1,15 +1,16 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 
 from app.api.deps import Session, require_admin, require_capability
 from app.core.database import sqlite_short_write
-from app.models.identity import User
+from app.models.identity import Store, User
 from app.models.ledger import IncomeCategory
 from app.schemas.income_config import (
     IncomeCategoryResponse,
     IncomeConfigPublishBody,
     IncomeConfigResponse,
+    IncomeCategoryVersionBody,
 )
 from app.services.income_config import IncomeConfigService
 from app.services.access import require_fresh_store_access
@@ -35,58 +36,68 @@ async def put_income_config(
 ) -> IncomeConfigResponse:
     actor_id = actor.id
     async with sqlite_short_write(session):
-        await require_fresh_store_access(
+        _, store = await require_fresh_store_access(
             session,
             user_id=actor_id,
             store_id=store_id,
             capability="income_config.manage",
         )
-        response = await IncomeConfigService(session).replace(store_id, body)
+        service = IncomeConfigService(session)
+        await service.check_revision(store, body.expected_revision)
+        response = await service.replace(store_id, body)
     return response
 
 
 async def _fresh_category_manager(
     session: Session, *, actor_id: int, category_id: int
-) -> IncomeCategory:
+) -> tuple[IncomeCategory, Store]:
     category = await session.get(
         IncomeCategory, category_id, populate_existing=True
     )
     if category is None:
         raise HTTPException(404, "Category not found")
-    await require_fresh_store_access(
+    _, store = await require_fresh_store_access(
         session,
         user_id=actor_id,
         store_id=category.store_id,
         capability="income_config.manage",
     )
-    return category
+    return category, store
 
 
 @router.post("/income-categories/{category_id}/archive", response_model=IncomeCategoryResponse)
 async def archive_income_category(
-    category_id: int, session: Session, actor: IncomeConfigManager
+    category_id: int, session: Session, actor: IncomeConfigManager,
+    body: IncomeCategoryVersionBody | None = Body(default=None),
 ) -> IncomeCategoryResponse:
     actor_id = actor.id
     async with sqlite_short_write(session):
-        await _fresh_category_manager(
+        _, store = await _fresh_category_manager(
             session, actor_id=actor_id, category_id=category_id
         )
-        category = await IncomeConfigService(session).archive(category_id)
+        service = IncomeConfigService(session)
+        await service.check_revision(store, body.expected_revision if body else None)
+        category = await service.archive(category_id)
+        service.advance(store)
         response = IncomeCategoryResponse.model_validate(category)
     return response
 
 
 @router.post("/income-categories/{category_id}/restore", response_model=IncomeCategoryResponse)
 async def restore_income_category(
-    category_id: int, session: Session, actor: IncomeConfigManager
+    category_id: int, session: Session, actor: IncomeConfigManager,
+    body: IncomeCategoryVersionBody | None = Body(default=None),
 ) -> IncomeCategoryResponse:
     actor_id = actor.id
     async with sqlite_short_write(session):
-        await _fresh_category_manager(
+        _, store = await _fresh_category_manager(
             session, actor_id=actor_id, category_id=category_id
         )
-        category = await IncomeConfigService(session).restore_category(
+        service = IncomeConfigService(session)
+        await service.check_revision(store, body.expected_revision if body else None)
+        category = await service.restore_category(
             category_id
         )
+        service.advance(store)
         response = IncomeCategoryResponse.model_validate(category)
     return response

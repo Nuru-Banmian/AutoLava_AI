@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 
 from fastapi import HTTPException
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,6 +40,7 @@ class IncomeConfigService:
         ordered = sorted(categories, key=lambda item: (item.sort_order, item.id))
         return IncomeConfigResponse(
             store_id=store.id,
+            revision=store.income_config_revision,
             enabled=store.income_items_enabled,
             formula=cls._formula(ordered),
             items=[IncomeCategoryResponse.model_validate(item) for item in ordered],
@@ -59,6 +61,21 @@ class IncomeConfigService:
     async def current(self, store_id: int) -> IncomeConfigResponse:
         store = await self._require_store(store_id)
         return self.response(store, await self._current_categories(store_id))
+
+    async def check_revision(self, store: Store, expected: int | None) -> None:
+        if expected is None:
+            raise HTTPException(428, "收入配置已升级，请重新加载后重试")
+        if expected != store.income_config_revision:
+            raise HTTPException(409, {
+                "code": "income_config_revision_conflict",
+                "message": "收入配置已变化，请核对最新配置后重试",
+                "current_config": jsonable_encoder(await self.current(store.id)),
+                "current_record": None,
+            })
+
+    @staticmethod
+    def advance(store: Store) -> None:
+        store.income_config_revision += 1
 
     @staticmethod
     def _validate_unique(body: IncomeConfigPublishBody) -> None:
@@ -109,6 +126,7 @@ class IncomeConfigService:
                 category.archived_at = now
                 category.is_active = False
         store.income_items_enabled = body.enabled
+        self.advance(store)
         await self.session.flush()
         return self.response(store, await self._current_categories(store_id))
 

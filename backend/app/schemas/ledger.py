@@ -19,6 +19,7 @@ class IncomeItemBody(BaseModel):
 
 
 class LedgerBody(BaseModel):
+    expected_config_revision: int | None = Field(default=None, ge=1)
     expected_identity: str | None = None
     expected_revision: int | None = Field(default=None, ge=1)
     is_open: Literal["营业", "休息", "提前休息"]

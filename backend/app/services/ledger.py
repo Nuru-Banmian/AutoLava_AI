@@ -20,6 +20,7 @@ from app.models.ledger import (
 )
 from app.models.operations import UTC_TIMESTAMP_CONTRACT
 from app.services.access import require_fresh_store_access
+from app.services.income_config import IncomeConfigService
 from app.services.record_payload import record_payload
 from app.services.weather import RECORD_WEATHER_VALUES, is_legacy_weather
 
@@ -139,6 +140,7 @@ class LedgerService:
             )
             return {
                 "store_id": store.id,
+                "config_revision": store.income_config_revision,
                 "identity": record.identity,
                 "revision": record.revision,
                 "enabled": record.income_mode == "composed",
@@ -158,6 +160,7 @@ class LedgerService:
         )
         return {
             "store_id": store.id,
+            "config_revision": store.income_config_revision,
             "identity": None,
             "revision": None,
             "enabled": store.income_items_enabled,
@@ -190,6 +193,13 @@ class LedgerService:
         actor_id: int,
     ) -> tuple[bool, int, date]:
         record = await self._find_record(store_id=store.id, record_date=record_date)
+        if payload["expected_config_revision"] != store.income_config_revision:
+            raise HTTPException(409, {
+                "code": "income_config_revision_conflict",
+                "message": "收入配置已变化，请核对最新配置和记录后重试",
+                "current_config": jsonable_encoder(await IncomeConfigService(self.session).current(store.id)),
+                "current_record": jsonable_encoder(record_payload(record)) if record is not None else None,
+            })
         self._check_expected(record, payload["expected_identity"], payload["expected_revision"])
         created = record is None
         if record is not None and is_legacy_weather(record.weather) and "weather" not in payload:

@@ -67,6 +67,7 @@ class MemberReplace(BaseModel):
 
 
 class CategoryCreate(BaseModel):
+    expected_revision: int | None = None
     store_id: int
     name: CategoryName
     include_in_total: bool
@@ -74,6 +75,7 @@ class CategoryCreate(BaseModel):
 
 
 class CategoryPatch(BaseModel):
+    expected_revision: int | None = None
     name: CategoryName | None = None
     include_in_total: bool | None = None
     is_active: bool | None = None

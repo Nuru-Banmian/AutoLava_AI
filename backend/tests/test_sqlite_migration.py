@@ -61,6 +61,10 @@ async def test_migrated_legacy_weather_remains_available_through_public_endpoint
         assert record.json()["weather_legacy"] is True
         assert record.json()["identity"]
         assert record.json()["revision"] == 1
+        assert record.json()["config_revision"] == 1
+        config = await client.get("/api/income-config/1/current")
+        assert config.status_code == 200
+        assert config.json()["revision"] == 1
         chart = await client.get("/api/charts/1", params={"start": "2026-07-28", "end": "2026-07-28"})
         assert chart.status_code == 200
         assert chart.json()["weather"] == [{"weather": "历史未规范天气", "average_revenue": 940}]
@@ -121,6 +125,8 @@ def test_blank_sqlite_file_migrates_to_final_schema(tmp_path: Path) -> None:
         assert tables == EXPECTED_TABLES
 
         store_columns = {row[1]: row for row in connection.execute("PRAGMA table_info('stores')")}
+        assert store_columns["income_config_revision"][4].strip("'") == "1"
+        assert store_columns["income_config_revision"][3] == 1
         assert store_columns["company_settlement_enabled"][4].strip("'") == "0"
         assert store_columns["company_settlement_enabled"][3] == 1
         assert store_columns["wash_count_enabled"][4].strip("'") == "1"
@@ -353,7 +359,7 @@ def test_applied_revision_0004_upgrades_without_losing_existing_data(tmp_path: P
 
     with closing(sqlite3.connect(database_path)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0019",
+            "0020",
         )
         assert connection.execute("SELECT username FROM users").fetchall() == [
             ("existing-admin",)
@@ -531,7 +537,7 @@ def test_reused_legacy_revision_0010_upgrades_to_new_agent_schema(
 
     with closing(sqlite3.connect(database_path)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0019",
+            "0020",
         )
         tables = {
             name

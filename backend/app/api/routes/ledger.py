@@ -120,7 +120,7 @@ async def recent_records(
     access: StoreAccess = Depends(require_store_read_access),
 ) -> list[dict]:
     records = await LedgerService(session).recent(store=access.store, days=days)
-    return [record_payload(record) for record in records]
+    return [record_payload(record) | {"config_revision": access.store.income_config_revision} for record in records]
 
 
 @router.get(
@@ -134,7 +134,7 @@ async def get_record_by_query(
     access: StoreAccess = Depends(require_store_read_access),
 ) -> dict:
     record = await LedgerService(session).get(store=access.store, record_date=record_date)
-    return record_payload(record)
+    return record_payload(record) | {"config_revision": access.store.income_config_revision}
 
 
 @router.get(
@@ -148,7 +148,7 @@ async def get_record_by_path(
     access: StoreAccess = Depends(require_store_read_access),
 ) -> dict:
     record = await LedgerService(session).get(store=access.store, record_date=record_date)
-    return record_payload(record)
+    return record_payload(record) | {"config_revision": access.store.income_config_revision}
 
 
 @router.get(
@@ -181,7 +181,7 @@ async def put_record(
     session: Session,
     access: StoreAccess = Depends(require_store_access),
 ) -> Response:
-    if not {"expected_identity", "expected_revision"}.issubset(body.model_fields_set):
+    if not {"expected_identity", "expected_revision", "expected_config_revision"}.issubset(body.model_fields_set) or body.expected_config_revision is None:
         raise HTTPException(428, "请重新加载每日台账后重试")
     actor_id = access.user.id
     location = FrozenWeatherLocation.from_store(access.store)
@@ -217,6 +217,7 @@ async def put_record(
         "id": record.id,
         "identity": record.identity,
         "revision": record.revision,
+        "config_revision": access.store.income_config_revision,
         "date": record.date.isoformat(),
         "daily_revenue": record.daily_revenue,
     }

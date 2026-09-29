@@ -209,6 +209,7 @@ async def test_reset_deletes_only_the_current_user_store_conversation(
         json={
             "expected_identity": None,
             "expected_revision": None,
+            "expected_config_revision": 1,
             "is_open": "营业",
             "daily_revenue": 12300,
             "wash_count": 5,

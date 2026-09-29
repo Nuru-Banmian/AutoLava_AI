@@ -12,6 +12,7 @@ async def put_ledger(client: AsyncClient, path: str, *, json: dict):
     return await client.put(path, json=json | {
         "expected_identity": expected["identity"] if expected else None,
         "expected_revision": expected["revision"] if expected else None,
+        "expected_config_revision": 1,
     })
 
 

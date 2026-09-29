@@ -14,12 +14,14 @@ class IncomeConfigItemBody(BaseModel):
 
 
 class IncomeConfigPublishBody(BaseModel):
+    expected_revision: int | None = None
     enabled: bool
     items: list[IncomeConfigItemBody]
 
 
 class IncomeConfigResponse(BaseModel):
     store_id: int
+    revision: int
     enabled: bool
     formula: str
     items: list["IncomeCategoryResponse"]
@@ -35,3 +37,7 @@ class IncomeCategoryResponse(BaseModel):
     is_active: bool
     sort_order: int
     archived_at: datetime | None
+
+
+class IncomeCategoryVersionBody(BaseModel):
+    expected_revision: int | None = None

@@ -48,6 +48,7 @@ class Store(Base):
     timezone: Mapped[str] = mapped_column(String(64), default="Europe/Rome")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     income_items_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    income_config_revision: Mapped[int] = mapped_column(default=1, server_default="1")
     company_settlement_enabled: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="0"
     )
