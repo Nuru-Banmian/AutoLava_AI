@@ -1,5 +1,7 @@
+import asyncio
 from datetime import date, datetime
 from io import BytesIO
+from threading import Event, Lock
 
 import pytest
 from openpyxl import load_workbook
@@ -7,6 +9,88 @@ from sqlalchemy import select
 
 from app.models.identity import StoreMember, User
 from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
+
+
+async def test_export_keeps_http_responsive_during_workbook_construction(
+    auth_client, store_factory, db_session, monkeypatch
+) -> None:
+    from app.core import export_work
+
+    store = await store_factory(name="Concurrent exports")
+    user = await db_session.scalar(select(User).where(User.username == "authenticated"))
+    db_session.add(StoreMember(store_id=store.id, user_id=user.id))
+    await db_session.flush()
+
+    entered = Event()
+    release = Event()
+    original = export_work.build_ledger_workbook
+
+    def blocked_builder(records, *, include_wash_count):
+        entered.set()
+        release.wait(timeout=10)
+        return original(records, include_wash_count=include_wash_count)
+
+    monkeypatch.setattr(export_work, "build_ledger_workbook", blocked_builder)
+    url = f"/api/database/{store.id}/export.xlsx"
+    calls = [asyncio.create_task(auth_client.get(url))]
+    try:
+        assert await asyncio.to_thread(entered.wait, 10)
+        assert (await auth_client.get("/health")).status_code == 200
+    finally:
+        release.set()
+    response = await asyncio.wait_for(calls[0], 10)
+    assert response.status_code == 200
+    assert load_workbook(BytesIO(response.content), read_only=True).sheetnames == [
+        "经营记录", "收入明细"
+    ]
+
+
+async def test_cancelled_export_calculations_keep_their_capacity(monkeypatch) -> None:
+    from app.core import export_work
+
+    release = Event()
+    entered = Event()
+    guard = Lock()
+    started = 0
+    active = 0
+    maximum = 0
+
+    def blocked_builder(records, *, include_wash_count):
+        nonlocal started, active, maximum
+        with guard:
+            started += 1
+            active += 1
+            maximum = max(maximum, active)
+            if started == export_work.EXPORT_WORK_LIMIT:
+                entered.set()
+        try:
+            release.wait(timeout=10)
+            return b"workbook"
+        finally:
+            with guard:
+                active -= 1
+
+    monkeypatch.setattr(export_work, "build_ledger_workbook", blocked_builder)
+    calls = [
+        asyncio.create_task(export_work.build_ledger_workbook_async([], include_wash_count=True))
+        for _ in range(export_work.EXPORT_WORK_LIMIT)
+    ]
+    extra = None
+    try:
+        assert await asyncio.to_thread(entered.wait, 10)
+        for call in calls:
+            call.cancel()
+        await asyncio.gather(*calls, return_exceptions=True)
+        extra = asyncio.create_task(
+            export_work.build_ledger_workbook_async([], include_wash_count=True)
+        )
+        await asyncio.wait_for(asyncio.to_thread(lambda: None), 1)
+        with guard:
+            assert started == export_work.EXPORT_WORK_LIMIT
+            assert maximum == export_work.EXPORT_WORK_LIMIT
+    finally:
+        release.set()
+    assert await asyncio.wait_for(extra, 10) == b"workbook"
 
 
 @pytest.mark.parametrize(
@@ -114,6 +198,7 @@ async def test_export_uses_saved_income_item_snapshots_after_current_category_ch
         daily_revenue=150,
         income_mode="composed",
         is_open="营业",
+        activity="=HYPERLINK(\"https://example.invalid\")",
         weather_edited=False,
         created_by=user.id,
         updated_by=user.id,
@@ -124,7 +209,7 @@ async def test_export_uses_saved_income_item_snapshots_after_current_category_ch
         DailyIncomeItem(
             record_id=record.id,
             category_id=category.id,
-            category_name="Historical name",
+            category_name="=Historical name",
             include_in_total=True,
             sort_order=0,
             amount=150,
@@ -154,15 +239,18 @@ async def test_export_uses_saved_income_item_snapshots_after_current_category_ch
         "最后修改人",
     ]
     detail = workbook["收入明细"]
+    assert summary.cell(row=2, column=7).value == "'=HYPERLINK(\"https://example.invalid\")"
+    assert summary.cell(row=2, column=7).data_type == "s"
     assert [detail.cell(row=2, column=index).value for index in range(1, 7)] == [
         datetime(2026, 7, 1),
         "星期三",
-        "Historical name",
+        "'=Historical name",
         True,
         0,
         150,
     ]
     assert detail.cell(row=2, column=6).number_format == "€#,##0"
+    assert detail.cell(row=2, column=3).data_type == "s"
 
 
 async def test_database_context_and_export_follow_the_requested_store_wash_setting(

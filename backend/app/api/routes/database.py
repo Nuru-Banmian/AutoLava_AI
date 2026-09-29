@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import Session, StoreAccess, require_capability, require_store_read_access
+from app.core.export_work import build_ledger_workbook_async
 from app.models.identity import User
 from app.models.ledger import (
     DailyIncomeItem,
@@ -16,7 +17,6 @@ from app.models.ledger import (
 )
 from app.schemas.database import DatabaseFilters, DatabasePage
 from app.schemas.time import timestamp_status, trusted_utc
-from app.services.export import build_ledger_workbook
 from app.services.record_payload import record_payload
 
 router = APIRouter(prefix="/database", tags=["database"])
@@ -215,6 +215,9 @@ async def export_records(
         include_wash_count=include_wash_count,
         include_bookkeeping_events=False,
     )
+    # All ORM data has been copied into plain dictionaries. End the read transaction
+    # before workbook construction, which can take much longer than the query.
+    await session.commit()
     if start is not None and end is not None:
         suffix = f"{start.isoformat()}-{end.isoformat()}"
     elif start is not None:
@@ -224,10 +227,11 @@ async def export_records(
     else:
         suffix = "all"
     filename = f"ledger-{access.store.id}-{suffix}.xlsx"
+    workbook = await build_ledger_workbook_async(
+        payloads, include_wash_count=include_wash_count
+    )
     return Response(
-        content=build_ledger_workbook(
-            payloads, include_wash_count=include_wash_count
-        ),
+        content=workbook,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
