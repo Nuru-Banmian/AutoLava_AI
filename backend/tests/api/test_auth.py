@@ -5,7 +5,7 @@ import jwt
 import pytest
 from fastapi import HTTPException
 
-from app.api.routes import auth as auth_routes
+from app.core import password_work
 from app.core.config import get_settings
 from app.models.identity import StoreMember
 
@@ -96,13 +96,13 @@ async def test_unknown_and_inactive_logins_verify_a_password_hash(
 ) -> None:
     inactive = await user_factory(username="inactive", password="secret", is_active=False)
     verified_hashes: list[str] = []
-    real_verify_password = auth_routes.verify_password
+    real_verify_password = password_work.verify_password
 
     def tracking_verify_password(password: str, password_hash: str) -> bool:
         verified_hashes.append(password_hash)
         return real_verify_password(password, password_hash)
 
-    monkeypatch.setattr(auth_routes, "verify_password", tracking_verify_password)
+    monkeypatch.setattr(password_work, "verify_password", tracking_verify_password)
     responses = [
         await client.post(
             "/api/auth/login",

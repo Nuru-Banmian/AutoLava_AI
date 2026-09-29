@@ -4,11 +4,12 @@ from sqlalchemy import select
 from app.api.deps import CurrentUser, Session
 from app.core.config import get_settings
 from app.core.database import sqlite_short_write
-from app.core.security import create_access_token, hash_password, verify_password
+from app.core.password_work import hash_password_async, verify_password_async
+from app.core.security import create_access_token
 from app.models.identity import User
 from app.models.identity import LoginSession
 from app.schemas.auth import LoginBody, PasswordChange
-from app.services.access import list_accessible_stores, require_fresh_user
+from app.services.access import list_accessible_stores
 from app.services.owner import authenticated_user_payload
 from app.services.sessions import current_credentials, new_session, require_credentials, revoke_all, utc_now
 
@@ -28,17 +29,17 @@ def _set_auth_cookie(response: Response, auth_identity: str, session_id: str) ->
 async def login(body: LoginBody, response: Response, session: Session) -> dict:
     user = await session.scalar(select(User).where(User.username == body.username))
     password_hash = user.password_hash if user is not None else _DUMMY_PASSWORD_HASH
-    password_matches = verify_password(body.password, password_hash)
-    if user is None or not user.is_active or not password_matches:
-        raise HTTPException(401, "Invalid credentials")
-    identity, verified_hash = user.auth_identity, user.password_hash
-    # Release the password snapshot before waiting for the write lock.
+    identity = user.auth_identity if user is not None else None
+    was_active = user.is_active if user is not None else False
     await session.commit()
+    password_matches = await verify_password_async(body.password, password_hash)
+    if identity is None or not was_active or not password_matches:
+        raise HTTPException(401, "Invalid credentials")
     async with sqlite_short_write(session):
         fresh_user = await session.scalar(
             select(User).where(User.auth_identity == identity).execution_options(populate_existing=True)
         )
-        if fresh_user is None or not fresh_user.is_active or fresh_user.password_hash != verified_hash:
+        if fresh_user is None or not fresh_user.is_active or fresh_user.password_hash != password_hash:
             raise HTTPException(401, "Invalid credentials")
         login_session = await new_session(session, fresh_user)
         payload = authenticated_user_payload(fresh_user)
@@ -65,11 +66,16 @@ async def change_password(
     actor_id = user.id
     credentials = current_credentials.get()
     assert credentials is not None
-    next_password_hash = hash_password(body.new_password)
+    password_hash = user.password_hash
+    identity = user.auth_identity
+    await session.commit()
+    if not await verify_password_async(body.current_password, password_hash):
+        raise HTTPException(422, "当前密码不正确")
+    next_password_hash = await hash_password_async(body.new_password)
     async with sqlite_short_write(session):
-        locked_user = await require_fresh_user(session, user_id=actor_id)
-        if not verify_password(body.current_password, locked_user.password_hash):
-            raise HTTPException(422, "当前密码不正确")
+        locked_user = await require_credentials(session, *credentials)
+        if locked_user.id != actor_id or locked_user.auth_identity != identity or locked_user.password_hash != password_hash:
+            raise HTTPException(401, "Authentication required")
         locked_user.password_hash = next_password_hash
         await revoke_all(session, locked_user.auth_identity)
         replacement = await new_session(session, locked_user)

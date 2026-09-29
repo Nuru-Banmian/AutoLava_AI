@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import Session, require_admin, require_capability
 from app.core.database import sqlite_short_write
-from app.core.security import hash_password
+from app.core.password_work import hash_password_async
 from app.models.identity import Store, StoreMember, User
 from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
 from app.models.operations import DailyBriefing, ScheduledTaskLog, SystemAlert
@@ -189,7 +189,8 @@ async def list_users(session: Session) -> list[dict[str, Any]]:
 async def create_user(body: UserCreate, session: Session, actor: UsersManager) -> dict[str, Any]:
     actor_id = actor.id
     next_store_ids = [] if body.role == "admin" else sorted(set(body.store_ids))
-    next_password_hash = hash_password(body.password)
+    await session.commit()
+    next_password_hash = await hash_password_async(body.password)
     try:
         async with sqlite_short_write(session):
             fresh_actor = await require_fresh_user(
@@ -218,9 +219,11 @@ async def create_user(body: UserCreate, session: Session, actor: UsersManager) -
 async def patch_user(
     user_id: int, body: UserPatch, session: Session, actor: UsersManager
 ) -> dict[str, Any]:
-    next_password_hash = (
-        hash_password(body.password) if body.password is not None else None
-    )
+    if body.password is not None:
+        await session.commit()
+        next_password_hash = await hash_password_async(body.password)
+    else:
+        next_password_hash = None
     actor_id = actor.id
     async with sqlite_short_write(session):
         fresh_actor = await require_fresh_user(
