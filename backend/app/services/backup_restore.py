@@ -29,6 +29,8 @@ def verify_isolated_restore(snapshot: Path, empty_directory: Path) -> dict[str, 
     report = empty_directory.with_name(f"{empty_directory.name}-result.json")
     restored = empty_directory / "restored.sqlite3"
     created_restore = False
+    # Invalidate the previous drill result before checking the next attempt.
+    report.unlink(missing_ok=True)
     try:
         if not _valid_backup(snapshot, require_schema=True):
             raise ValueError("Snapshot is not a verified application database")

@@ -120,6 +120,9 @@ def test_precheck_failure_records_result_and_report_error_preserves_cause(tmp_pa
     def fail_report(_path, _data):
         raise OSError("report unavailable")
 
+    stale = tmp_path / "other-result.json"
+    stale.write_text('{"status":"local_drill_success"}', encoding="utf-8")
     monkeypatch.setattr(backup_restore, "_write_report", fail_report)
     with pytest.raises(ValueError, match="not a verified"):
         verify_isolated_restore(tmp_path / "missing.sqlite3", tmp_path / "other")
+    assert not stale.exists()
