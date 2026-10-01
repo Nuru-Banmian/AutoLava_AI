@@ -5,6 +5,8 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import sqlite_short_write
+from app.services.access import require_fresh_store_access
 from app.models.identity import Store
 from app.models.ledger import DailyIncomeItem, IncomeCategory
 from app.schemas.income_config import (
@@ -159,3 +161,49 @@ class IncomeConfigService:
             raise HTTPException(409, "此收入项目已有历史记录，只能归档，不能永久删除")
         await self.session.delete(category)
         await self.session.flush()
+
+
+class IncomeConfigCommands:
+    """Own the transaction for configuration changes initiated by an actor."""
+
+    def __init__(self, session: AsyncSession, actor_id: int):
+        self.session = session
+        self.actor_id = actor_id
+
+    async def _category_and_store(self, category_id: int) -> tuple[IncomeCategory, Store]:
+        category = await self.session.get(IncomeCategory, category_id, populate_existing=True)
+        if category is None:
+            raise HTTPException(404, "Category not found")
+        _, store = await require_fresh_store_access(
+            self.session,
+            user_id=self.actor_id,
+            store_id=category.store_id,
+            capability="income_config.manage",
+        )
+        return category, store
+
+    async def replace(self, store_id: int, body: IncomeConfigPublishBody) -> IncomeConfigResponse:
+        async with sqlite_short_write(self.session):
+            _, store = await require_fresh_store_access(
+                self.session,
+                user_id=self.actor_id,
+                store_id=store_id,
+                capability="income_config.manage",
+            )
+            service = IncomeConfigService(self.session)
+            await service.check_revision(store, body.expected_revision)
+            return await service.replace(store_id, body)
+
+    async def change_category(
+        self, category_id: int, expected_revision: int | None, *, restore: bool
+    ) -> IncomeCategoryResponse:
+        async with sqlite_short_write(self.session):
+            _, store = await self._category_and_store(category_id)
+            service = IncomeConfigService(self.session)
+            await service.check_revision(store, expected_revision)
+            if restore:
+                category = await service.restore_category(category_id)
+            else:
+                category = await service.archive(category_id)
+            service.advance(store)
+            return IncomeCategoryResponse.model_validate(category)
