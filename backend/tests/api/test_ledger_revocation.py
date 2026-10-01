@@ -15,17 +15,6 @@ from app.models.identity import Store, StoreMember, User
 from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
 
 
-class PausedWeather:
-    def __init__(self) -> None:
-        self.entered = asyncio.Event()
-        self.release = asyncio.Event()
-
-    async def get_daily(self, store, target):
-        self.entered.set()
-        await self.release.wait()
-        return None
-
-
 async def _reset_database() -> None:
     async with engine.begin() as connection:
         for table in reversed(Base.metadata.sorted_tables):
@@ -111,25 +100,25 @@ def _payload(category_id: int, amount: int) -> dict:
     }
 
 
-async def test_create_rejects_actor_deactivated_during_weather() -> None:
+async def test_create_rejects_actor_deactivated_while_waiting_for_write_lock() -> None:
     await _reset_database()
     user_id, store_id, category_id, target = await _setup_ledger()
     client = await _logged_in_client("ledger-user")
-    weather = PausedWeather()
-    client._transport.app.state.weather_service = weather
+    await SQLITE_WRITE_LOCK.acquire()
     request = asyncio.create_task(
         client.put(
             f"/api/ledger/{store_id}/{target.isoformat()}",
             json=_payload(category_id, 125),
         )
     )
-    await weather.entered.wait()
+    while not SQLITE_WRITE_LOCK._waiters:
+        await asyncio.sleep(0)
     async with async_session_factory() as revoke:
         user = await revoke.get(User, user_id)
         assert user is not None
         user.is_active = False
         await revoke.commit()
-    weather.release.set()
+    SQLITE_WRITE_LOCK.release()
     response = await request
     await client.aclose()
 
@@ -140,20 +129,20 @@ async def test_create_rejects_actor_deactivated_during_weather() -> None:
         ) == 0
 
 
-async def test_update_rejects_membership_removed_during_weather() -> None:
+async def test_update_rejects_membership_removed_while_waiting_for_write_lock() -> None:
     await _reset_database()
     user_id, store_id, category_id, target = await _setup_ledger(with_record=True)
     client = await _logged_in_client("ledger-user")
     current = (await client.get(f"/api/ledger/{store_id}/{target.isoformat()}")).json()
-    weather = PausedWeather()
-    client._transport.app.state.weather_service = weather
+    await SQLITE_WRITE_LOCK.acquire()
     request = asyncio.create_task(
         client.put(
             f"/api/ledger/{store_id}/{target.isoformat()}",
             json=_payload(category_id, 250) | {"expected_identity": current["identity"], "expected_revision": current["revision"]},
         )
     )
-    await weather.entered.wait()
+    while not SQLITE_WRITE_LOCK._waiters:
+        await asyncio.sleep(0)
     async with async_session_factory() as revoke:
         await revoke.execute(
             delete(StoreMember).where(
@@ -162,7 +151,7 @@ async def test_update_rejects_membership_removed_during_weather() -> None:
             )
         )
         await revoke.commit()
-    weather.release.set()
+    SQLITE_WRITE_LOCK.release()
     response = await request
     await client.aclose()
 
@@ -209,7 +198,7 @@ async def test_delete_rejects_store_archived_while_waiting_for_lock() -> None:
         ) == 1
 
 
-async def test_create_uses_config_committed_during_weather_wait() -> None:
+async def test_create_uses_config_committed_while_waiting_for_write_lock() -> None:
     await _reset_database()
     _, store_id, category_id, target = await _setup_ledger()
     async with async_session_factory() as setup:
@@ -219,15 +208,15 @@ async def test_create_uses_config_committed_during_weather_wait() -> None:
         await setup.commit()
 
     client = await _logged_in_client("ledger-user")
-    weather = PausedWeather()
-    client._transport.app.state.weather_service = weather
+    await SQLITE_WRITE_LOCK.acquire()
     request = asyncio.create_task(
         client.put(
             f"/api/ledger/{store_id}/{target.isoformat()}",
             json=_payload(category_id, 125),
         )
     )
-    await weather.entered.wait()
+    while not SQLITE_WRITE_LOCK._waiters:
+        await asyncio.sleep(0)
     async with async_session_factory() as configure:
         store = await configure.get(Store, store_id)
         category = await configure.get(IncomeCategory, category_id)
@@ -238,7 +227,7 @@ async def test_create_uses_config_committed_during_weather_wait() -> None:
         category.include_in_total = False
         category.sort_order = 7
         await configure.commit()
-    weather.release.set()
+    SQLITE_WRITE_LOCK.release()
     response = await request
     await client.aclose()
 

@@ -399,7 +399,7 @@ async def create_store(
 
 @router.patch("/stores/{store_id}")
 async def patch_store(
-    store_id: int, body: StorePatch, session: Session, actor: StoresManager
+    store_id: int, body: StorePatch, request: Request, session: Session, actor: StoresManager
 ) -> dict[str, Any]:
     actor_id = actor.id
     async with sqlite_short_write(session):
@@ -410,9 +410,11 @@ async def patch_store(
         if store is None or not store.is_active:
             raise HTTPException(404, "Store not found")
         changes = body.model_dump(exclude_none=True)
+        previous_location = FrozenWeatherLocation.from_store(store)
         previous_settlement_enabled = store.company_settlement_enabled
         for field, value in changes.items():
             setattr(store, field, value)
+        location_changed = FrozenWeatherLocation.from_store(store) != previous_location
         if (
             "company_settlement_enabled" in changes
             and store.company_settlement_enabled != previous_settlement_enabled
@@ -429,6 +431,8 @@ async def patch_store(
                 )
             )
         response = _store_payload(store)
+    if location_changed:
+        request.app.state.pending_weather_refresh.wake()
     return response
 
 

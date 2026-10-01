@@ -57,6 +57,9 @@ class StoreDailyRecord(Base):
     precipitation: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
     activity: Mapped[str | None] = mapped_column(Text)
     weather_edited: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Manual saves use this queue to rebuild cached briefings without a weather call.
+    weather_refresh_due_at: Mapped[datetime | None] = mapped_column(index=True)
+    weather_refresh_finished: Mapped[bool] = mapped_column(Boolean, default=False)
     scanned: Mapped[bool] = mapped_column(Boolean, default=False)
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     updated_by: Mapped[int] = mapped_column(ForeignKey("users.id"))

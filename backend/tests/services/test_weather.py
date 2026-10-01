@@ -1,3 +1,4 @@
+import asyncio
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -81,6 +82,51 @@ async def test_weather_failure_returns_none(weather_service, respx_mock, store) 
     )
 
     assert await weather_service.get_daily(store, date.today() + timedelta(days=1)) is None
+
+
+async def test_all_provider_entrypoints_share_actual_network_limit(store) -> None:
+    active = 0
+    peak = 0
+    two_entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        if active == 2:
+            two_entered.set()
+        try:
+            await release.wait()
+            if "geocoding" in str(request.url):
+                return httpx.Response(200, json={"results": []})
+            return httpx.Response(200, json={"daily": {
+                "weather_code": [0],
+                "temperature_2m_max": [20],
+                "temperature_2m_min": [10],
+                "precipitation_sum": [0],
+            }})
+        finally:
+            active -= 1
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    provider = OpenMeteoProvider(client, max_inflight=2)
+    calls = [
+        asyncio.create_task(provider.get_daily(store, date(2020, 1, day)))
+        for day in range(1, 7)
+    ]
+    calls.append(asyncio.create_task(provider.geocode("Berlin")))
+    try:
+        await asyncio.wait_for(two_entered.wait(), timeout=2)
+        assert peak == 2
+        release.set()
+        await asyncio.wait_for(asyncio.gather(*calls), timeout=3)
+        assert peak == 2
+        assert active == 0
+    finally:
+        release.set()
+        await provider.aclose()
+    assert client.is_closed
 
 
 async def test_weather_service_contains_primary_and_fallback_exceptions(store) -> None:

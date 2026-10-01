@@ -6,7 +6,7 @@ import sqlite3
 import subprocess
 import sys
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -20,7 +20,7 @@ from app.core.config import get_settings
 from app.core.database import SQLITE_WRITE_LOCK, get_session, sqlite_url
 from app.core.security import hash_password
 from app.main import create_app
-from app.models.identity import Store, StoreMember, User
+from app.models.identity import LoginSession, Store, StoreMember, User
 from app.models.ledger import IncomeCategory, StoreDailyRecord
 
 
@@ -183,17 +183,7 @@ async def test_waiting_write_rechecks_original_session(tmp_path: Path) -> None:
             assert user.is_active is False
 
 
-async def test_weather_wait_cannot_commit_after_session_revocation(tmp_path: Path) -> None:
-    class PausedWeather:
-        def __init__(self) -> None:
-            self.entered = asyncio.Event()
-            self.release = asyncio.Event()
-
-        async def get_daily(self, _store, _target):
-            self.entered.set()
-            await self.release.wait()
-            return None
-
+async def test_waiting_ledger_write_cannot_commit_after_session_revocation(tmp_path: Path) -> None:
     async with migrated_clients(tmp_path) as (factory, admin, first, _):
         await login(admin, "session-admin", "AdminPass1")
         created = await admin.post(
@@ -215,8 +205,7 @@ async def test_weather_wait_cannot_commit_after_session_revocation(tmp_path: Pat
             await setup.commit()
             store_id, category_id = store.id, category.id
         await login(first, "ledger-user", "OldPass12")
-        weather = PausedWeather()
-        first._transport.app.state.weather_service = weather
+        await SQLITE_WRITE_LOCK.acquire()
         target = datetime.now(ZoneInfo("Europe/Rome")).date().isoformat()
         pending = asyncio.create_task(
             first.put(
@@ -224,12 +213,23 @@ async def test_weather_wait_cannot_commit_after_session_revocation(tmp_path: Pat
                 json={"expected_identity": None, "expected_revision": None, "expected_config_revision": 1, "is_open": "营业", "items": [{"category_id": category_id, "amount": 125}]},
             )
         )
-        await asyncio.wait_for(weather.entered.wait(), timeout=5)
-        reset = await admin.patch(
-            f"/api/admin/users/{user_id}", json={"password": "ResetPass12"}
-        )
-        assert reset.status_code == 200
-        weather.release.set()
+        try:
+            while not SQLITE_WRITE_LOCK._waiters:
+                await asyncio.sleep(0)
+            async with factory() as revoke:
+                user = await revoke.get(User, user_id)
+                assert user is not None
+                login_session = await revoke.scalar(
+                    select(LoginSession).where(
+                        LoginSession.auth_identity == user.auth_identity,
+                        LoginSession.revoked_at.is_(None),
+                    )
+                )
+                assert login_session is not None
+                login_session.revoked_at = datetime.now(UTC).replace(tzinfo=None)
+                await revoke.commit()
+        finally:
+            SQLITE_WRITE_LOCK.release()
         response = await pending
         assert response.status_code == 401
         assert "current_record" not in response.text
