@@ -13,9 +13,7 @@ from app.schemas.income_config import (
 from app.services.income_config import IncomeConfigCommands, IncomeConfigService
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
-IncomeConfigManager = Annotated[
-    User, Depends(require_capability("income_config.manage"))
-]
+IncomeConfigManager = Annotated[User, Depends(require_capability("income_config.manage"))]
 
 
 @router.get("/stores/{store_id}/income-config", response_model=IncomeConfigResponse)
@@ -36,7 +34,9 @@ async def put_income_config(
 
 @router.post("/income-categories/{category_id}/archive", response_model=IncomeCategoryResponse)
 async def archive_income_category(
-    category_id: int, session: Session, actor: IncomeConfigManager,
+    category_id: int,
+    session: Session,
+    actor: IncomeConfigManager,
     body: IncomeCategoryVersionBody | None = Body(default=None),
 ) -> IncomeCategoryResponse:
     return await IncomeConfigCommands(session, actor.id).change_category(
@@ -46,7 +46,9 @@ async def archive_income_category(
 
 @router.post("/income-categories/{category_id}/restore", response_model=IncomeCategoryResponse)
 async def restore_income_category(
-    category_id: int, session: Session, actor: IncomeConfigManager,
+    category_id: int,
+    session: Session,
+    actor: IncomeConfigManager,
     body: IncomeCategoryVersionBody | None = Body(default=None),
 ) -> IncomeCategoryResponse:
     return await IncomeConfigCommands(session, actor.id).change_category(

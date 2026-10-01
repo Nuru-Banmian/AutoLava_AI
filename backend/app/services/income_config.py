@@ -68,12 +68,15 @@ class IncomeConfigService:
         if expected is None:
             raise HTTPException(428, "收入配置已升级，请重新加载后重试")
         if expected != store.income_config_revision:
-            raise HTTPException(409, {
-                "code": "income_config_revision_conflict",
-                "message": "收入配置已变化，请核对最新配置后重试",
-                "current_config": jsonable_encoder(await self.current(store.id)),
-                "current_record": None,
-            })
+            raise HTTPException(
+                409,
+                {
+                    "code": "income_config_revision_conflict",
+                    "message": "收入配置已变化，请核对最新配置后重试",
+                    "current_config": jsonable_encoder(await self.current(store.id)),
+                    "current_record": None,
+                },
+            )
 
     @staticmethod
     def advance(store: Store) -> None:
@@ -88,9 +91,7 @@ class IncomeConfigService:
         if len(names) != len(set(names)):
             raise HTTPException(422, "Duplicate income category names are not allowed")
 
-    async def replace(
-        self, store_id: int, body: IncomeConfigPublishBody
-    ) -> IncomeConfigResponse:
+    async def replace(self, store_id: int, body: IncomeConfigPublishBody) -> IncomeConfigResponse:
         store = await self._require_store(store_id)
         self._validate_unique(body)
         requested_ids = {item.category_id for item in body.items if item.category_id is not None}

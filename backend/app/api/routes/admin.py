@@ -1,6 +1,10 @@
 from app.services import admin_commands
 from app.services.admin_commands import (
-    _user_payload, _managed_user_payload, _store_payload, _require_store, _category_payload,
+    _user_payload,
+    _managed_user_payload,
+    _store_payload,
+    _require_store,
+    _category_payload,
 )
 from typing import Annotated, Any
 
@@ -27,23 +31,7 @@ from app.services.owner import owner_username
 router = APIRouter(prefix="/admin", tags=["admin"])
 UsersManager = Annotated[User, Depends(require_capability("users.manage"))]
 StoresManager = Annotated[User, Depends(require_capability("stores.manage"))]
-IncomeConfigManager = Annotated[
-    User, Depends(require_capability("income_config.manage"))
-]
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+IncomeConfigManager = Annotated[User, Depends(require_capability("income_config.manage"))]
 
 
 def _alert_payload(alert: SystemAlert) -> dict[str, Any]:
@@ -75,14 +63,6 @@ def _task_log_payload(task_log: ScheduledTaskLog) -> dict[str, Any]:
     }
 
 
-
-
-
-
-
-
-
-
 @router.get("/users", dependencies=[Depends(require_capability("users.manage"))])
 async def list_users(session: Session) -> list[dict[str, Any]]:
     statement = select(User).order_by(User.username, User.id)
@@ -98,9 +78,7 @@ async def list_users(session: Session) -> list[dict[str, Any]]:
     store_ids_by_user: dict[int, list[int]] = {}
     for user_id, store_id in memberships:
         store_ids_by_user.setdefault(user_id, []).append(store_id)
-    return [
-        _managed_user_payload(user, store_ids_by_user.get(user.id, [])) for user in users
-    ]
+    return [_managed_user_payload(user, store_ids_by_user.get(user.id, [])) for user in users]
 
 
 @router.post("/users", status_code=201)
@@ -116,9 +94,7 @@ async def patch_user(
 
 
 @router.delete("/users/{user_id}", status_code=204)
-async def delete_unused_user(
-    user_id: int, session: Session, actor: UsersManager
-) -> None:
+async def delete_unused_user(user_id: int, session: Session, actor: UsersManager) -> None:
     return await admin_commands.delete_unused_user(user_id, session, actor)
 
 
@@ -159,9 +135,7 @@ async def timezone_for_store_location(
     latitude: Annotated[float, Query(ge=-90, le=90)],
     longitude: Annotated[float, Query(ge=-180, le=180)],
 ) -> dict[str, str]:
-    timezone = await request.app.state.open_meteo_provider.timezone(
-        latitude, longitude
-    )
+    timezone = await request.app.state.open_meteo_provider.timezone(latitude, longitude)
     if timezone is None:
         raise HTTPException(503, "暂时无法识别该位置的时区，请稍后重试")
     return {"timezone": timezone}
@@ -174,9 +148,7 @@ async def list_stores(session: Session) -> list[dict[str, Any]]:
 
 
 @router.post("/stores", status_code=201)
-async def create_store(
-    body: StoreCreate, session: Session, actor: StoresManager
-) -> dict[str, Any]:
+async def create_store(body: StoreCreate, session: Session, actor: StoresManager) -> dict[str, Any]:
     return await admin_commands.create_store(body, session, actor)
 
 
@@ -184,11 +156,9 @@ async def create_store(
 async def patch_store(
     store_id: int, body: StorePatch, request: Request, session: Session, actor: StoresManager
 ) -> dict[str, Any]:
-    return await admin_commands.patch_store(store_id, body, request.app.state.pending_weather_refresh, session, actor)
-
-
-
-
+    return await admin_commands.patch_store(
+        store_id, body, request.app.state.pending_weather_refresh, session, actor
+    )
 
 
 @router.delete("/stores/{store_id}", status_code=204)
@@ -236,8 +206,6 @@ async def list_income_categories(store_id: int, session: Session) -> list[dict[s
     return [_category_payload(category) for category in categories]
 
 
-
-
 @router.post("/income-categories", status_code=201)
 async def create_income_category(
     body: CategoryCreate, session: Session, actor: IncomeConfigManager
@@ -253,12 +221,16 @@ async def patch_income_category(
     session: Session,
     actor: IncomeConfigManager,
 ) -> dict[str, Any]:
-    return await admin_commands.patch_income_category(category_id, body, request.app.state.weather_service, session, actor)
+    return await admin_commands.patch_income_category(
+        category_id, body, request.app.state.weather_service, session, actor
+    )
 
 
 @router.delete("/income-categories/{category_id}", status_code=204)
 async def delete_unused_category(
-    category_id: int, session: Session, actor: IncomeConfigManager,
+    category_id: int,
+    session: Session,
+    actor: IncomeConfigManager,
     body: IncomeCategoryVersionBody | None = Body(default=None),
 ) -> None:
     return await admin_commands.delete_unused_category(category_id, session, actor, body)
