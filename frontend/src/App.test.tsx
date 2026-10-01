@@ -106,7 +106,7 @@ describe("App", () => {
     expect(within(nav).getAllByRole("link")).toHaveLength(4);
     expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["首页", "记账", "记录", "更多"]);
     expect(nav).toHaveClass("grid-cols-4");
-    const more = screen.getByRole("navigation", { name: "更多功能" });
+    const more = await screen.findByRole("navigation", { name: "更多功能" });
     expect(within(more).queryByRole("link", { name: "经营分析" })).not.toBeInTheDocument();
     expect(within(more).queryByRole("combobox", { name: "门店" })).not.toBeInTheDocument();
     expect(within(more).getByRole("link", { name: "修改密码" })).toBeInTheDocument();

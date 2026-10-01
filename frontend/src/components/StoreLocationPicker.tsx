@@ -5,7 +5,6 @@ import type { components } from "@/api/generated";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { leafletMapAdapter } from "@/maps/provider";
 import type { MapAdapter, MapLocation } from "@/maps/types";
 
 type GeocodeCandidate = components["schemas"]["GeocodeCandidateResponse"];
@@ -17,7 +16,7 @@ interface Props {
   buttonLabel?: string;
 }
 
-export function StoreLocationPicker({ value, onConfirm, adapter = leafletMapAdapter, buttonLabel }: Props) {
+export function StoreLocationPicker({ value, onConfirm, adapter, buttonLabel }: Props) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<MapLocation | null>(value);
   const [query, setQuery] = useState("");
@@ -25,6 +24,8 @@ export function StoreLocationPicker({ value, onConfirm, adapter = leafletMapAdap
   const [error, setError] = useState("");
   const [searching, setSearching] = useState(false);
   const [mapNode, setMapNode] = useState<HTMLDivElement | null>(null);
+  const [loadedAdapter, setLoadedAdapter] = useState<MapAdapter | null>(adapter ?? null);
+  const [mapLoadError, setMapLoadError] = useState(false);
   const requestSequence = useRef(0);
   const searchSequence = useRef(0);
   const openRef = useRef(false);
@@ -81,9 +82,21 @@ export function StoreLocationPicker({ value, onConfirm, adapter = leafletMapAdap
   }, [open, useCurrentLocation]);
 
   useEffect(() => {
-    if (!open || !mapNode) return;
-    return adapter.mount(mapNode, draft, resolveCoordinates);
-  }, [adapter, draft?.latitude, draft?.longitude, mapNode, open, resolveCoordinates]);
+    if (!open || adapter) return;
+    let active = true;
+    setMapLoadError(false);
+    void import("@/maps/provider").then(({ leafletMapAdapter }) => {
+      if (active) setLoadedAdapter(leafletMapAdapter);
+    }).catch(() => {
+      if (active) setMapLoadError(true);
+    });
+    return () => { active = false; };
+  }, [adapter, open]);
+
+  useEffect(() => {
+    if (!open || !mapNode || !loadedAdapter) return;
+    return loadedAdapter.mount(mapNode, draft, resolveCoordinates);
+  }, [loadedAdapter, draft?.latitude, draft?.longitude, mapNode, open, resolveCoordinates]);
 
   async function search(event: FormEvent) {
     event.preventDefault();
@@ -132,6 +145,8 @@ export function StoreLocationPicker({ value, onConfirm, adapter = leafletMapAdap
             setResults([]);
           }}>{result.name}, {result.country}</Button>
         </li>)}</ul>}
+        {!loadedAdapter && !mapLoadError && <p role="status">正在加载地图…</p>}
+        {mapLoadError && <p role="alert">地图加载失败。<Button type="button" variant="outline" onClick={() => window.location.reload()}>重新加载地图</Button></p>}
         <div ref={setMapNode} aria-label="门店位置地图" className="h-72 w-full overflow-hidden rounded-lg border" />
         <div className="flex flex-wrap items-center justify-between gap-2">
           <Button type="button" variant="secondary" onClick={useCurrentLocation}>使用当前位置</Button>
