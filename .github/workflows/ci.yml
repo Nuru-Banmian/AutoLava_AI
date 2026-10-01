@@ -20,6 +20,38 @@ env:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
 jobs:
+  api-contract:
+    name: OpenAPI contract drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.26"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install locked dependencies
+        run: |
+          cd backend && uv sync --locked && cd ../frontend && npm ci
+      - name: Reject API contract drift
+        run: |
+          cd backend && uv run --frozen python scripts/export_openapi.py --check
+          cd ../frontend && npm run generate:api-types
+          cd .. && git diff --exit-code -- frontend/src/api/openapi.json frontend/src/api/generated.ts frontend/src/api/weather-values.ts
+
   backend-quality:
     name: Backend quality
     runs-on: ubuntu-latest
@@ -157,6 +189,7 @@ jobs:
     name: CI gate
     if: ${{ always() }}
     needs:
+      - api-contract
       - backend-quality
       - backend-core
       - frontend-unit-build
@@ -166,14 +199,16 @@ jobs:
     steps:
       - name: Require every CI lane
         env:
+          API_CONTRACT: ${{ needs.api-contract.result }}
           BACKEND_QUALITY: ${{ needs.backend-quality.result }}
           BACKEND_CORE: ${{ needs.backend-core.result }}
           FRONTEND_UNIT_BUILD: ${{ needs.frontend-unit-build.result }}
           FRONTEND_E2E: ${{ needs.frontend-e2e.result }}
         shell: bash
         run: |
-          printf 'Backend quality: %s\nBackend core tests: %s\nFrontend unit and build: %s\nFrontend end-to-end: %s\n' \
-            "$BACKEND_QUALITY" "$BACKEND_CORE" "$FRONTEND_UNIT_BUILD" "$FRONTEND_E2E"
+          printf 'OpenAPI contract: %s\nBackend quality: %s\nBackend core tests: %s\nFrontend unit and build: %s\nFrontend end-to-end: %s\n' \
+            "$API_CONTRACT" "$BACKEND_QUALITY" "$BACKEND_CORE" "$FRONTEND_UNIT_BUILD" "$FRONTEND_E2E"
+          test "$API_CONTRACT" = success
           test "$BACKEND_QUALITY" = success
           test "$BACKEND_CORE" = success
           test "$FRONTEND_UNIT_BUILD" = success

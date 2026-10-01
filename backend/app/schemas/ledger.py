@@ -34,3 +34,12 @@ class LedgerBody(BaseModel):
 class LedgerDeleteBody(BaseModel):
     expected_identity: str | None = None
     expected_revision: int | None = Field(default=None, ge=1)
+
+
+class LedgerSaveResponse(BaseModel):
+    id: int
+    identity: str
+    revision: int
+    config_revision: int
+    date: str
+    daily_revenue: int

@@ -1,4 +1,22 @@
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
+
+
+class AuthenticatedUserResponse(BaseModel):
+    id: int
+    username: str
+    role: Literal["admin", "user"]
+    is_owner: bool
+
+
+class AccessibleStoreResponse(BaseModel):
+    id: int
+    name: str
+    timezone: str
+    is_active: bool
+    company_settlement_enabled: bool
+    wash_count_enabled: bool
 
 
 class LoginBody(BaseModel):

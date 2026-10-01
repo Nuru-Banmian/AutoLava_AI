@@ -193,6 +193,7 @@ def test_ci_runs_parallel_deterministic_lanes() -> None:
     workflow = yaml.safe_load(ci_text)
     jobs = workflow["jobs"]
     lane_names = {
+        "api-contract",
         "backend-quality",
         "backend-core",
         "frontend-unit-build",
@@ -211,6 +212,7 @@ def test_ci_runs_parallel_deterministic_lanes() -> None:
     core_commands = commands("backend-core")
     unit_commands = commands("frontend-unit-build")
     e2e_commands = commands("frontend-e2e")
+    contract_commands = commands("api-contract")
     gate_commands = commands("ci-gate")
 
     for backend_job in ("backend-quality", "backend-core"):
@@ -221,6 +223,8 @@ def test_ci_runs_parallel_deterministic_lanes() -> None:
     assert any("pytest" in command for command in core_commands)
     assert any("-n 4" in command and "--cov=app" in command for command in core_commands)
     assert any("coverage report --fail-under=85" in command for command in core_commands)
+    assert any("uv sync --locked" in command and "npm ci" in command for command in contract_commands)
+    assert any("export_openapi.py" in command and "generate:api-types" in command and "git diff --exit-code" in command for command in contract_commands)
     assert all(any(contract in command for command in unit_commands) for contract in (
         "npm ci",
         "npm test",
@@ -244,7 +248,7 @@ def test_ci_runs_parallel_deterministic_lanes() -> None:
     assert gate["if"] == "${{ always() }}"
     assert len(gate_commands) == 1
     assert all(f'test "${name}" = success' in gate_commands[0] for name in (
-        "BACKEND_QUALITY", "BACKEND_CORE", "FRONTEND_UNIT_BUILD", "FRONTEND_E2E"
+        "API_CONTRACT", "BACKEND_QUALITY", "BACKEND_CORE", "FRONTEND_UNIT_BUILD", "FRONTEND_E2E"
     ))
     assert all("uv sync" not in command for command in gate_commands)
     assert (ROOT / "backend" / "uv.lock").is_file()

@@ -8,7 +8,7 @@ from app.core.password_work import hash_password_async, verify_password_async
 from app.core.security import create_access_token
 from app.models.identity import User
 from app.models.identity import LoginSession
-from app.schemas.auth import LoginBody, PasswordChange
+from app.schemas.auth import AccessibleStoreResponse, AuthenticatedUserResponse, LoginBody, PasswordChange
 from app.services.access import list_accessible_stores
 from app.services.owner import authenticated_user_payload
 from app.services.sessions import current_credentials, new_session, require_credentials, revoke_all, utc_now
@@ -25,7 +25,7 @@ def _set_auth_cookie(response: Response, auth_identity: str, session_id: str) ->
     )
 
 
-@router.post("/auth/login")
+@router.post("/auth/login", response_model=AuthenticatedUserResponse)
 async def login(body: LoginBody, response: Response, session: Session) -> dict:
     user = await session.scalar(select(User).where(User.username == body.username))
     password_hash = user.password_hash if user is not None else _DUMMY_PASSWORD_HASH
@@ -82,12 +82,12 @@ async def change_password(
     _set_auth_cookie(response, locked_user.auth_identity, replacement.id)
 
 
-@router.get("/auth/me")
+@router.get("/auth/me", response_model=AuthenticatedUserResponse)
 async def me(user: CurrentUser) -> dict:
     return authenticated_user_payload(user)
 
 
-@router.get("/stores/accessible")
+@router.get("/stores/accessible", response_model=list[AccessibleStoreResponse])
 async def accessible_stores(user: CurrentUser, session: Session) -> list[dict]:
     stores = await list_accessible_stores(session, user)
     return [

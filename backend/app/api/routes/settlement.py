@@ -13,6 +13,8 @@ from app.schemas.settlement import (
     RevisionBody,
     SettlementMonthResponse,
     SettlementRecordResponse,
+    SettlementConflictResponse,
+    SettlementWorkspaceResponse,
 )
 from app.services.access import require_company_settlement_access
 from app.services.settlement import SettlementCompanyService, SettlementRecordService
@@ -32,18 +34,16 @@ async def require_enabled_settlement_store(
 EnabledSettlementStore = Annotated[tuple[User, Store], Depends(require_enabled_settlement_store)]
 
 
-@router.get("/{store_id}")
+@router.get("/{store_id}", response_model=SettlementWorkspaceResponse)
 async def settlement_workspace(
     store_id: int,
     access: EnabledSettlementStore,
-) -> dict[str, int | str | bool]:
+) -> SettlementWorkspaceResponse:
     """Return the gated shell used by later settlement vertical slices."""
     _, store = access
-    return {
-        "store_id": store.id,
-        "store_name": store.name,
-        "company_settlement_enabled": True,
-    }
+    return SettlementWorkspaceResponse(
+        store_id=store.id, store_name=store.name, company_settlement_enabled=True
+    )
 
 
 def company_service(session: Session, access: EnabledSettlementStore) -> SettlementCompanyService:
@@ -69,6 +69,7 @@ async def settlement_month(
 @router.post(
     "/{store_id}/records",
     response_model=SettlementRecordResponse,
+    responses={409: {"model": SettlementConflictResponse}},
     status_code=status.HTTP_201_CREATED,
 )
 async def create_settlement_record(
@@ -84,7 +85,8 @@ async def create_settlement_record(
     )
 
 
-@router.patch("/{store_id}/records/{record_id}", response_model=SettlementRecordResponse)
+@router.patch("/{store_id}/records/{record_id}", response_model=SettlementRecordResponse,
+              responses={409: {"model": SettlementConflictResponse}})
 async def update_settlement_record(
     store_id: int,
     record_id: int,
@@ -100,7 +102,8 @@ async def update_settlement_record(
     )
 
 
-@router.delete("/{store_id}/records/{record_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{store_id}/records/{record_id}", status_code=status.HTTP_204_NO_CONTENT,
+               responses={409: {"model": SettlementConflictResponse}})
 async def delete_settlement_record(
     store_id: int,
     record_id: int,
@@ -115,6 +118,7 @@ async def delete_settlement_record(
 @router.post(
     "/{store_id}/records/{record_id}/confirm",
     response_model=SettlementRecordResponse,
+    responses={409: {"model": SettlementConflictResponse}},
 )
 async def confirm_settlement_record(
     store_id: int,
@@ -129,6 +133,7 @@ async def confirm_settlement_record(
 @router.post(
     "/{store_id}/records/{record_id}/revoke-confirmation",
     response_model=SettlementRecordResponse,
+    responses={409: {"model": SettlementConflictResponse}},
 )
 async def revoke_settlement_record_confirmation(
     store_id: int,

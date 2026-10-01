@@ -73,6 +73,22 @@ class SettlementRecordResponse(BaseModel):
         return value.strftime("%Y-%m")
 
 
+class SettlementConflictDetail(BaseModel):
+    code: Literal["settlement_record_revision_conflict", "settlement_record_state_conflict"]
+    message: str
+    current_record: SettlementRecordResponse | None
+
+
+class SettlementConflictResponse(BaseModel):
+    detail: str | SettlementConflictDetail
+
+
+class SettlementWorkspaceResponse(BaseModel):
+    store_id: int
+    store_name: str
+    company_settlement_enabled: Literal[True]
+
+
 class SettlementMonthResponse(BaseModel):
     opening_month: date
     records: list[SettlementRecordResponse]

@@ -240,6 +240,7 @@ async def export_records(
 @router.get(
     "/{store_id}/records",
     response_model=DatabasePage,
+    response_model_exclude_unset=True,
     dependencies=[Depends(require_capability("analytics.view"))],
 )
 async def record_page(

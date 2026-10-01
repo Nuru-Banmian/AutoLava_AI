@@ -11,7 +11,7 @@ from sqlalchemy import case, select
 from app.api.deps import Session, StoreAccess, require_store_access, require_store_read_access
 from app.core.database import end_read_transaction, sqlite_short_write
 from app.models.operations import DailyBriefing, UTC_TIMESTAMP_CONTRACT
-from app.schemas.dashboard import DashboardCardResponse
+from app.schemas.dashboard import DashboardCardResponse, WeatherResponse
 from app.services.access import require_fresh_store_access
 from app.services.briefing import BriefingService
 from app.services.weather import FrozenWeatherLocation, WeatherResult, WeatherService
@@ -84,7 +84,7 @@ def _weather_payload(result: WeatherResult | None) -> dict[str, str | int | floa
     }
 
 
-@router.get("/weather/{store_id}/{target_date}")
+@router.get("/weather/{store_id}/{target_date}", response_model=WeatherResponse)
 async def get_weather(
     store_id: int,
     target_date: date,

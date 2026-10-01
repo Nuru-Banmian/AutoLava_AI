@@ -16,7 +16,8 @@ from app.api.deps import (
 )
 from app.api.routes.dashboard import get_weather_service
 from app.core.database import end_read_transaction, sqlite_short_write
-from app.schemas.ledger import LedgerBody, LedgerDeleteBody
+from app.schemas.database import RecordSnapshot
+from app.schemas.ledger import LedgerBody, LedgerDeleteBody, LedgerSaveResponse
 from app.services.access import Capability, require_fresh_store_access
 from app.services.briefing import BriefingService
 from app.services.ledger import LedgerService
@@ -109,6 +110,8 @@ async def _safely_refresh_briefing(
 
 @router.get(
     "/{store_id}/recent",
+    response_model=list[RecordSnapshot],
+    response_model_exclude_unset=True,
     dependencies=[Depends(require_capability("ledger.view"))],
 )
 async def recent_records(
@@ -123,6 +126,8 @@ async def recent_records(
 
 @router.get(
     "/{store_id}",
+    response_model=RecordSnapshot,
+    response_model_exclude_unset=True,
     dependencies=[Depends(require_capability("ledger.view"))],
 )
 async def get_record_by_query(
@@ -137,6 +142,8 @@ async def get_record_by_query(
 
 @router.get(
     "/{store_id}/{record_date}",
+    response_model=RecordSnapshot,
+    response_model_exclude_unset=True,
     dependencies=[Depends(require_capability("ledger.view"))],
 )
 async def get_record_by_path(
@@ -166,6 +173,7 @@ async def get_form_config(
 
 @router.put(
     "/{store_id}/{record_date}",
+    response_model=LedgerSaveResponse,
     dependencies=[
         Depends(require_capability("ledger.create")),
         Depends(require_capability("ledger.edit")),

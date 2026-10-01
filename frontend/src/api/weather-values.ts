@@ -1,0 +1,2 @@
+// Generated from the backend OpenAPI RecordWeather enum. Do not edit.
+export const recordWeatherValues = ["晴", "少云", "多云", "阴", "雾", "冻雾", "小毛毛雨", "毛毛雨", "大毛毛雨", "小冻毛毛雨", "冻毛毛雨", "小雨", "中雨", "大雨", "小冻雨", "冻雨", "小雪", "中雪", "大雪", "雪粒", "小阵雨", "阵雨", "大阵雨", "小阵雪", "大阵雪", "雷雨", "雷雨伴小冰雹", "雷雨伴大冰雹"] as const;

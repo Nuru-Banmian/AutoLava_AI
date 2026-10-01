@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "generate:api-types": "openapi-typescript src/api/openapi.json -o src/api/generated.ts",
     "test": "vitest run",
     "test:e2e": "playwright test"
   },
@@ -42,8 +43,9 @@
     "@vitejs/plugin-react": "latest",
     "jsdom": "latest",
     "msw": "latest",
+    "openapi-typescript": "7.10.1",
     "tailwindcss": "latest",
-    "typescript": "latest",
+    "typescript": "5.9.3",
     "vite": "latest",
     "vitest": "latest"
   },
