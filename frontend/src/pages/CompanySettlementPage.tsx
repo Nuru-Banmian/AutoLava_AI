@@ -2,8 +2,10 @@ import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronLeft, ChevronRight, Ellipsis, MoreHorizontal } from "lucide-react";
 import { Link } from "react-router-dom";
+import { z } from "zod";
 
 import { api, ApiError, friendlyApiError } from "@/api/client";
+import type { components } from "@/api/generated";
 import { assertSessionScope, currentSessionScope } from "@/auth/sessionScope";
 import {
   AlertDialog,
@@ -28,37 +30,10 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useStore } from "@/stores/StoreProvider";
 
-interface SettlementWorkspace {
-  store_id: number;
-  store_name: string;
-  company_settlement_enabled: true;
-}
-
-interface SettlementCompany {
-  id: number;
-  name: string;
-  is_active: boolean;
-}
-
-interface SettlementRecord {
-  id: number;
-  company_id: number;
-  company_name: string;
-  opening_month: string;
-  amount: number;
-  status: "pending" | "confirmed";
-  revision: number;
-  created_at: string;
-}
-
-interface SettlementMonth {
-  opening_month: string;
-  records: SettlementRecord[];
-  daily_ledger_revenue: number;
-  confirmed_settlement_income: number;
-  pending_amount: number;
-  monthly_total: number;
-}
+type SettlementWorkspace = components["schemas"]["SettlementWorkspaceResponse"];
+type SettlementCompany = components["schemas"]["CompanyResponse"];
+type SettlementRecord = components["schemas"]["SettlementRecordResponse"];
+type SettlementMonth = components["schemas"]["SettlementMonthResponse"];
 
 export function monthInTimezone(timezone: string, now = new Date()) {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -160,36 +135,27 @@ const recordTransitionConfig = {
   },
 } as const;
 
+const conflictRecordSchema: z.ZodType<SettlementRecord> = z.object({
+  id: z.number().int().positive(),
+  company_id: z.number().int().positive(),
+  company_name: z.string(),
+  opening_month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  amount: z.number().int().positive().max(MAX_SETTLEMENT_AMOUNT),
+  status: z.enum(["pending", "confirmed"]),
+  revision: z.number().int().positive(),
+  created_at: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/),
+});
+
 function canonicalConflictRecord(error: unknown): SettlementRecord | null {
   if (!(error instanceof ApiError) || error.status !== 409) return null;
-  const response = error.responseBody;
-  if (typeof response !== "object" || response === null || !("detail" in response)) return null;
-  const detail = response.detail;
-  if (typeof detail !== "object" || detail === null || !("current_record" in detail)) return null;
-  const current = detail.current_record;
-  if (
-    typeof current !== "object" ||
-    current === null ||
-    !("id" in current) ||
-    !Number.isInteger(current.id) ||
-    !("company_id" in current) ||
-    !Number.isInteger(current.company_id) ||
-    !("company_name" in current) ||
-    typeof current.company_name !== "string" ||
-    !("opening_month" in current) ||
-    typeof current.opening_month !== "string" ||
-    !/^\d{4}-(0[1-9]|1[0-2])$/.test(current.opening_month) ||
-    !("amount" in current) ||
-    !Number.isSafeInteger(current.amount) ||
-    !("status" in current) ||
-    (current.status !== "pending" && current.status !== "confirmed") ||
-    !("revision" in current) ||
-    !Number.isInteger(current.revision) ||
-    !("created_at" in current) ||
-    typeof current.created_at !== "string"
-  )
-    return null;
-  return current as SettlementRecord;
+  const response = z.object({
+    detail: z.object({
+      code: z.enum(["settlement_record_revision_conflict", "settlement_record_state_conflict"]),
+      message: z.string(),
+      current_record: conflictRecordSchema.nullable(),
+    }),
+  }).safeParse(error.responseBody);
+  return response.success ? response.data.detail.current_record : null;
 }
 
 function conflictForRecord(
@@ -704,7 +670,7 @@ export function CompanySettlementPage() {
           company_id: variables.companyId,
           opening_month: variables.month,
           amount: variables.amount,
-        }),
+        } satisfies components["schemas"]["RecordCreate"]),
       });
     },
     onSuccess: async (_record, variables) => {
@@ -734,7 +700,7 @@ export function CompanySettlementPage() {
             company_id: variables.companyId,
             amount: variables.amount,
             revision: variables.revision,
-          }),
+          } satisfies components["schemas"]["RecordPatch"]),
         },
       );
     },
@@ -776,7 +742,7 @@ export function CompanySettlementPage() {
       assertSessionScope(variables.authScope);
       return api<void>(`/settlements/${variables.storeId}/records/${variables.recordId}`, {
         method: "DELETE",
-        body: JSON.stringify({ revision: variables.revision }),
+        body: JSON.stringify({ revision: variables.revision } satisfies components["schemas"]["RevisionBody"]),
       });
     },
     onSuccess: async (_result, variables) => {
@@ -810,7 +776,7 @@ export function CompanySettlementPage() {
       const config = recordTransitionConfig[variables.kind];
       return api<SettlementRecord>(
         `/settlements/${variables.storeId}/records/${variables.recordId}/${config.path}`,
-        { method: "POST", body: JSON.stringify({ revision: variables.revision }) },
+        { method: "POST", body: JSON.stringify({ revision: variables.revision } satisfies components["schemas"]["RevisionBody"]) },
       );
     },
     onSuccess: async (_record, variables) => {
@@ -968,7 +934,7 @@ export function CompanySettlementPage() {
       draftVersion,
       path: `/settlements/${storeId}/companies`,
       method: "POST",
-      body: JSON.stringify({ name: submittedName }),
+      body: JSON.stringify({ name: submittedName } satisfies components["schemas"]["CompanyCreate"]),
       retry,
     });
   };
@@ -977,7 +943,12 @@ export function CompanySettlementPage() {
     if (!selected) return;
     submitCreate(selected.id, name);
   };
-  const runCompanyAction = async (storeId: number, path: string, method: string, body?: object) => {
+  const runCompanyAction = async (
+    storeId: number,
+    path: string,
+    method: string,
+    body?: components["schemas"]["CompanyPatch"],
+  ) => {
     const scopeId = scopeRef.current.id;
     const scope = authScope;
     const retry = () => {

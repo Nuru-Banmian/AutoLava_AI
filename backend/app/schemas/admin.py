@@ -1,3 +1,4 @@
+from datetime import datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -80,3 +81,72 @@ class CategoryPatch(BaseModel):
     include_in_total: bool | None = None
     is_active: bool | None = None
     sort_order: int | None = None
+
+
+class AdminUserResponse(BaseModel):
+    id: int
+    username: str
+    role: Literal["admin", "user"]
+    is_active: bool
+    store_ids: list[int]
+
+
+class UserSummaryResponse(BaseModel):
+    id: int
+    username: str
+    role: Literal["admin", "user"]
+    is_active: bool
+
+
+class AdminStoreResponse(BaseModel):
+    id: int
+    name: str
+    address: str
+    latitude: str | None
+    longitude: str | None
+    timezone: str
+    is_active: bool
+    company_settlement_enabled: bool
+    wash_count_enabled: bool
+
+
+class StoreMembersResponse(BaseModel):
+    store_id: int
+    user_ids: list[int]
+
+
+class SystemAlertResponse(BaseModel):
+    id: int
+    store_id: int | None
+    alert_type: str
+    level: str
+    message: str
+    is_resolved: bool
+    created_at: datetime | None
+    resolved_at: datetime | None
+    timestamp_status: Literal["utc", "legacy_unknown"]
+
+
+class ScheduledTaskLogResponse(BaseModel):
+    id: int
+    store_id: int | None
+    task_type: str
+    status: str
+    message: str | None
+    retry_count: int
+    started_at: datetime | None
+    finished_at: datetime | None
+    created_at: datetime | None
+    timestamp_status: Literal["utc", "legacy_unknown"]
+
+
+class GeocodeCandidateResponse(BaseModel):
+    name: str
+    country: str
+    latitude: float
+    longitude: float
+    timezone: str
+
+
+class TimezoneResponse(BaseModel):
+    timezone: str

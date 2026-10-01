@@ -16,16 +16,24 @@ from app.models.identity import Store, StoreMember, User
 from app.models.ledger import IncomeCategory
 from app.models.operations import ScheduledTaskLog, SystemAlert
 from app.schemas.admin import (
+    AdminStoreResponse,
+    AdminUserResponse,
     CategoryCreate,
     CategoryPatch,
+    GeocodeCandidateResponse,
     MemberReplace,
+    ScheduledTaskLogResponse,
     StoreCreate,
+    StoreMembersResponse,
     StorePatch,
+    SystemAlertResponse,
+    TimezoneResponse,
     UserCreate,
     UserPatch,
+    UserSummaryResponse,
 )
 from app.schemas.time import timestamp_status, trusted_utc
-from app.schemas.income_config import IncomeCategoryVersionBody
+from app.schemas.income_config import IncomeCategoryResponse, IncomeCategoryVersionBody
 from app.services.owner import owner_username
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -63,7 +71,7 @@ def _task_log_payload(task_log: ScheduledTaskLog) -> dict[str, Any]:
     }
 
 
-@router.get("/users", dependencies=[Depends(require_capability("users.manage"))])
+@router.get("/users", response_model=list[AdminUserResponse], dependencies=[Depends(require_capability("users.manage"))])
 async def list_users(session: Session) -> list[dict[str, Any]]:
     statement = select(User).order_by(User.username, User.id)
     configured_owner = owner_username()
@@ -81,12 +89,12 @@ async def list_users(session: Session) -> list[dict[str, Any]]:
     return [_managed_user_payload(user, store_ids_by_user.get(user.id, [])) for user in users]
 
 
-@router.post("/users", status_code=201)
+@router.post("/users", status_code=201, response_model=AdminUserResponse)
 async def create_user(body: UserCreate, session: Session, actor: UsersManager) -> dict[str, Any]:
     return await admin_commands.create_user(body, session, actor)
 
 
-@router.patch("/users/{user_id}")
+@router.patch("/users/{user_id}", response_model=AdminUserResponse)
 async def patch_user(
     user_id: int, body: UserPatch, session: Session, actor: UsersManager
 ) -> dict[str, Any]:
@@ -100,6 +108,7 @@ async def delete_unused_user(user_id: int, session: Session, actor: UsersManager
 
 @router.get(
     "/users/{user_id}/stores",
+    response_model=list[AdminStoreResponse],
     dependencies=[Depends(require_capability("users.manage"))],
 )
 async def list_user_stores(user_id: int, session: Session) -> list[dict[str, Any]]:
@@ -118,6 +127,7 @@ async def list_user_stores(user_id: int, session: Session) -> list[dict[str, Any
 
 @router.get(
     "/stores/geocode",
+    response_model=list[GeocodeCandidateResponse],
     dependencies=[Depends(require_capability("stores.manage"))],
 )
 async def geocode_store(
@@ -128,6 +138,7 @@ async def geocode_store(
 
 @router.get(
     "/stores/timezone",
+    response_model=TimezoneResponse,
     dependencies=[Depends(require_capability("stores.manage"))],
 )
 async def timezone_for_store_location(
@@ -141,18 +152,18 @@ async def timezone_for_store_location(
     return {"timezone": timezone}
 
 
-@router.get("/stores", dependencies=[Depends(require_capability("stores.manage"))])
+@router.get("/stores", response_model=list[AdminStoreResponse], dependencies=[Depends(require_capability("stores.manage"))])
 async def list_stores(session: Session) -> list[dict[str, Any]]:
     stores = (await session.scalars(select(Store).order_by(Store.name, Store.id))).all()
     return [_store_payload(store) for store in stores]
 
 
-@router.post("/stores", status_code=201)
+@router.post("/stores", status_code=201, response_model=AdminStoreResponse)
 async def create_store(body: StoreCreate, session: Session, actor: StoresManager) -> dict[str, Any]:
     return await admin_commands.create_store(body, session, actor)
 
 
-@router.patch("/stores/{store_id}")
+@router.patch("/stores/{store_id}", response_model=AdminStoreResponse)
 async def patch_store(
     store_id: int, body: StorePatch, request: Request, session: Session, actor: StoresManager
 ) -> dict[str, Any]:
@@ -168,6 +179,7 @@ async def delete_store(store_id: int, session: Session, actor: StoresManager) ->
 
 @router.get(
     "/stores/{store_id}/members",
+    response_model=list[UserSummaryResponse],
     dependencies=[Depends(require_capability("stores.manage"))],
 )
 async def list_store_members(store_id: int, session: Session) -> list[dict[str, Any]]:
@@ -183,7 +195,7 @@ async def list_store_members(store_id: int, session: Session) -> list[dict[str, 
     return [_user_payload(user) for user in users]
 
 
-@router.put("/stores/{store_id}/members")
+@router.put("/stores/{store_id}/members", response_model=StoreMembersResponse)
 async def replace_members(
     store_id: int, body: MemberReplace, session: Session, actor: StoresManager
 ) -> dict[str, Any]:
@@ -192,6 +204,7 @@ async def replace_members(
 
 @router.get(
     "/income-categories",
+    response_model=list[IncomeCategoryResponse],
     dependencies=[Depends(require_capability("income_config.manage"))],
 )
 async def list_income_categories(store_id: int, session: Session) -> list[dict[str, Any]]:
@@ -206,14 +219,14 @@ async def list_income_categories(store_id: int, session: Session) -> list[dict[s
     return [_category_payload(category) for category in categories]
 
 
-@router.post("/income-categories", status_code=201)
+@router.post("/income-categories", status_code=201, response_model=IncomeCategoryResponse)
 async def create_income_category(
     body: CategoryCreate, session: Session, actor: IncomeConfigManager
 ) -> dict[str, Any]:
     return await admin_commands.create_income_category(body, session, actor)
 
 
-@router.patch("/income-categories/{category_id}")
+@router.patch("/income-categories/{category_id}", response_model=IncomeCategoryResponse)
 async def patch_income_category(
     category_id: int,
     body: CategoryPatch,
@@ -236,7 +249,7 @@ async def delete_unused_category(
     return await admin_commands.delete_unused_category(category_id, session, actor, body)
 
 
-@router.get("/alerts", dependencies=[Depends(require_admin)])
+@router.get("/alerts", response_model=list[SystemAlertResponse], dependencies=[Depends(require_admin)])
 async def list_alerts(session: Session) -> list[dict[str, Any]]:
     alerts = (
         await session.scalars(
@@ -246,7 +259,7 @@ async def list_alerts(session: Session) -> list[dict[str, Any]]:
     return [_alert_payload(alert) for alert in alerts]
 
 
-@router.get("/task-logs", dependencies=[Depends(require_admin)])
+@router.get("/task-logs", response_model=list[ScheduledTaskLogResponse], dependencies=[Depends(require_admin)])
 async def list_task_logs(session: Session) -> list[dict[str, Any]]:
     task_logs = (
         await session.scalars(

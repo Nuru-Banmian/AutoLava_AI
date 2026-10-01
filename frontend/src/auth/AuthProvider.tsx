@@ -2,15 +2,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createContext, type PropsWithChildren, useContext } from "react";
 
 import { api, ApiError } from "@/api/client";
+import type { components } from "@/api/generated";
 import type { AuthenticatedUser } from "@/api/types";
 import { advanceSessionScope } from "@/auth/sessionScope";
 
 export const authQueryKey = ["auth", "me"] as const;
 
-interface LoginInput {
-  username: string;
-  password: string;
-}
+type LoginInput = components["schemas"]["LoginBody"];
 
 interface AuthContextValue {
   user: AuthenticatedUser | null;

@@ -15,7 +15,6 @@ export function MorePage() {
     <nav aria-label="更多功能" className="grid gap-2">
       {selected?.company_settlement_enabled && <Link className={moreLinkClass} to="/settlements">公司结算</Link>}
       <Link className={moreLinkClass} to="/account/password">修改密码</Link>
-      {user?.role === "admin" && <Link className={moreLinkClass} to="/agent">AI 对话</Link>}
       {user?.role === "admin" && <Link className={moreLinkClass} to="/admin">管理中心</Link>}
       {user?.role === "admin" && <Link className={moreLinkClass} to="/admin?tab=status">系统状态</Link>}
     </nav>

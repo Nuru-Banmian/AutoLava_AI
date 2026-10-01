@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { api, ApiError } from "@/api/client";
+import type { components } from "@/api/generated";
 import type { AdminStore } from "@/api/types";
 import { StoreLocationPicker } from "@/components/StoreLocationPicker";
 import { Button } from "@/components/ui/button";
@@ -105,7 +106,7 @@ export function StoreDetailsCard({ mode, store, onDirtyChange, onSaved, onDelete
       latitude: mode === "create" ? location.latitude : String(location.latitude),
       longitude: mode === "create" ? location.longitude : String(location.longitude),
       timezone: location.timezone,
-    };
+    } satisfies Omit<components["schemas"]["StoreCreate"], "wash_count_enabled">;
     try {
       const saved = mode === "create"
         ? await api<AdminStore>("/admin/stores", { method: "POST", body: JSON.stringify(body) })
@@ -133,7 +134,7 @@ export function StoreDetailsCard({ mode, store, onDirtyChange, onSaved, onDelete
     try {
       await api<AdminStore>(`/admin/stores/${store.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ is_active: !store.is_active }),
+        body: JSON.stringify({ is_active: !store.is_active } satisfies components["schemas"]["StorePatch"]),
       });
       void invalidateStores();
       if (!isCurrent(requestId)) return;

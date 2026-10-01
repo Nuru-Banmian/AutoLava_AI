@@ -19,7 +19,6 @@ dependencies = [
   "sqlalchemy>=2,<3",
   "tzdata; sys_platform == 'win32'",
   "uvicorn[standard]",
-  "langgraph>=1.2.11",
 ]
 
 [project.optional-dependencies]

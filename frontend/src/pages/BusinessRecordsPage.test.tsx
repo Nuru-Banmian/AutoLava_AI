@@ -16,8 +16,8 @@ vi.mock("@/stores/StoreProvider", () => ({ useStore: vi.fn() }));
 vi.mock("@/lib/business-record-export", () => ({ downloadBusinessRecords: vi.fn() }));
 
 const server = setupServer();
-const berlin: AccessibleStore = { id: 1, name: "Berlin", timezone: "Europe/Berlin" };
-const paris: AccessibleStore = { id: 2, name: "Paris", timezone: "Europe/Paris" };
+const berlin: AccessibleStore = { id: 1, name: "Berlin", timezone: "Europe/Berlin", is_active: true, company_settlement_enabled: false, wash_count_enabled: true };
+const paris: AccessibleStore = { id: 2, name: "Paris", timezone: "Europe/Paris", is_active: true, company_settlement_enabled: false, wash_count_enabled: true };
 let selectedStore: AccessibleStore | null = berlin;
 type TestInitialEntry = string | { pathname: string; state?: unknown };
 
@@ -32,6 +32,7 @@ const record: RecordSnapshot = {
   wash_count: 8,
   is_open: "营业",
   weather: "晴",
+  weather_legacy: false,
   weather_auto: "晴",
   weather_code: 1,
   temperature_max: "20.0",

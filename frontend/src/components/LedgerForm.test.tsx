@@ -36,6 +36,7 @@ function savedRecord(overrides: Partial<RecordSnapshot> = {}): RecordSnapshot {
     wash_count: null,
     is_open: "营业",
     weather: null,
+    weather_legacy: false,
     weather_auto: null,
     weather_code: null,
     temperature_max: null,

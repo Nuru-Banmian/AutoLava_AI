@@ -332,7 +332,6 @@ describe("authenticated application shell", () => {
       "首页",
       "记账",
       "营业记录",
-      "AI 对话",
       "管理中心",
     ]);
     expect(within(mobile).getAllByRole("link").map((link) => link.textContent)).toEqual([

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { CategoryDescriptor, IncomeConfigResponse, LedgerBody, LedgerStatus, RecordSnapshot, WeatherResponse } from "@/api/types";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { isRecordWeather, type CategoryDescriptor, type IncomeConfigResponse, type LedgerBody, type LedgerStatus, type RecordSnapshot, type WeatherResponse } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatWholeEuro, parseWholeAmount } from "@/lib/user-api";
@@ -191,7 +191,35 @@ export function LedgerForm({ categories, config, record, weather, weatherOptions
     setStatus(next);
     if (next === "休息" && wash !== "") setWash("0");
   }
-  return <form className="grid min-w-0 gap-5" onSubmit={(event) => { event.preventDefault(); if (validationError) return; const items = amountResults.map(({ category, result }) => ({ category_id: category.id, amount: status === "休息" ? 0 : (result as { value: number }).value })); if (composed) setAmounts(Object.fromEntries(effectiveCategories.map((category) => [category.id, amounts[category.id] || "0"]))); else if (directTotal === "") setDirectTotal("0"); if (!record && wash === "") setWash("0"); submittedWeather.current = weatherValue || null; onSave({ is_open: status, daily_revenue: composed ? null : status === "休息" ? 0 : (directResult as { value: number }).value, wash_count: normalizedFormWashCount(status, wash), weather: record && !weatherEdited && record.weather === null ? undefined : weatherValue || null, weather_edited: weatherEdited, activity: normalizedActivity(activity), items: composed ? items : [] }); }}>
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (validationError) return;
+    const requestedWeather = record && !weatherEdited && record.weather === null
+      ? undefined
+      : weatherValue || null;
+    if (typeof requestedWeather === "string" && !isRecordWeather(requestedWeather)) return;
+    const items = amountResults.map(({ category, result }) => ({
+      category_id: category.id,
+      amount: status === "休息" ? 0 : (result as { value: number }).value,
+    }));
+    if (composed) {
+      setAmounts(Object.fromEntries(effectiveCategories.map((category) => [category.id, amounts[category.id] || "0"])));
+    } else if (directTotal === "") {
+      setDirectTotal("0");
+    }
+    if (!record && wash === "") setWash("0");
+    submittedWeather.current = requestedWeather ?? null;
+    onSave({
+      is_open: status,
+      daily_revenue: composed ? null : status === "休息" ? 0 : (directResult as { value: number }).value,
+      wash_count: normalizedFormWashCount(status, wash),
+      weather: requestedWeather,
+      weather_edited: weatherEdited,
+      activity: normalizedActivity(activity),
+      items: composed ? items : [],
+    });
+  }
+  return <form className="grid min-w-0 gap-5" onSubmit={submit}>
     <section role="group" aria-label="状态与天气" className="grid min-w-0 gap-4 md:grid-cols-2">
       <label className="grid min-w-0 gap-1.5 font-medium">状态<select aria-label="状态" value={status} onChange={(event) => changeStatus(event.target.value as LedgerStatus)} className={LEDGER_FIELD_CLASS}><option>营业</option><option>休息</option><option>提前休息</option></select></label>
       <div className="grid min-w-0 gap-1.5"><span className="font-medium">天气</span><Select value={weatherValue} onValueChange={(value) => { setWeatherValue(value === "__clear_weather__" ? "" : value); setWeatherEdited(true); }}><SelectTrigger aria-label="天气" className="h-11 text-base"><SelectValue placeholder="请选择天气">{legacyWeather ? `历史旧值：${weatherValue}` : weatherValue || undefined}</SelectValue></SelectTrigger><SelectContent><SelectItem value="__clear_weather__">清空天气</SelectItem>{weatherOptions.map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectContent></Select>{legacyWeather && <p className="text-sm text-destructive">历史旧值：{weatherValue}。重新保存前请选择有效天气或清空。</p>}</div>

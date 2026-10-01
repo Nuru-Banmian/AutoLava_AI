@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "generate:api-types": "openapi-typescript src/api/openapi.json -o src/api/generated.ts",
     "test": "vitest run",
     "test:e2e": "playwright test"
   },
@@ -25,10 +26,8 @@
     "react": "latest",
     "react-dom": "latest",
     "react-hook-form": "latest",
-    "react-markdown": "^10.1.0",
     "react-router-dom": "latest",
     "recharts": "latest",
-    "remark-gfm": "^4.0.1",
     "tailwind-merge": "latest",
     "zod": "latest"
   },
@@ -44,8 +43,9 @@
     "@vitejs/plugin-react": "latest",
     "jsdom": "latest",
     "msw": "latest",
+    "openapi-typescript": "7.10.1",
     "tailwindcss": "latest",
-    "typescript": "latest",
+    "typescript": "5.9.3",
     "vite": "latest",
     "vitest": "latest"
   },

@@ -26,3 +26,11 @@ class DashboardCardResponse(BaseModel):
         contract = UTC_TIMESTAMP_CONTRACT if self.timestamp_status == "utc" else "legacy_unknown"
         self.generated_at = trusted_utc(self.generated_at, contract)
         return self
+
+
+class WeatherResponse(BaseModel):
+    weather: str | None
+    weather_code: int | None
+    temperature_max: float | None
+    temperature_min: float | None
+    precipitation: float | None

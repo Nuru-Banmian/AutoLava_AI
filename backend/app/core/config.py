@@ -22,10 +22,6 @@ class Settings(BaseSettings):
     cookie_secure: bool = False
     cors_origins: list[str] = ["http://localhost:5173"]
     weather_max_inflight: int = Field(default=4, ge=1, le=32)
-    agent_model_endpoint: str = ""
-    agent_model_region: str = ""
-    agent_model_id: str = ""
-    agent_model_api_key: SecretStr = SecretStr("")
 
     @model_validator(mode="after")
     def validate_production_settings(self) -> "Settings":

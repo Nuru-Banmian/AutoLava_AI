@@ -1,36 +1,16 @@
-export type UserRole = "admin" | "user";
+import type { components } from "@/api/generated";
+import { recordWeatherValues } from "@/api/weather-values";
 
-export interface User {
-  id: number;
-  username: string;
-  role: UserRole;
-}
+type Schema = components["schemas"];
 
-export interface AuthenticatedUser extends User {
-  is_owner: boolean;
-}
+export type UserRole = Schema["AuthenticatedUserResponse"]["role"];
+export type User = Pick<Schema["AuthenticatedUserResponse"], "id" | "username" | "role">;
+export type AuthenticatedUser = Schema["AuthenticatedUserResponse"];
+export type AdminUser = Schema["AdminUserResponse"];
+export type AccessibleStore = Schema["AccessibleStoreResponse"];
+export type AdminStore = Schema["AdminStoreResponse"];
 
-export interface AdminUser extends User {
-  is_active: boolean;
-  store_ids: number[];
-}
-
-export interface AccessibleStore {
-  id: number;
-  name: string;
-  timezone: string;
-  is_active?: boolean;
-  company_settlement_enabled?: boolean;
-  wash_count_enabled?: boolean;
-}
-
-export interface AdminStore extends AccessibleStore {
-  address: string;
-  latitude: string;
-  longitude: string;
-  is_active: boolean;
-}
-
+// Geocoding coordinates are a display and draft model, not an API transport schema.
 export interface StoreLocation {
   label: string;
   latitude: number;
@@ -38,120 +18,37 @@ export interface StoreLocation {
   timezone: string;
 }
 
-export interface IncomeCategory {
-  id: number;
-  store_id: number;
-  name: string;
-  include_in_total: boolean;
-  is_active: boolean;
-  sort_order: number;
-}
+export type IncomeCategory = Schema["IncomeCategoryResponse"];
+export type IncomeConfigResponse = Schema["IncomeConfigResponse"];
+export type IncomeConfigItem = Schema["IncomeCategoryResponse"];
+export type StoreMembers = Schema["StoreMembersResponse"];
+export type SystemAlert = Schema["SystemAlertResponse"];
+export type ScheduledTaskLog = Schema["ScheduledTaskLogResponse"];
 
-export interface IncomeConfigResponse {
-  store_id: number;
-  revision: number;
-  enabled: boolean;
-  formula: string;
-  items: IncomeConfigItem[];
-}
+export type LedgerStatus = Schema["LedgerBody"]["is_open"];
+export type IncomeMode = Schema["RecordSnapshot"]["income_mode"];
+export type CategoryDescriptor = Schema["CategoryDescriptor"];
+export type IncomeItemBody = Schema["IncomeItemBody"];
+export type LedgerBody = Schema["LedgerBody"];
+type RecordWeather = NonNullable<LedgerBody["weather"]>;
+type MissingWeather = Exclude<RecordWeather, (typeof recordWeatherValues)[number]>;
+const allWeatherValuesPresent: MissingWeather extends never ? true : never = true;
+void allWeatherValuesPresent;
 
-export interface IncomeConfigItem {
-  id: number;
-  store_id: number;
-  name: string;
-  include_in_total: boolean;
-  is_active: boolean;
-  sort_order: number;
-  archived_at: string | null;
+export function isRecordWeather(value: string): value is RecordWeather {
+  return (recordWeatherValues as readonly string[]).includes(value);
 }
+export type LedgerSaveResponse = Schema["LedgerSaveResponse"];
+export type RecordItem = Schema["RecordItem"];
+export type BookkeepingEvent = Schema["BookkeepingEvent"];
+export type RecordSnapshot = Schema["RecordSnapshot"];
+export type DatabaseResponse = Schema["DatabasePage"];
+export type BriefingCard = Required<Schema["DashboardCardResponse"]>;
+export type WeatherResponse = Schema["WeatherResponse"];
 
-export interface StoreMembers {
-  store_id: number;
-  user_ids: number[];
-}
-
-export interface SystemAlert {
-  id: number;
-  store_id: number | null;
-  alert_type: string;
-  level: string;
-  message: string;
-  is_resolved: boolean;
-  created_at: string | null;
-  resolved_at: string | null;
-  timestamp_status: "utc" | "legacy_unknown";
-}
-
-export interface ScheduledTaskLog {
-  id: number;
-  store_id: number | null;
-  task_type: string;
-  status: string;
-  message: string | null;
-  retry_count: number;
-  started_at: string | null;
-  finished_at: string | null;
-  created_at: string | null;
-  timestamp_status: "utc" | "legacy_unknown";
-}
-
-export type LedgerStatus = "营业" | "休息" | "提前休息";
-export type IncomeMode = "legacy_total" | "composed";
-export interface CategoryDescriptor { id: number; name: string; include_in_total: boolean; is_active: boolean; sort_order: number }
-export interface IncomeItemBody { category_id: number; amount: number }
-export interface LedgerBody {
-  is_open: LedgerStatus;
-  daily_revenue: number | null;
-  wash_count: number | null;
-  weather?: string | null;
-  weather_edited: boolean;
-  activity: string | null;
-  items: IncomeItemBody[];
-}
-export interface LedgerSaveResponse { id: number; identity: string; revision: number; config_revision: number; date: string; daily_revenue: number }
-export interface RecordItem extends IncomeItemBody { id: number; category_name: string; include_in_total: boolean; sort_order: number; created_at: string; updated_at: string }
-export interface BookkeepingEvent { id: number; action: "created" | "updated"; actor_id: number; actor_name: string; occurred_at: string | null; timestamp_status: "utc" | "legacy_unknown" }
-export interface RecordSnapshot {
-  id: number; identity: string; revision: number; config_revision?: number; store_id: number; date: string; daily_revenue: number; wash_count?: number | null; is_open: LedgerStatus;
-  income_mode: IncomeMode;
-  weather: string | null; weather_legacy?: boolean; weather_auto: string | null; weather_code: number | null; temperature_max: string | null;
-  temperature_min: string | null; precipitation: string | null; activity: string | null; weather_edited: boolean; scanned: boolean;
-  created_by: number; updated_by: number; created_at: string; updated_at: string; items: RecordItem[];
-  created_by_name?: string; updated_by_name?: string;
-  bookkeeping_events?: BookkeepingEvent[];
-}
-export interface DatabaseResponse { items: RecordSnapshot[]; categories: CategoryDescriptor[]; sum_daily_revenue: number; total: number; page: number; page_size: number }
-export interface BriefingCard {
-  card_type: "yesterday" | "today" | "tomorrow";
-  state: "missing" | "recorded" | "rest" | "early_closed" | "forecast" | "unavailable";
-  revenue: number | null;
-  weather: string | null;
-  weekday: string | null;
-  temperature_max: string | null;
-  temperature_min: string | null;
-  precipitation: string | null;
-  hint: string | null;
-  generated_at: string | null;
-  timestamp_status: "utc" | "legacy_unknown";
-}
-export interface WeatherResponse { weather: string | null; weather_code: number | null; temperature_max: number | null; temperature_min: number | null; precipitation: number | null }
-export type ChartBucket = "day" | "month";
-export type CategoryComposition =
-  | { category_id: number; category_name: string; amount: number }
-  | { category_id: null; category_name: "公司结算"; amount: number };
-export interface ChartComparisonKpis { start: string; end: string; total_revenue: number; open_days: number; average_revenue: number }
-export interface IncomeSummary { daily_ledger_revenue: number; confirmed_settlement_income: number; total_income: number; includes_settlement_income: boolean }
-export interface MonthlyRevenue { month: string; revenue: number; daily_ledger_revenue: number; confirmed_settlement_income: number; monthly_total_income: number }
-export interface ChartsResponse {
-  kpis: { total_revenue: number; record_days: number; open_days: number; average_revenue: number; primary_categories: CategoryComposition[]; total_wash_count: number | null; wash_count_covered_days: number | null; wash_count_coverage_status: "no_operating_days" | "missing" | "partial" | "complete" | null; average_ticket: number | null };
-  range: { start: string; end: string; bucket: ChartBucket };
-  comparison_kpis: ChartComparisonKpis | null;
-  income_summary: IncomeSummary;
-  classified_included_total: number;
-  daily: { date: string; revenue: number }[];
-  categories: CategoryComposition[];
-  excluded_categories: CategoryComposition[];
-  monthly: MonthlyRevenue[];
-  weather: { weather: string; average_revenue: number }[];
-  weekday: { weekday: number; average_revenue: number }[];
-}
+export type ChartBucket = Schema["ChartRange"]["bucket"];
+export type CategoryComposition = Schema["PrimaryCategory"] | Schema["SettlementComposition"];
+export type ChartComparisonKpis = Schema["ChartComparisonKpis"];
+export type IncomeSummary = Schema["IncomeSummary"];
+export type MonthlyRevenue = Schema["MonthlyRevenue"];
+export type ChartsResponse = Schema["ChartsResponse"];

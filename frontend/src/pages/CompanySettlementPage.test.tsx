@@ -499,6 +499,25 @@ describe("CompanySettlementPage record corrections", () => {
     expect(requests).toBe(1);
   });
 
+  it("does not trust a malformed 409 snapshot or enable a retry", async () => {
+    let requests = 0;
+    renderPage([http.delete("/api/settlements/1/records/20", () => {
+      requests += 1;
+      return HttpResponse.json({ detail: {
+        code: "settlement_record_revision_conflict",
+        message: "记录已变化",
+        current_record: { ...record({ revision: 2 }), company_name: 42 },
+      } }, { status: 409 });
+    })]);
+    await openRecordActions("Alpha");
+    fireEvent.click(screen.getByRole("menuitem", { name: "删除Alpha开票记录" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认永久删除开票记录" }));
+    expect(await screen.findByRole("group", { name: "冲突最新记录" })).toHaveTextContent("最新状态无法读取");
+    expect(screen.queryByRole("button", { name: "已核对最新记录，使用新版本" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "确认永久删除开票记录" })).toBeDisabled();
+    expect(requests).toBe(1);
+  });
+
   it("permanently deletes only after confirmation and sends the current revision", async () => {
     let submitted: unknown;
     let deleted = false;
