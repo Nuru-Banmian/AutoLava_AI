@@ -281,7 +281,7 @@ async def diagnostics(session: Session) -> dict[str, Any]:
         latest_valid_backup_at, get_settings().backup_directory
     )
     latest_tasks = {}
-    for task_type in ("weather_refresh", "sqlite_backup"):
+    for task_type in ("weather_refresh", "sqlite_backup", "sqlite_backup_copy"):
         task = await session.scalar(
             select(ScheduledTaskLog)
             .where(ScheduledTaskLog.task_type == task_type)
@@ -295,7 +295,11 @@ async def diagnostics(session: Session) -> dict[str, Any]:
     return {
         "latest_valid_local_backup_at": latest_backup,
         "local_snapshot": "success" if latest_backup is not None else "no_valid_backup",
-        "offsite_copy": "not_configured",
+        "offsite_copy": (
+            "not_configured" if not get_settings().backup_ssh_host else
+            latest_tasks["sqlite_backup_copy"]["status"]
+            if latest_tasks["sqlite_backup_copy"] else "not_attempted"
+        ),
         "isolated_restore": "not_verified",
         "latest_tasks": latest_tasks,
     }

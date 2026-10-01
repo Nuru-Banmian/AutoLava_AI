@@ -13,6 +13,7 @@ from app.api.router import api_router
 from app.api.routes.dashboard import RefreshLimiter
 from app.core.config import get_settings
 from app.core.database import async_session_factory, engine
+from app.services.backup_copy import SshBackupDestination
 from app.services.scheduler import (
     BackgroundRefreshScheduler,
     DailyScheduler,
@@ -42,17 +43,33 @@ def create_app(
     maintenance_scheduler: DailyScheduler | None = None
     if settings.environment.lower() == "production":
         maintenance_timezone = ZoneInfo(settings.maintenance_timezone)
+        copy_destination = None
+        copy_fields = (
+            settings.backup_ssh_host, settings.backup_ssh_user,
+            settings.backup_ssh_directory, settings.backup_ssh_key_file,
+            settings.backup_ssh_known_hosts_file,
+        )
+        if any(copy_fields):
+            if not all(copy_fields):
+                raise ValueError("Backup SSH destination is incomplete")
+            copy_destination = SshBackupDestination(
+                settings.backup_ssh_host, settings.backup_ssh_user,
+                settings.backup_ssh_directory, settings.backup_ssh_key_file,
+                settings.backup_ssh_known_hosts_file,
+            )
         maintenance_scheduler = DailyScheduler(
             make_sqlite_maintenance_callback(
                 session_factory,
                 source=settings.database_path,
                 destination=settings.backup_directory,
                 timezone=maintenance_timezone,
+                copy_destination=copy_destination,
             ),
             timezone=maintenance_timezone,
             hour=3,
-            startup_complete=lambda today: has_valid_backup(
-                settings.backup_directory, today
+            startup_complete=lambda today: (
+                copy_destination is None
+                and has_valid_backup(settings.backup_directory, today)
             ),
         )
 

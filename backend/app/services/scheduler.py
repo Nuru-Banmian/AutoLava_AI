@@ -19,6 +19,7 @@ from app.models.operations import ScheduledTaskLog, UTC_TIMESTAMP_CONTRACT
 from app.services.briefing import BriefingService
 from app.services.operations_retention import prune_operational_rows
 from app.services.sqlite_backup import backup_sqlite
+from app.services.backup_copy import SshBackupDestination, copy_verified_snapshot
 from app.services.weather import FrozenWeatherLocation, WeatherResult, WeatherService, is_valid_weather_result
 
 
@@ -171,6 +172,7 @@ def make_sqlite_maintenance_callback(
     source: Path,
     destination: Path,
     timezone: ZoneInfo,
+    copy_destination: SshBackupDestination | None = None,
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> Callable[[], Awaitable[None]]:
     async def maintain() -> None:
@@ -182,8 +184,9 @@ def make_sqlite_maintenance_callback(
         else:
             local_today = started_value.astimezone(timezone).date()
         status = "success"
+        snapshot = None
         try:
-            await asyncio.to_thread(
+            snapshot = await asyncio.to_thread(
                 backup_sqlite, source, destination, local_today
             )
             message = "SQLite backup completed"
@@ -193,6 +196,27 @@ def make_sqlite_maintenance_callback(
         finished_at = _utc_naive(clock())
         duration_ms = round((monotonic() - started_clock) * 1000)
         logger.info("task=sqlite_backup store_id=none result=%s duration_ms=%d", status, duration_ms)
+
+        copy_status = "not_configured" if copy_destination is None else "failed"
+        if snapshot is not None and copy_destination is not None:
+            try:
+                await asyncio.to_thread(copy_verified_snapshot, snapshot, copy_destination)
+                copy_status = "success"
+            except Exception as error:
+                logger.error("task=sqlite_backup_copy result=failed error_type=%s", type(error).__name__)
+        if copy_destination is not None:
+            try:
+                async with session_factory() as session:
+                    async with sqlite_short_write(session):
+                        session.add(ScheduledTaskLog(
+                            store_id=None, task_type="sqlite_backup_copy",
+                            status=copy_status, message=f"SQLite backup copy {copy_status}",
+                            retry_count=0, started_at=started_at,
+                            finished_at=_utc_naive(clock()), created_at=started_at,
+                            timestamp_contract=UTC_TIMESTAMP_CONTRACT,
+                        ))
+            except Exception as error:
+                logger.error("task=sqlite_backup_copy_log result=failed error_type=%s", type(error).__name__)
 
         try:
             async with session_factory() as session:

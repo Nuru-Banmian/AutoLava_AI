@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     environment: str = "development"
     database_path: Path = Path("../.autolava-local/autolava.sqlite3")
     backup_directory: Path = Path("../.autolava-local/backups")
+    backup_ssh_host: str = ""
+    backup_ssh_user: str = ""
+    backup_ssh_directory: str = ""
+    backup_ssh_key_file: Path | None = None
+    backup_ssh_known_hosts_file: Path | None = None
     maintenance_timezone: str = "Europe/Rome"
     jwt_secret: SecretStr = SecretStr("development-only-secret")
     bootstrap_username: str = ""
