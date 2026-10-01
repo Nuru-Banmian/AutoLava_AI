@@ -17,6 +17,6 @@ cd backend
 .\.venv\Scripts\python.exe -c "from pathlib import Path; from app.services.backup_restore import verify_isolated_restore; print(verify_isolated_restore(Path('SNAPSHOT.sqlite3'), Path('EMPTY-DIRECTORY')))"
 ```
 
-结果包含迁移版本和账号、门店、每日台账、历史分类快照、公司结算的样本行存在情况。缺少任一代表性记录则演练失败。目标目录必须为空，程序只在该目录建立恢复副本，不覆盖在线主库。`restore-result.json` 保存本地隔离演练结果、时间及快照摘要；失败时保存错误类型。维护者可将该报告放在受保护的位置，并通过 `AUTOLAVA_BACKUP_RESTORE_REPORT_FILE` 指向它，管理员诊断会显示 `local_drill_success` 或 `failed`。这不表示真实异机恢复已通过。保留快照来源及失败记录；不得在证据中写入凭证或真实业务数据。
+结果包含迁移版本和账号、门店、每日台账、历史分类快照、公司结算的样本行存在情况。缺少任一代表性记录则演练失败。目标目录必须为空，程序只在该目录建立恢复副本，不覆盖在线主库。与目标目录同级的 `<目录名>-result.json` 保存本地隔离演练结果、时间及快照摘要；失败时保存错误类型，包括前置校验失败。维护者可将该报告放在受保护的位置，并通过 `AUTOLAVA_BACKUP_RESTORE_REPORT_FILE` 指向它，管理员诊断会显示 `local_drill_success` 或 `failed`。这不表示真实异机恢复已通过。保留快照来源及失败记录；不得在证据中写入凭证或真实业务数据。
 
 当前自动化验收只覆盖传输替身与本地隔离恢复。真实异机目的地的启用、数据传输及恢复演练尚未执行，需单独配置与明确授权。

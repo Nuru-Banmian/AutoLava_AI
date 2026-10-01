@@ -91,16 +91,35 @@ def test_isolated_restore_requires_empty_target_and_reads_migrated_schema(tmp_pa
     assert result["migration_version"]
     assert result["sample_rows_present"] == {name: True for name in (
         "users", "stores", "daily_records", "income_snapshots", "settlements")}
+    report = tmp_path / "restore-result.json"
+    assert '"status": "local_drill_success"' in report.read_text(encoding="utf-8")
     with closing(sqlite3.connect(tmp_path / "restore" / "restored.sqlite3")) as restored:
         assert restored.execute("SELECT daily_revenue FROM store_daily_records").fetchone() == (100,)
         assert restored.execute("SELECT category_name FROM daily_income_items").fetchone() == ("Historical",)
         assert restored.execute("SELECT amount, status FROM settlement_records").fetchone() == (50, "confirmed")
     with pytest.raises(ValueError, match="empty"):
         verify_isolated_restore(snapshot, tmp_path / "restore")
+    assert '"status": "failed"' in report.read_text(encoding="utf-8")
     with closing(sqlite3.connect(source)) as db:
         db.execute("DELETE FROM settlement_records")
         db.commit()
     incomplete = backup_sqlite(source, tmp_path / "incomplete", date(2026, 10, 1))
     with pytest.raises(ValueError, match="lacks representative"):
         verify_isolated_restore(incomplete, tmp_path / "failed-restore")
-    assert '"status": "failed"' in (tmp_path / "failed-restore" / "restore-result.json").read_text()
+    assert '"status": "failed"' in (tmp_path / "failed-restore-result.json").read_text()
+
+
+def test_precheck_failure_records_result_and_report_error_preserves_cause(tmp_path, monkeypatch):
+    from app.services import backup_restore
+
+    target = tmp_path / "isolated"
+    with pytest.raises(ValueError, match="not a verified"):
+        verify_isolated_restore(tmp_path / "missing.sqlite3", target)
+    assert '"status": "failed"' in (tmp_path / "isolated-result.json").read_text()
+
+    def fail_report(_path, _data):
+        raise OSError("report unavailable")
+
+    monkeypatch.setattr(backup_restore, "_write_report", fail_report)
+    with pytest.raises(ValueError, match="not a verified"):
+        verify_isolated_restore(tmp_path / "missing.sqlite3", tmp_path / "other")
