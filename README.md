@@ -120,5 +120,10 @@ npx playwright test
 ```
 
 The normal PR CI runs backend and frontend checks, including the locked backend install and
-`npm ci`. The separate manual image workflow builds both images and checks API startup and
-migration with a disposable volume. It does not validate the complete user flow.
+`npm ci`. The separate manual `release-flow.yml` workflow builds both images and exercises
+the published Web bundle through real Nginx and a local HTTPS test proxy. It validates Secure
+Cookie login and logout, browser ledger save and restart readback, HTTP analytics and workbook
+export, and migration of a disposable older database. Image IDs, migration versions, selected
+runtime dependencies, browser traces, and failure logs are saved with the run. The local HTTPS
+certificate is self-signed and trusted only by this isolated check. See
+`docs/validation/issue-203-release-flow.md` for its evidence boundary.
