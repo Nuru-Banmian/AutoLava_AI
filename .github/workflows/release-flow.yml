@@ -1,0 +1,36 @@
+name: Release flow acceptance
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [labeled, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    name: Actual API and Web images, HTTPS and browser
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'release-candidate') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Verify candidate with disposable Docker data
+        run: bash scripts/verify-release-flow.sh "$RUNNER_TEMP/release-flow"
+      - name: Preserve release diagnostics, including failed runs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-flow-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/release-flow/
+            frontend/test-results/
+            frontend/playwright-report/release/
+          if-no-files-found: warn
+          retention-days: 7

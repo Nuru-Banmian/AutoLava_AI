@@ -1,0 +1,7 @@
+services:
+  autolava-api:
+    environment:
+      # Refuse outbound provider traffic during disposable release acceptance.
+      HTTP_PROXY: http://127.0.0.1:9
+      HTTPS_PROXY: http://127.0.0.1:9
+      NO_PROXY: localhost,127.0.0.1,autolava-api,autolava-web
