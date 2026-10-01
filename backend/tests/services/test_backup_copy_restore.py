@@ -79,7 +79,7 @@ def test_isolated_restore_requires_empty_target_and_reads_migrated_schema(tmp_pa
     with closing(sqlite3.connect(source)) as db:
         db.execute("INSERT INTO users (id, auth_identity, username, password_hash, role, is_active) VALUES (1, 'sample', 'sample', 'unused', 'admin', 1)")
         db.execute("INSERT INTO stores (id, name, address, latitude, longitude, timezone, is_active, income_items_enabled) VALUES (1, 'Sample', 'Sample', 45, 9, 'Europe/Rome', 1, 1)")
-        db.execute("INSERT INTO store_daily_records (id, store_id, date, daily_revenue, income_mode, is_open, weather_edited, scanned, created_by, updated_by) VALUES (1, 1, '2026-10-01', 100, 'composed', '营业', 0, 0, 1, 1)")
+        db.execute("INSERT INTO store_daily_records (id, identity, revision, store_id, date, daily_revenue, income_mode, is_open, weather_edited, scanned, created_by, updated_by) VALUES (1, 'sample-record', 1, 1, '2026-10-01', 100, 'composed', '营业', 0, 0, 1, 1)")
         db.execute("INSERT INTO income_categories (id, store_id, name, include_in_total, is_active, sort_order) VALUES (1, 1, 'Original', 1, 1, 0)")
         db.execute("INSERT INTO daily_income_items (id, record_id, category_id, category_name, include_in_total, sort_order, amount) VALUES (1, 1, 1, 'Historical', 1, 0, 100)")
         db.execute("INSERT INTO settlement_companies (id, store_id, name, normalized_name, is_active, created_by, updated_by) VALUES (1, 1, 'Company', 'company', 1, 1, 1)")

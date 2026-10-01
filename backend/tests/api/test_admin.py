@@ -127,9 +127,17 @@ async def test_diagnostics_distinguish_verified_local_backup_from_unconfigured_c
         assert visible["isolated_restore"] == "local_drill_success"
         store = await store_factory(name="Copy failure does not block ledger")
         today = datetime.now(ZoneInfo(store.timezone)).date()
+        form = (await admin_client.get(
+            f"/api/ledger/{store.id}/{today.isoformat()}/form-config"
+        )).json()
         saved = await admin_client.put(
             f"/api/ledger/{store.id}/{today.isoformat()}",
-            json={"is_open": "营业", "daily_revenue": 100, "items": []},
+            json={
+                "expected_identity": form["identity"],
+                "expected_revision": form["revision"],
+                "expected_config_revision": form["config_revision"],
+                "is_open": "营业", "daily_revenue": 100, "items": [],
+            },
         )
         assert saved.status_code == 201
         assert saved.json()["daily_revenue"] == 100
