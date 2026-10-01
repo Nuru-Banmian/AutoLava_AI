@@ -90,14 +90,6 @@ describe("App", () => {
     expect(await screen.findByText("AutoLava AI")).toBeInTheDocument();
   });
 
-  it("lets an administrator open the basic AI chat from the system navigation", async () => {
-    renderApplication("/agent", "administrator");
-
-    expect(await screen.findByRole("heading", { name: "AI 对话" })).toBeInTheDocument();
-    const navigation = screen.getByRole("navigation", { name: "主导航" });
-    expect(within(navigation).getByRole("link", { name: "AI 对话" })).toHaveAttribute("href", "/agent");
-  });
-
   it("keeps the retired charts route unmatched without mounting either legacy page", () => {
     const router = createAppRouter(["/charts"]);
 
@@ -177,7 +169,6 @@ describe("App", () => {
       "首页",
       "记账",
       "营业记录",
-      "AI 对话",
       "管理中心",
     ]);
   });

@@ -1,4 +1,4 @@
-import { BookOpen, Bot, Building2, Database, Home, LogOut, Menu, Settings } from "lucide-react";
+import { BookOpen, Building2, Database, Home, LogOut, Menu, Settings } from "lucide-react";
 import type { ComponentType, SVGProps } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 
@@ -17,7 +17,6 @@ const icons: Record<string, Icon> = {
   "/settlements": Building2,
   "/database": Database,
   "/admin": Settings,
-  "/agent": Bot,
   "/more": Menu,
 };
 

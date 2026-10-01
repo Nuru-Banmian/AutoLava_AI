@@ -29,6 +29,14 @@ function Assert-Command([string]$Name) {
     }
 }
 
+function Resolve-UvExecutable {
+    $globalUv = Get-Command uv -ErrorAction SilentlyContinue
+    if ($globalUv) { return $globalUv.Source }
+    $bundledUv = Join-Path $BackendVenv "Scripts\uv.exe"
+    if (Test-Path -LiteralPath $bundledUv) { return $bundledUv }
+    Stop-WithMessage "缺少命令 uv，请先安装后重试。"
+}
+
 function Get-EnvFileValues([string]$Path) {
     $values = @{}
     if (-not (Test-Path -LiteralPath $Path)) { return $values }
@@ -189,11 +197,11 @@ function Ensure-Dependencies {
     $backendHash = Get-ManifestHash (Join-Path $BackendDir "pyproject.toml")
     $backendMarker = Join-Path $StateDir "backend.sha256"
     if (-not (Test-Path $BackendPython) -or -not (Test-HashCurrent $backendMarker $backendHash)) {
-        Assert-Command "uv"
+        $uv = Resolve-UvExecutable
         if (-not (Test-Path $BackendPython)) {
-            Invoke-Checked "创建 Python 虚拟环境" { uv venv $BackendVenv }
+            Invoke-Checked "创建 Python 虚拟环境" { & $uv venv $BackendVenv }
         }
-        Invoke-Checked "安装后端依赖" { uv pip install --python $BackendPython -e $BackendDir }
+        Invoke-Checked "安装后端依赖" { & $uv pip install --python $BackendPython -e $BackendDir }
         Save-Hash $backendMarker $backendHash
     }
 

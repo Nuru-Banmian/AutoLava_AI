@@ -136,7 +136,8 @@ def test_launcher_preflight_and_dependency_cache_are_repository_local() -> None:
         "Get-FileHash",
         'Join-Path $RepoRoot ".autolava-local"',
         'Join-Path $BackendDir ".venv"',
-        "uv pip install",
+        "Resolve-UvExecutable",
+        "& $uv pip install",
         "npm ci",
     ):
         assert fragment in launcher
@@ -144,13 +145,40 @@ def test_launcher_preflight_and_dependency_cache_are_repository_local() -> None:
         r"function Ensure-Dependencies.*?^}", launcher, re.DOTALL | re.MULTILINE
     )
     assert ensure_dependencies
-    assert 'Assert-Command "uv"' in ensure_dependencies.group(0)
+    assert "Resolve-UvExecutable" in ensure_dependencies.group(0)
     startup_preflight = launcher[
         launcher.index("if ($PSVersionTable.PSVersion.Major") :
         launcher.index("Ensure-Dependencies", launcher.index("$backendProcess = $null"))
     ]
     assert 'Assert-Command "uv"' not in startup_preflight
     assert ".autolava-local/" in read(".gitignore")
+
+
+@pytest.mark.skipif(shutil.which("powershell.exe") is None, reason="requires Windows PowerShell")
+def test_launcher_uses_repo_venv_uv_when_global_uv_is_unavailable(tmp_path: Path) -> None:
+    launcher = read("scripts/start-local.ps1")
+    resolver = re.search(
+        r"function Resolve-UvExecutable.*?^}", launcher, re.DOTALL | re.MULTILINE
+    )
+    assert resolver, "launcher must resolve the uv already installed in its backend venv"
+    venv = tmp_path / "backend" / ".venv"
+    bundled_uv = venv / "Scripts" / "uv.exe"
+    bundled_uv.parent.mkdir(parents=True)
+    bundled_uv.touch()
+    quoted_venv = str(venv).replace("'", "''")
+    powershell = resolver.group(0) + r'''
+function Get-Command { param($Name, $ErrorAction) return $null }
+$BackendVenv = '%s'
+$resolved = Resolve-UvExecutable
+if ($resolved -ne (Join-Path $BackendVenv "Scripts\uv.exe")) { throw "wrong uv path" }
+''' % quoted_venv
+    completed = subprocess.run(
+        [shutil.which("powershell.exe"), "-NoProfile", "-Command", powershell],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_launcher_windows_check_short_circuits_before_iswindows_on_powershell_51() -> None:

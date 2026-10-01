@@ -10,7 +10,6 @@ import { MorePage } from "@/pages/MorePage";
 import { BusinessRecordsPage } from "@/pages/BusinessRecordsPage";
 import { AccountPasswordPage } from "@/pages/AccountPasswordPage";
 import { CompanySettlementPage } from "@/pages/CompanySettlementPage";
-import { AgentPage } from "@/pages/AgentPage";
 import { StoreProvider } from "@/stores/StoreProvider";
 
 function AuthLoading() {
@@ -28,11 +27,6 @@ function ProtectedShell() {
 function AdminRoute() {
   const { user } = useAuth();
   return user?.role === "admin" ? <AdminPage /> : <Navigate to="/" replace />;
-}
-
-function AgentRoute() {
-  const { user } = useAuth();
-  return user?.role === "admin" ? <AgentPage /> : <Navigate to="/" replace />;
 }
 
 function MoreRoute() {
@@ -53,7 +47,6 @@ const routes: RouteObject[] = [{
       { path: "more", element: <MoreRoute /> },
       { path: "account/password", element: <AccountPasswordPage /> },
       { path: "admin", element: <AdminRoute /> },
-      { path: "agent", element: <AgentRoute /> },
     ] },
   ],
 }];

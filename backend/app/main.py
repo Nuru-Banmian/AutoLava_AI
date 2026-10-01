@@ -1,5 +1,4 @@
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -19,7 +18,6 @@ from app.services.scheduler import (
 )
 from app.services.sqlite_backup import has_valid_backup
 from app.services.pending_weather import PendingWeatherRefresh
-from app.services.agent_chat import AgentChatGraph, OpenAICompatibleChatModel
 from app.services.weather import OpenMeteoProvider, WeatherService
 
 
@@ -80,8 +78,6 @@ def create_app(
     app.state.dashboard_refresh_limiter = RefreshLimiter()
     app.state.background_refresh_scheduler = scheduler
     app.state.pending_weather_refresh = pending_weather
-    app.state.agent_chat_graph = AgentChatGraph(OpenAICompatibleChatModel(settings))
-    app.state.agent_clock = lambda: datetime.now(UTC)
     if maintenance_scheduler is not None:
         # Retention is chained after every backup attempt, so both names expose
         # the same single 03:00 lifecycle owner.

@@ -1,7 +1,6 @@
 from sqlalchemy.dialects import sqlite
 
 from app.models.base import Base
-import app.models.agent_chat  # noqa: F401
 import app.models.identity  # noqa: F401
 import app.models.ledger  # noqa: F401
 import app.models.operations  # noqa: F401
@@ -12,8 +11,6 @@ def test_final_tables_are_registered() -> None:
     assert set(Base.metadata.tables) == {
         "users",
         "login_sessions",
-        "agent_conversations",
-        "agent_messages",
         "stores",
         "store_members",
         "income_categories",
@@ -30,9 +27,6 @@ def test_final_tables_are_registered() -> None:
 
 
 def test_business_unique_constraints_exist() -> None:
-    assert {
-        c.name for c in Base.metadata.tables["agent_conversations"].constraints
-    } >= {"uq_agent_conversations_user_store"}
     assert {c.name for c in Base.metadata.tables["store_members"].constraints} >= {
         "uq_store_members_store_user"
     }
