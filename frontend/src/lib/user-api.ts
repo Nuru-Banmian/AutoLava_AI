@@ -68,7 +68,7 @@ export async function loadCategoryCatalog(storeId: number, start: string, end: s
   };
 }
 
-export function storeLocalToday(store: AccessibleStore, now = new Date()): string {
+export function storeLocalToday(store: Pick<AccessibleStore, "timezone">, now = new Date()): string {
   const parts = new Intl.DateTimeFormat("en-CA", { timeZone: store.timezone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
   const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return `${value.year}-${value.month}-${value.day}`;

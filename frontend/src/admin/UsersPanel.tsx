@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { UserEditor, type UserDraft } from "@/admin/UserEditor";
 import { api, ApiError } from "@/api/client";
+import type { components } from "@/api/generated";
 import type { AdminStore, AdminUser, UserRole } from "@/api/types";
 import { useAuth } from "@/auth/AuthProvider";
 import { Button } from "@/components/ui/button";
@@ -13,7 +14,7 @@ const usersKey = ["admin", "users"] as const;
 const storesKey = ["admin", "stores"] as const;
 
 type UserSelection = number | "new" | null;
-type UserPatchBody = { password?: string; role?: UserRole; is_active?: boolean; store_ids?: number[] };
+type UserPatchBody = components["schemas"]["UserPatch"];
 type TargetState = { requestId: number; pending: boolean; error: Error | null };
 
 function targetFor(selection: UserSelection) {
@@ -99,7 +100,7 @@ export function UsersPanel() {
   }
 
   const createUser = useMutation({
-    mutationFn: ({ body }: { target: "new"; requestId: number; generation: number; body: { username: string; password: string; role: UserRole; store_ids: number[] } }) =>
+    mutationFn: ({ body }: { target: "new"; requestId: number; generation: number; body: components["schemas"]["UserCreate"] }) =>
       api<AdminUser>("/admin/users", { method: "POST", body: JSON.stringify(body) }),
     onSuccess: async (created, { target, requestId, generation }) => {
       await invalidateAuthoritativeData();

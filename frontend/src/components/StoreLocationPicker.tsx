@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 
 import { api, friendlyApiError } from "@/api/client";
+import type { components } from "@/api/generated";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { leafletMapAdapter } from "@/maps/provider";
 import type { MapAdapter, MapLocation } from "@/maps/types";
 
-type GeocodeCandidate = { name: string; country: string; latitude: number; longitude: number; timezone: string };
+type GeocodeCandidate = components["schemas"]["GeocodeCandidateResponse"];
 
 interface Props {
   value: MapLocation | null;
@@ -45,7 +46,7 @@ export function StoreLocationPicker({ value, onConfirm, adapter = leafletMapAdap
     setDraft({ label: "地图选点", ...point, timezone: "" });
     try {
       const params = new URLSearchParams({ latitude: String(point.latitude), longitude: String(point.longitude) });
-      const result = await api<{ timezone: string }>(`/admin/stores/timezone?${params}`);
+      const result = await api<components["schemas"]["TimezoneResponse"]>(`/admin/stores/timezone?${params}`);
       if (sequence !== requestSequence.current) return;
       setDraft({ label: "地图选点", ...point, timezone: result.timezone });
     } catch (reason) {

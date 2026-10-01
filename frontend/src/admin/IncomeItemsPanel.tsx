@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
 import { api, ApiError, friendlyApiError } from "@/api/client";
+import type { components } from "@/api/generated";
 import type { IncomeCategory, IncomeConfigResponse } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,7 +11,7 @@ import { invalidateUserData } from "@/lib/user-api";
 const configKey = (storeId: number) => ["income-config", storeId, "current"] as const;
 const categoriesKey = (storeId: number) => ["admin", "income-categories", storeId] as const;
 
-type CategoryWithArchive = IncomeCategory & { archived_at: string | null };
+type CategoryWithArchive = IncomeCategory;
 type DraftItem = {
   key: string;
   category_id: number | null;
@@ -161,7 +162,7 @@ export function IncomeItemsPanel({ storeId, onDirtyChange }: IncomeItemsPanelPro
           is_active,
           sort_order,
         })),
-      }),
+      } satisfies components["schemas"]["IncomeConfigPublishBody"]),
       });
       queryClient.setQueryData(configKey(config.store_id), config);
       await refreshStore(capturedStoreId);

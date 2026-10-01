@@ -861,6 +861,8 @@ export interface components {
         };
         /** CategoryCreate */
         CategoryCreate: {
+            /** Expected Revision */
+            expected_revision?: number | null;
             /** Include In Total */
             include_in_total: boolean;
             /** Name */
@@ -888,6 +890,8 @@ export interface components {
         };
         /** CategoryPatch */
         CategoryPatch: {
+            /** Expected Revision */
+            expected_revision?: number | null;
             /** Include In Total */
             include_in_total?: boolean | null;
             /** Is Active */
@@ -1075,6 +1079,11 @@ export interface components {
             /** Store Id */
             store_id: number;
         };
+        /** IncomeCategoryVersionBody */
+        IncomeCategoryVersionBody: {
+            /** Expected Revision */
+            expected_revision?: number | null;
+        };
         /** IncomeConfigItemBody */
         IncomeConfigItemBody: {
             /** Category Id */
@@ -1098,6 +1107,8 @@ export interface components {
         IncomeConfigPublishBody: {
             /** Enabled */
             enabled: boolean;
+            /** Expected Revision */
+            expected_revision?: number | null;
             /** Items */
             items: components["schemas"]["IncomeConfigItemBody"][];
         };
@@ -1109,6 +1120,8 @@ export interface components {
             formula: string;
             /** Items */
             items: components["schemas"]["IncomeCategoryResponse"][];
+            /** Revision */
+            revision: number;
             /** Store Id */
             store_id: number;
         };
@@ -1136,6 +1149,12 @@ export interface components {
             activity?: string | null;
             /** Daily Revenue */
             daily_revenue?: number | null;
+            /** Expected Config Revision */
+            expected_config_revision?: number | null;
+            /** Expected Identity */
+            expected_identity?: string | null;
+            /** Expected Revision */
+            expected_revision?: number | null;
             /**
              * Is Open
              * @enum {string}
@@ -1155,14 +1174,27 @@ export interface components {
              */
             weather_edited: boolean;
         };
+        /** LedgerDeleteBody */
+        LedgerDeleteBody: {
+            /** Expected Identity */
+            expected_identity?: string | null;
+            /** Expected Revision */
+            expected_revision?: number | null;
+        };
         /** LedgerSaveResponse */
         LedgerSaveResponse: {
+            /** Config Revision */
+            config_revision: number;
             /** Daily Revenue */
             daily_revenue: number;
             /** Date */
             date: string;
             /** Id */
             id: number;
+            /** Identity */
+            identity: string;
+            /** Revision */
+            revision: number;
         };
         /** LoginBody */
         LoginBody: {
@@ -1723,7 +1755,11 @@ export interface operations {
                 access_token?: string | null;
             };
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["IncomeCategoryVersionBody"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             204: {
@@ -1791,7 +1827,11 @@ export interface operations {
                 access_token?: string | null;
             };
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["IncomeCategoryVersionBody"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -1824,7 +1864,11 @@ export interface operations {
                 access_token?: string | null;
             };
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["IncomeCategoryVersionBody"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -2917,7 +2961,11 @@ export interface operations {
                 access_token?: string | null;
             };
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["LedgerDeleteBody"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             204: {
