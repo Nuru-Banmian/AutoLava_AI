@@ -24,8 +24,6 @@ from app.services.record_payload import record_payload
 from app.services.weather import (
     FrozenWeatherLocation,
     RECORD_WEATHER_OPTIONS,
-    WeatherService,
-    is_valid_weather_result,
 )
 
 router = APIRouter(prefix="/ledger", tags=["ledger"])
@@ -184,28 +182,7 @@ async def put_record(
     if not {"expected_identity", "expected_revision", "expected_config_revision"}.issubset(body.model_fields_set) or body.expected_config_revision is None:
         raise HTTPException(428, "请重新加载每日台账后重试")
     actor_id = access.user.id
-    location = FrozenWeatherLocation.from_store(access.store)
     payload = body.model_dump(mode="json", exclude_unset=True)
-    weather_service: WeatherService = get_weather_service(request)
-    await end_read_transaction(session)
-    try:
-        result = await asyncio.wait_for(
-            weather_service.get_daily(location, record_date), timeout=9
-        )
-    except Exception:
-        result = None
-    if result is not None and is_valid_weather_result(result):
-        payload.update(
-            {
-                "weather_auto": result.weather,
-                "weather_code": result.weather_code,
-                "temperature_max": result.temperature_max,
-                "temperature_min": result.temperature_min,
-                "precipitation": result.precipitation,
-            }
-        )
-    else:
-        result = None
     write = await LedgerService(session).upsert(
         store_id=store_id,
         record_date=record_date,
@@ -221,18 +198,9 @@ async def put_record(
         "date": record.date.isoformat(),
         "daily_revenue": record.daily_revenue,
     }
-    await _safely_refresh_briefing(
-        request,
-        session,
-        actor_id=actor_id,
-        store_id=store_id,
-        location=location,
-        capability="ledger.edit",
-        record_date=write.event.record_date,
-        weather_overrides={
-            record_date: result.weather if result is not None else "天气暂时不可用"
-        },
-    )
+    pending_refresh = getattr(request.app.state, "pending_weather_refresh", None)
+    if pending_refresh is not None:
+        pending_refresh.wake()
     return JSONResponse(
         content=response_content,
         status_code=201 if created else 200,
@@ -273,5 +241,6 @@ async def delete_record(
         location=location,
         capability="ledger.delete",
         record_date=event.record_date,
+        weather_overrides={record_date: "天气暂时不可用"},
     )
     return Response(status_code=204)

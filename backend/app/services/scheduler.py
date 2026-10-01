@@ -17,7 +17,7 @@ from app.models.operations import ScheduledTaskLog, UTC_TIMESTAMP_CONTRACT
 from app.services.briefing import BriefingService
 from app.services.operations_retention import prune_operational_rows
 from app.services.sqlite_backup import backup_sqlite
-from app.services.weather import WeatherResult, WeatherService, is_valid_weather_result
+from app.services.weather import FrozenWeatherLocation, WeatherResult, WeatherService, is_valid_weather_result
 
 
 logger = logging.getLogger(__name__)
@@ -228,7 +228,7 @@ def make_sqlite_maintenance_callback(
 
 @dataclass(frozen=True)
 class _StoreWeather:
-    store: Store
+    store: FrozenWeatherLocation
     today: date
     dates: tuple[date, date, date]
     results: dict[date, WeatherResult | None]
@@ -252,13 +252,14 @@ def make_refresh_callback(
             return self.results.get(target)
 
     async def fetch_weather(store: Store) -> _StoreWeather:
-        today = datetime.now(ZoneInfo(store.timezone)).date()
+        location = FrozenWeatherLocation.from_store(store)
+        today = datetime.now(ZoneInfo(location.timezone)).date()
         dates = (today - timedelta(days=1), today, today + timedelta(days=1))
 
         async def lookup(target: date) -> WeatherResult | None:
             try:
                 return await asyncio.wait_for(
-                    weather_service.get_daily(store, target),
+                    weather_service.get_daily(location, target),
                     timeout=weather_timeout_seconds,
                 )
             except Exception:
@@ -266,7 +267,7 @@ def make_refresh_callback(
 
         values = await asyncio.gather(*(lookup(target) for target in dates))
         return _StoreWeather(
-            store=store,
+            store=location,
             today=today,
             dates=dates,
             results=dict(zip(dates, values, strict=True)),
@@ -276,6 +277,13 @@ def make_refresh_callback(
         async with session_factory() as session:
             try:
                 async with sqlite_short_write(session):
+                    current_store = await session.get(Store, weather.store.id, populate_existing=True)
+                    if (
+                        current_store is None
+                        or not current_store.is_active
+                        or FrozenWeatherLocation.from_store(current_store) != weather.store
+                    ):
+                        return False
                     # This query happens after all network waits, so manual edits made
                     # while weather was in flight are observed before automatic writes.
                     records = list(
@@ -288,7 +296,7 @@ def make_refresh_callback(
                     )
                     for record in records:
                         result = weather.results[record.date]
-                        if result is not None:
+                        if result is not None and record.weather_refresh_due_at is None:
                             apply_refreshed_weather(record, result)
                     await BriefingService(
                         session, CachedWeatherService(weather.results)
@@ -320,11 +328,12 @@ def make_refresh_callback(
             stores = []
             discovery_failed = True
 
-        fetched = await asyncio.gather(*(fetch_weather(store) for store in stores))
-        outcomes = [
-            await write_store(weather)
-            for weather in sorted(fetched, key=lambda value: value.store.id)
-        ]
+        outcomes = []
+        for offset in range(0, len(stores), 20):
+            fetched = await asyncio.gather(*(fetch_weather(store) for store in stores[offset:offset + 20]))
+            outcomes.extend(
+                [await write_store(weather) for weather in sorted(fetched, key=lambda value: value.store.id)]
+            )
         succeeded = sum(outcomes)
         failed = len(stores) - succeeded
         if discovery_failed:

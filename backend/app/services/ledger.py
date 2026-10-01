@@ -314,6 +314,10 @@ class LedgerService:
                 and (record.weather is None or record.weather != previous_weather)
             )
         )
+        # This is committed with the ledger write, including historical dates.
+        # A cancelled process can discover the work again after restart.
+        record.weather_refresh_due_at = datetime.now(UTC).replace(tzinfo=None)
+        record.weather_refresh_finished = record.weather_edited
         for field in (
             "weather_auto",
             "weather_code",

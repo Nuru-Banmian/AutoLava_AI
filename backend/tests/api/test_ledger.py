@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import asyncio
 from io import BytesIO
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -123,7 +124,34 @@ async def test_put_releases_dependency_transaction_before_weather(
     )
 
     assert response.status_code == 201
-    assert observed_transactions == [False]
+    assert observed_transactions == []
+
+
+async def test_historical_ledger_save_and_read_do_not_wait_for_weather(
+    auth_client: AsyncClient,
+    assigned_store: AssignedStore,
+    ledger_payload: dict,
+) -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class BlockedWeather:
+        async def get_daily(self, store: Store, target: date):
+            entered.set()
+            await release.wait()
+            return WeatherResult("晴", 0, 20.0, 10.0, 0.0)
+
+    auth_client._transport.app.state.weather_service = BlockedWeather()
+    record_date = today_for(assigned_store) - timedelta(days=30)
+    path = f"/api/ledger/{assigned_store.id}/{record_date.isoformat()}"
+    try:
+        response = await asyncio.wait_for(
+            put_ledger(auth_client, path, json=ledger_payload), timeout=1
+        )
+        assert response.status_code == 201
+        assert (await auth_client.get(path)).json()["daily_revenue"] == 200
+    finally:
+        release.set()
 
 
 @pytest.mark.parametrize("amount", [1.5, "1.00"])
@@ -491,7 +519,7 @@ async def test_explicit_clear_with_auto_weather_stays_cleared(
     assert saved["weather_edited"] is True
 
 
-async def test_untouched_empty_weather_can_still_be_auto_filled(
+async def test_second_save_does_not_wait_for_fresh_weather(
     auth_client: AsyncClient, assigned_store: AssignedStore, ledger_payload: dict,
 ) -> None:
     path = f"/api/ledger/{assigned_store.id}/{today_for(assigned_store).isoformat()}"
@@ -506,5 +534,5 @@ async def test_untouched_empty_weather_can_still_be_auto_filled(
     auth_client._transport.app.state.weather_service = FreshWeather()
     assert (await put_ledger(auth_client, path, json=body)).status_code == 200
     saved = (await auth_client.get(path)).json()
-    assert saved["weather"] == "晴"
+    assert saved["weather"] is None
     assert saved["weather_edited"] is False

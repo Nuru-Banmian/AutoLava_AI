@@ -1,6 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
-from pydantic import SecretStr, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT_ENV_FILE = Path(__file__).resolve().parents[3] / ".env"
@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     bootstrap_username: str = ""
     cookie_secure: bool = False
     cors_origins: list[str] = ["http://localhost:5173"]
+    weather_max_inflight: int = Field(default=4, ge=1, le=32)
     agent_model_endpoint: str = ""
     agent_model_region: str = ""
     agent_model_id: str = ""

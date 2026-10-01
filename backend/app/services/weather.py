@@ -3,6 +3,7 @@ from datetime import date, datetime
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
+import asyncio
 import httpx
 
 from app.models.identity import Store
@@ -95,14 +96,24 @@ class WeatherProvider(Protocol):
 
 
 class OpenMeteoProvider:
-    def __init__(self, client: httpx.AsyncClient | None = None):
+    def __init__(self, client: httpx.AsyncClient | None = None, *, max_inflight: int = 4):
+        if max_inflight < 1:
+            raise ValueError("max_inflight must be positive")
         self.client = client
+        self._network_slots = asyncio.Semaphore(max_inflight)
+
+    async def aclose(self) -> None:
+        if self.client is not None:
+            await self.client.aclose()
+            self.client = None
 
     async def _get(self, url: str, **kwargs: Any) -> httpx.Response:
-        if self.client is not None:
-            return await self.client.get(url, **kwargs)
-        async with httpx.AsyncClient() as client:
-            return await client.get(url, **kwargs)
+        # The semaphore surrounds the actual HTTP call, not a parent task.
+        async with self._network_slots:
+            if self.client is not None:
+                return await self.client.get(url, **kwargs)
+            async with httpx.AsyncClient() as client:
+                return await client.get(url, **kwargs)
 
     async def get_daily(
         self, store: WeatherLocation, target: date
