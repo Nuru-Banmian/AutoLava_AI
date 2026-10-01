@@ -27,7 +27,7 @@ from app.schemas.admin import (
 from app.schemas.income_config import IncomeCategoryVersionBody
 from app.services.access import require_fresh_store_access, require_fresh_user
 from app.services.briefing import BriefingService
-from app.services.income_config import IncomeConfigService
+from app.services.income_config import IncomeConfigService, require_category_manager
 from app.services.owner import is_owner
 from app.services.sessions import revoke_all
 from app.services.weather import FrozenWeatherLocation
@@ -141,21 +141,6 @@ async def _store_has_protected_references(session: AsyncSession, store_id: int) 
         if await session.scalar(select(exists().where(store_id_column == store_id))):
             return True
     return False
-
-
-async def _require_fresh_category_manager(
-    session: AsyncSession, *, actor_id: int, category_id: int
-) -> tuple[IncomeCategory, Store]:
-    category = await session.get(IncomeCategory, category_id, populate_existing=True)
-    if category is None:
-        raise HTTPException(404, "Category not found")
-    _, store = await require_fresh_store_access(
-        session,
-        user_id=actor_id,
-        store_id=category.store_id,
-        capability="income_config.manage",
-    )
-    return category, store
 
 
 async def create_user(body: UserCreate, session: AsyncSession, actor: User) -> dict[str, Any]:
@@ -399,7 +384,7 @@ async def patch_income_category(
 ) -> dict[str, Any]:
     actor_id = actor.id
     async with sqlite_short_write(session):
-        category, store = await _require_fresh_category_manager(
+        category, store = await require_category_manager(
             session, actor_id=actor_id, category_id=category_id
         )
         service = IncomeConfigService(session)
@@ -471,7 +456,7 @@ async def delete_unused_category(
 ) -> None:
     actor_id = actor.id
     async with sqlite_short_write(session):
-        _, store = await _require_fresh_category_manager(
+        _, store = await require_category_manager(
             session, actor_id=actor_id, category_id=category_id
         )
         service = IncomeConfigService(session)

@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import sqlite_short_write
-from app.services.access import require_fresh_store_access
+from app.services.access import require_fresh_store_access, require_fresh_user
 from app.models.identity import Store
 from app.models.ledger import DailyIncomeItem, IncomeCategory
 from app.schemas.income_config import (
@@ -164,6 +164,23 @@ class IncomeConfigService:
         await self.session.flush()
 
 
+async def require_category_manager(
+    session: AsyncSession, *, actor_id: int, category_id: int
+) -> tuple[IncomeCategory, Store]:
+    # Check the current session before looking up an identifier supplied by the caller.
+    await require_fresh_user(session, user_id=actor_id, capability="income_config.manage")
+    category = await session.get(IncomeCategory, category_id, populate_existing=True)
+    if category is None:
+        raise HTTPException(404, "Category not found")
+    _, store = await require_fresh_store_access(
+        session,
+        user_id=actor_id,
+        store_id=category.store_id,
+        capability="income_config.manage",
+    )
+    return category, store
+
+
 class IncomeConfigCommands:
     """Own the transaction for configuration changes initiated by an actor."""
 
@@ -172,16 +189,9 @@ class IncomeConfigCommands:
         self.actor_id = actor_id
 
     async def _category_and_store(self, category_id: int) -> tuple[IncomeCategory, Store]:
-        category = await self.session.get(IncomeCategory, category_id, populate_existing=True)
-        if category is None:
-            raise HTTPException(404, "Category not found")
-        _, store = await require_fresh_store_access(
-            self.session,
-            user_id=self.actor_id,
-            store_id=category.store_id,
-            capability="income_config.manage",
+        return await require_category_manager(
+            self.session, actor_id=self.actor_id, category_id=category_id
         )
-        return category, store
 
     async def replace(self, store_id: int, body: IncomeConfigPublishBody) -> IncomeConfigResponse:
         async with sqlite_short_write(self.session):

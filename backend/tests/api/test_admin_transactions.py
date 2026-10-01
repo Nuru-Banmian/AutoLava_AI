@@ -19,10 +19,15 @@ from app.main import create_app
 class WriteGate:
     def __init__(self) -> None:
         self.waiting = asyncio.Event()
+        self.third_waiting = asyncio.Event()
         self.release = asyncio.Event()
+        self.attempts = 0
 
     async def __aenter__(self):
+        self.attempts += 1
         self.waiting.set()
+        if self.attempts == 3:
+            self.third_waiting.set()
         await self.release.wait()
 
     async def __aexit__(self, *_args):
@@ -158,12 +163,26 @@ async def test_migrated_management_commands_roll_back_and_recheck_identity(
             revoked = asyncio.create_task(
                 client.put("/api/admin/stores/1/members", json={"user_ids": []})
             )
-            await asyncio.wait_for(gate.waiting.wait(), timeout=5)
+            revoked_category = asyncio.create_task(
+                client.patch(
+                    "/api/admin/income-categories/1",
+                    json={"expected_revision": 2, "name": "Revoked"},
+                )
+            )
+            revoked_unknown_category = asyncio.create_task(
+                client.patch(
+                    "/api/admin/income-categories/9999",
+                    json={"expected_revision": 2, "name": "Revoked"},
+                )
+            )
+            await asyncio.wait_for(gate.third_waiting.wait(), timeout=5)
             with closing(sqlite3.connect(database_path)) as connection:
                 connection.execute("UPDATE users SET is_active = 0 WHERE id = 1")
                 connection.commit()
             gate.release.set()
             assert (await revoked).status_code == 401
+            assert (await revoked_category).status_code == 401
+            assert (await revoked_unknown_category).status_code == 401
 
         with closing(sqlite3.connect(database_path)) as connection:
             assert connection.execute(
