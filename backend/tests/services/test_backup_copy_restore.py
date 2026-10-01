@@ -87,6 +87,7 @@ def test_isolated_restore_requires_empty_target_and_reads_migrated_schema(tmp_pa
         db.commit()
     snapshot = backup_sqlite(source, tmp_path / "local", date(2026, 10, 1))
     result = verify_isolated_restore(snapshot, tmp_path / "restore")
+    assert result["status"] == "local_drill_success"
     assert result["migration_version"]
     assert result["sample_rows_present"] == {name: True for name in (
         "users", "stores", "daily_records", "income_snapshots", "settlements")}
@@ -96,3 +97,10 @@ def test_isolated_restore_requires_empty_target_and_reads_migrated_schema(tmp_pa
         assert restored.execute("SELECT amount, status FROM settlement_records").fetchone() == (50, "confirmed")
     with pytest.raises(ValueError, match="empty"):
         verify_isolated_restore(snapshot, tmp_path / "restore")
+    with closing(sqlite3.connect(source)) as db:
+        db.execute("DELETE FROM settlement_records")
+        db.commit()
+    incomplete = backup_sqlite(source, tmp_path / "incomplete", date(2026, 10, 1))
+    with pytest.raises(ValueError, match="lacks representative"):
+        verify_isolated_restore(incomplete, tmp_path / "failed-restore")
+    assert '"status": "failed"' in (tmp_path / "failed-restore" / "restore-result.json").read_text()

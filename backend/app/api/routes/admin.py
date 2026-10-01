@@ -39,6 +39,7 @@ from app.schemas.time import timestamp_status, trusted_utc
 from app.schemas.income_config import IncomeCategoryResponse, IncomeCategoryVersionBody
 from app.services.owner import owner_username
 from app.services.sqlite_backup import latest_valid_backup_at
+from app.services.backup_restore import restore_drill_status
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 UsersManager = Annotated[User, Depends(require_capability("users.manage"))]
@@ -300,6 +301,8 @@ async def diagnostics(session: Session) -> dict[str, Any]:
             latest_tasks["sqlite_backup_copy"]["status"]
             if latest_tasks["sqlite_backup_copy"] else "not_attempted"
         ),
-        "isolated_restore": "not_verified",
+        "isolated_restore": await asyncio.to_thread(
+            restore_drill_status, get_settings().backup_restore_report_file
+        ),
         "latest_tasks": latest_tasks,
     }

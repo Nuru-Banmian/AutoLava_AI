@@ -77,7 +77,7 @@ async def test_alerts_and_task_logs_remain_admin_only(
 
 
 async def test_diagnostics_distinguish_verified_local_backup_from_unconfigured_copy(
-    admin_client, tmp_path, monkeypatch
+    admin_client, db_session, store_factory, tmp_path, monkeypatch
 ) -> None:
     backup_directory = tmp_path / "backups"
     backup_directory.mkdir()
@@ -103,6 +103,36 @@ async def test_diagnostics_distinguish_verified_local_backup_from_unconfigured_c
         assert updated["local_snapshot"] == "success"
         assert updated["latest_valid_local_backup_at"].endswith("Z")
         assert updated["offsite_copy"] == "not_configured"
+        report = tmp_path / "restore-result.json"
+        report.write_text(
+            '{"status":"local_drill_success","migration_version":"head",'
+            '"snapshot_sha256":"' + '0' * 64 + '","sample_rows_present":{'
+            '"users":true,"stores":true,"daily_records":true,'
+            '"income_snapshots":true,"settlements":true}}',
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("AUTOLAVA_BACKUP_RESTORE_REPORT_FILE", str(report))
+        monkeypatch.setenv("AUTOLAVA_BACKUP_SSH_HOST", "backup.example")
+        get_settings.cache_clear()
+        db_session.add(ScheduledTaskLog(
+            store_id=None, task_type="sqlite_backup_copy", status="failed",
+            message="SQLite backup copy failed", retry_count=0,
+            started_at=datetime.now(UTC).replace(tzinfo=None),
+            finished_at=datetime.now(UTC).replace(tzinfo=None),
+        ))
+        await db_session.commit()
+        visible = (await admin_client.get("/api/admin/diagnostics")).json()
+        assert visible["local_snapshot"] == "success"
+        assert visible["offsite_copy"] == "failed"
+        assert visible["isolated_restore"] == "local_drill_success"
+        store = await store_factory(name="Copy failure does not block ledger")
+        today = datetime.now(ZoneInfo(store.timezone)).date()
+        saved = await admin_client.put(
+            f"/api/ledger/{store.id}/{today.isoformat()}",
+            json={"is_open": "营业", "daily_revenue": 100, "items": []},
+        )
+        assert saved.status_code == 201
+        assert saved.json()["daily_revenue"] == 100
     finally:
         get_settings.cache_clear()
 

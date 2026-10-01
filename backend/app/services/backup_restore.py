@@ -1,9 +1,12 @@
 """Offline recovery drill against a disposable directory."""
 
 import hashlib
+import json
+import os
 import shutil
 import sqlite3
 from contextlib import closing
+from datetime import UTC, datetime
 from pathlib import Path
 
 from app.services.sqlite_backup import _valid_backup
@@ -20,7 +23,8 @@ def verify_isolated_restore(snapshot: Path, empty_directory: Path) -> dict[str, 
         with snapshot.open("rb") as source, restored.open("xb") as target:
             shutil.copyfileobj(source, target)
         with snapshot.open("rb") as source, restored.open("rb") as target:
-            if hashlib.file_digest(source, "sha256").digest() != hashlib.file_digest(target, "sha256").digest():
+            snapshot_digest = hashlib.file_digest(source, "sha256").hexdigest()
+            if snapshot_digest != hashlib.file_digest(target, "sha256").hexdigest():
                 raise ValueError("Restored snapshot checksum mismatch")
         with closing(sqlite3.connect(f"{restored.resolve().as_uri()}?mode=ro", uri=True)) as db:
             if db.execute("PRAGMA integrity_check").fetchone() != ("ok",):
@@ -36,7 +40,44 @@ def verify_isolated_restore(snapshot: Path, empty_directory: Path) -> dict[str, 
                 "settlements": "SELECT id, company_id FROM settlement_records LIMIT 1",
             }
             readable = {name: db.execute(query).fetchone() is not None for name, query in tables.items()}
-        return {"migration_version": version[0], "sample_rows_present": readable}
-    except BaseException:
+        if not all(readable.values()):
+            raise ValueError("Restored database lacks representative business records")
+        result = {
+            "status": "local_drill_success",
+            "verified_at": datetime.now(UTC).isoformat(),
+            "snapshot_sha256": snapshot_digest,
+            "migration_version": version[0],
+            "sample_rows_present": readable,
+        }
+        report = empty_directory / "restore-result.json"
+        temporary_report = report.with_suffix(".json.tmp")
+        temporary_report.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+        os.replace(temporary_report, report)
+        return result
+    except Exception as error:
         restored.unlink(missing_ok=True)
+        (empty_directory / "restore-result.json").write_text(
+            json.dumps({"status": "failed", "error_type": type(error).__name__}),
+            encoding="utf-8",
+        )
         raise
+
+
+def restore_drill_status(report: Path | None) -> str:
+    if report is None:
+        return "not_verified"
+    try:
+        data = json.loads(report.read_text(encoding="utf-8"))
+        if data.get("status") == "failed":
+            return "failed"
+        if (
+            data.get("status") == "local_drill_success"
+            and data.get("migration_version")
+            and len(data.get("snapshot_sha256", "")) == 64
+            and len(data.get("sample_rows_present", {})) == 5
+            and all(data["sample_rows_present"].values())
+        ):
+            return "local_drill_success"
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    return "not_verified"

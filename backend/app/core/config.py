@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     backup_ssh_directory: str = ""
     backup_ssh_key_file: Path | None = None
     backup_ssh_known_hosts_file: Path | None = None
+    backup_restore_report_file: Path | None = None
     maintenance_timezone: str = "Europe/Rome"
     jwt_secret: SecretStr = SecretStr("development-only-secret")
     bootstrap_username: str = ""

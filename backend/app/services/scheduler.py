@@ -197,7 +197,7 @@ def make_sqlite_maintenance_callback(
         duration_ms = round((monotonic() - started_clock) * 1000)
         logger.info("task=sqlite_backup store_id=none result=%s duration_ms=%d", status, duration_ms)
 
-        copy_status = "not_configured" if copy_destination is None else "failed"
+        copy_status = "not_attempted" if snapshot is None else "failed"
         if snapshot is not None and copy_destination is not None:
             try:
                 await asyncio.to_thread(copy_verified_snapshot, snapshot, copy_destination)

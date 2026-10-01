@@ -1,6 +1,7 @@
 """Copy a completed SQLite snapshot to a separately operated SSH host."""
 
 import hashlib
+import logging
 import re
 import shlex
 import subprocess
@@ -12,6 +13,7 @@ from app.services.sqlite_backup import _valid_backup
 
 
 _SAFE_ACCOUNT = re.compile(r"^[A-Za-z0-9._-]+$")
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -65,9 +67,12 @@ def copy_verified_snapshot(snapshot: Path, destination: SshBackupDestination) ->
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=30,
         )
     except BaseException:
-        subprocess.run(
-            ["ssh", *options, remote, f"rm -f {quoted_temp}"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, timeout=30,
-        )
+        try:
+            subprocess.run(
+                ["ssh", *options, remote, f"rm -f {quoted_temp}"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, timeout=30,
+            )
+        except Exception as cleanup_error:
+            logger.error("task=sqlite_backup_copy_cleanup result=failed error_type=%s", type(cleanup_error).__name__)
         raise
     return digest
