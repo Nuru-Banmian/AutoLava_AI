@@ -147,7 +147,7 @@ async def test_sqlite_maintenance_runs_retention_after_failed_backup(
 
     def fail_backup(_source: Path, _destination: Path, _today: date) -> Path:
         order.append("backup")
-        raise RuntimeError("simulated backup failure " + "x" * 1000)
+        raise RuntimeError("password=secret Cookie=private JWT=private " + "x" * 1000)
 
     async def record_retention(_session, _now):
         order.append("retention")
@@ -176,6 +176,8 @@ async def test_sqlite_maintenance_runs_retention_after_failed_backup(
         assert task is not None
         assert task.status == "failed"
         assert len(task.message) <= 500
+        assert "password=secret" not in task.message
+        assert "Cookie=private" not in task.message
 
 
 async def test_sqlite_maintenance_runs_retention_after_successful_backup(

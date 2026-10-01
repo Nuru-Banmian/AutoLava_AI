@@ -1,3 +1,5 @@
+import asyncio
+
 from app.services import admin_commands
 from app.services.admin_commands import (
     _user_payload,
@@ -12,6 +14,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 
 from app.api.deps import Session, require_admin, require_capability
+from app.core.config import get_settings
 from app.models.identity import Store, StoreMember, User
 from app.models.ledger import IncomeCategory
 from app.models.operations import ScheduledTaskLog, SystemAlert
@@ -35,6 +38,7 @@ from app.schemas.admin import (
 from app.schemas.time import timestamp_status, trusted_utc
 from app.schemas.income_config import IncomeCategoryResponse, IncomeCategoryVersionBody
 from app.services.owner import owner_username
+from app.services.sqlite_backup import latest_valid_backup_at
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 UsersManager = Annotated[User, Depends(require_capability("users.manage"))]
@@ -269,3 +273,29 @@ async def list_task_logs(session: Session) -> list[dict[str, Any]]:
         )
     ).all()
     return [_task_log_payload(task_log) for task_log in task_logs]
+
+
+@router.get("/diagnostics", dependencies=[Depends(require_admin)])
+async def diagnostics(session: Session) -> dict[str, Any]:
+    latest_backup = await asyncio.to_thread(
+        latest_valid_backup_at, get_settings().backup_directory
+    )
+    latest_tasks = {}
+    for task_type in ("weather_refresh", "sqlite_backup"):
+        task = await session.scalar(
+            select(ScheduledTaskLog)
+            .where(ScheduledTaskLog.task_type == task_type)
+            .order_by(ScheduledTaskLog.created_at.desc(), ScheduledTaskLog.id.desc())
+            .limit(1)
+        )
+        latest_tasks[task_type] = None if task is None else {
+            "status": task.status,
+            "finished_at": trusted_utc(task.finished_at, task.timestamp_contract),
+        }
+    return {
+        "latest_valid_local_backup_at": latest_backup,
+        "local_snapshot": "success" if latest_backup is not None else "no_valid_backup",
+        "offsite_copy": "not_configured",
+        "isolated_restore": "not_verified",
+        "latest_tasks": latest_tasks,
+    }

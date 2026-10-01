@@ -2,7 +2,7 @@ import os
 import re
 import sqlite3
 from contextlib import closing
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 
@@ -51,12 +51,42 @@ def create_verified_snapshot(source: Path, snapshot: Path) -> Path:
 
 def has_valid_backup(destination: Path, today: date) -> bool:
     backup = destination / f"autolava-{today:%Y%m%d}.sqlite3"
-    if not backup.is_file():
+    return _valid_backup(backup, require_schema=False)
+
+
+def _valid_backup(path: Path, *, require_schema: bool) -> bool:
+    if not path.is_file():
         return False
     try:
-        return _integrity_result(backup) == "ok"
+        with closing(sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)) as connection:
+            if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
+                return False
+            if require_schema:
+                for statement in _REPRESENTATIVE_READS:
+                    connection.execute(statement).fetchone()
+        return True
     except (OSError, sqlite3.Error):
         return False
+
+
+def latest_valid_backup_at(destination: Path) -> datetime | None:
+    """Only report completed snapshots that still pass SQLite integrity check."""
+    latest: datetime | None = None
+    for candidate in destination.glob("autolava-????????.sqlite3"):
+        match = _BACKUP_NAME.fullmatch(candidate.name)
+        if match is None:
+            continue
+        try:
+            digits = match.group(1)
+            date.fromisoformat(f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}")
+            if not _valid_backup(candidate, require_schema=True):
+                continue
+            modified = datetime.fromtimestamp(candidate.stat().st_mtime, UTC)
+        except (ValueError, OSError, sqlite3.Error):
+            continue
+        if latest is None or modified > latest:
+            latest = modified
+    return latest
 
 
 def _prune_old_backups(destination: Path, today: date) -> None:

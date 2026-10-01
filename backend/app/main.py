@@ -3,13 +3,16 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.router import api_router
 from app.api.routes.dashboard import RefreshLimiter
 from app.core.config import get_settings
-from app.core.database import async_session_factory
+from app.core.database import async_session_factory, engine
 from app.services.scheduler import (
     BackgroundRefreshScheduler,
     DailyScheduler,
@@ -95,6 +98,15 @@ def create_app(
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/ready", response_model=None)
+    async def ready() -> dict[str, str] | JSONResponse:
+        try:
+            async with engine.connect() as connection:
+                await connection.execute(text("SELECT 1 FROM users LIMIT 1"))
+        except (SQLAlchemyError, OSError):
+            return JSONResponse({"status": "unavailable"}, status_code=503)
+        return {"status": "ready"}
 
     return app
 

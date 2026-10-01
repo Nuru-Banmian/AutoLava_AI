@@ -257,7 +257,7 @@ async def test_weather_endpoint_returns_null_fields_when_provider_fails(
     }
 
 
-async def test_weather_endpoint_contains_unexpected_provider_failure(
+async def test_weather_endpoint_exposes_program_failure_as_server_error(
     auth_client, db_session, store_factory
 ) -> None:
     store = await _assign_store(auth_client, db_session, store_factory)
@@ -269,10 +269,15 @@ async def test_weather_endpoint_contains_unexpected_provider_failure(
     auth_client._transport.app.state.weather_service = BrokenWeatherService()
     target = date.today() + timedelta(days=1)
 
-    response = await auth_client.get(f"/api/weather/{store.id}/{target.isoformat()}")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=auth_client._transport.app, raise_app_exceptions=False),
+        base_url="http://testserver",
+        cookies=auth_client.cookies,
+    ) as client:
+        response = await client.get(f"/api/weather/{store.id}/{target.isoformat()}")
 
-    assert response.status_code == 200
-    assert all(value is None for value in response.json().values())
+    assert response.status_code == 500
+    assert "unexpected provider failure" not in response.text
 
 
 async def test_weather_endpoint_returns_normalized_success(

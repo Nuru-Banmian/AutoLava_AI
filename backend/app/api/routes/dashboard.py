@@ -1,4 +1,5 @@
 import asyncio
+import httpx
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from time import monotonic
@@ -93,7 +94,7 @@ async def get_weather(
 ) -> dict[str, str | int | float | None]:
     try:
         result = await weather.get_daily(access.store, target_date)
-    except Exception:
+    except (TimeoutError, httpx.HTTPError):
         result = None
     return _weather_payload(result)
 
@@ -139,7 +140,7 @@ async def refresh_dashboard(
     async def lookup(target: date) -> WeatherResult | None:
         try:
             return await weather.get_daily(location, target)
-        except Exception:
+        except (TimeoutError, httpx.HTTPError):
             return None
 
     values = await asyncio.gather(*(lookup(target) for target in weather_dates))

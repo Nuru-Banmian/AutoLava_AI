@@ -14,7 +14,7 @@ const alternateStore = { id: 2, name: "Milano Nord", address: "Milano, Italia", 
 async function mockAdminApi(
   page: Page,
   capture: Capture,
-  { isOwner = true }: { isOwner?: boolean } = {},
+  { isOwner = true, role = "admin" }: { isOwner?: boolean; role?: "admin" | "user" } = {},
 ) {
   let authenticated = false;
   let databaseBackupRequests = 0;
@@ -40,8 +40,8 @@ async function mockAdminApi(
     const path = url.pathname;
     const json = (value: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(value) });
 
-    if (path === "/api/auth/me") return authenticated ? json({ id: 1, username: "administrator", role: "admin", is_owner: isOwner }) : json({ detail: "Authentication required" }, 401);
-    if (path === "/api/auth/login" && request.method() === "POST") { authenticated = true; return json({ id: 1, username: "administrator", role: "admin", is_owner: isOwner }); }
+    if (path === "/api/auth/me") return authenticated ? json({ id: 1, username: "administrator", role, is_owner: isOwner }) : json({ detail: "Authentication required" }, 401);
+    if (path === "/api/auth/login" && request.method() === "POST") { authenticated = true; return json({ id: 1, username: "administrator", role, is_owner: isOwner }); }
     if (path === "/api/stores/accessible") {
       if (accessibleStoresFailed) {
         accessibleStoreFailures += 1;
@@ -64,6 +64,7 @@ async function mockAdminApi(
       return json(users[0]);
     }
     if (path === "/api/admin/alerts") return json([]);
+    if (path === "/api/admin/diagnostics") return role === "admin" ? json({ latest_valid_local_backup_at: null, local_snapshot: "no_valid_backup", offsite_copy: "not_configured", isolated_restore: "not_verified", latest_tasks: { weather_refresh: null, sqlite_backup: null } }) : json({ detail: "Administrator access required" }, 403);
     if (path === "/api/admin/task-logs") return json([{ id: 1, store_id: 1, task_type: "weather", status: "success", message: null, retry_count: 0, started_at: "2026-07-16T08:00:00Z", finished_at: "2026-07-16T08:05:00Z", created_at: "2026-07-16T08:00:00Z" }]);
     if (path === "/api/admin/database-backup") {
       databaseBackupRequests += 1;
@@ -120,6 +121,9 @@ test("final administrator confirms the sensitive database backup download", asyn
   await page.getByLabel("密码", { exact: true }).fill("password-123");
   await page.getByRole("button", { name: "登录" }).click();
   await page.goto("/admin?tab=status");
+  await expect(page.getByText("无有效备份")).toBeVisible();
+  await expect(page.getByText("未配置")).toBeVisible();
+  await expect(page.getByText("未验证")).toBeVisible();
 
   await page.getByRole("button", { name: "下载数据库备份" }).click();
   const dialog = page.getByRole("alertdialog", { name: "下载完整数据库备份？" });
@@ -139,6 +143,17 @@ test("final administrator confirms the sensitive database backup download", asyn
     "autolava-backup-20260723-210000.sqlite3",
   );
   expect(api.databaseBackupRequests()).toBe(1);
+});
+
+test("ordinary user cannot open the administrator diagnostics page", async ({ page }) => {
+  await mockAdminApi(page, {}, { role: "user", isOwner: false });
+  await page.goto("/login");
+  await page.getByLabel("用户名").fill("operator");
+  await page.getByLabel("密码", { exact: true }).fill("password-123");
+  await page.getByRole("button", { name: "登录" }).click();
+  await page.goto("/admin?tab=status");
+  await expect(page.getByText("最近有效本地备份")).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: "系统状态" })).toHaveCount(0);
 });
 
 test("ordinary administrator cannot see the database backup entry", async ({ page }) => {
