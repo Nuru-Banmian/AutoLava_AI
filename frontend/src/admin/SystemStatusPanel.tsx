@@ -6,6 +6,13 @@ import type { AdminStore, BriefingCard, ScheduledTaskLog, SystemAlert } from "@/
 import { dashboardKey } from "@/lib/user-api";
 
 type ParsedTimestamp = { value: string; epoch: number };
+type Diagnostics = {
+  latest_valid_local_backup_at: string | null;
+  local_snapshot: "success" | "no_valid_backup";
+  offsite_copy: "not_configured";
+  isolated_restore: "not_verified";
+  latest_tasks: Record<string, { status: string; finished_at: string | null } | null>;
+};
 
 function parseTimestamp(value: string | null | undefined): ParsedTimestamp | null {
   if (!value || !/(?:Z|[+-]\d{2}:\d{2})$/i.test(value)) return null;
@@ -38,6 +45,7 @@ export function SystemStatusPanel() {
   const stores = useQuery({ queryKey: ["admin", "stores"], queryFn: () => api<AdminStore[]>("/admin/stores") });
   const alerts = useQuery({ queryKey: ["admin", "alerts"], queryFn: () => api<SystemAlert[]>("/admin/alerts") });
   const taskLogs = useQuery({ queryKey: ["admin", "task-logs"], queryFn: () => api<ScheduledTaskLog[]>("/admin/task-logs") });
+  const diagnostics = useQuery({ queryKey: ["admin", "diagnostics"], queryFn: () => api<Diagnostics>("/admin/diagnostics") });
   const dashboardQueries = useQueries({ queries: (stores.data ?? []).filter((store) => store.is_active).map((store) => ({
     queryKey: dashboardKey(store.id),
     queryFn: () => api<BriefingCard[]>(`/dashboard/${store.id}`),
@@ -74,8 +82,8 @@ export function SystemStatusPanel() {
     || (task.finished_at !== null && parseTimestamp(task.finished_at) === null));
   const hasUnresolvedError = unresolvedAlerts.some((alert) => alert.level.toLowerCase() === "error");
   const latestWeatherFailed = latestWeather !== null && latestWeather.task.status.toLowerCase() !== "success";
-  const loading = stores.isPending || alerts.isPending || taskLogs.isPending || dashboardQueries.some((query) => query.isPending);
-  const failed = stores.isError || alerts.isError || taskLogs.isError || dashboardQueries.some((query) => query.isError);
+  const loading = stores.isPending || alerts.isPending || taskLogs.isPending || diagnostics.isPending || dashboardQueries.some((query) => query.isPending);
+  const failed = stores.isError || alerts.isError || taskLogs.isError || diagnostics.isError || dashboardQueries.some((query) => query.isError);
   const empty = stores.isSuccess && alerts.isSuccess && taskLogs.isSuccess
     && activeStores.length === 0 && alerts.data.length === 0 && taskLogs.data.length === 0 && dashboardCards.length === 0;
   const everyStoreHasDashboard = activeStores.length > 0 && dashboardStates.every((state) => state.latest !== null && state.issue === null);
@@ -98,6 +106,12 @@ export function SystemStatusPanel() {
       {!loading && !failed && <dl className="grid gap-2 text-sm sm:grid-cols-2">
         <div><dt className="text-muted-foreground">最近天气更新</dt><dd>{formatTimestamp(latestWeather?.parsed ?? null, weatherIssue)}</dd></div>
         <div><dt className="text-muted-foreground">最近仪表盘生成</dt><dd>{formatTimestamp(dashboardGeneratedAt, dashboardIssue)}</dd></div>
+        <div><dt className="text-muted-foreground">最近有效本地备份</dt><dd>{formatTimestamp(parseTimestamp(diagnostics.data?.latest_valid_local_backup_at))}</dd></div>
+        <div><dt className="text-muted-foreground">本地快照</dt><dd>{diagnostics.data?.local_snapshot === "success" ? "已验证" : "无有效备份"}</dd></div>
+        <div><dt className="text-muted-foreground">异机复制</dt><dd>未配置</dd></div>
+        <div><dt className="text-muted-foreground">隔离恢复</dt><dd>未验证</dd></div>
+        <div><dt className="text-muted-foreground">最近天气任务结果</dt><dd>{diagnostics.data?.latest_tasks.weather_refresh?.status ?? "暂无记录"}</dd></div>
+        <div><dt className="text-muted-foreground">最近备份任务结果</dt><dd>{diagnostics.data?.latest_tasks.sqlite_backup?.status ?? "暂无记录"}</dd></div>
         <div className="sm:col-span-2"><dt className="text-muted-foreground">各门店仪表盘</dt><dd><ul>{dashboardStates.map((state) => <li key={state.store.id}>{state.store.name}：{formatTimestamp(state.latest, state.issue)}</li>)}</ul></dd></div>
       </dl>}
     </section>

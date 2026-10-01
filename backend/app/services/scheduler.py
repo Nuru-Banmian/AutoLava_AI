@@ -5,8 +5,10 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 import logging
 from pathlib import Path
+from time import monotonic
 from zoneinfo import ZoneInfo
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -68,6 +70,7 @@ class BackgroundRefreshScheduler:
 
     async def _run(self) -> None:
         while True:
+            started_clock = monotonic()
             try:
                 if self.timeout_seconds is None:
                     await self.refresh()
@@ -75,8 +78,8 @@ class BackgroundRefreshScheduler:
                     await asyncio.wait_for(
                         self.refresh(), timeout=self.timeout_seconds
                     )
-            except Exception:
-                pass
+            except Exception as error:
+                logger.error("task=weather_refresh store_id=none result=failed duration_ms=%d error_type=%s", round((monotonic() - started_clock) * 1000), type(error).__name__)
             await asyncio.sleep(self.interval_seconds)
 
 
@@ -137,10 +140,11 @@ class DailyScheduler:
         ).total_seconds()
 
     async def _invoke_callback(self) -> None:
+        started_clock = monotonic()
         try:
             await self.callback()
-        except Exception:
-            logger.exception("Daily maintenance callback failed")
+        except Exception as error:
+            logger.error("task=sqlite_maintenance store_id=none result=failed duration_ms=%d error_type=%s", round((monotonic() - started_clock) * 1000), type(error).__name__)
 
     async def _run(self) -> None:
         today = self._local_now().date()
@@ -157,14 +161,8 @@ def _utc_naive(value: datetime) -> datetime:
     return value.astimezone(UTC).replace(tzinfo=None)
 
 
-def _bounded_error_summary(error: Exception, *, limit: int = 500) -> str:
-    detail = " ".join(str(error).split())
-    summary = f"SQLite backup failed: {type(error).__name__}"
-    if detail:
-        summary = f"{summary}: {detail}"
-    if len(summary) <= limit:
-        return summary
-    return summary[: limit - 3] + "..."
+def _safe_backup_error(error: Exception) -> str:
+    return f"SQLite backup failed: {type(error).__name__}"
 
 
 def make_sqlite_maintenance_callback(
@@ -176,6 +174,7 @@ def make_sqlite_maintenance_callback(
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> Callable[[], Awaitable[None]]:
     async def maintain() -> None:
+        started_clock = monotonic()
         started_value = clock()
         started_at = _utc_naive(started_value)
         if started_value.tzinfo is None:
@@ -184,14 +183,16 @@ def make_sqlite_maintenance_callback(
             local_today = started_value.astimezone(timezone).date()
         status = "success"
         try:
-            backup_path = await asyncio.to_thread(
+            await asyncio.to_thread(
                 backup_sqlite, source, destination, local_today
             )
-            message = f"SQLite backup completed: {backup_path.name}"
+            message = "SQLite backup completed"
         except Exception as error:
             status = "failed"
-            message = _bounded_error_summary(error)
+            message = _safe_backup_error(error)
         finished_at = _utc_naive(clock())
+        duration_ms = round((monotonic() - started_clock) * 1000)
+        logger.info("task=sqlite_backup store_id=none result=%s duration_ms=%d", status, duration_ms)
 
         try:
             async with session_factory() as session:
@@ -209,8 +210,8 @@ def make_sqlite_maintenance_callback(
                             timestamp_contract=UTC_TIMESTAMP_CONTRACT,
                         )
                     )
-        except Exception:
-            logger.error("%s", message)
+        except Exception as error:
+            logger.error("task=sqlite_backup_log result=failed error_type=%s", type(error).__name__)
 
         retention_now = _utc_naive(clock())
         try:
@@ -219,8 +220,8 @@ def make_sqlite_maintenance_callback(
                     await prune_operational_rows(session, retention_now)
         except Exception as error:
             logger.error(
-                "Operational retention failed: %s",
-                _bounded_error_summary(error),
+                "task=operations_retention result=failed error_type=%s",
+                type(error).__name__,
             )
 
     return maintain
@@ -229,6 +230,7 @@ def make_sqlite_maintenance_callback(
 @dataclass(frozen=True)
 class _StoreWeather:
     store: FrozenWeatherLocation
+    started_clock: float
     today: date
     dates: tuple[date, date, date]
     results: dict[date, WeatherResult | None]
@@ -252,6 +254,7 @@ def make_refresh_callback(
             return self.results.get(target)
 
     async def fetch_weather(store: Store) -> _StoreWeather:
+        started_clock = monotonic()
         location = FrozenWeatherLocation.from_store(store)
         today = datetime.now(ZoneInfo(location.timezone)).date()
         dates = (today - timedelta(days=1), today, today + timedelta(days=1))
@@ -262,18 +265,19 @@ def make_refresh_callback(
                     weather_service.get_daily(location, target),
                     timeout=weather_timeout_seconds,
                 )
-            except Exception:
+            except (TimeoutError, httpx.HTTPError):
                 return None
 
         values = await asyncio.gather(*(lookup(target) for target in dates))
         return _StoreWeather(
             store=location,
+            started_clock=started_clock,
             today=today,
             dates=dates,
             results=dict(zip(dates, values, strict=True)),
         )
 
-    async def write_store(weather: _StoreWeather) -> bool:
+    async def write_store(weather: _StoreWeather) -> str:
         async with session_factory() as session:
             try:
                 async with sqlite_short_write(session):
@@ -283,7 +287,7 @@ def make_refresh_callback(
                         or not current_store.is_active
                         or FrozenWeatherLocation.from_store(current_store) != weather.store
                     ):
-                        return False
+                        return "failed"
                     # This query happens after all network waits, so manual edits made
                     # while weather was in flight are observed before automatic writes.
                     records = list(
@@ -308,9 +312,10 @@ def make_refresh_callback(
                     succeeded = all(
                         result is not None for result in weather.results.values()
                     )
-                return succeeded
-            except Exception:
-                return False
+                return "success" if succeeded else "degraded"
+            except Exception as error:
+                logger.error("task=weather_refresh store_id=%d result=failed error_type=%s", weather.store.id, type(error).__name__)
+                return "failed"
 
     async def refresh_all() -> None:
         started_at = datetime.now(UTC).replace(tzinfo=None)
@@ -324,18 +329,38 @@ def make_refresh_callback(
                         .order_by(Store.id)
                     )
                 )
-        except Exception:
+        except Exception as error:
             stores = []
             discovery_failed = True
+            logger.error("task=weather_refresh store_id=none result=failed error_type=%s", type(error).__name__)
 
-        outcomes = []
+        started_clock = monotonic()
+        outcomes: list[str] = []
         for offset in range(0, len(stores), 20):
-            fetched = await asyncio.gather(*(fetch_weather(store) for store in stores[offset:offset + 20]))
-            outcomes.extend(
-                [await write_store(weather) for weather in sorted(fetched, key=lambda value: value.store.id)]
+            batch = stores[offset:offset + 20]
+            fetched = await asyncio.gather(
+                *(fetch_weather(store) for store in batch), return_exceptions=True
             )
-        succeeded = sum(outcomes)
-        failed = len(stores) - succeeded
+            for store, result in zip(batch, fetched, strict=True):
+                if isinstance(result, BaseException):
+                    if isinstance(result, asyncio.CancelledError):
+                        raise result
+                    outcomes.append("failed")
+                    logger.error(
+                        "task=weather_refresh store_id=%d result=failed duration_ms=%d error_type=%s",
+                        store.id, round((monotonic() - started_clock) * 1000), type(result).__name__,
+                    )
+                    continue
+                outcome = await write_store(result)
+                outcomes.append(outcome)
+                logger.info(
+                    "task=weather_refresh store_id=%d result=%s duration_ms=%d",
+                    result.store.id, outcome, round((monotonic() - result.started_clock) * 1000),
+                )
+        succeeded = outcomes.count("success")
+        degraded = outcomes.count("degraded")
+        failed = len(stores) - succeeded - degraded
+        logger.info("task=weather_refresh store_id=all result=%s duration_ms=%d", "failed" if discovery_failed or failed else "degraded" if degraded else "success", round((monotonic() - started_clock) * 1000))
         if discovery_failed:
             status = "failed"
             message = "天气刷新失败：无法读取启用门店"
@@ -343,10 +368,10 @@ def make_refresh_callback(
             status = "success"
             message = "天气刷新完成：当前没有启用门店"
         else:
-            status = "success" if failed == 0 else "failed"
+            status = "failed" if failed else "degraded" if degraded else "success"
             message = (
                 f"天气刷新完成：共 {len(stores)} 个门店，"
-                f"成功 {succeeded} 个，失败 {failed} 个"
+                f"成功 {succeeded} 个，降级 {degraded} 个，失败 {failed} 个"
             )
 
         async with session_factory() as session:

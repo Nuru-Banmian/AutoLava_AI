@@ -170,7 +170,7 @@ class OpenMeteoProvider:
                     }
                 )
             return candidates
-        except Exception:
+        except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError):
             return []
 
     async def timezone(self, latitude: float, longitude: float) -> str | None:
@@ -204,11 +204,11 @@ class WeatherService:
     ) -> WeatherResult | None:
         try:
             result = await self.primary.get_daily(store, target)
-        except Exception:
+        except (TimeoutError, httpx.HTTPError):
             result = None
         if result is not None or self.fallback is None:
             return result
         try:
             return await self.fallback.get_daily(store, target)
-        except Exception:
+        except (TimeoutError, httpx.HTTPError):
             return None

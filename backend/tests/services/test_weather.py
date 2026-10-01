@@ -129,14 +129,15 @@ async def test_all_provider_entrypoints_share_actual_network_limit(store) -> Non
     assert client.is_closed
 
 
-async def test_weather_service_contains_primary_and_fallback_exceptions(store) -> None:
+async def test_weather_service_does_not_hide_program_errors(store) -> None:
     class BrokenProvider:
         async def get_daily(self, store, target):
             raise RuntimeError("provider failed unexpectedly")
 
     service = WeatherService(BrokenProvider(), BrokenProvider())
 
-    assert await service.get_daily(store, date.today()) is None
+    with pytest.raises(RuntimeError, match="provider failed unexpectedly"):
+        await service.get_daily(store, date.today())
 
 
 async def test_geocode_normalizes_candidates_and_failure_is_empty(respx_mock) -> None:
@@ -174,7 +175,8 @@ async def test_geocode_normalizes_candidates_and_failure_is_empty(respx_mock) ->
     assert await provider.geocode("Milano") == []
 
     route.mock(side_effect=RuntimeError("unexpected provider failure"))
-    assert await provider.geocode("Milano") == []
+    with pytest.raises(RuntimeError, match="unexpected provider failure"):
+        await provider.geocode("Milano")
 
 
 @pytest.mark.parametrize(

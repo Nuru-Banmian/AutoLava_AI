@@ -1,4 +1,8 @@
 import asyncio
+import os
+from pathlib import Path
+import subprocess
+import sys
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -22,6 +26,7 @@ from app.models.identity import Store, StoreMember, User
 from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
 from app.models.operations import DailyBriefing, ScheduledTaskLog, SystemAlert
 from app.schemas.admin import UserPatch
+from app.services.sqlite_backup import backup_sqlite
 
 
 @pytest.fixture
@@ -68,6 +73,38 @@ async def test_alerts_and_task_logs_remain_admin_only(
     assert login.status_code == 200
     assert (await auth_client.get("/api/admin/alerts")).status_code == 403
     assert (await auth_client.get("/api/admin/task-logs")).status_code == 403
+    assert (await auth_client.get("/api/admin/diagnostics")).status_code == 403
+
+
+async def test_diagnostics_distinguish_verified_local_backup_from_unconfigured_copy(
+    admin_client, tmp_path, monkeypatch
+) -> None:
+    backup_directory = tmp_path / "backups"
+    backup_directory.mkdir()
+    monkeypatch.setenv("AUTOLAVA_BACKUP_DIRECTORY", str(backup_directory))
+    get_settings.cache_clear()
+    try:
+        initial = (await admin_client.get("/api/admin/diagnostics")).json()
+        assert initial["local_snapshot"] == "no_valid_backup"
+        assert initial["latest_valid_local_backup_at"] is None
+        assert initial["offsite_copy"] == "not_configured"
+        assert initial["isolated_restore"] == "not_verified"
+
+        source = tmp_path / "migrated.sqlite3"
+        subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "head"],
+            cwd=Path(__file__).parents[2],
+            env=os.environ | {"AUTOLAVA_DATABASE_PATH": str(source)},
+            check=True,
+            capture_output=True,
+        )
+        backup_sqlite(source, backup_directory, date(2026, 10, 1))
+        updated = (await admin_client.get("/api/admin/diagnostics")).json()
+        assert updated["local_snapshot"] == "success"
+        assert updated["latest_valid_local_backup_at"].endswith("Z")
+        assert updated["offsite_copy"] == "not_configured"
+    finally:
+        get_settings.cache_clear()
 
 
 async def test_store_creation_has_no_legacy_work_hours_payload(admin_client) -> None:

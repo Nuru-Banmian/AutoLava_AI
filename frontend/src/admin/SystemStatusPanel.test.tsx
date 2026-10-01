@@ -56,6 +56,13 @@ function mockStatus({
     http.get("/api/admin/stores", () => HttpResponse.json(stores)),
     http.get("/api/admin/alerts", () => HttpResponse.json(alerts)),
     http.get("/api/admin/task-logs", () => HttpResponse.json(taskLogs)),
+    http.get("/api/admin/diagnostics", () => HttpResponse.json({
+      latest_valid_local_backup_at: null,
+      local_snapshot: "no_valid_backup",
+      offsite_copy: "not_configured",
+      isolated_restore: "not_verified",
+      latest_tasks: { weather_refresh: { status: "success", finished_at: "2026-07-16T08:05:00Z" }, sqlite_backup: null },
+    })),
     http.get("/api/dashboard/:storeId", ({ params }) => HttpResponse.json(cardsByStore[Number(params.storeId)] ?? [])),
   );
 }
@@ -73,7 +80,7 @@ describe("SystemStatusPanel", () => {
     expect(screen.queryByText("运行正常")).not.toBeInTheDocument();
   });
 
-  it.each(["/api/admin/stores", "/api/admin/alerts", "/api/admin/task-logs", "/api/dashboard/1"])("does not claim healthy when required request %s fails", async (endpoint) => {
+  it.each(["/api/admin/stores", "/api/admin/alerts", "/api/admin/task-logs", "/api/admin/diagnostics", "/api/dashboard/1"])("does not claim healthy when required request %s fails", async (endpoint) => {
     mockStatus();
     server.use(http.get(endpoint, () => HttpResponse.json({ detail: "boom" }, { status: 500 })));
     renderStatus();
@@ -92,7 +99,7 @@ describe("SystemStatusPanel", () => {
     renderStatus();
     expect(await screen.findByText("状态数据不完整")).toBeInTheDocument();
     expect(screen.getByText(/最近仪表盘生成/)).toBeInTheDocument();
-    expect(screen.getByText("暂无记录")).toBeInTheDocument();
+    expect(screen.getAllByText("暂无记录").length).toBeGreaterThan(0);
     expect(screen.queryByText("运行正常")).not.toBeInTheDocument();
   });
 
@@ -132,6 +139,15 @@ describe("SystemStatusPanel", () => {
     expect(screen.getByText(/最近天气更新/)).toBeInTheDocument();
     expect(screen.getByText(/最近仪表盘生成/)).toBeInTheDocument();
     expect(screen.getByText(/一条提醒/)).toBeInTheDocument();
+  });
+
+  it("separates local backup, offsite copy, and restore evidence", async () => {
+    mockStatus();
+    renderStatus();
+    expect(await screen.findByText("无有效备份")).toBeInTheDocument();
+    expect(screen.getByText("未配置")).toBeInTheDocument();
+    expect(screen.getByText("未验证")).toBeInTheDocument();
+    expect(screen.getByText("最近备份任务结果").parentElement).toHaveTextContent("暂无记录");
   });
 
   it("keeps named status cards in the desktop hierarchy", async () => {
