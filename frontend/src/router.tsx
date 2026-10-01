@@ -1,16 +1,33 @@
+import { Component, lazy, Suspense, type ReactNode } from "react";
 import { createBrowserRouter, createMemoryRouter, Navigate, Outlet, useLocation, type RouteObject } from "react-router-dom";
 
 import { AuthProvider, useAuth } from "@/auth/AuthProvider";
 import { AppShell } from "@/layouts/AppShell";
-import { AdminPage } from "@/pages/AdminPage";
-import { LoginPage } from "@/pages/LoginPage";
-import { HomePage } from "@/pages/HomePage";
-import { LedgerPage } from "@/pages/LedgerPage";
-import { MorePage } from "@/pages/MorePage";
-import { BusinessRecordsPage } from "@/pages/BusinessRecordsPage";
-import { AccountPasswordPage } from "@/pages/AccountPasswordPage";
-import { CompanySettlementPage } from "@/pages/CompanySettlementPage";
 import { StoreProvider } from "@/stores/StoreProvider";
+
+const AdminPage = lazy(() => import("@/pages/AdminPage").then((module) => ({ default: module.AdminPage })));
+const LoginPage = lazy(() => import("@/pages/LoginPage").then((module) => ({ default: module.LoginPage })));
+const HomePage = lazy(() => import("@/pages/HomePage").then((module) => ({ default: module.HomePage })));
+const LedgerPage = lazy(() => import("@/pages/LedgerPage").then((module) => ({ default: module.LedgerPage })));
+const MorePage = lazy(() => import("@/pages/MorePage").then((module) => ({ default: module.MorePage })));
+const BusinessRecordsPage = lazy(() => import("@/pages/BusinessRecordsPage").then((module) => ({ default: module.BusinessRecordsPage })));
+const AccountPasswordPage = lazy(() => import("@/pages/AccountPasswordPage").then((module) => ({ default: module.AccountPasswordPage })));
+const CompanySettlementPage = lazy(() => import("@/pages/CompanySettlementPage").then((module) => ({ default: module.CompanySettlementPage })));
+
+class PageLoadBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() { return { failed: true }; }
+
+  render() {
+    if (this.state.failed) return <main role="alert" className="p-6">页面资源加载失败。<button className="ml-2 underline" onClick={() => window.location.reload()}>重新加载</button></main>;
+    return this.props.children;
+  }
+}
+
+function Page({ children }: { children: ReactNode }) {
+  return <PageLoadBoundary><Suspense fallback={<main role="status" className="p-6">正在加载页面…</main>}>{children}</Suspense></PageLoadBoundary>;
+}
 
 function AuthLoading() {
   return <main className="flex min-h-screen items-center justify-center" role="status">正在加载…</main>;
@@ -26,26 +43,26 @@ function ProtectedShell() {
 
 function AdminRoute() {
   const { user } = useAuth();
-  return user?.role === "admin" ? <AdminPage /> : <Navigate to="/" replace />;
+  return user?.role === "admin" ? <Page><AdminPage /></Page> : <Navigate to="/" replace />;
 }
 
 function MoreRoute() {
   const location = useLocation();
   const status = (location.state as { status?: unknown } | null)?.status;
-  return <>{status === "密码已更新" && <p className="mb-4 text-sm text-primary" role="status">密码已更新</p>}<MorePage /></>;
+  return <>{status === "密码已更新" && <p className="mb-4 text-sm text-primary" role="status">密码已更新</p>}<Page><MorePage /></Page></>;
 }
 
 const routes: RouteObject[] = [{
   element: <AuthProvider><Outlet /></AuthProvider>,
   children: [
-    { path: "/login", element: <LoginPage /> },
+    { path: "/login", element: <Page><LoginPage /></Page> },
     { element: <ProtectedShell />, children: [
-      { index: true, element: <HomePage /> },
-      { path: "ledger", element: <LedgerPage /> },
-      { path: "settlements", element: <CompanySettlementPage /> },
-      { path: "database", element: <BusinessRecordsPage /> },
+      { index: true, element: <Page><HomePage /></Page> },
+      { path: "ledger", element: <Page><LedgerPage /></Page> },
+      { path: "settlements", element: <Page><CompanySettlementPage /></Page> },
+      { path: "database", element: <Page><BusinessRecordsPage /></Page> },
       { path: "more", element: <MoreRoute /> },
-      { path: "account/password", element: <AccountPasswordPage /> },
+      { path: "account/password", element: <Page><AccountPasswordPage /></Page> },
       { path: "admin", element: <AdminRoute /> },
     ] },
   ],

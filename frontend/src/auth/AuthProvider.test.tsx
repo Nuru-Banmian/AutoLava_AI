@@ -122,7 +122,7 @@ describe("authenticated application shell", () => {
     expect(screen.getByRole("status")).toHaveTextContent("正在加载");
     await waitFor(() => expect(resolveMe).toBeDefined());
     resolveMe();
-    expect(await screen.findByRole("heading", { name: "记账" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "记账" }, { timeout: 5000 })).toBeInTheDocument();
   });
 
   it("sends only username and password and opens the authenticated shell after login", async () => {
