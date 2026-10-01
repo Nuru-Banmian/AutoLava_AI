@@ -44,6 +44,9 @@ class BookkeepingEvent(BaseModel):
 
 class RecordSnapshot(BaseModel):
     id: int
+    identity: str
+    revision: int
+    config_revision: int | None = None
     store_id: int
     date: str
     daily_revenue: int

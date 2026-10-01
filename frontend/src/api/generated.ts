@@ -1280,6 +1280,8 @@ export interface components {
             activity: string | null;
             /** Bookkeeping Events */
             bookkeeping_events?: components["schemas"]["BookkeepingEvent"][] | null;
+            /** Config Revision */
+            config_revision?: number | null;
             /** Created At */
             created_at: string;
             /** Created By */
@@ -1292,6 +1294,8 @@ export interface components {
             date: string;
             /** Id */
             id: number;
+            /** Identity */
+            identity: string;
             /**
              * Income Mode
              * @enum {string}
@@ -1306,6 +1310,8 @@ export interface components {
             items: components["schemas"]["RecordItem"][];
             /** Precipitation */
             precipitation: string | null;
+            /** Revision */
+            revision: number;
             /** Scanned */
             scanned: boolean;
             /** Store Id */
