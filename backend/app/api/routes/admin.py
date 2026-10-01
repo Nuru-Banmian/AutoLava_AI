@@ -39,6 +39,7 @@ from app.schemas.time import timestamp_status, trusted_utc
 from app.schemas.income_config import IncomeCategoryResponse, IncomeCategoryVersionBody
 from app.services.owner import owner_username
 from app.services.sqlite_backup import latest_valid_backup_at
+from app.services.backup_restore import restore_drill_status
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 UsersManager = Annotated[User, Depends(require_capability("users.manage"))]
@@ -281,7 +282,7 @@ async def diagnostics(session: Session) -> dict[str, Any]:
         latest_valid_backup_at, get_settings().backup_directory
     )
     latest_tasks = {}
-    for task_type in ("weather_refresh", "sqlite_backup"):
+    for task_type in ("weather_refresh", "sqlite_backup", "sqlite_backup_copy"):
         task = await session.scalar(
             select(ScheduledTaskLog)
             .where(ScheduledTaskLog.task_type == task_type)
@@ -295,7 +296,13 @@ async def diagnostics(session: Session) -> dict[str, Any]:
     return {
         "latest_valid_local_backup_at": latest_backup,
         "local_snapshot": "success" if latest_backup is not None else "no_valid_backup",
-        "offsite_copy": "not_configured",
-        "isolated_restore": "not_verified",
+        "offsite_copy": (
+            "not_configured" if not get_settings().backup_ssh_host else
+            latest_tasks["sqlite_backup_copy"]["status"]
+            if latest_tasks["sqlite_backup_copy"] else "not_attempted"
+        ),
+        "isolated_restore": await asyncio.to_thread(
+            restore_drill_status, get_settings().backup_restore_report_file
+        ),
         "latest_tasks": latest_tasks,
     }

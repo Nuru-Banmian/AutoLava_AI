@@ -224,6 +224,41 @@ async def test_sqlite_maintenance_runs_retention_after_successful_backup(
         assert task.status == "success"
 
 
+async def test_failed_offsite_copy_keeps_local_backup_and_reports_separate_failure(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await _reset_database()
+    source = tmp_path / "source.sqlite3"
+    with closing(sqlite3.connect(source)) as connection:
+        connection.execute("CREATE TABLE marker (value TEXT)")
+    from app.services.backup_copy import SshBackupDestination
+
+    key = tmp_path / "key"
+    known = tmp_path / "known"
+    key.touch()
+    known.touch()
+    destination = SshBackupDestination("backup.example", "operator", "/snapshots", key, known)
+
+    def fail_copy(_snapshot, _destination):
+        raise RuntimeError("credential=secret")
+
+    monkeypatch.setattr("app.services.scheduler.copy_verified_snapshot", fail_copy)
+    callback = make_sqlite_maintenance_callback(
+        async_session_factory, source=source, destination=tmp_path / "local",
+        timezone=ZoneInfo("Europe/Rome"), copy_destination=destination,
+        clock=lambda: datetime(2026, 7, 19, 1, tzinfo=UTC),
+    )
+    await callback()
+    assert (tmp_path / "local" / "autolava-20260719.sqlite3").exists()
+    async with async_session_factory() as session:
+        rows = (await session.scalars(select(ScheduledTaskLog).where(
+            ScheduledTaskLog.task_type.in_(("sqlite_backup", "sqlite_backup_copy"))
+        ))).all()
+    assert {row.task_type: row.status for row in rows} == {
+        "sqlite_backup": "success", "sqlite_backup_copy": "failed"}
+    assert all("secret" not in (row.message or "") for row in rows)
+
+
 @pytest.mark.parametrize("manual_weather", ["用户手工天气", None])
 async def test_refresh_rechecks_weather_edited_after_network_wait(manual_weather: str | None) -> None:
     await _reset_database()
