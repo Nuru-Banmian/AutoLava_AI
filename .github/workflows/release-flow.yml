@@ -23,6 +23,20 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Verify candidate with disposable Docker data
         run: bash scripts/verify-release-flow.sh "$RUNNER_TEMP/release-flow"
+      - name: Save the exact accepted release images
+        run: |
+          revision=$(git rev-parse HEAD)
+          docker save -o "$RUNNER_TEMP/autolava-api.tar" "autolava-api:$revision"
+          docker save -o "$RUNNER_TEMP/autolava-web.tar" "autolava-web:$revision"
+      - name: Upload accepted images and evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: autolava-verified-release-images-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/autolava-api.tar
+            ${{ runner.temp }}/autolava-web.tar
+            ${{ runner.temp }}/release-flow/
+          retention-days: 7
       - name: Preserve release diagnostics, including failed runs
         if: ${{ always() }}
         uses: actions/upload-artifact@v7
