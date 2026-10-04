@@ -7,7 +7,7 @@ import type { DatabaseResponse, IncomeConfigResponse, LedgerBody, LedgerSaveResp
 import { LedgerDatePicker } from "@/components/LedgerDatePicker";
 import { LedgerForm } from "@/components/LedgerForm";
 import { Button } from "@/components/ui/button";
-import { categoryCatalogKey, incomeConfigKey, invalidateUserData, ledgerMonthKey, ledgerRecordKey, storeLocalToday } from "@/lib/user-api";
+import { categoryCatalogKey, incomeConfigKey, invalidateUserData, ledgerMonthKey, ledgerRecordKey, loadLedgerRecord, storeLocalToday } from "@/lib/user-api";
 import { useStore } from "@/stores/StoreProvider";
 import { useUnsavedChanges } from "@/navigation/UnsavedChanges";
 import { ledgerReturnState } from "@/navigation/business-records-return";
@@ -32,7 +32,7 @@ export function LedgerPage() {
   useEffect(() => { setMessage(""); setSavedSubmission(null); setPriorDraft(null); }, [selected?.id, date]);
   const catalog = useQuery({ queryKey: selected ? categoryCatalogKey(selected.id, date) : ["categoryCatalog", "none"], enabled: Boolean(selected && date), queryFn: () => api<DatabaseResponse>(`/database/${selected!.id}/records?start=${date}&end=${date}&page=1&page_size=1`) });
   const config = useQuery({ queryKey: selected ? incomeConfigKey(selected.id) : ["income-config", "none", "current"], enabled: Boolean(selected), queryFn: () => api<IncomeConfigResponse>(`/income-config/${selected!.id}/current`) });
-  const record = useQuery({ queryKey: selected && date ? ledgerRecordKey(selected.id, date) : ["ledger", "record", "none"], enabled: Boolean(selected && date), queryFn: async () => { try { return await api<RecordSnapshot>(`/ledger/${selected!.id}/${date}`); } catch (error) { if (error instanceof ApiError && error.status === 404) return null; throw error; } } });
+  const record = useQuery({ queryKey: selected && date ? ledgerRecordKey(selected.id, date) : ["ledger", "record", "none"], enabled: Boolean(selected && date), queryFn: ({ signal }) => loadLedgerRecord(selected!.id, date, signal) });
   const writeScope = `${selected?.id ?? "none"}:${date}`;
   useEffect(() => {
     if (record.isSuccess && config.data && expected?.scope !== writeScope) {

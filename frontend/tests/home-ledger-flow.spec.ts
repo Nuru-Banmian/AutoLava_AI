@@ -197,7 +197,7 @@ for (const width of [320, 390, 768, 1024, 1280]) {
     await expect(homeState(page)).toContainText("营业状态：营业");
     await expect(homeState(page)).toContainText("总营业额 €150");
     await expect.poll(() => flow.reads.length).toBeGreaterThan(firstReadCount);
-    await homeState(page).getByRole("link", { name: "修改今日记录" }).click();
+    await homeState(page).getByRole("link", { name: "修改今日台账" }).click();
     await expect(page.getByLabel(categories[0].name, { exact: true })).toHaveValue("120");
     await expect(page.getByLabel(categories[12].name, { exact: true })).toHaveValue("999");
     await page.getByLabel(categories[0].name, { exact: true }).fill("220");
@@ -242,7 +242,7 @@ test("direct total keeps a failed draft, retries, and saves historical dates wit
   expect(flow.records.get(`1:${today}`)).toMatchObject({ daily_revenue: 150, income_mode: "legacy_total", items: [] });
   await navigation(page, 390).getByRole("link", { name: "首页", exact: true }).click();
   await expect(homeState(page)).toContainText("总营业额 €150");
-  await homeState(page).getByRole("link", { name: "修改今日记录" }).click();
+  await homeState(page).getByRole("link", { name: "修改今日台账" }).click();
   await expect(page.getByLabel("当日营业额", { exact: true })).toHaveValue("150");
   await page.getByLabel("当日营业额", { exact: true }).fill("175");
   await page.getByLabel("状态", { exact: true }).selectOption("提前休息");
@@ -252,7 +252,7 @@ test("direct total keeps a failed draft, retries, and saves historical dates wit
   await navigation(page, 390).getByRole("link", { name: "首页", exact: true }).click();
   await expect(homeState(page)).toContainText("总营业额 €175");
   await expect(homeState(page)).toContainText("营业状态：提前休息");
-  await homeState(page).getByRole("link", { name: "修改今日记录" }).click();
+  await homeState(page).getByRole("link", { name: "修改今日台账" }).click();
   await page.getByRole("button", { name: "选择台账日期：2026年7月17日" }).click();
   const picker = page.getByRole("dialog", { name: "选择台账日期" });
   await expect(picker.getByRole("button", { name: "2026年7月18日" })).toBeDisabled();

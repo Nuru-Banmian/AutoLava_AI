@@ -1,10 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { api, ApiError, friendlyApiError } from "@/api/client";
-import type { BriefingCard, RecordSnapshot } from "@/api/types";
+import type { BriefingCard } from "@/api/types";
 import { BriefingCards } from "@/components/BriefingCards";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { dashboardKey, formatWholeEuro, ledgerRecordKey, storeLocalToday } from "@/lib/user-api";
+import { dashboardKey, formatWholeEuro, ledgerRecordKey, loadLedgerRecord, storeLocalToday } from "@/lib/user-api";
 import { useStore } from "@/stores/StoreProvider";
 
 function addDays(value: string, amount: number) {
@@ -20,14 +20,7 @@ export function HomePage() {
   const record = useQuery({
     queryKey: selected ? ledgerRecordKey(selected.id, today) : ["ledger", "record", "none"],
     enabled: Boolean(selected),
-    queryFn: async ({ signal }) => {
-      try {
-        return await api<RecordSnapshot>(`/ledger/${selected!.id}/${today}`, { signal });
-      } catch (error) {
-        if (error instanceof ApiError && error.status === 404) return null;
-        throw error;
-      }
-    },
+    queryFn: ({ signal }) => loadLedgerRecord(selected!.id, today, signal),
   });
   const query = useQuery({ queryKey: selected ? dashboardKey(selected.id) : ["dashboard", "none"], enabled: Boolean(selected), queryFn: ({ signal }) => api<BriefingCard[]>(`/dashboard/${selected!.id}`, { signal }) });
   const refresh = useMutation({ mutationFn: (storeId: number) => api<BriefingCard[]>(`/dashboard/${storeId}/refresh`, { method: "POST" }), onSuccess: async (cards, storeId) => { client.setQueryData(dashboardKey(storeId), cards); await client.invalidateQueries({ queryKey: dashboardKey(storeId), exact: true }); } });
@@ -45,7 +38,7 @@ export function HomePage() {
       {record.error && hasRecordResult && <p role="alert">今日状态刷新失败，当前显示上次读取的结果。</p>}
       {record.isFetching && hasRecordResult && <p role="status" className="text-sm text-muted-foreground">正在刷新今日状态…</p>}
       <div className="flex flex-wrap gap-2">
-        {selected.is_active !== false ? <a className={buttonVariants()} href={`/ledger?date=${today}`}>{record.data ? "修改今日记录" : hasRecordResult ? "立即记账" : "进入记账"}</a> : <p role="status">该门店已归档，仅可查看历史数据和经营分析。</p>}
+        {selected.is_active !== false ? <a className={buttonVariants()} href={`/ledger?date=${today}`}>{record.data ? "修改今日台账" : hasRecordResult ? "立即记账" : "进入记账"}</a> : <p role="status">该门店已归档，仅可查看历史数据和经营分析。</p>}
         {record.error && <Button variant="outline" disabled={record.isFetching} onClick={() => void record.refetch()}>重试今日状态</Button>}
       </div>
     </section>

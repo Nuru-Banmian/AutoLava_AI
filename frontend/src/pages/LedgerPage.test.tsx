@@ -710,6 +710,36 @@ describe("LedgerPage", () => {
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 
+  it("preserves a new operating draft entered while a rest save is pending", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let saved = false;
+    renderLedger([
+      http.get("/api/ledger/1/:date", () => HttpResponse.json(saved ? { ...recordSnapshot(0), is_open: "休息", wash_count: 0 } : recordSnapshot(12))),
+      http.put("/api/ledger/1/:date", async () => {
+        await gate;
+        saved = true;
+        return HttpResponse.json({ ...recordSnapshot(0), is_open: "休息", wash_count: 0 });
+      }),
+    ]);
+    await screen.findByRole("button", { name: "保存修改" });
+    fireEvent.change(screen.getByLabelText("状态"), { target: { value: "休息" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+    expect(await screen.findByRole("button", { name: "保存中…" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("状态"), { target: { value: "营业" } });
+    fireEvent.change(screen.getByLabelText("现金"), { target: { value: "99" } });
+    fireEvent.change(screen.getByLabelText("事件"), { target: { value: "新的营业草稿" } });
+    release();
+    expect(await screen.findByRole("status")).toHaveTextContent("保存成功");
+    await waitFor(() => expect(screen.getByRole("button", { name: "保存修改" })).toBeEnabled());
+    expect(screen.getByLabelText("状态")).toHaveValue("营业");
+    expect(screen.getByLabelText("现金")).toHaveValue("99");
+    expect(screen.getByLabelText("事件")).toHaveValue("新的营业草稿");
+    const event = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
   it("waits for the post-save record before absorbing delayed automatic weather", async () => {
     let releaseWeather!: () => void;
     const weatherDelayed = new Promise<void>((resolve) => { releaseWeather = resolve; });

@@ -75,7 +75,7 @@ it.each([["营业", 0], ["休息", 0], ["提前休息", 73]])("reads a recorded 
   expect(await within(today).findByText("今日已记录")).toBeInTheDocument();
   expect(within(today).getByText(`营业状态：${status}`)).toBeInTheDocument();
   expect(within(today).getByText(`总营业额 €${amount}`)).toBeInTheDocument();
-  expect(within(today).getByRole("link", { name: "修改今日记录" })).toBeInTheDocument();
+  expect(within(today).getByRole("link", { name: "修改今日台账" })).toBeInTheDocument();
 });
 
 it("distinguishes exhausted request failures from missing daily ledgers and recovers by retry", async () => {
