@@ -127,6 +127,24 @@ afterEach(() => {
 afterAll(() => server.close());
 
 describe("BusinessRecordsPage", () => {
+  it("opens a missing calendar date on its fifteen-date page and returns focus to that record", async () => {
+    server.use(
+      http.get("/api/database/1/records", () => HttpResponse.json(databaseResponse([record]))),
+      http.get("/api/charts/1", () => HttpResponse.json(chartsPayload)),
+    );
+    renderPage();
+    await screen.findByText("第 1 / 2 页");
+    fireEvent.click(screen.getByRole("button", { name: "经营分析" }));
+    const date = await screen.findByRole("button", { name: "2026-07-01 未录入 —" });
+    fireEvent.click(date);
+    const detail = await screen.findByRole("region", { name: "2026-07-01 营业记录详情" });
+    expect(within(detail).getByText("未录入")).toBeInTheDocument();
+    expect(within(detail).getByRole("link", { name: "修改这天记录" })).toHaveAttribute("href", "/ledger?date=2026-07-01");
+    fireEvent.click(within(detail).getByRole("button", { name: "返回记录" }));
+    await screen.findByText("第 2 / 2 页");
+    await waitFor(() => expect(screen.getByRole("button", { name: "2026年7月1日 星期三，未录入，—" })).toHaveFocus());
+    expect(screen.getByRole("button", { name: "记录" })).toHaveAttribute("aria-pressed", "true");
+  });
   it("keeps the manually chosen page after a linked date's background refresh", async () => {
     let revenue = 100;
     server.use(

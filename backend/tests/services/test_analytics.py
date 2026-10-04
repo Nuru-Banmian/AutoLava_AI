@@ -118,7 +118,7 @@ async def test_analytics_returns_expected_groups(db_session: AsyncSession) -> No
     assert result["kpis"]["average_revenue"] == 150
     assert result["kpis"]["total_wash_count"] == 3
     assert result["kpis"]["average_ticket"] == 50
-    assert result["daily"][0] == {"date": "2026-07-12", "revenue": 150}
+    assert result["daily"][0] == {"date": "2026-07-12", "revenue": 150, "is_open": "营业"}
     assert result["monthly"] == [
         {
             "month": "2026-07",
@@ -545,10 +545,10 @@ async def test_operating_day_average_uses_open_and_early_close_records(
     assert result["kpis"]["total_wash_count"] == 3
     assert result["kpis"]["average_ticket"] == 50
     assert result["daily"] == [
-        {"date": "2026-07-12", "revenue": 150},
-        {"date": "2026-07-13", "revenue": 0},
-        {"date": "2026-07-14", "revenue": 50},
-        {"date": "2026-07-15", "revenue": 0},
+        {"date": "2026-07-12", "revenue": 150, "is_open": "营业"},
+        {"date": "2026-07-13", "revenue": 0, "is_open": "休息"},
+        {"date": "2026-07-14", "revenue": 50, "is_open": "提前休息"},
+        {"date": "2026-07-15", "revenue": 0, "is_open": "营业"},
     ]
     assert {
         item["category_name"]: item["amount"] for item in result["categories"]

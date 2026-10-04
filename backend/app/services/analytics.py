@@ -1,6 +1,6 @@
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Literal
 
@@ -72,6 +72,17 @@ def _month_start(value: date) -> date:
     return value.replace(day=1)
 
 
+def _daily_revenue_rows(records: list[StoreDailyRecord]) -> list[dict[str, object]]:
+    return [
+        {
+            "date": record.date.isoformat(),
+            "revenue": record.daily_revenue,
+            "is_open": record.is_open,
+        }
+        for record in records
+    ]
+
+
 def _monthly_revenue_rows(
     daily_by_month: dict[str, int],
     settlement_by_month: dict[str, int],
@@ -132,7 +143,27 @@ class AnalyticsService:
         compare_start: date | None = None,
         compare_end: date | None = None,
         bucket: Literal["day", "month"] = "day",
+        local_date: date | None = None,
     ) -> dict:
+        if (
+            local_date is not None
+            and (start.year, start.month) == (end.year, end.month)
+            and (start.year, start.month) == (local_date.year, local_date.month)
+        ):
+            end = min(end, local_date)
+        daily_compare_start, daily_compare_end = compare_start, compare_end
+        short_previous_month = False
+        if (
+            local_date is not None
+            and compare_start is None
+            and start <= end
+            and (start.year, start.month) == (end.year, end.month)
+        ):
+            previous_last = start.replace(day=1) - timedelta(days=1)
+            short_previous_month = end.day > previous_last.day
+            if start.day <= previous_last.day:
+                daily_compare_start = previous_last.replace(day=start.day)
+                daily_compare_end = previous_last.replace(day=min(end.day, previous_last.day))
         wash_count_enabled = await self.session.scalar(
             select(Store.wash_count_enabled).where(Store.id == store_id)
         )
@@ -149,13 +180,13 @@ class AnalyticsService:
             )
         ).all()
         comparison_records: list[StoreDailyRecord] = []
-        if compare_start is not None and compare_end is not None:
+        if daily_compare_start is not None and daily_compare_end is not None:
             comparison_records = (
                 await self.session.scalars(
                     select(StoreDailyRecord)
                     .where(
                         StoreDailyRecord.store_id == store_id,
-                        StoreDailyRecord.date.between(compare_start, compare_end),
+                        StoreDailyRecord.date.between(daily_compare_start, daily_compare_end),
                     )
                     .order_by(StoreDailyRecord.date, StoreDailyRecord.id)
                 )
@@ -271,6 +302,31 @@ class AnalyticsService:
                 "average_revenue": comparison["average_revenue"],
             }
 
+        previous_revenue = None
+        change_percent = None
+        comparison_coverage = None
+        comparison_status = "no_comparison"
+        if daily_compare_start is not None and daily_compare_end is not None:
+            previous_revenue = sum(record.daily_revenue for record in comparison_records)
+            comparison_coverage = {
+                "start": daily_compare_start.isoformat(),
+                "end": daily_compare_end.isoformat(),
+                "record_days": len(comparison_records),
+                "interval_days": (daily_compare_end - daily_compare_start).days + 1,
+            }
+            if not comparison_records:
+                comparison_status = "no_previous_records"
+            elif previous_revenue == 0:
+                comparison_status = "zero_previous"
+            elif not records:
+                comparison_status = "no_current_records"
+            else:
+                comparison_status = "comparable"
+                change_percent = float(
+                    (Decimal(daily_ledger_revenue - previous_revenue) * 100 / previous_revenue)
+                    .quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                )
+
         return {
             "kpis": kpis,
             "range": {
@@ -279,6 +335,15 @@ class AnalyticsService:
                 "bucket": bucket,
             },
             "comparison_kpis": comparison_kpis,
+            "comparison_coverage": comparison_coverage,
+            "ledger_comparison": {
+                "current_revenue": daily_ledger_revenue,
+                "previous_revenue": previous_revenue,
+                "change_percent": change_percent,
+                "status": comparison_status,
+                "short_previous_month": short_previous_month,
+            },
+            "comparison_daily": _daily_revenue_rows(comparison_records),
             "income_summary": {
                 "daily_ledger_revenue": daily_ledger_revenue,
                 "confirmed_settlement_income": confirmed_settlement_income,
@@ -286,10 +351,13 @@ class AnalyticsService:
                 "includes_settlement_income": includes_settlement_income,
             },
             "classified_included_total": classified_included_total,
-            "daily": [
-                {"date": record.date.isoformat(), "revenue": record.daily_revenue}
-                for record in records
-            ],
+            "period_coverage": {
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "record_days": len(records),
+                "interval_days": max(0, (end - start).days + 1),
+            },
+            "daily": _daily_revenue_rows(records),
             "categories": compositions,
             "excluded_categories": excluded_rows,
             "monthly": _monthly_revenue_rows(

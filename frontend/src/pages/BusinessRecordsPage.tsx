@@ -259,6 +259,16 @@ export function BusinessRecordsPage() {
     openedFromList.current = true;
     navigate({ pathname: location.pathname, search: `?date=${nextRecord.date}` });
   };
+  const openCalendarDate = (date: string) => {
+    viewPositions.current.analysis = window.scrollY;
+    listPosition.current = { scrollY: viewPositions.current.records, scrollTop: listContainer.current?.scrollTop ?? 0 };
+    const index = tableRows.findIndex((row) => row.date === date);
+    if (index >= 0) setPage(Math.floor(index / PAGE_SIZE) + 1);
+    setSelectedDate(date);
+    setView("records");
+    openedFromList.current = true;
+    navigate({ pathname: location.pathname, search: `?date=${date}` });
+  };
   const returnToRecords = () => {
     if (openedFromList.current) {
       openedFromList.current = false;
@@ -388,7 +398,7 @@ export function BusinessRecordsPage() {
       </div>
       </div>
       <div hidden={view !== "analysis"} className="min-w-0">
-        {recordStateReady && <BusinessAnalysisCard key={selected.id} storeId={selected.id} range={range} />}
+        {recordStateReady && <BusinessAnalysisCard key={selected.id} storeId={selected.id} range={range} today={today} onSelectDate={openCalendarDate} visible={view === "analysis"} />}
       </div>
       {view === "records" && hasWindowData && mobileRecord && (mobileRecord.id === null || mobileRecord.store_id === selected.id) && (
         <div ref={detailContainer} role="region" aria-label={`${mobileRecord.date} 营业记录详情`} className="lg:hidden">

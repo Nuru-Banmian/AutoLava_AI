@@ -4,6 +4,21 @@ import { describe, expect, it, vi } from "vitest";
 import { RecordFilters } from "@/components/RecordFilters";
 
 describe("RecordFilters", () => {
+  it("lets the user narrow a month to an exact date interval and rejects future dates", () => {
+    const onChange = vi.fn();
+    render(<RecordFilters mode="custom" range={{ start: "2026-06-01", end: "2026-06-30" }} today="2026-07-17" exporting={false} exportError="" onChange={onChange} onExport={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("开始日期"), { target: { value: "2026-06-02" } });
+    fireEvent.change(screen.getByLabelText("结束日期"), { target: { value: "2026-06-06" } });
+    expect(onChange).toHaveBeenLastCalledWith("custom", { start: "2026-06-02", end: "2026-06-06" });
+    fireEvent.change(screen.getByLabelText("结束日期"), { target: { value: "2026-07-18" } });
+    expect(screen.getByRole("alert")).toHaveTextContent("未来日期不可选择");
+    expect(onChange).toHaveBeenCalledTimes(2);
+    fireEvent.change(screen.getByLabelText("结束日期"), { target: { value: "2026-06-01" } });
+    expect(screen.getByRole("alert")).toHaveTextContent("结束日期不能早于开始日期");
+    fireEvent.change(screen.getByLabelText("开始日期"), { target: { value: "" } });
+    expect(screen.getByRole("alert")).toHaveTextContent("请选择开始日期和结束日期");
+    expect(onChange).toHaveBeenCalledTimes(2);
+  });
   const props = {
     mode: "month" as const,
     range: { start: "2026-07-01", end: "2026-07-31" },

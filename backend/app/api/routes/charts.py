@@ -1,5 +1,6 @@
-from datetime import date
+from datetime import date, datetime
 from typing import Annotated, Literal
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
@@ -30,6 +31,14 @@ async def get_charts(
     if compare_start is not None and compare_end is not None and compare_start > compare_end:
         raise HTTPException(422, "compare_start must be on or before compare_end")
 
+    local_date = datetime.now(ZoneInfo(access.store.timezone)).date()
+    if (
+        (start.year, start.month) == (end.year, end.month)
+        and (start.year, start.month) == (local_date.year, local_date.month)
+        and start > local_date
+    ):
+        raise HTTPException(422, "start must be on or before the store's local date")
+
     selected_ids = None if category_id is None else list(dict.fromkeys(category_id))
     if selected_ids is not None:
         owned_ids = set(
@@ -52,5 +61,6 @@ async def get_charts(
         compare_start=compare_start,
         compare_end=compare_end,
         bucket=bucket,
+        local_date=local_date,
     )
     return ChartsResponse.model_validate(result)

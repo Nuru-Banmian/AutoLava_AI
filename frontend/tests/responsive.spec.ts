@@ -453,10 +453,10 @@ test("database at 390px exposes all custom month inputs without horizontal overf
   expect(exportBox!.x + exportBox!.width).toBeLessThanOrEqual(filterBox!.x + filterBox!.width);
   await recordFilters.getByRole("button", { name: "单月浏览" }).focus();
   await page.keyboard.press("Shift+Tab");
-  const endMonthInput = recordFilters.getByLabel("结束月份", { exact: true });
-  await expect(endMonthInput).toBeFocused();
+  const endDateInput = recordFilters.getByLabel("结束日期", { exact: true });
+  await expect(endDateInput).toBeFocused();
   const [focusedInputBox, mobileNavigationBox] = await Promise.all([
-    endMonthInput.boundingBox(),
+    endDateInput.boundingBox(),
     page.getByRole("navigation", { name: "移动导航" }).boundingBox(),
   ]);
   expect(focusedInputBox).not.toBeNull();

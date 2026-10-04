@@ -4,6 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import type { ChartsResponse } from "@/api/types";
 import { ChartPanel } from "@/components/ChartPanel";
+import { DailyLedgerTrend } from "@/components/DailyLedgerTrend";
+import { BusinessCalendar } from "@/components/BusinessCalendar";
 import { IncomeComposition } from "@/components/IncomeComposition";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,6 +15,9 @@ import { chartsKey, formatWholeEuro } from "@/lib/user-api";
 interface BusinessAnalysisCardProps {
   storeId: number;
   range: DateRange;
+  today?: string;
+  onSelectDate?: (date: string) => void;
+  visible?: boolean;
 }
 
 function comparisonText(data: ChartsResponse): string | null {
@@ -36,7 +41,7 @@ function Kpi({ title, value }: { title: string; value: string }) {
   </div>;
 }
 
-export function BusinessAnalysisCard({ storeId, range }: BusinessAnalysisCardProps) {
+export function BusinessAnalysisCard({ storeId, range, today = range.end, onSelectDate, visible = true }: BusinessAnalysisCardProps) {
   const resolved = useMemo(() => {
     try {
       return analysisRange("custom", range.end, range);
@@ -50,11 +55,11 @@ export function BusinessAnalysisCard({ storeId, range }: BusinessAnalysisCardPro
     enabled: resolved !== null,
     queryFn: ({ signal }) => api<ChartsResponse>(`/charts/${storeId}?${queryString}`, { signal }),
   });
-  const data = charts.data;
+  const data = visible ? charts.data : undefined;
   const trend = data ? (data.range.bucket === "day"
     ? data.daily.map((row) => ({ label: row.date, revenue: row.revenue }))
     : data.monthly.map((row) => ({ label: row.month, revenue: row.monthly_total_income }))) : [];
-  const hasBusinessData = (data?.income_summary.total_income ?? 0) !== 0;
+  const hasBusinessData = (data?.kpis.record_days ?? 0) > 0 || (data?.income_summary.total_income ?? 0) !== 0;
   const isSingleMonth = data?.range.start.slice(0, 7) === data?.range.end.slice(0, 7);
 
   return <Card>
@@ -84,11 +89,12 @@ export function BusinessAnalysisCard({ storeId, range }: BusinessAnalysisCardPro
         <div className="grid gap-1 text-sm text-muted-foreground">
           <p>当前区间：{data.range.start} 至 {data.range.end}（按{data.range.bucket === "day" ? "日" : "月"}）</p>
           {data.comparison_kpis && <p>比较区间：{data.comparison_kpis.start} 至 {data.comparison_kpis.end}</p>}
-          {comparisonText(data) && <p>{comparisonText(data)}</p>}
+          {data.range.bucket === "month" && comparisonText(data) && <p>{comparisonText(data)}</p>}
         </div>
         {!hasBusinessData && <p>该范围暂无经营数据</p>}
-        <ChartPanel embedded title="营业额趋势" kind="line" data={trend} xKey="label" valueKey="revenue" emptyMessage="暂无趋势数据" heightClassName="h-64 min-h-64" />
+        {data.range.bucket === "day" ? <DailyLedgerTrend key={`trend-${data.range.start}-${data.range.end}`} data={data} /> : <><p className="text-sm text-muted-foreground">月粒度：月度总收入，包含开票月份已确认公司结算。</p><ChartPanel embedded title="月度总收入趋势" kind="line" data={trend} xKey="label" valueKey="revenue" emptyMessage="暂无趋势数据" heightClassName="h-64 min-h-64" /></>}
         <IncomeComposition included={data.categories} excluded={data.excluded_categories} classifiedIncludedTotal={data.classified_included_total} />
+        {isSingleMonth && <BusinessCalendar key={`calendar-${data.range.start}-${data.range.end}`} data={data} today={today} onSelectDate={onSelectDate} />}
       </>}
     </CardContent>
   </Card>;

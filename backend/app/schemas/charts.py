@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class PrimaryCategory(BaseModel):
@@ -24,6 +24,24 @@ class ChartKpis(BaseModel):
 class DailyRevenue(BaseModel):
     date: str
     revenue: int
+    is_open: Literal["营业", "休息", "提前休息"] | None = None
+
+
+class PeriodCoverage(BaseModel):
+    start: str
+    end: str
+    record_days: int
+    interval_days: int
+
+
+class LedgerComparison(BaseModel):
+    current_revenue: int
+    previous_revenue: int | None
+    change_percent: float | None
+    status: Literal[
+        "comparable", "no_previous_records", "zero_previous", "no_comparison", "no_current_records"
+    ]
+    short_previous_month: bool
 
 
 class SettlementComposition(BaseModel):
@@ -81,6 +99,10 @@ class ChartsResponse(BaseModel):
     income_summary: IncomeSummary
     classified_included_total: int
     daily: list[DailyRevenue]
+    period_coverage: PeriodCoverage | None = None
+    comparison_daily: list[DailyRevenue] = Field(default_factory=list)
+    comparison_coverage: PeriodCoverage | None = None
+    ledger_comparison: LedgerComparison | None = None
     categories: list[CategoryComposition]
     excluded_categories: list[CategoryComposition]
     monthly: list[MonthlyRevenue]
