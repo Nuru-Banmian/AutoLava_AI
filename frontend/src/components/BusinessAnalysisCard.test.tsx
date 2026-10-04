@@ -82,7 +82,7 @@ describe("BusinessAnalysisCard", () => {
     expect(within(weather).queryByRole("combobox")).not.toBeInTheDocument();
     localStorage.removeItem("weatherOrder");
   });
-  it("shows daily ledger coverage and readable missing, closed and zero values independently of settlements", async () => {
+  it("keeps the ledger comparison without redundant coverage or reading controls", async () => {
     server.use(http.get("/api/charts/1", () => HttpResponse.json({
       ...payload(),
       range: { start: "2026-07-01", end: "2026-07-04", bucket: "day" },
@@ -94,15 +94,13 @@ describe("BusinessAnalysisCard", () => {
       ledger_comparison: { current_revenue: 100, previous_revenue: 80, change_percent: 25, status: "comparable", short_previous_month: false },
     })));
     renderCard({ start: "2026-07-01", end: "2026-07-04" });
-    expect(await screen.findByText("本期已记录 3 / 4 天；上期已记录 1 / 4 天")).toBeInTheDocument();
+    await screen.findByText("每日台账营业额较上期 +25.0%");
+    expect(screen.queryByText(/本期已记录/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/上期有效范围/)).not.toBeInTheDocument();
     expect(screen.queryByText("记录覆盖不完整，比较仅反映已记录每日台账。")).not.toBeInTheDocument();
     expect(screen.getByText("每日台账营业额较上期 +25.0%")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("趋势读数日期"), { target: { value: "2026-07-02" } });
-    expect(screen.getByRole("status", { name: "趋势读数" })).toHaveTextContent("2026-07-02：未录入，—");
-    fireEvent.change(screen.getByLabelText("趋势读数日期"), { target: { value: "2026-07-03" } });
-    expect(screen.getByRole("status", { name: "趋势读数" })).toHaveTextContent("2026-07-03：休息，€0");
-    fireEvent.change(screen.getByLabelText("趋势读数日期"), { target: { value: "2026-07-04" } });
-    expect(screen.getByRole("status", { name: "趋势读数" })).toHaveTextContent("2026-07-04：营业，€0");
+    expect(screen.queryByLabelText("趋势读数日期")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "趋势读数" })).not.toBeInTheDocument();
   });
   it("drives all analysis content from the supplied record-table range without separate controls", async () => {
     const requests: URL[] = [];
@@ -236,7 +234,7 @@ describe("BusinessAnalysisCard", () => {
     expect(screen.getByLabelText("公司结算 占比 28.6%")).toBeInTheDocument();
   });
 
-  it("reads short-month limits without inventing an earlier date and omits calendars for cross-month scopes", async () => {
+  it("omits short-month explanations and calendars for cross-month scopes", async () => {
     server.use(http.get("/api/charts/1", () => HttpResponse.json({ ...payload(),
       range: { start: "2026-03-01", end: "2026-03-31", bucket: "day" },
       comparison_daily: [{ date: "2026-02-28", revenue: 80, is_open: "营业" }],
@@ -245,10 +243,10 @@ describe("BusinessAnalysisCard", () => {
       ledger_comparison: { current_revenue: 100, previous_revenue: 80, change_percent: 25, status: "comparable", short_previous_month: true },
     })));
     const first = renderCard({ start: "2026-03-01", end: "2026-03-31" });
-    expect(await screen.findByText("本期已记录 1 / 31 天；上期已记录 1 / 28 天")).toBeInTheDocument();
-    expect(screen.getByText("上期有效范围：2026-02-01 至 2026-02-28")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("趋势读数日期"), { target: { value: "2026-03-31" } });
-    expect(screen.getByRole("status", { name: "趋势读数" })).toHaveTextContent("上期无对应日期");
+    await screen.findByText("每日台账营业额较上期 +25.0%");
+    expect(screen.queryByText(/本期已记录/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/上期有效范围/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("趋势读数日期")).not.toBeInTheDocument();
     first.unmount();
     server.use(http.get("/api/charts/1", () => HttpResponse.json({ ...payload(), range: { start: "2026-01-01", end: "2026-03-31", bucket: "month" } })));
     renderCard({ start: "2026-01-01", end: "2026-03-31" });

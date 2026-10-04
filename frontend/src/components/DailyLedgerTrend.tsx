@@ -1,5 +1,4 @@
 import { eachDayOfInterval, format, parseISO } from "date-fns";
-import { useState } from "react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import type { ChartsResponse } from "@/api/types";
@@ -22,8 +21,6 @@ export function DailyLedgerTrend({ data }: { data: ChartsResponse }) {
     current: current.get(date)?.revenue ?? null,
     previous: priorDates[index] ? previous.get(priorDates[index])?.revenue ?? null : null,
   }));
-  const [selectedDate, setSelectedDate] = useState(dates[0] ?? "");
-  const selected = rows.find((row) => row.date === selectedDate) ?? rows[0];
   const readable = (date: string | undefined, comparative = false) => {
     if (!date) return "上期无对应日期";
     const record = (comparative ? previous : current).get(date);
@@ -44,11 +41,7 @@ export function DailyLedgerTrend({ data }: { data: ChartsResponse }) {
       <span className="flex items-center gap-2"><span aria-hidden="true" className="h-1 w-6 bg-primary" />本期每日台账</span>
       {priorRange && <span className="flex items-center gap-2"><span aria-hidden="true" className="w-6 border-t-2 border-dashed border-[var(--chart-series-2)]" />上期每日台账</span>}
     </div>
-    {coverage && <div className="grid gap-1 text-sm text-muted-foreground">
-      <p>本期已记录 {coverage.record_days} / {coverage.interval_days} 天{priorRange ? `；上期已记录 ${priorRange.record_days} / ${priorRange.interval_days} 天` : ""}</p>
-      {priorRange && <p>上期有效范围：{priorRange.start} 至 {priorRange.end}</p>}
-      <p>{comparisonMessage}</p>
-    </div>}
+    {coverage && <p className="text-sm text-muted-foreground">{comparisonMessage}</p>}
     <div data-testid="chart-panel-plot" className="h-48 min-h-48 w-full min-w-0">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={rows} margin={{ top: 10, right: 12, bottom: 8, left: 0 }}>
@@ -64,12 +57,5 @@ export function DailyLedgerTrend({ data }: { data: ChartsResponse }) {
         </LineChart>
       </ResponsiveContainer>
     </div>
-    {selected && <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-1 rounded-md bg-muted/40 p-2">
-      <label htmlFor="trend-date" className="text-sm font-medium">趋势读数日期</label>
-      <select id="trend-date" value={selected.date} onChange={(event) => setSelectedDate(event.target.value)} className="h-11 w-full min-w-0 rounded-md border bg-white px-3 text-base focus-visible:outline-2 focus-visible:outline-primary">
-        {dates.map((date) => <option key={date} value={date}>{date}</option>)}
-      </select>
-      <div role="status" aria-label="趋势读数" className="col-span-2 grid gap-0.5 break-words text-sm tabular-nums"><p>本期 {readable(selected.date)}</p>{priorRange && <p>上期 {readable(selected.previousDate, true)}</p>}</div>
-    </div>}
   </section>;
 }

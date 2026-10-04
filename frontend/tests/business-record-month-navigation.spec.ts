@@ -69,7 +69,7 @@ test("320px: calendar cells shade revenue with the theme blue and expose exact r
   await expect(page.getByRole("button", { name: /^查看 .* 每日台账$/ })).toHaveCount(0);
 });
 
-test("390px: daily ledger curves keep gaps, expose keyboard readings and open missing calendar dates on the right page", async ({ page }) => {
+test("390px: daily ledger curves keep gaps without redundant readers and open missing calendar dates", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
   await page.setViewportSize({ width: 390, height: 844 });
   await mockEditableBusinessRecords(page);
@@ -87,16 +87,13 @@ test("390px: daily ledger curves keep gaps, expose keyboard readings and open mi
   await page.goto("/database");
   await page.getByLabel("月份", { exact: true }).fill("2026-06");
   await page.getByRole("button", { name: "经营分析", exact: true }).click();
-  await expect(page.getByText("本期已记录 4 / 30 天；上期已记录 1 / 30 天", { exact: true })).toBeVisible();
+  await expect(page.getByText(/本期已记录/)).toHaveCount(0);
+  await expect(page.getByText(/上期有效范围/)).toHaveCount(0);
   await expect(page.getByText("每日台账营业额较上期 +50.0%", { exact: true })).toBeVisible();
   const trend = page.getByRole("region", { name: "每日台账营业额趋势" });
   await expect.poll(async () => ((await trend.locator("path.recharts-line-curve").first().getAttribute("d"))?.match(/M/g) ?? []).length).toBe(2);
-  const reading = page.getByLabel("趋势读数日期", { exact: true });
-  await reading.selectOption("2026-06-14");
-  await expect(page.getByRole("status", { name: "趋势读数" })).toContainText("2026-06-14：未录入，—");
-  await reading.focus();
-  await reading.press("ArrowUp");
-  await expect(page.getByRole("status", { name: "趋势读数" })).toContainText("2026-06-13：休息，€0");
+  await expect(page.getByLabel("趋势读数日期", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("status", { name: "趋势读数" })).toHaveCount(0);
   const missingDate = page.getByRole("button", { name: "2026-06-01 未录入 —", exact: true });
   await wheelToControl(page, missingDate);
   const box = (await missingDate.boundingBox())!;
