@@ -4,8 +4,8 @@ import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import type { DateRange, MonthSelection, MonthSelectionIssue, RecordRangeMode } from "@/lib/business-record-ranges";
-import { customMonthRange, monthRange, monthSelectionIssue } from "@/lib/business-record-ranges";
+import type { DateRange, RecordRangeMode } from "@/lib/business-record-ranges";
+import { customMonthRange, monthRange } from "@/lib/business-record-ranges";
 
 interface RecordFiltersProps {
   mode: RecordRangeMode;
@@ -17,23 +17,14 @@ interface RecordFiltersProps {
   onExport(): void;
 }
 
-const monthSelectionMessages: Record<MonthSelectionIssue, string> = {
-  missing: "请选择开始月份和结束月份",
-  invalid: "请选择有效月份",
-  future: "未来月份不可选择",
-  reversed: "结束月份不能早于开始月份",
-};
-
 export function RecordFilters({ mode, range, today, exporting, exportError, onChange, onExport }: RecordFiltersProps) {
   const currentMonth = today.slice(0, 7);
   const selectedMonth = range.start.slice(0, 7);
-  const [customDraft, setCustomDraft] = useState<MonthSelection>({ startMonth: selectedMonth, endMonth: range.end.slice(0, 7) });
   const [dateDraft, setDateDraft] = useState(range);
   const [customOpen, setCustomOpen] = useState(mode === "custom");
   const [validationError, setValidationError] = useState("");
 
   useEffect(() => {
-    setCustomDraft({ startMonth: range.start.slice(0, 7), endMonth: range.end.slice(0, 7) });
     setDateDraft(range);
     setValidationError("");
   }, [range.start, range.end]);
@@ -62,23 +53,11 @@ export function RecordFilters({ mode, range, today, exporting, exportError, onCh
   };
   const openCustom = () => {
     const next = { startMonth: selectedMonth, endMonth: selectedMonth };
-    setCustomDraft(next);
     setValidationError("");
     setCustomOpen(true);
     const nextRange = customMonthRange(next, today);
     setDateDraft(nextRange);
     onChange("custom", nextRange);
-  };
-  const updateCustom = (patch: Partial<MonthSelection>) => {
-    const next = { ...customDraft, ...patch };
-    const issue = monthSelectionIssue(next, currentMonth);
-    setCustomDraft(next);
-    setValidationError(issue ? monthSelectionMessages[issue] : "");
-    if (!issue) {
-      const nextRange = customMonthRange(next, today);
-      setDateDraft(nextRange);
-      onChange("custom", nextRange);
-    }
   };
   const updateDate = (patch: Partial<typeof range>) => {
     const next = { ...dateDraft, ...patch };
@@ -88,7 +67,6 @@ export function RecordFilters({ mode, range, today, exporting, exportError, onCh
         : next.start > next.end ? "结束日期不能早于开始日期" : "";
     setValidationError(error);
     if (!error) {
-      setCustomDraft({ startMonth: next.start.slice(0, 7), endMonth: next.end.slice(0, 7) });
       onChange("custom", next);
     }
   };
@@ -113,13 +91,7 @@ export function RecordFilters({ mode, range, today, exporting, exportError, onCh
         </Button>
       </div>
       {customOpen && (
-        <div className="grid min-w-0 grid-cols-2 gap-2 md:col-span-2 md:row-start-2" data-testid="record-filter-months">
-          <label className="grid min-w-0 gap-1 text-sm font-medium">开始月份
-            <Input aria-label="开始月份" className="h-10 min-w-0 px-2" max={currentMonth} onChange={(event) => updateCustom({ startMonth: event.target.value })} type="month" value={customDraft.startMonth} />
-          </label>
-          <label className="grid min-w-0 gap-1 text-sm font-medium">结束月份
-            <Input aria-label="结束月份" className="h-10 min-w-0 px-2" max={currentMonth} onChange={(event) => updateCustom({ endMonth: event.target.value })} type="month" value={customDraft.endMonth} />
-          </label>
+        <div className="grid min-w-0 grid-cols-2 gap-2 md:col-span-2 md:row-start-2" data-testid="record-filter-dates">
           <label className="grid min-w-0 gap-1 text-sm font-medium">开始日期
             <Input aria-label="开始日期" className="h-11 min-w-0 px-2" max={today} onChange={(event) => updateDate({ start: event.target.value })} type="date" value={dateDraft.start} />
           </label>

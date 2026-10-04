@@ -894,7 +894,7 @@ test("recomputes the current month from the newly selected store timezone", asyn
   await expectLatestSynchronizedRange(requests, { storeId: 2, start: "2026-07-01", end: "2026-07-31" });
 });
 
-test("uses month-bounded custom ranges and blocks reversed or future queries at 320px", async ({ page }) => {
+test("uses one row of custom date fields and blocks reversed or future queries at 320px", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
   await page.setViewportSize({ width: 320, height: 700 });
   const requests = { records: [] as RangeRequest[], charts: [] as RangeRequest[] };
@@ -903,24 +903,30 @@ test("uses month-bounded custom ranges and blocks reversed or future queries at 
 
   const filters = page.getByRole("region", { name: "记录筛选" });
   await filters.getByRole("button", { name: "自定义范围" }).click();
-  const start = filters.getByLabel("开始月份", { exact: true });
-  const end = filters.getByLabel("结束月份", { exact: true });
-  await start.fill("2026-05");
-  await end.fill("2026-06");
+  const start = filters.getByLabel("开始日期", { exact: true });
+  const end = filters.getByLabel("结束日期", { exact: true });
+  await expect(filters.getByLabel("开始月份", { exact: true })).toHaveCount(0);
+  await expect(filters.getByLabel("结束月份", { exact: true })).toHaveCount(0);
+  const startBounds = (await start.boundingBox())!;
+  const endBounds = (await end.boundingBox())!;
+  expect(Math.abs(startBounds.y - endBounds.y)).toBeLessThanOrEqual(1);
+  expect(endBounds.x).toBeGreaterThan(startBounds.x);
+  await start.fill("2026-05-01");
+  await end.fill("2026-06-30");
   await expectLatestSynchronizedRange(requests, { storeId: 1, start: "2026-05-01", end: "2026-06-30" });
 
-  await end.fill("2026-07");
+  await end.fill("2026-07-18");
   await expectLatestSynchronizedRange(requests, { storeId: 1, start: "2026-05-01", end: "2026-07-18" });
 
   const reversedCount = requests.records.length;
-  await start.fill("2026-08");
-  await expect(filters.getByRole("alert")).toContainText("未来月份不可选择");
+  await start.fill("2026-08-01");
+  await expect(filters.getByRole("alert")).toContainText("未来日期不可选择");
   await expect.poll(() => requests.records.length).toBe(reversedCount);
-  await start.fill("2026-07");
+  await start.fill("2026-07-01");
   await expectLatestSynchronizedRange(requests, { storeId: 1, start: "2026-07-01", end: "2026-07-18" });
   const validCount = requests.records.length;
-  await end.fill("2026-06");
-  await expect(filters.getByRole("alert")).toContainText("结束月份不能早于开始月份");
+  await end.fill("2026-06-30");
+  await expect(filters.getByRole("alert")).toContainText("结束日期不能早于开始日期");
   await expect.poll(() => requests.records.length).toBe(validCount);
 
   await end.focus();
@@ -940,8 +946,8 @@ test("loads every record page for a long custom month range", async ({ page }) =
 
   const filters = page.getByRole("region", { name: "记录筛选" });
   await filters.getByRole("button", { name: "自定义范围" }).click();
-  await filters.getByLabel("开始月份", { exact: true }).fill("2025-01");
-  await filters.getByLabel("结束月份", { exact: true }).fill("2025-12");
+  await filters.getByLabel("开始日期", { exact: true }).fill("2025-01-01");
+  await filters.getByLabel("结束日期", { exact: true }).fill("2025-12-31");
 
   await expect.poll(() => requests.pagedRecords.filter((request) => (
     request.start === "2025-01-01" && request.end === "2025-12-31"
