@@ -17,6 +17,16 @@ async function wheelToControl(page: Page, control: Locator) {
   const viewport = page.viewportSize()!;
   await page.mouse.move(viewport.width * 0.75, viewport.height * 0.5);
   for (let attempt = 0; attempt < 8; attempt += 1) {
+    // Native wheel events return before scrolling finishes. Read stable geometry
+    // before choosing the next movement or declaring the control reachable.
+    let previousY: number | undefined;
+    let stableReadings = 0;
+    await expect.poll(async () => {
+      const y = (await control.boundingBox())!.y;
+      stableReadings = y === previousY ? stableReadings + 1 : 0;
+      previousY = y;
+      return stableReadings;
+    }).toBeGreaterThanOrEqual(2);
     const box = (await control.boundingBox())!;
     const navigation = await page.getByRole("navigation", { name: "移动导航", includeHidden: true }).boundingBox();
     const bottom = navigation?.y ?? viewport.height;
@@ -26,6 +36,28 @@ async function wheelToControl(page: Page, control: Locator) {
   }
   await expect(control).toBeInViewport({ ratio: 1 });
 }
+
+test("320px: calendar cells use income shading and expose amounts through exact readings", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
+  await page.setViewportSize({ width: 320, height: 844 });
+  await mockEditableBusinessRecords(page);
+  await page.route("**/api/charts/1?**", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+    kpis: { total_revenue: 999900000, record_days: 1, open_days: 1, average_revenue: 999900000, primary_categories: [], total_wash_count: null, average_ticket: null },
+    range: { start: "2026-06-01", end: "2026-06-30", bucket: "day" }, comparison_kpis: null,
+    income_summary: { daily_ledger_revenue: 999900000, confirmed_settlement_income: 0, total_income: 999900000, includes_settlement_income: false }, classified_included_total: 0,
+    daily: [{ date: "2026-06-02", revenue: 999900000, is_open: "营业" }], categories: [], excluded_categories: [], monthly: [], weather: [], weekday: [],
+  }) }));
+  await page.goto("/database");
+  await page.getByLabel("月份", { exact: true }).fill("2026-06");
+  await page.getByRole("button", { name: "经营分析", exact: true }).click();
+  const date = page.getByRole("button", { name: "2026-06-02 营业 €999.900.000", exact: true });
+  await wheelToControl(page, date);
+  await expect(date).toHaveText("2营业");
+  await expect(date).toHaveCSS("background-color", "rgba(30, 58, 95, 0.2)");
+  await expect(page.getByRole("button", { name: "2026-06-01 未录入 —", exact: true })).toHaveCSS("background-color", "rgba(30, 58, 95, 0)");
+  await page.getByLabel("日历读数日期", { exact: true }).selectOption("2026-06-02");
+  await expect(page.getByRole("status", { name: "日历读数" })).toHaveText("2026-06-02 营业 €999.900.000");
+});
 
 test("390px: daily ledger curves keep gaps, expose keyboard readings and open missing calendar dates on the right page", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });

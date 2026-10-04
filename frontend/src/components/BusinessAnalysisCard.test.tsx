@@ -112,11 +112,12 @@ describe("BusinessAnalysisCard", () => {
     expect(screen.queryByText("该范围暂无经营数据")).not.toBeInTheDocument();
   });
 
-  it("keeps the largest permitted daily amount compact in a calendar while preserving the exact reading", async () => {
+  it("uses income shading without a resident calendar amount and preserves the exact reading", async () => {
     server.use(http.get("/api/charts/1", () => HttpResponse.json(payload({ daily: [{ date: "2026-07-01", revenue: 9999999999, is_open: "营业" }] }))));
     renderCard();
     const date = await screen.findByRole("button", { name: "2026-07-01 营业 €9.999.999.999" });
-    expect(date).toHaveTextContent("€10b");
+    expect(date).toHaveTextContent(/^1营业$/);
+    expect(date).toHaveStyle({ backgroundColor: "rgba(30, 58, 95, 0.2)" });
     expect(screen.getByRole("status", { name: "日历读数" })).toHaveTextContent("€9.999.999.999");
   });
 

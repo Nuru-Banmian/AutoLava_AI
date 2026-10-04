@@ -3,7 +3,6 @@ import { useState } from "react";
 
 import type { ChartsResponse } from "@/api/types";
 import { Button } from "@/components/ui/button";
-import { formatCompactEuro } from "@/lib/compact-euro";
 import { formatWholeEuro } from "@/lib/user-api";
 
 export function BusinessCalendar({ data, today, onSelectDate }: {
@@ -39,7 +38,6 @@ export function BusinessCalendar({ data, today, onSelectDate }: {
           style={enabled ? { backgroundColor: `rgba(30, 58, 95, ${opacity})` } : undefined}
           onFocus={() => setSelectedDate(date)} onPointerEnter={() => enabled && setSelectedDate(date)} onClick={() => { setSelectedDate(date); onSelectDate?.(date); }}>
           <span className="font-semibold">{Number(date.slice(8))}</span><span className="break-all leading-tight">{state(date)}</span>
-          {enabled && <span className="text-[11px] leading-tight">{record ? formatCompactEuro(record.revenue) : "—"}</span>}
         </button>;
       })}
     </div>
@@ -51,6 +49,6 @@ export function BusinessCalendar({ data, today, onSelectDate }: {
       <p role="status" aria-label="日历读数" className="break-words text-sm tabular-nums">{label(selected)}</p>
       {onSelectDate && <Button type="button" variant="outline" className="h-11" onClick={() => onSelectDate(selected)}>查看 {selected} 每日台账</Button>}
     </div>}
-    <p className="text-sm text-muted-foreground">颜色深浅仅辅助表示金额；休息和已记录零营业额为真实 €0，未录入为 —。k 表示千欧元，m 表示百万欧元，b 表示十亿欧元，完整金额见读数。公司结算不分摊到日期。</p>
+    <p className="text-sm text-muted-foreground">颜色越深表示每日台账营业额越高；日期格保留日期和状态，选中日期可查看完整金额。休息和已记录零营业额为真实 €0，未录入为 —。公司结算不分摊到日期。</p>
   </section>;
 }
