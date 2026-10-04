@@ -329,8 +329,8 @@ describe("BusinessRecordsPage", () => {
     renderPage();
 
     fireEvent.click(within(screen.getByRole("region", { name: "记录筛选" })).getByRole("button", { name: "自定义范围" }));
-    fireEvent.change(screen.getByLabelText("开始月份"), { target: { value: "2026-06" } });
-    fireEvent.change(screen.getByLabelText("结束月份"), { target: { value: "2026-06" } });
+    fireEvent.change(screen.getByLabelText("开始日期"), { target: { value: "2026-06-01" } });
+    fireEvent.change(screen.getByLabelText("结束日期"), { target: { value: "2026-06-30" } });
     await screen.findByRole("heading", { name: "2026年6月15日 星期一" });
     fireEvent.click(screen.getByRole("button", { name: "下一页" }));
     fireEvent.click(screen.getByRole("button", { name: "2026年6月15日 星期一，营业，€100" }));

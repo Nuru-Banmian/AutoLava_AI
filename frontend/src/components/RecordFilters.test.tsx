@@ -67,18 +67,20 @@ describe("RecordFilters", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("未来月份不可选择");
   });
 
-  it("opens a month-based custom range and resolves past and current end boundaries", () => {
+  it("opens just one pair of date fields for custom ranges", () => {
     const onChange = vi.fn();
     render(<RecordFilters {...props} onChange={onChange} />);
 
     fireEvent.click(screen.getByRole("button", { name: "自定义范围" }));
-    expect(screen.getByTestId("record-filter-months")).toHaveClass("grid", "grid-cols-2");
-    expect(screen.getByLabelText("开始月份")).toHaveAttribute("type", "month");
-    expect(screen.getByLabelText("结束月份")).toHaveAttribute("type", "month");
+    expect(screen.getByTestId("record-filter-dates")).toHaveClass("grid", "grid-cols-2");
+    expect(screen.getByLabelText("开始日期")).toHaveAttribute("type", "date");
+    expect(screen.getByLabelText("结束日期")).toHaveAttribute("type", "date");
+    expect(screen.queryByLabelText("开始月份")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("结束月份")).not.toBeInTheDocument();
     expect(onChange).toHaveBeenLastCalledWith("custom", { start: "2026-07-01", end: "2026-07-17" });
 
-    fireEvent.change(screen.getByLabelText("开始月份"), { target: { value: "2026-05" } });
-    fireEvent.change(screen.getByLabelText("结束月份"), { target: { value: "2026-06" } });
+    fireEvent.change(screen.getByLabelText("开始日期"), { target: { value: "2026-05-01" } });
+    fireEvent.change(screen.getByLabelText("结束日期"), { target: { value: "2026-06-30" } });
     expect(onChange).toHaveBeenLastCalledWith("custom", { start: "2026-05-01", end: "2026-06-30" });
   });
 
@@ -88,26 +90,26 @@ describe("RecordFilters", () => {
     fireEvent.click(screen.getByRole("button", { name: "自定义范围" }));
     onChange.mockClear();
 
-    fireEvent.change(screen.getByLabelText("开始月份"), { target: { value: "2026-08" } });
+    fireEvent.change(screen.getByLabelText("开始日期"), { target: { value: "2026-08-01" } });
     expect(onChange).not.toHaveBeenCalled();
-    expect(screen.getByRole("alert")).toHaveTextContent("未来月份不可选择");
+    expect(screen.getByRole("alert")).toHaveTextContent("未来日期不可选择");
     expect(screen.getByRole("button", { name: "导出当前范围" })).toBeDisabled();
 
-    fireEvent.change(screen.getByLabelText("开始月份"), { target: { value: "2026-07" } });
+    fireEvent.change(screen.getByLabelText("开始日期"), { target: { value: "2026-07-01" } });
     onChange.mockClear();
-    fireEvent.change(screen.getByLabelText("结束月份"), { target: { value: "2026-06" } });
+    fireEvent.change(screen.getByLabelText("结束日期"), { target: { value: "2026-06-30" } });
     expect(onChange).not.toHaveBeenCalled();
-    expect(screen.getByRole("alert")).toHaveTextContent("结束月份不能早于开始月份");
+    expect(screen.getByRole("alert")).toHaveTextContent("结束日期不能早于开始日期");
   });
 
   it("preserves an invalid custom draft across value-equivalent range props", () => {
     const view = render(<RecordFilters {...props} />);
     fireEvent.click(screen.getByRole("button", { name: "自定义范围" }));
-    fireEvent.change(screen.getByLabelText("开始月份"), { target: { value: "2026-08" } });
+    fireEvent.change(screen.getByLabelText("开始日期"), { target: { value: "2026-08-01" } });
 
     view.rerender(<RecordFilters {...props} range={{ start: "2026-07-01", end: "2026-07-31" }} />);
-    expect(screen.getByLabelText("开始月份")).toHaveValue("2026-08");
-    expect(screen.getByLabelText("结束月份")).toHaveValue("2026-07");
+    expect(screen.getByLabelText("开始日期")).toHaveValue("2026-08-01");
+    expect(screen.getByLabelText("结束日期")).toHaveValue("2026-07-17");
   });
 
   it("clears an invalid draft when an external range changes", () => {
@@ -122,10 +124,10 @@ describe("RecordFilters", () => {
 
   it("closes custom controls after an external mode change and exposes export errors", () => {
     const view = render(<RecordFilters {...props} mode="custom" exportError="导出失败，请重试" />);
-    expect(screen.getByTestId("record-filter-months")).toBeInTheDocument();
+    expect(screen.getByTestId("record-filter-dates")).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("导出失败，请重试");
 
     view.rerender(<RecordFilters {...props} mode="month" />);
-    expect(screen.queryByTestId("record-filter-months")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("record-filter-dates")).not.toBeInTheDocument();
   });
 });

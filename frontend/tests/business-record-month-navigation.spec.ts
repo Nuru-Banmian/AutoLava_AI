@@ -37,7 +37,7 @@ async function wheelToControl(page: Page, control: Locator) {
   await expect(control).toBeInViewport({ ratio: 1 });
 }
 
-test("320px: calendar cells use income shading and expose amounts through exact readings", async ({ page }) => {
+test("320px: calendar cells shade revenue with the theme blue and expose exact readings", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
   await page.setViewportSize({ width: 320, height: 844 });
   await mockEditableBusinessRecords(page);
@@ -45,7 +45,7 @@ test("320px: calendar cells use income shading and expose amounts through exact 
     kpis: { total_revenue: 999900000, record_days: 1, open_days: 1, average_revenue: 999900000, primary_categories: [], total_wash_count: null, average_ticket: null },
     range: { start: "2026-06-01", end: "2026-06-30", bucket: "day" }, comparison_kpis: null,
     income_summary: { daily_ledger_revenue: 999900000, confirmed_settlement_income: 0, total_income: 999900000, includes_settlement_income: false }, classified_included_total: 0,
-    daily: [{ date: "2026-06-02", revenue: 999900000, is_open: "营业" }], categories: [], excluded_categories: [], monthly: [], weather: [], weekday: [],
+    daily: [{ date: "2026-06-02", revenue: 999900000, is_open: "营业" }, { date: "2026-06-03", revenue: 499950000, is_open: "营业" }, { date: "2026-06-04", revenue: 0, is_open: "营业" }], categories: [], excluded_categories: [], monthly: [], weather: [], weekday: [],
   }) }));
   await page.goto("/database");
   await page.getByLabel("月份", { exact: true }).fill("2026-06");
@@ -56,15 +56,20 @@ test("320px: calendar cells use income shading and expose amounts through exact 
   const originalColor = await date.evaluate((element) => getComputedStyle(element).backgroundColor);
   await page.evaluate(() => document.documentElement.style.setProperty("--primary", "oklch(0.5 0.15 255)"));
   await expect.poll(() => date.evaluate((element) => getComputedStyle(element).backgroundColor)).not.toBe(originalColor);
-  await expect(date).toHaveCSS("background-color", /\/ 0.2\)/);
+  await expect(date).toHaveCSS("background-color", /\/ 0.4\)/);
+  await expect(page.getByRole("button", { name: "2026-06-03 营业 €499.950.000", exact: true })).toHaveCSS("background-color", /\/ 0.24\)/);
+  await expect(page.getByRole("button", { name: "2026-06-04 营业 €0", exact: true })).toHaveCSS("background-color", /\/ 0.08\)/);
   await expect(page.getByRole("button", { name: "2026-06-01 未录入 —", exact: true })).toHaveCSS("background-color", /\/ 0\)/);
   await page.evaluate(() => document.documentElement.style.removeProperty("--primary"));
   await expect(date).toHaveCSS("background-color", originalColor);
-  await page.getByLabel("日历读数日期", { exact: true }).selectOption("2026-06-02");
-  await expect(page.getByRole("status", { name: "日历读数" })).toHaveText("2026-06-02 营业 €999.900.000");
+  await page.getByRole("region", { name: "营业日历", exact: true }).screenshot({ path: "output/theme-calendar-320.png" });
+  await expect(date).toHaveAttribute("title", "2026-06-02 营业 €999.900.000");
+  await expect(page.getByLabel("日历读数日期", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("status", { name: "日历读数" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^查看 .* 每日台账$/ })).toHaveCount(0);
 });
 
-test("390px: daily ledger curves keep gaps, expose keyboard readings and open missing calendar dates on the right page", async ({ page }) => {
+test("390px: daily ledger curves keep gaps without redundant readers and open missing calendar dates", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
   await page.setViewportSize({ width: 390, height: 844 });
   await mockEditableBusinessRecords(page);
@@ -82,16 +87,13 @@ test("390px: daily ledger curves keep gaps, expose keyboard readings and open mi
   await page.goto("/database");
   await page.getByLabel("月份", { exact: true }).fill("2026-06");
   await page.getByRole("button", { name: "经营分析", exact: true }).click();
-  await expect(page.getByText("本期已记录 4 / 30 天；上期已记录 1 / 30 天", { exact: true })).toBeVisible();
+  await expect(page.getByText(/本期已记录/)).toHaveCount(0);
+  await expect(page.getByText(/上期有效范围/)).toHaveCount(0);
   await expect(page.getByText("每日台账营业额较上期 +50.0%", { exact: true })).toBeVisible();
   const trend = page.getByRole("region", { name: "每日台账营业额趋势" });
   await expect.poll(async () => ((await trend.locator("path.recharts-line-curve").first().getAttribute("d"))?.match(/M/g) ?? []).length).toBe(2);
-  const reading = page.getByLabel("趋势读数日期", { exact: true });
-  await reading.selectOption("2026-06-14");
-  await expect(page.getByRole("status", { name: "趋势读数" })).toContainText("2026-06-14：未录入，—");
-  await reading.focus();
-  await reading.press("ArrowUp");
-  await expect(page.getByRole("status", { name: "趋势读数" })).toContainText("2026-06-13：休息，€0");
+  await expect(page.getByLabel("趋势读数日期", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("status", { name: "趋势读数" })).toHaveCount(0);
   const missingDate = page.getByRole("button", { name: "2026-06-01 未录入 —", exact: true });
   await wheelToControl(page, missingDate);
   const box = (await missingDate.boundingBox())!;
@@ -179,6 +181,7 @@ for (const width of [320, 390, 768, 1024, 1280]) {
     await page.mouse.move(firstBox.x + firstBox.width / 2, firstBox.y + firstBox.height / 2);
     await page.mouse.wheel(0, 2500);
     const pagination = page.getByRole("navigation", { name: "记录分页" });
+    await wheelToControl(page, pagination);
     await expect(pagination).toBeInViewport({ ratio: 1 });
     const next = pagination.getByRole("button", { name: "下一页" });
     const nextBox = (await next.boundingBox())!;
@@ -425,6 +428,8 @@ for (const width of [390, 1280]) {
     await expect(page.getByText("加载经营分析…", { exact: true })).toBeVisible();
     release();
     await expect(page.getByText("经营分析加载失败", { exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("region", { name: "星期经营表现", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "天气与营业额对比", exact: true })).toHaveCount(0);
     expect(attempts).toBeGreaterThan(1);
     await page.getByRole("button", { name: "记录", exact: true }).click();
     await expect(currentDate).toBeVisible();
@@ -437,6 +442,66 @@ for (const width of [390, 1280]) {
     await expect(page.getByText("经营分析加载失败", { exact: true })).not.toBeVisible();
     expect(fixture.requests.records.length).toBe(recordsReadCount);
     expect(fixture.contractErrors).toEqual([]);
+  });
+}
+
+for (const width of [390, 1280]) {
+  test(`${width}px: grouped readings survive refresh failures and discard late previous-scope charts`, async ({ page }) => {
+    await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
+    await page.setViewportSize({ width, height: 844 });
+    await mockEditableBusinessRecords(page);
+    let failJune = false;
+    let holdJuly = false;
+    let julyStarted = false;
+    let releaseJuly!: () => void;
+    const pendingJuly = new Promise<void>((resolve) => { releaseJuly = resolve; });
+    let markJulyFinished!: () => void;
+    const julyFinished = new Promise<void>((resolve) => { markJulyFinished = resolve; });
+    await page.route("**/api/charts/*?**", async (route) => {
+      const url = new URL(route.request().url());
+      const start = url.searchParams.get("start")!;
+      const storeId = Number(url.pathname.split("/").at(-1));
+      if (failJune && start === "2026-06-01") return route.fulfill({ status: 503, body: "{}", contentType: "application/json" });
+      const delayed = holdJuly && storeId === 1 && start === "2026-07-01";
+      if (delayed) { julyStarted = true; await pendingJuly; }
+      const amount = storeId === 2 ? 55 : start === "2026-06-01" ? 42 : 999;
+      const weather = storeId === 2 ? "多云" : start === "2026-06-01" ? "中雨" : "晴";
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+        kpis: { total_revenue: amount, record_days: 1, open_days: 1, average_revenue: amount, primary_categories: [], total_wash_count: null, average_ticket: null },
+        range: { start, end: url.searchParams.get("end"), bucket: "day" }, comparison_kpis: null,
+        income_summary: { daily_ledger_revenue: amount, confirmed_settlement_income: 0, total_income: amount, includes_settlement_income: false },
+        classified_included_total: 0, daily: [], categories: [], excluded_categories: [], monthly: [],
+        weekday: [{ weekday: 0, average_revenue: amount, operating_day_count: 1 }],
+        weather: [{ weather, average_revenue: amount, operating_day_count: 1 }],
+      }) });
+      if (delayed) markJulyFinished();
+    });
+    await page.goto("/database");
+    const filters = page.getByRole("region", { name: "记录筛选" });
+    await filters.getByLabel("月份", { exact: true }).fill("2026-06");
+    await page.getByRole("button", { name: "经营分析", exact: true }).click();
+    const juneGroup = page.getByRole("listitem", { name: "中雨：€42，1 天经营日样本", exact: true });
+    await expect(juneGroup).toBeVisible();
+    await filters.getByLabel("月份", { exact: true }).fill("2026-07");
+    await expect(page.getByRole("listitem", { name: "晴：€999，1 天经营日样本", exact: true })).toBeVisible();
+    failJune = true;
+    await filters.getByLabel("月份", { exact: true }).fill("2026-06");
+    await expect(page.getByText("刷新经营分析失败，当前显示上次取得的数据。", { exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(juneGroup).toBeVisible();
+    failJune = false;
+    await page.getByRole("button", { name: "重试经营分析", exact: true }).click();
+    await expect(page.getByText("刷新经营分析失败，当前显示上次取得的数据。", { exact: true })).toHaveCount(0);
+    holdJuly = true;
+    await filters.getByLabel("月份", { exact: true }).fill("2026-07");
+    await expect.poll(() => julyStarted).toBe(true);
+    const picker = page.getByTestId(width < 1024 ? "mobile-store-picker" : "desktop-store-picker");
+    await picker.getByLabel("门店", { exact: true }).selectOption("2");
+    await expect(page.getByRole("listitem", { name: "多云：€55，1 天经营日样本", exact: true })).toBeVisible();
+    releaseJuly();
+    await julyFinished;
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await expect(page.getByRole("listitem", { name: "晴：€999，1 天经营日样本", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("listitem", { name: "多云：€55，1 天经营日样本", exact: true })).toBeVisible();
   });
 }
 
@@ -551,7 +616,7 @@ for (const width of [1024, 1280]) {
   for (const entry of ["record row", "date detail link"]) {
     test(`${width}px: ${entry} editing returns to the actual scroll position`, async ({ page }) => {
       await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
-      await page.setViewportSize({ width, height: 844 });
+      await page.setViewportSize({ width, height: 600 });
       const fixture = await mockEditableBusinessRecords(page, [editableRecord(1, "2026-07-17", 170)]);
       let saved = false;
       let releaseReturnRefresh!: () => void;
@@ -578,8 +643,10 @@ for (const width of [1024, 1280]) {
       await expect(detail).toContainText("€170");
       const headingBox = (await detail.getByRole("heading", { name: "2026年7月17日 星期五", exact: true }).boundingBox())!;
       await page.mouse.move(headingBox.x + headingBox.width / 2, headingBox.y + headingBox.height / 2);
+      const expectedScroll = Math.min(300, (await measureScroll()).scrollMax);
+      expect(expectedScroll).toBeGreaterThan(0);
       await page.mouse.wheel(0, 300);
-      await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(300);
+      await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(expectedScroll);
       const edit = detail.getByRole("link", { name: "修改这天记录", exact: true });
       await expect(edit).toBeInViewport({ ratio: 1 });
       const recordScroll = await page.evaluate(() => window.scrollY);
@@ -824,7 +891,7 @@ test("recomputes the current month from the newly selected store timezone", asyn
   await expectLatestSynchronizedRange(requests, { storeId: 2, start: "2026-07-01", end: "2026-07-31" });
 });
 
-test("uses month-bounded custom ranges and blocks reversed or future queries at 320px", async ({ page }) => {
+test("uses one row of custom date fields and blocks reversed or future queries at 320px", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
   await page.setViewportSize({ width: 320, height: 700 });
   const requests = { records: [] as RangeRequest[], charts: [] as RangeRequest[] };
@@ -833,24 +900,30 @@ test("uses month-bounded custom ranges and blocks reversed or future queries at 
 
   const filters = page.getByRole("region", { name: "记录筛选" });
   await filters.getByRole("button", { name: "自定义范围" }).click();
-  const start = filters.getByLabel("开始月份", { exact: true });
-  const end = filters.getByLabel("结束月份", { exact: true });
-  await start.fill("2026-05");
-  await end.fill("2026-06");
+  const start = filters.getByLabel("开始日期", { exact: true });
+  const end = filters.getByLabel("结束日期", { exact: true });
+  await expect(filters.getByLabel("开始月份", { exact: true })).toHaveCount(0);
+  await expect(filters.getByLabel("结束月份", { exact: true })).toHaveCount(0);
+  const startBounds = (await start.boundingBox())!;
+  const endBounds = (await end.boundingBox())!;
+  expect(Math.abs(startBounds.y - endBounds.y)).toBeLessThanOrEqual(1);
+  expect(endBounds.x).toBeGreaterThan(startBounds.x);
+  await start.fill("2026-05-01");
+  await end.fill("2026-06-30");
   await expectLatestSynchronizedRange(requests, { storeId: 1, start: "2026-05-01", end: "2026-06-30" });
 
-  await end.fill("2026-07");
+  await end.fill("2026-07-18");
   await expectLatestSynchronizedRange(requests, { storeId: 1, start: "2026-05-01", end: "2026-07-18" });
 
   const reversedCount = requests.records.length;
-  await start.fill("2026-08");
-  await expect(filters.getByRole("alert")).toContainText("未来月份不可选择");
+  await start.fill("2026-08-01");
+  await expect(filters.getByRole("alert")).toContainText("未来日期不可选择");
   await expect.poll(() => requests.records.length).toBe(reversedCount);
-  await start.fill("2026-07");
+  await start.fill("2026-07-01");
   await expectLatestSynchronizedRange(requests, { storeId: 1, start: "2026-07-01", end: "2026-07-18" });
   const validCount = requests.records.length;
-  await end.fill("2026-06");
-  await expect(filters.getByRole("alert")).toContainText("结束月份不能早于开始月份");
+  await end.fill("2026-06-30");
+  await expect(filters.getByRole("alert")).toContainText("结束日期不能早于开始日期");
   await expect.poll(() => requests.records.length).toBe(validCount);
 
   await end.focus();
@@ -870,8 +943,8 @@ test("loads every record page for a long custom month range", async ({ page }) =
 
   const filters = page.getByRole("region", { name: "记录筛选" });
   await filters.getByRole("button", { name: "自定义范围" }).click();
-  await filters.getByLabel("开始月份", { exact: true }).fill("2025-01");
-  await filters.getByLabel("结束月份", { exact: true }).fill("2025-12");
+  await filters.getByLabel("开始日期", { exact: true }).fill("2025-01-01");
+  await filters.getByLabel("结束日期", { exact: true }).fill("2025-12-31");
 
   await expect.poll(() => requests.pagedRecords.filter((request) => (
     request.start === "2025-01-01" && request.end === "2025-12-31"

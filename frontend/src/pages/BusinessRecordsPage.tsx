@@ -298,9 +298,9 @@ export function BusinessRecordsPage() {
   }
 
   return (
-    <section className="grid w-full min-w-0 content-start gap-4">
+    <section className="grid w-full min-w-0 content-start gap-2">
       <header><h1 className="text-2xl font-semibold">营业记录</h1></header>
-      <div className={mobileRecord && view === "records" ? "hidden gap-3 lg:grid" : "grid gap-3"}>
+      <div className={mobileRecord && view === "records" ? "hidden gap-2 lg:grid" : "grid gap-2"}>
         <div role="group" aria-label="营业记录视图" className="grid w-full max-w-md grid-cols-2 gap-1 rounded-xl border border-border bg-white p-1">
           <Button type="button" className="h-11 gap-2" variant={view === "records" ? "default" : "outline"} aria-pressed={view === "records"} onClick={() => switchView("records")}><List aria-hidden="true" className="size-4" />记录</Button>
           <Button type="button" className="h-11 gap-2" variant={view === "analysis" ? "default" : "outline"} aria-pressed={view === "analysis"} onClick={() => switchView("analysis")}><ChartNoAxesCombined aria-hidden="true" className="size-4" />经营分析</Button>
@@ -333,7 +333,7 @@ export function BusinessRecordsPage() {
         )}
       </div>
       <div hidden={view !== "records"} className={mobileRecord ? "hidden lg:block" : ""}>
-      <div className="grid gap-4 lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <div className="grid gap-3 lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <div ref={listContainer} className={mobileRecord ? "hidden min-w-0 overflow-x-hidden lg:flex lg:min-h-0 lg:flex-col" : "min-w-0 overflow-x-hidden lg:flex lg:min-h-0 lg:flex-col"}>
           {hasWindowData && <div className="hidden lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:block">
             <RecordTable
@@ -369,7 +369,7 @@ export function BusinessRecordsPage() {
             onPageChange={handlePageChange}
           />}
         </div>
-        <aside className="grid gap-4 lg:min-h-0 lg:overflow-y-auto">
+        <aside className="grid gap-2 lg:min-h-0 lg:overflow-y-auto">
           {hasWindowData && <div className="hidden lg:block">
             {selectedTableRow ? (
               <RecordDetailPanel

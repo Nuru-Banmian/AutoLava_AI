@@ -72,7 +72,9 @@ async def test_migrated_legacy_weather_remains_available_through_public_endpoint
         assert config.json()["revision"] == 1
         chart = await client.get("/api/charts/1", params={"start": "2026-07-28", "end": "2026-07-28"})
         assert chart.status_code == 200
-        assert chart.json()["weather"] == [{"weather": "历史未规范天气", "average_revenue": 940}]
+        assert chart.json()["weather"] == [
+            {"weather": "历史未规范天气", "average_revenue": 940, "operating_day_count": 1}
+        ]
         entered = Event()
         release = Event()
         finished = Event()

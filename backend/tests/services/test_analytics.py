@@ -564,13 +564,13 @@ async def test_operating_day_average_uses_open_and_early_close_records(
         }
     ]
     assert result["weather"] == [
-        {"weather": "晴", "average_revenue": 150},
-        {"weather": "未记录", "average_revenue": 25},
+        {"weather": "晴", "average_revenue": 150, "operating_day_count": 1},
+        {"weather": "未记录", "average_revenue": 25, "operating_day_count": 2},
     ]
     assert result["weekday"] == [
-        {"weekday": 1, "average_revenue": 50},
-        {"weekday": 2, "average_revenue": 0},
-        {"weekday": 6, "average_revenue": 150},
+        {"weekday": 1, "average_revenue": 50, "operating_day_count": 1},
+        {"weekday": 2, "average_revenue": 0, "operating_day_count": 1},
+        {"weekday": 6, "average_revenue": 150, "operating_day_count": 1},
     ]
     assert result["comparison_kpis"] == {
         "start": "2026-07-01",

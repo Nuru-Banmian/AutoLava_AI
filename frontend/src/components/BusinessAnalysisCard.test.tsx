@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -38,7 +38,51 @@ afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
 describe("BusinessAnalysisCard", () => {
-  it("shows daily ledger coverage and readable missing, closed and zero values independently of settlements", async () => {
+  it("compares operating-day samples in fixed weekday and weather order with missing weekdays distinct from zero", async () => {
+    server.use(http.get("/api/charts/1", () => HttpResponse.json({ ...payload(),
+      weekday: [
+        { weekday: 4, average_revenue: 0, operating_day_count: 1 },
+        { weekday: 0, average_revenue: 101, operating_day_count: 2 },
+      ],
+      weather: [
+        { weather: "未记录", average_revenue: 80, operating_day_count: 3 },
+        { weather: "历史未规范天气", average_revenue: 20, operating_day_count: 1 },
+        { weather: "雷雨伴大冰雹", average_revenue: 200, operating_day_count: 1 },
+        { weather: "兼容类别", average_revenue: 42, operating_day_count: 2 },
+        { weather: "少云", average_revenue: 0, operating_day_count: 1 },
+        { weather: "晴", average_revenue: 101, operating_day_count: 2 },
+        { weather: "阴", average_revenue: 0, operating_day_count: 0 },
+      ],
+    })));
+    renderCard();
+    const weekday = await screen.findByRole("region", { name: "星期经营表现" });
+    expect(within(weekday).getAllByRole("listitem").map((row) => row.textContent)).toEqual([
+      "周一€1012 天", "周二—0 天", "周三—0 天", "周四—0 天", "周五€01 天", "周六—0 天", "周日—0 天",
+    ]);
+    const weather = screen.getByRole("region", { name: "天气与营业额对比" });
+    expect(within(weather).getAllByRole("listitem").map((row) => row.textContent)).toEqual([
+      "晴€1012 天", "少云€01 天", "雷雨伴大冰雹€2001 天", "兼容类别€422 天", "历史未规范天气€201 天", "未记录€803 天",
+    ]);
+    within(weekday).getByRole("listitem", { name: "周二：无经营日样本，—，0 天" }).focus();
+    expect(within(weekday).getByRole("listitem", { name: "周二：无经营日样本，—，0 天" })).toHaveFocus();
+    expect(within(weekday).queryByRole("combobox")).not.toBeInTheDocument();
+    expect(within(weather).queryByRole("combobox")).not.toBeInTheDocument();
+    expect(screen.queryByText("未记录仅表示经营日缺少记录天气，金额和样本仍计入。")).not.toBeInTheDocument();
+  });
+  it("keeps all canonical weather groups in the agreed order regardless of API order or preview preferences", async () => {
+    const weatherNames = ["晴", "少云", "多云", "阴", "雾", "冻雾", "小毛毛雨", "毛毛雨", "大毛毛雨", "小冻毛毛雨", "冻毛毛雨", "小雨", "中雨", "大雨", "小冻雨", "冻雨", "小雪", "中雪", "大雪", "雪粒", "小阵雨", "阵雨", "大阵雨", "小阵雪", "大阵雪", "雷雨", "雷雨伴小冰雹", "雷雨伴大冰雹"];
+    localStorage.setItem("weatherOrder", JSON.stringify(["雷雨伴大冰雹", "晴"]));
+    server.use(http.get("/api/charts/1", () => HttpResponse.json({ ...payload(),
+      weather: weatherNames.slice().reverse().map((weather, index) => ({ weather, average_revenue: index, operating_day_count: index + 1 })),
+    })));
+    renderCard();
+    const weather = await screen.findByRole("region", { name: "天气与营业额对比" });
+    expect(within(weather).getAllByRole("listitem").map((row) => row.getAttribute("aria-label")!.split("：")[0])).toEqual(weatherNames);
+    expect(within(weather).queryByText("未记录")).not.toBeInTheDocument();
+    expect(within(weather).queryByRole("combobox")).not.toBeInTheDocument();
+    localStorage.removeItem("weatherOrder");
+  });
+  it("keeps the ledger comparison without redundant coverage or reading controls", async () => {
     server.use(http.get("/api/charts/1", () => HttpResponse.json({
       ...payload(),
       range: { start: "2026-07-01", end: "2026-07-04", bucket: "day" },
@@ -50,15 +94,13 @@ describe("BusinessAnalysisCard", () => {
       ledger_comparison: { current_revenue: 100, previous_revenue: 80, change_percent: 25, status: "comparable", short_previous_month: false },
     })));
     renderCard({ start: "2026-07-01", end: "2026-07-04" });
-    expect(await screen.findByText("本期已记录 3 / 4 天；上期已记录 1 / 4 天")).toBeInTheDocument();
-    expect(screen.getByText("记录覆盖不完整，比较仅反映已记录每日台账。")).toBeInTheDocument();
+    await screen.findByText("每日台账营业额较上期 +25.0%");
+    expect(screen.queryByText(/本期已记录/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/上期有效范围/)).not.toBeInTheDocument();
+    expect(screen.queryByText("记录覆盖不完整，比较仅反映已记录每日台账。")).not.toBeInTheDocument();
     expect(screen.getByText("每日台账营业额较上期 +25.0%")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("趋势读数日期"), { target: { value: "2026-07-02" } });
-    expect(screen.getByRole("status", { name: "趋势读数" })).toHaveTextContent("2026-07-02：未录入，—");
-    fireEvent.change(screen.getByLabelText("趋势读数日期"), { target: { value: "2026-07-03" } });
-    expect(screen.getByRole("status", { name: "趋势读数" })).toHaveTextContent("2026-07-03：休息，€0");
-    fireEvent.change(screen.getByLabelText("趋势读数日期"), { target: { value: "2026-07-04" } });
-    expect(screen.getByRole("status", { name: "趋势读数" })).toHaveTextContent("2026-07-04：营业，€0");
+    expect(screen.queryByLabelText("趋势读数日期")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "趋势读数" })).not.toBeInTheDocument();
   });
   it("drives all analysis content from the supplied record-table range without separate controls", async () => {
     const requests: URL[] = [];
@@ -71,8 +113,9 @@ describe("BusinessAnalysisCard", () => {
     renderCard();
 
     await screen.findByText("现金收入");
-    expect(screen.getByTestId("chart-panel-plot")).toHaveClass("h-64", "min-h-64");
+    expect(screen.getByTestId("chart-panel-plot")).toHaveClass("h-48", "min-h-48");
     expect(requests[0].pathname + requests[0].search).toBe("/api/charts/1?start=2026-07-01&end=2026-07-17&bucket=day");
+    expect(requests).toHaveLength(1);
     expect(screen.queryByLabelText("经营分析日期范围")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("分析开始日期")).not.toBeInTheDocument();
     expect(screen.getByText("比较区间：2026-06-01 至 2026-06-17")).toBeInTheDocument();
@@ -112,18 +155,24 @@ describe("BusinessAnalysisCard", () => {
     expect(screen.queryByText("该范围暂无经营数据")).not.toBeInTheDocument();
   });
 
-  it("uses income shading without a resident calendar amount and preserves the exact reading", async () => {
+  it("uses revenue shading in theme blue and preserves the exact reading", async () => {
     server.use(http.get("/api/charts/1", () => HttpResponse.json(payload({ daily: [{ date: "2026-07-01", revenue: 9999999999, is_open: "营业" }] }))));
     renderCard();
     const date = await screen.findByRole("button", { name: "2026-07-01 营业 €9.999.999.999" });
     expect(date).toHaveTextContent(/^1营业$/);
-    expect(date).toHaveAttribute("style", "background-color: color-mix(in oklab, var(--primary) 20%, transparent);");
-    expect(screen.getByRole("status", { name: "日历读数" })).toHaveTextContent("€9.999.999.999");
+    expect(date).toHaveAttribute("style", "background-color: color-mix(in oklab, var(--primary) 40%, transparent);");
+    expect(date).toHaveAttribute("title", "2026-07-01 营业 €9.999.999.999");
+    expect(screen.queryByLabelText("日历读数日期")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "日历读数" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^查看 .* 每日台账$/ })).not.toBeInTheDocument();
   });
 
   it("keeps cached content visible and labels a failed refresh", async () => {
     let fail = false;
-    server.use(http.get("/api/charts/1", () => fail ? HttpResponse.json({ detail: "failed" }, { status: 500 }) : HttpResponse.json(payload())));
+    server.use(http.get("/api/charts/1", () => fail ? HttpResponse.json({ detail: "failed" }, { status: 500 }) : HttpResponse.json({ ...payload(),
+      weekday: [{ weekday: 0, average_revenue: 77, operating_day_count: 2 }],
+      weather: [{ weather: "晴", average_revenue: 77, operating_day_count: 2 }],
+    })));
     const { client } = renderCard();
 
     expect((await screen.findAllByText("€100")).length).toBeGreaterThan(0);
@@ -131,6 +180,7 @@ describe("BusinessAnalysisCard", () => {
     await client.invalidateQueries({ queryKey: ["charts", 1] });
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("刷新经营分析失败，当前显示上次取得的数据。"));
     expect(screen.getAllByText("€100").length).toBeGreaterThan(0);
+    expect(screen.getByRole("listitem", { name: "晴：€77，2 天经营日样本" })).toBeInTheDocument();
   });
 
   it("avoids a numeric comparison when the prior total is zero", async () => {
@@ -184,7 +234,7 @@ describe("BusinessAnalysisCard", () => {
     expect(screen.getByLabelText("公司结算 占比 28.6%")).toBeInTheDocument();
   });
 
-  it("reads short-month limits without inventing an earlier date and omits calendars for cross-month scopes", async () => {
+  it("omits short-month explanations and calendars for cross-month scopes", async () => {
     server.use(http.get("/api/charts/1", () => HttpResponse.json({ ...payload(),
       range: { start: "2026-03-01", end: "2026-03-31", bucket: "day" },
       comparison_daily: [{ date: "2026-02-28", revenue: 80, is_open: "营业" }],
@@ -193,15 +243,15 @@ describe("BusinessAnalysisCard", () => {
       ledger_comparison: { current_revenue: 100, previous_revenue: 80, change_percent: 25, status: "comparable", short_previous_month: true },
     })));
     const first = renderCard({ start: "2026-03-01", end: "2026-03-31" });
-    expect(await screen.findByText("本期已记录 1 / 31 天；上期已记录 1 / 28 天")).toBeInTheDocument();
-    expect(screen.getByText(/上月较短/)).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("趋势读数日期"), { target: { value: "2026-03-31" } });
-    expect(screen.getByRole("status", { name: "趋势读数" })).toHaveTextContent("上期无对应日期");
+    await screen.findByText("每日台账营业额较上期 +25.0%");
+    expect(screen.queryByText(/本期已记录/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/上期有效范围/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("趋势读数日期")).not.toBeInTheDocument();
     first.unmount();
     server.use(http.get("/api/charts/1", () => HttpResponse.json({ ...payload(), range: { start: "2026-01-01", end: "2026-03-31", bucket: "month" } })));
     renderCard({ start: "2026-01-01", end: "2026-03-31" });
     await screen.findByText("月度总收入趋势");
-    expect(screen.getByText("月粒度：月度总收入，包含开票月份已确认公司结算。")).toBeInTheDocument();
+    expect(screen.queryByText("月粒度：月度总收入，包含开票月份已确认公司结算。")).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "营业日历" })).not.toBeInTheDocument();
   });
 
@@ -214,8 +264,37 @@ describe("BusinessAnalysisCard", () => {
     expect(await screen.findByRole("button", { name: "重试经营分析" })).toBeInTheDocument();
     expect(requests).toBe(3);
     expect(screen.queryByRole("region", { name: "营业日历" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "星期经营表现" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "天气与营业额对比" })).not.toBeInTheDocument();
     fail = false;
     fireEvent.click(screen.getByRole("button", { name: "重试经营分析" }));
     expect(await screen.findByRole("region", { name: "营业日历" })).toBeInTheDocument();
+  });
+  it("does not retain another store or range's groups when its late response arrives", async () => {
+    let releaseOld!: () => void;
+    const delayed = new Promise<void>((resolve) => { releaseOld = resolve; });
+    let oldRequested = false;
+    let oldReturned = false;
+    server.use(http.get("/api/charts/:store", async ({ params, request }) => {
+      const start = new URL(request.url).searchParams.get("start")!;
+      if (params.store === "1" && start === "2026-07-01") {
+        oldRequested = true;
+        await delayed;
+        oldReturned = true;
+        return HttpResponse.json({ ...payload(), weather: [{ weather: "晴", average_revenue: 999, operating_day_count: 4 }] });
+      }
+      return HttpResponse.json({ ...payload(), range: { start, end: "2026-06-30", bucket: "day" },
+        weather: [{ weather: "中雨", average_revenue: 42, operating_day_count: 1 }],
+      });
+    }));
+    const { client, rerender } = renderCard();
+    await waitFor(() => expect(oldRequested).toBe(true));
+    rerender(<QueryClientProvider client={client}><BusinessAnalysisCard storeId={2} range={{ start: "2026-06-01", end: "2026-06-30" }} /></QueryClientProvider>);
+    expect(screen.queryByRole("region", { name: "天气与营业额对比" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("listitem", { name: "中雨：€42，1 天经营日样本" })).toBeInTheDocument();
+    releaseOld();
+    await waitFor(() => expect(oldReturned).toBe(true));
+    expect(screen.queryByRole("listitem", { name: "晴：€999，4 天经营日样本" })).not.toBeInTheDocument();
+    expect(screen.getByRole("listitem", { name: "中雨：€42，1 天经营日样本" })).toBeInTheDocument();
   });
 });

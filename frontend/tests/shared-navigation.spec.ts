@@ -22,7 +22,10 @@ for (const width of [320, 390, 768, 1024, 1280]) {
     const picker = page.getByTestId(width < 768 ? "mobile-store-picker" : "desktop-store-picker");
     const store = picker.getByRole("combobox", { name: "门店" });
     await store.selectOption("1");
-    await expect(picker.getByText(longName, { exact: false }).last()).toBeVisible();
+    await expect(store).toBeVisible();
+    await expect(store).toHaveValue("1");
+    await expect(store).toHaveAttribute("title", longName);
+    await expect(picker.locator("p")).toHaveCount(0);
     await expect(page.getByRole("navigation", { name: "更多功能" }).getByRole("link", { name: "公司结算" })).toBeVisible();
     await expect(page.getByRole("link", { name: "管理中心", exact: true })).toHaveCount(0);
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);

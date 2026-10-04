@@ -7,6 +7,7 @@ import { ChartPanel } from "@/components/ChartPanel";
 import { DailyLedgerTrend } from "@/components/DailyLedgerTrend";
 import { BusinessCalendar } from "@/components/BusinessCalendar";
 import { IncomeComposition } from "@/components/IncomeComposition";
+import { GroupedPerformanceCharts } from "@/components/GroupedPerformanceCharts";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { analysisRange, analysisSearchParams, type DateRange } from "@/lib/business-record-ranges";
@@ -35,9 +36,9 @@ function comparisonText(data: ChartsResponse): string | null {
 }
 
 function Kpi({ title, value }: { title: string; value: string }) {
-  return <div className="rounded-lg bg-muted/50 p-3">
+  return <div className="rounded-lg bg-muted/50 p-2.5">
     <p className="text-sm text-muted-foreground">{title}</p>
-    <strong className="text-xl tabular-nums">{value}</strong>
+    <strong className="text-lg tabular-nums">{value}</strong>
   </div>;
 }
 
@@ -63,10 +64,10 @@ export function BusinessAnalysisCard({ storeId, range, today = range.end, onSele
   const isSingleMonth = data?.range.start.slice(0, 7) === data?.range.end.slice(0, 7);
 
   return <Card>
-    <CardHeader>
+    <CardHeader className="px-3 py-3 sm:px-4 sm:py-3">
       <CardTitle>经营分析</CardTitle>
     </CardHeader>
-    <CardContent className="grid gap-5">
+    <CardContent className="grid gap-3 px-3 pb-3 sm:px-4 sm:pb-4">
       {!resolved && <p role="alert">请选择有效的日期范围</p>}
       {charts.isLoading && !data && <p role="status">加载经营分析…</p>}
       {charts.error && !data && <div role="alert" className="flex items-center gap-3"><span>经营分析加载失败</span><Button type="button" size="sm" variant="outline" onClick={() => void charts.refetch()}>重试经营分析</Button></div>}
@@ -92,9 +93,12 @@ export function BusinessAnalysisCard({ storeId, range, today = range.end, onSele
           {data.range.bucket === "month" && comparisonText(data) && <p>{comparisonText(data)}</p>}
         </div>
         {!hasBusinessData && <p>该范围暂无经营数据</p>}
-        {data.range.bucket === "day" ? <DailyLedgerTrend key={`trend-${data.range.start}-${data.range.end}`} data={data} /> : <><p className="text-sm text-muted-foreground">月粒度：月度总收入，包含开票月份已确认公司结算。</p><ChartPanel embedded title="月度总收入趋势" kind="line" data={trend} xKey="label" valueKey="revenue" emptyMessage="暂无趋势数据" heightClassName="h-64 min-h-64" /></>}
-        <IncomeComposition included={data.categories} excluded={data.excluded_categories} classifiedIncludedTotal={data.classified_included_total} />
-        {isSingleMonth && <BusinessCalendar key={`calendar-${data.range.start}-${data.range.end}`} data={data} today={today} onSelectDate={onSelectDate} />}
+        {data.range.bucket === "day" ? <DailyLedgerTrend key={`trend-${data.range.start}-${data.range.end}`} data={data} /> : <ChartPanel embedded title="月度总收入趋势" kind="line" data={trend} xKey="label" valueKey="revenue" emptyMessage="暂无趋势数据" heightClassName="h-64 min-h-64" />}
+        <GroupedPerformanceCharts key={`${storeId}:${data.range.start}:${data.range.end}`} data={data} />
+        <div className={`grid min-w-0 items-start gap-4 ${isSingleMonth ? "lg:grid-cols-2" : ""}`}>
+          <div className={`min-w-0 ${isSingleMonth ? "" : "lg:max-w-xl"}`}><IncomeComposition included={data.categories} excluded={data.excluded_categories} classifiedIncludedTotal={data.classified_included_total} /></div>
+          {isSingleMonth && <BusinessCalendar key={`calendar-${data.range.start}-${data.range.end}`} data={data} today={today} onSelectDate={onSelectDate} />}
+        </div>
       </>}
     </CardContent>
   </Card>;
