@@ -57,7 +57,7 @@ export function BusinessRecordsPage() {
   const listContainer = useRef<HTMLDivElement>(null);
   const detailContainer = useRef<HTMLDivElement>(null);
   const listPosition = useRef({ scrollY: restored?.scrollY ?? 0, scrollTop: 0 });
-  const viewPositions = useRef({ records: 0, analysis: 0 });
+  const viewPositions = useRef({ records: restored?.scrollY ?? 0, analysis: 0 });
   const openedFromList = useRef(false);
   const focusAfterReturn = useRef<string | null>(null);
   const linkedDate = new URLSearchParams(location.search).get("date");
@@ -68,6 +68,7 @@ export function BusinessRecordsPage() {
     const previous = previousScope.current;
     if (previous.storeId === (selected?.id ?? null) && previous.today === today) return;
     previousScope.current = { storeId: selected?.id ?? null, today };
+    scrollRestored.current = true;
     if (!selected) {
       setRecordStoreId(null);
       setSelectedDate(null);
@@ -128,11 +129,14 @@ export function BusinessRecordsPage() {
   }, [records.data, records.isSuccess, selected?.id]);
 
   useEffect(() => {
-    if (!restored || !records.isSuccess || scrollRestored.current) return;
-    scrollRestored.current = true;
-    const frame = requestAnimationFrame(() => window.scrollTo({ top: restored.scrollY }));
+    if (!restored || !records.isSuccess || records.isFetching || scrollRestored.current) return;
+    if (range.start !== restored.range.start || range.end !== restored.range.end || page !== restored.page) return;
+    const frame = requestAnimationFrame(() => {
+      window.scrollTo({ top: restored.scrollY });
+      scrollRestored.current = true;
+    });
     return () => cancelAnimationFrame(frame);
-  }, [records.isSuccess, restored]);
+  }, [records.isSuccess, records.isFetching, restored, range.start, range.end, page]);
 
   const selectedRecordFromResponse = recordStateReady ? records.data?.items.find((item) => (
     item.date === selectedDate && item.store_id === selected?.id
@@ -213,6 +217,7 @@ export function BusinessRecordsPage() {
     return () => cancelAnimationFrame(frame);
   }, [deleteFocusDate, records.data, records.isFetching, recordStateReady]);
   useEffect(() => {
+    if (restored && !scrollRestored.current) return;
     if (mobileRecord && !window.matchMedia?.("(min-width: 1024px)").matches) return;
     const frame = requestAnimationFrame(() => window.scrollTo({ top: viewPositions.current[view] }));
     return () => cancelAnimationFrame(frame);
@@ -228,6 +233,10 @@ export function BusinessRecordsPage() {
     : "";
 
   const handleRecordRangeChange = (nextMode: RecordRangeMode, nextRange: DateRange) => {
+    scrollRestored.current = true;
+    if (linkedDate) navigate(location.pathname, { replace: true, state: null });
+    pendingMobileRestoreDate.current = null;
+    openedFromList.current = false;
     setRecordMode(nextMode);
     setRange(nextRange);
     setPage(1);
@@ -235,6 +244,10 @@ export function BusinessRecordsPage() {
     setMobileRecord(null);
   };
   const handlePageChange = (nextPage: number) => {
+    scrollRestored.current = true;
+    if (linkedDate) navigate(location.pathname, { replace: true, state: null });
+    pendingMobileRestoreDate.current = null;
+    openedFromList.current = false;
     setPage(nextPage);
     setSelectedDate(null);
     setMobileRecord(null);
@@ -256,6 +269,7 @@ export function BusinessRecordsPage() {
     setView(nextView);
   };
   const editRecord = (targetDate: string) => {
+    const editingMobileDetail = mobileRecord && !window.matchMedia?.("(min-width: 1024px)").matches;
     const returnToBusinessRecords: BusinessRecordsViewState = {
       storeId: selected!.id,
       recordMode,
@@ -263,7 +277,7 @@ export function BusinessRecordsPage() {
       page,
       selectedDate,
       mobileRecordDate: mobileRecord?.date ?? null,
-      scrollY: mobileRecord ? listPosition.current.scrollY : window.scrollY,
+      scrollY: editingMobileDetail ? listPosition.current.scrollY : window.scrollY,
     };
     navigate(`/ledger?date=${targetDate}`, { state: { returnToBusinessRecords } });
   };

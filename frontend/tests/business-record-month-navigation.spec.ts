@@ -186,7 +186,7 @@ function editableRecord(storeId: number, date: string, amount: number, status: R
   };
 }
 
-async function mockEditableBusinessRecords(page: Page) {
+async function mockEditableBusinessRecords(page: Page, additionalRecords: RecordSnapshot[] = []) {
   const requests = { records: [] as RangeRequest[], charts: [] as RangeRequest[] };
   await mockBusinessRecords(page, requests);
   const records = new Map<string, RecordSnapshot>([
@@ -196,6 +196,7 @@ async function mockEditableBusinessRecords(page: Page) {
     ["1:2026-06-11", editableRecord(1, "2026-06-11", 0)],
     ["2:2026-07-17", editableRecord(2, "2026-07-17", 917)],
   ]);
+  for (const record of additionalRecords) records.set(`${record.store_id}:${record.date}`, record);
   const contractErrors: string[] = [];
   await page.route("**/api/auth/me", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: 1, username: "fixture-admin", role: "admin", is_owner: false }) }));
   await page.route(/\/api\/(database\/\d+\/(records|export\.xlsx)|ledger\/|income-config\/|weather\/)/, async (route) => {
@@ -423,6 +424,101 @@ test("390px: a valid missing-date link opens its second page and invalid links n
     await expect(page.getByRole("button", { name: "返回记录", exact: true })).toHaveCount(0);
   }
 });
+
+for (const width of [1024, 1280]) {
+  test(`${width}px: a date detail link switches to analysis without leaving records visible`, async ({ page }) => {
+    await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
+    await page.setViewportSize({ width, height: 844 });
+    await mockEditableBusinessRecords(page);
+    await page.goto("/database?date=2026-07-03");
+    const recordsTable = page.locator("table");
+    const detailHeading = page.getByRole("main").getByRole("complementary", { includeHidden: true }).getByRole("heading", { name: "2026年7月3日 星期五", exact: true, includeHidden: true });
+    const pagination = page.getByRole("navigation", { name: "记录分页", includeHidden: true });
+    await expect(recordsTable).toBeVisible();
+    await expect(detailHeading).toBeVisible();
+    await expect(page.getByText("第 2 / 2 页", { exact: true })).toBeVisible();
+
+    const analysis = page.getByRole("button", { name: "经营分析", exact: true });
+    await analysis.click();
+    await expect(analysis).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByText("营业额趋势", { exact: true })).toBeVisible();
+    await expect(recordsTable).not.toBeVisible();
+    await expect(detailHeading).not.toBeVisible();
+    await expect(pagination).not.toBeVisible();
+
+    await page.getByRole("button", { name: "记录", exact: true }).click();
+    await expect(recordsTable).toBeVisible();
+    await expect(detailHeading).toBeVisible();
+    await expect(recordEntry(page, width, "2026年7月3日 星期五，未录入，—")).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByText("第 2 / 2 页", { exact: true })).toBeVisible();
+  });
+}
+
+for (const width of [1024, 1280]) {
+  for (const entry of ["record row", "date detail link"]) {
+    test(`${width}px: ${entry} editing returns to the actual scroll position`, async ({ page }) => {
+      await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
+      await page.setViewportSize({ width, height: 844 });
+      const fixture = await mockEditableBusinessRecords(page, [editableRecord(1, "2026-07-17", 170)]);
+      let saved = false;
+      let releaseReturnRefresh!: () => void;
+      const returnRefresh = new Promise<void>((resolve) => { releaseReturnRefresh = resolve; });
+      await page.route("**/api/ledger/1/2026-07-17", async (route) => {
+        if (route.request().method() === "PUT") saved = true;
+        await route.fallback();
+      });
+      await page.route("**/api/database/1/records?**", async (route) => {
+        if (saved && new URL(route.request().frame().url()).pathname === "/database") await returnRefresh;
+        await route.fallback();
+      });
+      const measureScroll = () => page.evaluate(() => ({
+        scrollY: window.scrollY,
+        documentHeight: document.documentElement.scrollHeight,
+        viewportHeight: window.innerHeight,
+        scrollMax: document.documentElement.scrollHeight - window.innerHeight,
+      }));
+      await page.goto(entry === "date detail link" ? "/database?date=2026-07-17" : "/database");
+      const selected = recordEntry(page, width, "2026年7月17日 星期五，营业，€170");
+      await expect(selected).toBeVisible();
+      if (entry === "record row") await selected.click();
+      const detail = recordDetail(page, width, "2026-07-17", "2026年7月17日 星期五");
+      await expect(detail).toContainText("€170");
+      const headingBox = (await detail.getByRole("heading", { name: "2026年7月17日 星期五", exact: true }).boundingBox())!;
+      await page.mouse.move(headingBox.x + headingBox.width / 2, headingBox.y + headingBox.height / 2);
+      await page.mouse.wheel(0, 300);
+      await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(300);
+      const edit = detail.getByRole("link", { name: "修改这天记录", exact: true });
+      await expect(edit).toBeInViewport({ ratio: 1 });
+      const recordScroll = await page.evaluate(() => window.scrollY);
+      const beforeEdit = await measureScroll();
+      const editBox = (await edit.boundingBox())!;
+      await page.mouse.click(editBox.x + editBox.width / 2, editBox.y + editBox.height / 2);
+      await expect(page).toHaveURL(/ledger\?date=2026-07-17$/);
+      await page.getByLabel("当日营业额", { exact: true }).fill("270");
+      await page.getByRole("button", { name: "保存修改", exact: true }).click();
+      await expect(page).toHaveURL(/\/database(?:\?date=2026-07-17)?$/);
+      const refreshing = page.getByText("正在刷新记录…", { exact: true });
+      await expect(refreshing).toBeVisible();
+      const refreshStatusBox = await refreshing.boundingBox();
+      const pendingRefresh = await measureScroll();
+      releaseReturnRefresh();
+      await expect(refreshing).not.toBeVisible();
+      await expect(detail).toContainText("€270");
+      await expect(page.getByRole("region", { name: "记录筛选" }).getByLabel("月份", { exact: true })).toHaveValue("2026-07");
+      await expect(page.getByText("第 1 / 2 页", { exact: true })).toBeVisible();
+      await expect(recordEntry(page, width, "2026年7月17日 星期五，营业，€270")).toHaveAttribute("aria-selected", "true");
+      try {
+        await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(recordScroll);
+      } finally {
+        await test.info().attach("records-return-geometry", {
+          body: JSON.stringify({ width, entry, beforeEdit, pendingRefresh, refreshStatusBox, settled: await measureScroll() }),
+          contentType: "application/json",
+        });
+      }
+      expect(fixture.contractErrors).toEqual([]);
+    });
+  }
+}
 
 for (const width of [390, 1280]) {
   test(`${width}px: late charts cannot replace the newly selected store and month`, async ({ page }) => {

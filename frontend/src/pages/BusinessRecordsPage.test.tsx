@@ -127,6 +127,36 @@ afterEach(() => {
 afterAll(() => server.close());
 
 describe("BusinessRecordsPage", () => {
+  it("keeps the manually chosen page after a linked date's background refresh", async () => {
+    let revenue = 100;
+    server.use(
+      http.get("/api/database/1/records", () => HttpResponse.json(databaseResponse([{ ...record, date: "2026-07-01", daily_revenue: revenue }]))),
+      http.get("/api/charts/1", () => HttpResponse.json(chartsPayload)),
+    );
+    const view = renderPage("admin", "/database?date=2026-07-01");
+    await screen.findByText("第 2 / 2 页");
+    fireEvent.click(screen.getByRole("button", { name: "上一页" }));
+    expect(screen.getByText("第 1 / 2 页")).toBeInTheDocument();
+    revenue = 200;
+    await view.client.invalidateQueries({ queryKey: ["database", "records", 1] });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    expect(screen.getByText("第 1 / 2 页")).toBeInTheDocument();
+    expect(screen.getByLabelText("路由状态")).toHaveTextContent("/database|null");
+  });
+
+  it("clears the old linked date when the user changes the record range", async () => {
+    server.use(
+      http.get("/api/database/1/records", () => HttpResponse.json(databaseResponse([{ ...record, date: "2026-07-01" }]))),
+      http.get("/api/charts/1", () => HttpResponse.json(chartsPayload)),
+    );
+    renderPage("admin", "/database?date=2026-07-01");
+    await screen.findByText("第 2 / 2 页");
+    fireEvent.click(screen.getByRole("button", { name: "自定义范围" }));
+    await waitFor(() => expect(screen.getByLabelText("路由状态")).toHaveTextContent("/database|null"));
+    expect(await screen.findByText("第 1 / 2 页")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "2026-07-01 营业记录详情" })).not.toBeInTheDocument();
+  });
+
   it("keeps the chosen analysis view when a linked date's records refresh in the background", async () => {
     let revenue = 100;
     server.use(
@@ -394,11 +424,11 @@ describe("BusinessRecordsPage", () => {
 
     fireEvent.click(within(screen.getByRole("table")).getByText("2026年7月17日 星期五").closest("tr")!);
 
-    const detailTitle = await screen.findByRole("heading", { name: "2026年7月17日 星期五" });
-    const detailCard = detailTitle.closest<HTMLElement>("[data-slot='card']") ?? detailTitle.parentElement?.parentElement?.parentElement;
-    expect(within(detailCard!).getByText("未录入", { exact: true })).toBeInTheDocument();
-    expect(within(detailCard!).getByRole("link", { name: "修改这天记录" })).toHaveAttribute("href", "/ledger?date=2026-07-17");
-    expect(within(detailCard!).queryByRole("button", { name: "删除记录" })).not.toBeInTheDocument();
+    const detail = screen.getByRole("complementary");
+    expect(await within(detail).findByRole("heading", { name: "2026年7月17日 星期五" })).toBeInTheDocument();
+    expect(within(detail).getByText("未录入", { exact: true })).toBeInTheDocument();
+    expect(within(detail).getByRole("link", { name: "修改这天记录" })).toHaveAttribute("href", "/ledger?date=2026-07-17");
+    expect(within(detail).queryByRole("button", { name: "删除记录" })).not.toBeInTheDocument();
   });
 
   it("opens an editable mobile detail for an unrecorded date", async () => {
@@ -612,9 +642,9 @@ describe("BusinessRecordsPage", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("删除成功");
     expect((await screen.findAllByText("暂无可查看记录")).length).toBeGreaterThan(0);
     await waitFor(() => expect(chartRequests).toBe(2));
-    const remainingDetail = screen.getByRole("heading", { name: "2026年7月14日 星期二" }).parentElement?.parentElement?.parentElement;
+    const remainingDetail = screen.getByRole("complementary");
     expect(remainingDetail).toHaveTextContent("未录入");
-    expect(within(remainingDetail!).queryByRole("button", { name: "删除记录" })).not.toBeInTheDocument();
+    expect(within(remainingDetail).queryByRole("button", { name: "删除记录" })).not.toBeInTheDocument();
     expect(screen.queryByText(/历史|回滚/)).not.toBeInTheDocument();
   });
 
