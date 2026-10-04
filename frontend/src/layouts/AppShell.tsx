@@ -57,7 +57,7 @@ export function AppShell() {
     <div className="min-h-dvh min-w-0 bg-background md:pl-64">
       <UnsavedRouteGuard />
       <header className="border-b bg-card md:fixed md:left-0 md:top-0 md:z-40 md:w-64 md:border-0 md:bg-transparent md:text-primary-foreground">
-        <div className="flex min-w-0 flex-wrap items-center gap-3 px-4 py-3 md:px-6 md:py-5"><strong className="shrink-0 text-base tracking-tight">AutoLava AI</strong>{!isAdminRoute && <div data-testid="mobile-store-picker" className="ml-auto min-w-0 max-w-full flex-1 basis-36 md:hidden"><StorePicker showLabel={false} /></div>}</div>
+        <div className="flex min-w-0 flex-wrap items-center gap-3 px-4 py-3 md:px-6 md:py-5"><strong className="shrink-0 text-base tracking-tight">门店管理系统</strong>{!isAdminRoute && <div data-testid="mobile-store-picker" className="ml-auto min-w-0 max-w-full flex-1 basis-36 md:hidden"><StorePicker showLabel={false} /></div>}</div>
       </header>
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col overflow-y-auto bg-primary p-4 text-primary-foreground md:flex">
         <div className="mt-16 grid gap-3">

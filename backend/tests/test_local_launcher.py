@@ -275,7 +275,7 @@ def test_readme_documents_simple_sqlite_windows_launcher() -> None:
         "http://127.0.0.1:5173",
         "-NoBrowser",
         "alembic upgrade head",
-        "manifests change",
+        "依赖清单变化",
         "Ctrl+C",
         ".autolava-local/autolava.sqlite3",
         ".env",

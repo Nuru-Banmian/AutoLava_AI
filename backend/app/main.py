@@ -92,7 +92,7 @@ def create_app(
             await pending_weather.stop()
             await provider.aclose()
 
-    app = FastAPI(title="AutoLava AI API", lifespan=lifespan)
+    app = FastAPI(title="门店管理系统 API", lifespan=lifespan)
     app.state.open_meteo_provider = provider
     app.state.weather_service = weather_service
     app.state.dashboard_refresh_limiter = RefreshLimiter()

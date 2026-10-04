@@ -16,11 +16,11 @@ $BackendVenv = Join-Path $BackendDir ".venv"
 $BackendPython = Join-Path $BackendVenv "Scripts\python.exe"
 
 function Write-Stage([string]$Message) {
-    Write-Host "[AutoLava] $Message" -ForegroundColor Cyan
+    Write-Host "[门店管理系统] $Message" -ForegroundColor Cyan
 }
 
 function Stop-WithMessage([string]$Message) {
-    throw "[AutoLava] $Message"
+    throw "[门店管理系统] $Message"
 }
 
 function Assert-Command([string]$Name) {
@@ -297,7 +297,7 @@ try {
     Wait-Healthy "http://127.0.0.1:8000/health" $backendProcess
     $frontendProcess = Start-Frontend
     Wait-Healthy "http://127.0.0.1:5173/health" $frontendProcess
-    Write-Host "AutoLava AI 已就绪：http://127.0.0.1:5173" -ForegroundColor Green
+    Write-Host "门店管理系统 已就绪：http://127.0.0.1:5173" -ForegroundColor Green
     if (-not $NoBrowser) { Start-Process "http://127.0.0.1:5173" | Out-Null }
 
     while ($true) {
