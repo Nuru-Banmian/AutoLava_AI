@@ -18,14 +18,15 @@ export function MobileRecordList({ records, selectedDate, onSelect }: MobileReco
         const revenue = isUnrecorded ? "—" : formatWholeEuro(record.daily_revenue);
         return (
           <button
-            key={record.id ?? record.date}
+            key={record.date}
             type="button"
             aria-pressed={record.date === selectedDate}
-            className="grid w-full grid-cols-[minmax(0,1fr)_3.5rem_5rem] items-center gap-2 overflow-hidden px-3 py-2 text-left aria-pressed:bg-primary/10"
+            data-record-date={record.date}
+            className="grid min-h-11 w-full grid-cols-[minmax(0,1fr)_4rem_minmax(4rem,max-content)] items-center gap-2 px-2 py-2 text-left text-sm aria-pressed:bg-primary/10"
             aria-label={`${dateLabel}，${status}，${revenue}`}
             onClick={(event) => onSelect(record, event.currentTarget)}
           >
-            <span className="whitespace-nowrap">{dateLabel}</span>
+            <span className="flex flex-wrap items-baseline gap-x-1"><span className="whitespace-nowrap">{format(parseISO(record.date), "M月d日")}</span><span className="whitespace-nowrap text-xs text-muted-foreground">{dateLabel.slice(-3).replace("星期", "周")}</span></span>
             <span className="whitespace-nowrap">{status}</span>
             <span className="whitespace-nowrap text-right tabular-nums">{revenue}</span>
           </button>
@@ -34,3 +35,4 @@ export function MobileRecordList({ records, selectedDate, onSelect }: MobileReco
     </div>
   );
 }
+import { format, parseISO } from "date-fns";

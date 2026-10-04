@@ -52,7 +52,6 @@ export function AppShell() {
   const { error: storeError, refetch: refetchStores } = useStore();
   const { pathname } = useLocation();
   const isAdminRoute = pathname === "/admin" || pathname.startsWith("/admin/");
-  const isBusinessRecordsRoute = pathname === "/database";
 
   return (
     <div className="min-h-dvh min-w-0 bg-background md:pl-64">
@@ -72,7 +71,7 @@ export function AppShell() {
           </div>
         </div>
       </aside>
-      <main className={`mx-auto min-w-0 w-full max-w-7xl p-3 pb-28 sm:p-4 sm:pb-28 md:p-6 md:pb-6 ${isBusinessRecordsRoute ? "lg:flex lg:h-dvh lg:flex-col lg:overflow-hidden" : ""}`}>
+      <main className="mx-auto min-w-0 w-full max-w-7xl p-3 pb-28 sm:p-4 sm:pb-28 md:p-6 md:pb-6">
         {logoutError && <p className="mb-4 text-sm text-destructive" role="alert">退出失败，请重试</p>}
         {!isAdminRoute && storeError && <div className="mb-4 flex flex-wrap items-center gap-2 text-sm text-destructive" role="alert"><span>门店加载失败，请重试</span><Button aria-label="重试门店" onClick={() => { void refetchStores(); }} size="sm" variant="outline">重试</Button></div>}
         <Outlet />

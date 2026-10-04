@@ -39,8 +39,9 @@ export function RecordTable({ records, selectedDate, loading, error, onSelect, o
             const selected = record.date === selectedDate;
             return (
               <tr
-                key={record.id ?? record.date}
+                key={record.date}
                 aria-selected={selected}
+                data-record-date={record.date}
                 tabIndex={0}
                 onClick={() => onSelect(record)}
                 onKeyDown={(event) => activateFromKeyboard(event, record)}
@@ -48,7 +49,7 @@ export function RecordTable({ records, selectedDate, loading, error, onSelect, o
               >
                 <td className="whitespace-normal break-keep px-3 py-3">{dateLabel}</td>
                 <td className="px-3 py-3">{isUnrecorded ? "未录入" : record.is_open}</td>
-                <td className="px-3 py-3">{isUnrecorded ? "—" : formatWholeEuro(record.daily_revenue)}</td>
+                <td className="px-3 py-3 tabular-nums">{isUnrecorded ? "—" : formatWholeEuro(record.daily_revenue)}</td>
                 <td className="px-3 py-3">{isUnrecorded ? "—" : record.weather_legacy ? `历史旧值：${record.weather}` : record.weather ?? "—"}</td>
               </tr>
             );

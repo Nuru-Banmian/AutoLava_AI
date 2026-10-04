@@ -132,16 +132,16 @@ async function expectNativeMonthInput(input: ReturnType<Page["getByLabel"]>, exp
   await expect.poll(() => input.evaluate((node) => node.getBoundingClientRect().height)).toBe(44);
 }
 
-test("desktop record and analysis workspaces share the viewport without outer scrolling", async ({ page }) => {
+test("desktop displays records beside their detail and gives analysis the full work area", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
   await page.setViewportSize({ width: 1280, height: 900 });
   await mockResponsiveApi(page);
   await page.goto("/database");
 
-  const analysisWorkspace = page.locator("main").getByRole("complementary");
-  const recordWorkspace = analysisWorkspace.locator("xpath=preceding-sibling::*[1]");
+  const detailWorkspace = page.locator("main").getByRole("complementary");
+  const recordWorkspace = page.getByRole("table");
   await expect(page.getByRole("table")).toBeVisible();
-  await expect(analysisWorkspace).toBeVisible();
+  await expect(detailWorkspace).toBeVisible();
   const detailHeading = page.getByRole("heading", { name: "2026年7月17日 星期五" });
   await expect(detailHeading).toBeVisible();
   await expect(detailHeading.locator("..")).toContainText("营业");
@@ -151,36 +151,25 @@ test("desktop record and analysis workspaces share the viewport without outer sc
   await expect(page.getByText("洗车 20 辆", { exact: true })).toBeVisible();
   await expect(page.getByText("洗车数量", { exact: true })).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1280);
-  const [recordBox, analysisBox] = await Promise.all([
+  const [recordBox, detailBox] = await Promise.all([
     recordWorkspace.boundingBox(),
-    analysisWorkspace.boundingBox(),
+    detailWorkspace.boundingBox(),
   ]);
   expect(recordBox).not.toBeNull();
-  expect(analysisBox).not.toBeNull();
-  expect(Math.abs(recordBox!.y - analysisBox!.y)).toBeLessThanOrEqual(1);
-  expect(Math.abs(recordBox!.y + recordBox!.height - analysisBox!.y - analysisBox!.height)).toBeLessThanOrEqual(1);
-  expect(Math.abs(analysisBox!.y + analysisBox!.height - (900 - 24))).toBeLessThanOrEqual(1);
-  await expect.poll(() => page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThanOrEqual(900);
-
-  await expect.poll(() => analysisWorkspace.evaluate((node) => ({
-    overflowY: getComputedStyle(node).overflowY,
-    independentlyScrollable: node.scrollHeight > node.clientHeight,
-  }))).toEqual({ overflowY: "auto", independentlyScrollable: true });
-
-  const outerScrollBefore = await page.evaluate(() => window.scrollY);
-  await analysisWorkspace.evaluate((node) => node.scrollTo({ top: node.scrollHeight }));
-  const analysisCard = analysisWorkspace.locator(":scope > *").last();
-  await expect.poll(async () => {
-    const [workspaceBox, cardBox] = await Promise.all([
-      analysisWorkspace.boundingBox(),
-      analysisCard.boundingBox(),
-    ]);
-    return analysisWorkspace.evaluate((node, bottomGap) => ({
-      atEnd: Math.abs(node.scrollTop - (node.scrollHeight - node.clientHeight)) <= 1,
-      bottomGap,
-    }), Math.round((workspaceBox?.y ?? 0) + (workspaceBox?.height ?? 0) - (cardBox?.y ?? 0) - (cardBox?.height ?? 0)));
-  }).toEqual({ atEnd: true, bottomGap: 0 });
-  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(outerScrollBefore);
+  expect(detailBox).not.toBeNull();
+  expect(recordBox!.x + recordBox!.width).toBeLessThanOrEqual(detailBox!.x);
+  expect(Math.abs(recordBox!.y - detailBox!.y)).toBeLessThanOrEqual(1);
+  expect(recordBox!.width).toBeGreaterThan(300);
+  expect(detailBox!.width).toBeGreaterThan(300);
+  await expect(page.getByRole("heading", { name: "经营分析", exact: true })).not.toBeVisible();
+  await page.getByRole("button", { name: "经营分析", exact: true }).click();
+  const analysisWorkspace = page.getByRole("heading", { name: "经营分析", exact: true }).locator("../..");
+  await expect(analysisWorkspace).toBeVisible();
+  await expect(recordWorkspace).not.toBeVisible();
+  const [analysisBox, mainBox] = await Promise.all([analysisWorkspace.boundingBox(), page.locator("main").boundingBox()]);
+  expect(analysisBox!.width).toBeGreaterThan(mainBox!.width * 0.9);
+  await expect(page.getByText("营业额趋势", { exact: true })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1280);
 });
 
 test("weekday stays inside the date column at the narrow desktop breakpoint", async ({ page }) => {
@@ -233,17 +222,13 @@ test("global store picker switches cleanly between mobile and desktop without he
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(1280);
 });
 
-test("320px record list, bottom sheet, and analysis remain reachable without clipping", async ({ page }) => {
+test("320px record list, current-page detail, and analysis remain reachable without clipping", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
   await page.setViewportSize({ width: 320, height: 700 });
   await mockResponsiveApi(page);
   await page.goto("/database");
 
-  const analysisWorkspace = page.locator("main").getByRole("complementary");
-  await expect.poll(() => analysisWorkspace.evaluate((node) => ({
-    overflowY: getComputedStyle(node).overflowY,
-    expandsToContent: node.scrollHeight === node.clientHeight,
-  }))).toEqual({ overflowY: "visible", expandsToContent: true });
+  await expect(page.getByRole("heading", { name: "经营分析", exact: true })).not.toBeVisible();
   const recordFilters = page.getByRole("region", { name: "记录筛选" });
   await expect(recordFilters.getByTestId("record-filter-months")).toHaveCount(0);
   await expect(recordFilters.getByLabel("开始月份", { exact: true })).toHaveCount(0);
@@ -283,7 +268,7 @@ test("320px record list, bottom sheet, and analysis remain reachable without cli
   await expect(firstRow).toHaveAccessibleName("2026年7月17日 星期五，营业，€100");
   const visibleFields = firstRow.locator(":scope > span");
   await expect(visibleFields).toHaveCount(3);
-  await expect(visibleFields).toHaveText(["2026年7月17日 星期五", "营业", "€100"]);
+  await expect(visibleFields).toHaveText(["7月17日周五", "营业", "€100"]);
   await expect(firstRow.getByText("记账事件")).toHaveCount(0);
   const alignedRows = [
     firstRow,
@@ -303,33 +288,34 @@ test("320px record list, bottom sheet, and analysis remain reachable without cli
   const scrollBeforeOpen = await page.evaluate(() => window.scrollY);
   await firstRow.click();
 
-  const sheet = page.getByRole("dialog", { name: "2026-07-17 营业记录详情" });
-  await expect(sheet).toBeVisible();
-  const detailHeading = sheet.getByRole("heading", { name: "2026年7月17日 星期五" });
+  const detail = page.getByRole("region", { name: "2026-07-17 营业记录详情" });
+  await expect(detail).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(recordFilters).not.toBeVisible();
+  await expect(page.getByRole("group", { name: "营业记录视图" })).not.toBeVisible();
+  const detailHeading = detail.getByRole("heading", { name: "2026年7月17日 星期五" });
   await expect(detailHeading).toBeVisible();
   await expect(detailHeading.locator("..")).toContainText("营业");
-  const summary = sheet.getByRole("region", { name: "营业摘要" });
+  const summary = detail.getByRole("region", { name: "营业摘要" });
   await expect(summary).toContainText("营业额€100");
   await expect(summary).toContainText("天气晴");
-  await expect(sheet.getByText("洗车 20 辆", { exact: true })).toBeVisible();
-  await expect(sheet.getByText("事件：会员日照常营业", { exact: true })).toBeVisible();
-  const bookkeepingEvents = sheet.getByRole("region", { name: "记账事件" });
+  await expect(detail.getByText("洗车 20 辆", { exact: true })).toBeVisible();
+  await expect(detail.getByText("事件：会员日照常营业", { exact: true })).toBeVisible();
+  const bookkeepingEvents = detail.getByRole("region", { name: "记账事件" });
   await expect(bookkeepingEvents).toContainText("小王创建记录");
   await expect(bookkeepingEvents).toContainText("2026年7月17日 10:30");
   await expect(bookkeepingEvents).toContainText("小李修改记录");
   await expect(bookkeepingEvents).toContainText("2026年7月17日 14:00");
-  await expect(sheet.getByText("洗车数量", { exact: true })).toHaveCount(0);
-  await expect.poll(() => sheet.evaluate((node) => ({
-    position: getComputedStyle(node).position,
-    top: node.getBoundingClientRect().top,
-    bottom: getComputedStyle(node).bottom,
-    height: node.getBoundingClientRect().height,
-  }))).toEqual({ position: "fixed", top: 16, bottom: "0px", height: 684 });
-  await expect.poll(() => sheet.getByRole("heading", { name: "2026年7月17日 星期五" }).evaluate((node) => getComputedStyle(node).fontSize)).toBe("24px");
-  await expect.poll(() => sheet.getByText("€100", { exact: true }).first().evaluate((node) => getComputedStyle(node).fontSize)).toBe("18px");
-  await expect.poll(() => sheet.evaluate((node) => node.scrollWidth)).toBeLessThanOrEqual(320);
-  await sheet.getByRole("button", { name: "Close" }).click();
-  await expect(sheet).toBeHidden();
+  await expect(detail.getByText("洗车数量", { exact: true })).toHaveCount(0);
+  const back = detail.getByRole("button", { name: "返回记录", exact: true });
+  const [detailHeadingBox, backBox] = await Promise.all([detailHeading.boundingBox(), back.boundingBox()]);
+  expect(backBox!.y).toBeLessThan(detailHeadingBox!.y + detailHeadingBox!.height);
+  await expect(detailHeading).toBeFocused();
+  await expect.poll(() => detailHeading.evaluate((node) => parseFloat(getComputedStyle(node).fontSize))).toBeGreaterThanOrEqual(16);
+  await expect.poll(() => detail.getByText("€100", { exact: true }).first().evaluate((node) => getComputedStyle(node).fontSize)).toBe("18px");
+  await expect.poll(() => detail.evaluate((node) => node.scrollWidth)).toBeLessThanOrEqual(320);
+  await back.click();
+  await expect(detail).toBeHidden();
   await expect(firstRow).toBeFocused();
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(scrollBeforeOpen);
   await page.keyboard.press("Tab");
@@ -345,26 +331,24 @@ test("320px record list, bottom sheet, and analysis remain reachable without cli
   expect(focusedRowBox!.y + focusedRowBox!.height).toBeLessThanOrEqual(focusedNavigationBox!.y);
 
   await secondRow.click();
-  const restSheet = page.getByRole("dialog", { name: "2026-07-16 营业记录详情" });
-  await expect(restSheet.getByRole("heading", { name: "2026年7月16日 星期四" }).locator("..")).toContainText("休息");
-  await expect(restSheet.getByText(/洗车 \d+ 辆/)).toHaveCount(0);
-  await restSheet.getByRole("button", { name: "Close" }).click();
+  const restDetail = page.getByRole("region", { name: "2026-07-16 营业记录详情" });
+  await expect(restDetail.getByRole("heading", { name: "2026年7月16日 星期四" }).locator("..")).toContainText("休息");
+  await expect(restDetail.getByText(/洗车 \d+ 辆/)).toHaveCount(0);
+  await restDetail.getByRole("button", { name: "返回记录" }).click();
   await expect(secondRow).toBeFocused();
 
   const thirdRow = page.locator('main button[aria-label^="2026年7月15日"]').first();
   await thirdRow.click();
-  const earlyCloseSheet = page.getByRole("dialog", { name: "2026-07-15 营业记录详情" });
-  await expect(earlyCloseSheet.getByRole("heading", { name: "2026年7月15日 星期三" }).locator("..")).toContainText("提前休息");
-  await expect(earlyCloseSheet.getByText(/洗车 \d+ 辆/)).toHaveCount(0);
-  await earlyCloseSheet.getByRole("button", { name: "Close" }).click();
+  const earlyCloseDetail = page.getByRole("region", { name: "2026-07-15 营业记录详情" });
+  await expect(earlyCloseDetail.getByRole("heading", { name: "2026年7月15日 星期三" }).locator("..")).toContainText("提前休息");
+  await expect(earlyCloseDetail.getByText(/洗车 \d+ 辆/)).toHaveCount(0);
+  await earlyCloseDetail.getByRole("button", { name: "返回记录" }).click();
   await expect(thirdRow).toBeFocused();
 
   const pagination = page.getByRole("navigation", { name: "记录分页" });
-  const analysis = page.getByRole("heading", { name: "经营分析" });
-  const [paginationBox, analysisBox] = await Promise.all([pagination.boundingBox(), analysis.boundingBox()]);
-  expect(paginationBox).not.toBeNull();
-  expect(analysisBox).not.toBeNull();
-  expect(analysisBox!.y).toBeGreaterThanOrEqual(paginationBox!.y + paginationBox!.height);
+  await page.getByRole("button", { name: "经营分析", exact: true }).click();
+  await expect(pagination).not.toBeVisible();
+  await expect(page.getByRole("heading", { name: "经营分析", exact: true })).toBeVisible();
 
   await page.getByRole("region", { name: "收入分类" }).getByRole("button", { name: /展开收入分类/ }).click();
   await page.getByRole("region", { name: "其他数据" }).getByRole("button", { name: /展开其他数据/ }).click();
@@ -397,19 +381,19 @@ test("record detail hides a positive wash count when the store setting is disabl
   await expect(page.getByRole("region", { name: "营业摘要" })).toBeVisible();
 });
 
-test("database desktop keeps the wide analysis rail, compact trend, and accessible custom months", async ({ page }) => {
+test("database desktop gives analysis full width with a compact trend and accessible custom months", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
   await page.setViewportSize({ width: 1280, height: 900 });
   await mockResponsiveApi(page);
   await page.goto("/database");
 
-  const analysisRail = page.locator("main > section > div > aside");
-  await expect(analysisRail).toHaveCount(1);
+  await page.getByRole("button", { name: "经营分析", exact: true }).click();
+  const analysisWorkspace = page.getByRole("heading", { name: "经营分析", exact: true }).locator("../..");
   const trend = page.getByTestId("chart-panel-plot");
-  await expect(analysisRail).toBeVisible();
+  await expect(analysisWorkspace).toBeVisible();
   await expect(trend).toBeVisible();
-  await expect.poll(() => analysisRail.evaluate((node) => node.getBoundingClientRect().width)).toBeGreaterThanOrEqual(480);
-  await expect.poll(() => analysisRail.evaluate((node) => node.getBoundingClientRect().width)).toBeLessThanOrEqual(512);
+  const mainBox = await page.locator("main").boundingBox();
+  await expect.poll(() => analysisWorkspace.evaluate((node) => node.getBoundingClientRect().width)).toBeGreaterThan(mainBox!.width * 0.9);
   await expect.poll(() => trend.evaluate((node) => node.getBoundingClientRect().height)).toBe(256);
 
   const recordFilters = page.getByRole("region", { name: "记录筛选" });
@@ -441,8 +425,7 @@ test("database at 390px exposes all custom month inputs without horizontal overf
   await page.goto("/database");
 
   const recordFilters = page.getByRole("region", { name: "记录筛选" });
-  const analysisRail = page.locator("main > section > div > aside");
-  await expect(analysisRail).toHaveCount(1);
+  await expect(page.getByRole("heading", { name: "经营分析", exact: true })).not.toBeVisible();
   await expect(recordFilters.getByTestId("record-filter-months")).toHaveCount(0);
   await expect(recordFilters.getByLabel("开始月份", { exact: true })).toHaveCount(0);
   await expect(recordFilters.getByLabel("结束月份", { exact: true })).toHaveCount(0);

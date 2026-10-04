@@ -480,11 +480,11 @@ for (const viewport of [
     await expect(page.getByText("第 1 / 2 页")).toBeVisible();
 
     const firstCurrentRow = recordRows(page, mobile).first();
-    await expect(firstCurrentRow).toContainText("2026年7月17日");
+    await expect(firstCurrentRow).toContainText(mobile ? "7月17日" : "2026年7月17日");
     if (mobile) await firstCurrentRow.click();
     const detail = mobile
-      ? page.getByRole("dialog", { name: "2026-07-17 营业记录详情" })
-      : page.getByRole("heading", { name: "2026年7月17日 星期五" }).locator("../..");
+      ? page.getByRole("region", { name: "2026-07-17 营业记录详情" })
+      : page.locator("main").getByRole("complementary");
     await expect(detail.getByText("€100", { exact: true }).first()).toBeVisible();
     await expect(detail.getByRole("link", { name: "修改这天记录" })).toBeVisible();
     if (mobile) {
@@ -500,17 +500,17 @@ for (const viewport of [
       await expect(deleteDialog).toBeHidden();
       await expect(deleteButton).toBeFocused();
       expect(requests.ledgerDeletes).toEqual([]);
-      await page.getByRole("button", { name: "Close" }).click();
+      await detail.getByRole("button", { name: "返回记录" }).click();
     }
 
     await page.getByRole("button", { name: "下一页" }).click();
     await expect(page.getByText("第 2 / 2 页")).toBeVisible();
     const pageTwoFirst = recordRows(page, mobile).first();
-    await expect(pageTwoFirst).toContainText("2026年7月2日");
+    await expect(pageTwoFirst).toContainText(mobile ? "7月2日" : "2026年7月2日");
     await pageTwoFirst.click();
     if (mobile) {
       await expect(pageTwoFirst).toHaveAttribute("aria-pressed", "true");
-      await page.getByRole("button", { name: "Close" }).click();
+      await page.getByRole("region", { name: "2026-07-02 营业记录详情" }).getByRole("button", { name: "返回记录" }).click();
     } else {
       await expect(page.getByRole("heading", { name: "2026年7月2日 星期四" })).toBeVisible();
     }
@@ -518,21 +518,23 @@ for (const viewport of [
     await page.getByRole("button", { name: "前一月", exact: true }).click();
     await expect(page.getByText("第 1 / 2 页")).toBeVisible();
     const previousMonthFirst = recordRows(page, mobile).first();
-    await expect(previousMonthFirst).toContainText("2026年6月30日");
+    await expect(previousMonthFirst).toContainText(mobile ? "6月30日" : "2026年6月30日");
     await previousMonthFirst.click();
     if (mobile) {
       await expect(previousMonthFirst).toHaveAttribute("aria-pressed", "true");
-      await page.getByRole("button", { name: "Close" }).click();
+      await page.getByRole("region", { name: "2026-06-30 营业记录详情" }).getByRole("button", { name: "返回记录" }).click();
     } else {
       await expect(page.getByRole("heading", { name: "2026年6月30日 星期二" })).toBeVisible();
     }
 
     await expect(page.getByText("第 1 / 2 页")).toBeVisible();
-    await expect(recordRows(page, mobile).first()).toContainText("2026年6月30日");
+    await expect(recordRows(page, mobile).first()).toContainText(mobile ? "6月30日" : "2026年6月30日");
     await expect.poll(() => requests.chartRequests.at(-1)?.searchParams.get("start")).toBe("2026-06-01");
     await expect.poll(() => requests.chartRequests.at(-1)?.searchParams.get("end")).toBe("2026-06-30");
     await expect.poll(() => requests.chartRequests.at(-1)?.searchParams.get("bucket")).toBe("day");
     await expect.poll(() => requests.databaseRequests.at(-1)?.searchParams.get("start")).toBe("2026-06-01");
+
+    await page.getByRole("button", { name: "经营分析", exact: true }).click();
 
     const included = page.getByRole("region", { name: "收入分类" });
     const excluded = page.getByRole("region", { name: "其他数据" });
@@ -620,7 +622,8 @@ test("desktop: multi-date ledger snapshots, markers, dirty guards, and permanent
   await expect.poll(() => flow.ledgerDeletes).toContain("2026-07-15");
   await expect(page.getByRole("table").locator("tbody tr").filter({ hasText: "2026年7月15日" })).toContainText("未录入");
   await expect.poll(() => flow.chartRequests.length).toBeGreaterThan(chartRequestsBeforeDelete);
-  await expect(page.getByRole("heading", { name: "2026年7月15日 星期三" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "2026年7月15日 星期三" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "营业摘要" })).toContainText("—");
 
   await navigation.getByRole("link", { name: "记账" }).click();
   await page.getByRole("button", { name: "选择台账日期：2026年7月17日" }).click();

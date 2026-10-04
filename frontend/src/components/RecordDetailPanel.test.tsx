@@ -53,7 +53,6 @@ describe("RecordDetailPanel", () => {
     renderPanel({ ...record, is_open: "提前休息", activity: "会员日照常营业" });
 
     const heading = screen.getByRole("heading", { name: "2026年7月14日 星期二" });
-    expect(heading.parentElement).toHaveClass("flex-row", "flex-wrap");
     expect(heading.parentElement).toHaveTextContent("2026年7月14日 星期二提前休息");
     expect(screen.getByText("提前休息", { exact: true })).toBeInTheDocument();
     expect(screen.queryByText("营业状态", { exact: true })).not.toBeInTheDocument();
