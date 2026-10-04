@@ -215,7 +215,7 @@ test("global store picker switches cleanly between mobile and desktop without he
 
   await page.setViewportSize({ width: 1280, height: 900 });
   const desktopPicker = page.getByTestId("desktop-store-picker");
-  const brand = page.getByText("AutoLava AI", { exact: true });
+  const brand = page.getByText("门店管理系统", { exact: true });
   await expect(desktopPicker.getByRole("combobox", { name: "门店" })).toBeVisible();
   await expect(page.getByTestId("mobile-store-picker")).toBeHidden();
   const [pickerBox, brandBox] = await Promise.all([desktopPicker.boundingBox(), brand.boundingBox()]);

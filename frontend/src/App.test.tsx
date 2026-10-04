@@ -87,7 +87,7 @@ function contrastRatio(first: string, second: string) {
 describe("App", () => {
   it("loads the shared application shell", async () => {
     renderApplication("/");
-    expect(await screen.findByText("AutoLava AI")).toBeInTheDocument();
+    expect(await screen.findByText("门店管理系统")).toBeInTheDocument();
   });
 
   it("keeps the retired charts route unmatched without mounting either legacy page", () => {
@@ -136,7 +136,7 @@ describe("App", () => {
     expect(within(more).queryByRole("combobox", { name: "门店" })).not.toBeInTheDocument();
     expect(await screen.findAllByRole("combobox", { name: "门店" })).toHaveLength(2);
 
-    const brand = screen.getByText("AutoLava AI");
+    const brand = screen.getByText("门店管理系统");
     const desktopPicker = screen.getByTestId("desktop-store-picker");
     const mobilePicker = screen.getByTestId("mobile-store-picker");
     expect(brand.compareDocumentPosition(desktopPicker) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
