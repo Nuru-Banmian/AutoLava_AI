@@ -63,11 +63,11 @@ describe("BusinessAnalysisCard", () => {
     expect(within(weather).getAllByRole("listitem").map((row) => row.textContent)).toEqual([
       "晴€1012 天", "少云€01 天", "雷雨伴大冰雹€2001 天", "兼容类别€422 天", "历史未规范天气€201 天", "未记录€803 天",
     ]);
-    fireEvent.change(within(weekday).getByRole("combobox", { name: "星期经营表现读数分组" }), { target: { value: "周二" } });
-    expect(within(weekday).getByRole("status")).toHaveTextContent("周二：无经营日样本，—，0 天");
-    fireEvent.change(within(weather).getByRole("combobox", { name: "天气与营业额对比读数分组" }), { target: { value: "未记录" } });
-    expect(within(weather).getByRole("status")).toHaveTextContent("未记录：€80，3 天经营日样本");
-    expect(screen.getByText("未记录仅表示经营日缺少记录天气，金额和样本仍计入。")).toBeInTheDocument();
+    within(weekday).getByRole("listitem", { name: "周二：无经营日样本，—，0 天" }).focus();
+    expect(within(weekday).getByRole("listitem", { name: "周二：无经营日样本，—，0 天" })).toHaveFocus();
+    expect(within(weekday).queryByRole("combobox")).not.toBeInTheDocument();
+    expect(within(weather).queryByRole("combobox")).not.toBeInTheDocument();
+    expect(screen.queryByText("未记录仅表示经营日缺少记录天气，金额和样本仍计入。")).not.toBeInTheDocument();
   });
   it("keeps all canonical weather groups in the agreed order regardless of API order or preview preferences", async () => {
     const weatherNames = ["晴", "少云", "多云", "阴", "雾", "冻雾", "小毛毛雨", "毛毛雨", "大毛毛雨", "小冻毛毛雨", "冻毛毛雨", "小雨", "中雨", "大雨", "小冻雨", "冻雨", "小雪", "中雪", "大雪", "雪粒", "小阵雨", "阵雨", "大阵雨", "小阵雪", "大阵雪", "雷雨", "雷雨伴小冰雹", "雷雨伴大冰雹"];
@@ -79,7 +79,7 @@ describe("BusinessAnalysisCard", () => {
     const weather = await screen.findByRole("region", { name: "天气与营业额对比" });
     expect(within(weather).getAllByRole("listitem").map((row) => row.getAttribute("aria-label")!.split("：")[0])).toEqual(weatherNames);
     expect(within(weather).queryByText("未记录")).not.toBeInTheDocument();
-    expect(within(weather).getByRole("combobox", { name: "天气与营业额对比读数分组" })).toBeInTheDocument();
+    expect(within(weather).queryByRole("combobox")).not.toBeInTheDocument();
     localStorage.removeItem("weatherOrder");
   });
   it("shows daily ledger coverage and readable missing, closed and zero values independently of settlements", async () => {
@@ -95,7 +95,7 @@ describe("BusinessAnalysisCard", () => {
     })));
     renderCard({ start: "2026-07-01", end: "2026-07-04" });
     expect(await screen.findByText("本期已记录 3 / 4 天；上期已记录 1 / 4 天")).toBeInTheDocument();
-    expect(screen.getByText("记录覆盖不完整，比较仅反映已记录每日台账。")).toBeInTheDocument();
+    expect(screen.queryByText("记录覆盖不完整，比较仅反映已记录每日台账。")).not.toBeInTheDocument();
     expect(screen.getByText("每日台账营业额较上期 +25.0%")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("趋势读数日期"), { target: { value: "2026-07-02" } });
     expect(screen.getByRole("status", { name: "趋势读数" })).toHaveTextContent("2026-07-02：未录入，—");
@@ -163,7 +163,10 @@ describe("BusinessAnalysisCard", () => {
     const date = await screen.findByRole("button", { name: "2026-07-01 营业 €9.999.999.999" });
     expect(date).toHaveTextContent(/^1营业$/);
     expect(date).toHaveAttribute("style", "background-color: color-mix(in oklab, var(--primary) 20%, transparent);");
-    expect(screen.getByRole("status", { name: "日历读数" })).toHaveTextContent("€9.999.999.999");
+    expect(date).toHaveAttribute("title", "2026-07-01 营业 €9.999.999.999");
+    expect(screen.queryByLabelText("日历读数日期")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "日历读数" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^查看 .* 每日台账$/ })).not.toBeInTheDocument();
   });
 
   it("keeps cached content visible and labels a failed refresh", async () => {
@@ -243,14 +246,14 @@ describe("BusinessAnalysisCard", () => {
     })));
     const first = renderCard({ start: "2026-03-01", end: "2026-03-31" });
     expect(await screen.findByText("本期已记录 1 / 31 天；上期已记录 1 / 28 天")).toBeInTheDocument();
-    expect(screen.getByText(/上月较短/)).toBeInTheDocument();
+    expect(screen.getByText("上期有效范围：2026-02-01 至 2026-02-28")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("趋势读数日期"), { target: { value: "2026-03-31" } });
     expect(screen.getByRole("status", { name: "趋势读数" })).toHaveTextContent("上期无对应日期");
     first.unmount();
     server.use(http.get("/api/charts/1", () => HttpResponse.json({ ...payload(), range: { start: "2026-01-01", end: "2026-03-31", bucket: "month" } })));
     renderCard({ start: "2026-01-01", end: "2026-03-31" });
     await screen.findByText("月度总收入趋势");
-    expect(screen.getByText("月粒度：月度总收入，包含开票月份已确认公司结算。")).toBeInTheDocument();
+    expect(screen.queryByText("月粒度：月度总收入，包含开票月份已确认公司结算。")).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "营业日历" })).not.toBeInTheDocument();
   });
 

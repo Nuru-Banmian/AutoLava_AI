@@ -60,8 +60,10 @@ test("320px: calendar cells use income shading and expose amounts through exact 
   await expect(page.getByRole("button", { name: "2026-06-01 未录入 —", exact: true })).toHaveCSS("background-color", /\/ 0\)/);
   await page.evaluate(() => document.documentElement.style.removeProperty("--primary"));
   await expect(date).toHaveCSS("background-color", originalColor);
-  await page.getByLabel("日历读数日期", { exact: true }).selectOption("2026-06-02");
-  await expect(page.getByRole("status", { name: "日历读数" })).toHaveText("2026-06-02 营业 €999.900.000");
+  await expect(date).toHaveAttribute("title", "2026-06-02 营业 €999.900.000");
+  await expect(page.getByLabel("日历读数日期", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("status", { name: "日历读数" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^查看 .* 每日台账$/ })).toHaveCount(0);
 });
 
 test("390px: daily ledger curves keep gaps, expose keyboard readings and open missing calendar dates on the right page", async ({ page }) => {

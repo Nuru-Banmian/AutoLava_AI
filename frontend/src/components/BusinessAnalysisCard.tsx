@@ -93,7 +93,7 @@ export function BusinessAnalysisCard({ storeId, range, today = range.end, onSele
           {data.range.bucket === "month" && comparisonText(data) && <p>{comparisonText(data)}</p>}
         </div>
         {!hasBusinessData && <p>该范围暂无经营数据</p>}
-        {data.range.bucket === "day" ? <DailyLedgerTrend key={`trend-${data.range.start}-${data.range.end}`} data={data} /> : <><p className="text-sm text-muted-foreground">月粒度：月度总收入，包含开票月份已确认公司结算。</p><ChartPanel embedded title="月度总收入趋势" kind="line" data={trend} xKey="label" valueKey="revenue" emptyMessage="暂无趋势数据" heightClassName="h-64 min-h-64" /></>}
+        {data.range.bucket === "day" ? <DailyLedgerTrend key={`trend-${data.range.start}-${data.range.end}`} data={data} /> : <ChartPanel embedded title="月度总收入趋势" kind="line" data={trend} xKey="label" valueKey="revenue" emptyMessage="暂无趋势数据" heightClassName="h-64 min-h-64" />}
         <GroupedPerformanceCharts key={`${storeId}:${data.range.start}:${data.range.end}`} data={data} />
         <IncomeComposition included={data.categories} excluded={data.excluded_categories} classifiedIncludedTotal={data.classified_included_total} />
         {isSingleMonth && <BusinessCalendar key={`calendar-${data.range.start}-${data.range.end}`} data={data} today={today} onSelectDate={onSelectDate} />}

@@ -30,8 +30,6 @@ export function DailyLedgerTrend({ data }: { data: ChartsResponse }) {
     return `${date}：${record ? `${record.is_open ?? "已记录"}，${formatWholeEuro(record.revenue)}` : "未录入，—"}`;
   };
   const coverage = data.period_coverage;
-  const incomplete = coverage && (coverage.record_days < coverage.interval_days
-    || (priorRange && priorRange.record_days < priorRange.interval_days));
   const comparison = data.ledger_comparison;
   const comparisonMessage = comparison?.status === "comparable"
     ? `每日台账营业额较上期 ${comparison.change_percent! > 0 ? "+" : ""}${comparison.change_percent!.toFixed(1)}%`
@@ -42,7 +40,6 @@ export function DailyLedgerTrend({ data }: { data: ChartsResponse }) {
 
   return <section aria-label="每日台账营业额趋势" className="grid min-w-0 gap-2">
     <h3 className="font-semibold">营业额趋势</h3>
-    <p className="text-sm text-muted-foreground">每日台账营业额（€）；公司结算收入不计入日曲线及同期变化。</p>
     <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm" aria-label="趋势图例">
       <span className="flex items-center gap-2"><span aria-hidden="true" className="h-1 w-6 bg-primary" />本期每日台账</span>
       {priorRange && <span className="flex items-center gap-2"><span aria-hidden="true" className="w-6 border-t-2 border-dashed border-[var(--chart-series-2)]" />上期每日台账</span>}
@@ -50,8 +47,6 @@ export function DailyLedgerTrend({ data }: { data: ChartsResponse }) {
     {coverage && <div className="grid gap-1 text-sm text-muted-foreground">
       <p>本期已记录 {coverage.record_days} / {coverage.interval_days} 天{priorRange ? `；上期已记录 ${priorRange.record_days} / ${priorRange.interval_days} 天` : ""}</p>
       {priorRange && <p>上期有效范围：{priorRange.start} 至 {priorRange.end}</p>}
-      {comparison?.short_previous_month && <p>上月较短，比较截止至上月实际末日；没有对应日期的部分不补造数据。</p>}
-      {incomplete && <p>记录覆盖不完整，比较仅反映已记录每日台账。</p>}
       <p>{comparisonMessage}</p>
     </div>}
     <div data-testid="chart-panel-plot" className="h-48 min-h-48 w-full min-w-0">
@@ -69,7 +64,6 @@ export function DailyLedgerTrend({ data }: { data: ChartsResponse }) {
         </LineChart>
       </ResponsiveContainer>
     </div>
-    <p className="text-xs text-muted-foreground">坐标缩写：k 为千欧元，m 为百万欧元，b 为十亿欧元；读数显示完整整数金额。</p>
     {selected && <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-1 rounded-md bg-muted/40 p-2">
       <label htmlFor="trend-date" className="text-sm font-medium">趋势读数日期</label>
       <select id="trend-date" value={selected.date} onChange={(event) => setSelectedDate(event.target.value)} className="h-11 w-full min-w-0 rounded-md border bg-white px-3 text-base focus-visible:outline-2 focus-visible:outline-primary">
