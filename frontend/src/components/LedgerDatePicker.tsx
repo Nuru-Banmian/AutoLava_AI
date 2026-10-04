@@ -52,12 +52,12 @@ function PickerPanel({ value, today, recordedDates, month, setMonth, select }: L
 
   return (
     <div className="grid min-w-0 gap-4 pt-1">
-      <div className="flex items-center justify-between gap-2 pr-8">
-        <button type="button" aria-label="上个月" onClick={() => moveMonth(-1)} className="rounded-lg p-2 hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring">
+      <div className="flex items-center justify-between gap-2 pr-12">
+        <button type="button" aria-label="上个月" onClick={() => moveMonth(-1)} className="flex size-11 shrink-0 items-center justify-center rounded-lg hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring">
           <ChevronLeft aria-hidden="true" className="size-5" />
         </button>
         <p className="font-semibold">{format(parseISO(`${month}-01`), "yyyy年M月")}</p>
-        <button type="button" aria-label="下个月" disabled={month >= today.slice(0, 7)} onClick={() => moveMonth(1)} className="rounded-lg p-2 hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-30">
+        <button type="button" aria-label="下个月" disabled={month >= today.slice(0, 7)} onClick={() => moveMonth(1)} className="flex size-11 shrink-0 items-center justify-center rounded-lg hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-30">
           <ChevronRight aria-hidden="true" className="size-5" />
         </button>
       </div>

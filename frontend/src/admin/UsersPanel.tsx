@@ -261,15 +261,15 @@ export function UsersPanel() {
   return <div className="min-w-0 space-y-4">
     <ErrorMessage error={users.error} />
     <ErrorMessage error={stores.error} />
-    <div className="grid min-w-0 gap-4 md:grid-cols-[minmax(13rem,18rem)_minmax(0,1fr)] md:grid-rows-[auto_1fr]">
+    <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(13rem,18rem)_minmax(0,1fr)] lg:grid-rows-[auto_1fr]">
       <div
         aria-label="用户列表操作"
-        className="flex min-w-0 items-center gap-2 md:col-start-1 md:row-start-1"
+        className="flex min-w-0 items-center gap-2 lg:col-start-1 lg:row-start-1"
         data-testid="user-panel-controls"
         role="toolbar"
       >
-        <span className="hidden min-w-0 flex-1 text-sm font-medium md:block">用户列表</span>
-        <label className="min-w-0 flex-1 md:hidden">
+        <span className="hidden min-w-0 flex-1 text-sm font-medium lg:block">用户列表</span>
+        <label className="min-w-0 flex-1 lg:hidden">
           <span className="sr-only">用户</span>
           <select
             aria-label="用户"
@@ -287,7 +287,7 @@ export function UsersPanel() {
           新建用户
         </Button>
       </div>
-      <aside aria-label="用户列表" className="hidden min-w-0 md:col-start-1 md:row-start-2 md:block">
+      <aside aria-label="用户列表" className="hidden min-w-0 lg:col-start-1 lg:row-start-2 lg:block">
         <ul className="divide-y overflow-hidden rounded-xl border border-border bg-card shadow-sm">
           {list.map((user) => <li key={user.id}>
             <button
@@ -306,7 +306,7 @@ export function UsersPanel() {
           </li>)}
         </ul>
       </aside>
-      <main className="min-w-0 md:col-start-2 md:row-span-2 md:row-start-1">{editor}</main>
+      <main className="min-w-0 lg:col-start-2 lg:row-span-2 lg:row-start-1">{editor}</main>
     </div>
   </div>;
 }

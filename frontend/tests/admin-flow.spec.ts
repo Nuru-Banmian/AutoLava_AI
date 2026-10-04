@@ -300,7 +300,7 @@ test("store and user creation stays attached to each list across admin breakpoin
     await expect(page.getByRole("heading", { name: view.heading })).toBeVisible();
   }
 
-  for (const width of [390, 320]) {
+  for (const width of [390, 320, 768]) {
     await page.setViewportSize({ width, height: 844 });
     await page.goto("/admin");
     for (const view of [

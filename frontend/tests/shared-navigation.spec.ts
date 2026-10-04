@@ -18,13 +18,14 @@ for (const width of [320, 390, 768, 1024, 1280]) {
       return route.fulfill({ status: path === "/api/auth/me" || path === "/api/stores/accessible" ? 200 : 500, contentType: "application/json", body: JSON.stringify(body) });
     });
     await page.goto("/more");
+    if (width === 320) await page.addStyleTag({ content: "html { scrollbar-gutter: stable; }" });
     const picker = page.getByTestId(width < 768 ? "mobile-store-picker" : "desktop-store-picker");
     const store = picker.getByRole("combobox", { name: "门店" });
     await store.selectOption("1");
     await expect(picker.getByText(longName, { exact: false }).last()).toBeVisible();
     await expect(page.getByRole("navigation", { name: "更多功能" }).getByRole("link", { name: "公司结算" })).toBeVisible();
     await expect(page.getByRole("link", { name: "管理中心", exact: true })).toHaveCount(0);
-    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
     expect((await store.boundingBox())!.height).toBeGreaterThanOrEqual(44);
     expect(await store.evaluate((node) => parseFloat(getComputedStyle(node).fontSize))).toBeGreaterThanOrEqual(16);
     if (width < 768) {
@@ -41,6 +42,6 @@ for (const width of [320, 390, 768, 1024, 1280]) {
     await page.getByLabel("确认新密码").fill("different-password");
     await page.getByRole("button", { name: "更新密码" }).click();
     await expect(page.getByRole("alert")).toHaveText("两次输入的新密码不一致");
-    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   });
 }
