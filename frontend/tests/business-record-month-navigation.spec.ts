@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import type { LedgerBody, RecordSnapshot } from "../src/api/types";
 import { weatherOptions } from "../src/test/weather-options";
 
@@ -12,6 +12,60 @@ const stores = [
   { id: 1, name: "Kiritimati 门店", timezone: "Pacific/Kiritimati" },
   { id: 2, name: "Adak 门店", timezone: "America/Adak" },
 ];
+
+async function wheelToControl(page: Page, control: Locator) {
+  const viewport = page.viewportSize()!;
+  await page.mouse.move(viewport.width * 0.75, viewport.height * 0.5);
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const box = (await control.boundingBox())!;
+    const navigation = await page.getByRole("navigation", { name: "移动导航" }).boundingBox();
+    const bottom = navigation?.y ?? viewport.height;
+    if (box.y >= 8 && box.y + box.height <= bottom - 8) return;
+    await page.mouse.wheel(0, box.y + box.height / 2 - bottom / 2);
+    await expect.poll(async () => (await control.boundingBox())!.y).not.toBe(box.y);
+  }
+  await expect(control).toBeInViewport({ ratio: 1 });
+}
+
+test("390px: daily ledger curves keep gaps, expose keyboard readings and open missing calendar dates on the right page", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockEditableBusinessRecords(page);
+  await page.route("**/api/charts/1?**", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+    kpis: { total_revenue: 925, record_days: 4, open_days: 3, average_revenue: 75, primary_categories: [], total_wash_count: null, average_ticket: null },
+    range: { start: "2026-06-01", end: "2026-06-30", bucket: "day" }, comparison_kpis: null,
+    income_summary: { daily_ledger_revenue: 225, confirmed_settlement_income: 700, total_income: 925, includes_settlement_income: true }, classified_included_total: 700,
+    daily: [{ date: "2026-06-11", revenue: 0, is_open: "营业" }, { date: "2026-06-12", revenue: 75, is_open: "提前休息" }, { date: "2026-06-13", revenue: 0, is_open: "休息" }, { date: "2026-06-15", revenue: 150, is_open: "营业" }],
+    comparison_daily: [{ date: "2026-05-01", revenue: 150, is_open: "营业" }],
+    period_coverage: { start: "2026-06-01", end: "2026-06-30", record_days: 4, interval_days: 30 },
+    comparison_coverage: { start: "2026-05-01", end: "2026-05-30", record_days: 1, interval_days: 30 },
+    ledger_comparison: { current_revenue: 225, previous_revenue: 150, change_percent: 50, status: "comparable", short_previous_month: false },
+    categories: [{ category_id: null, category_name: "公司结算", amount: 700 }], excluded_categories: [], monthly: [], weather: [], weekday: [],
+  }) }));
+  await page.goto("/database");
+  await page.getByLabel("月份", { exact: true }).fill("2026-06");
+  await page.getByRole("button", { name: "经营分析", exact: true }).click();
+  await expect(page.getByText("本期已记录 4 / 30 天；上期已记录 1 / 30 天", { exact: true })).toBeVisible();
+  await expect(page.getByText("每日台账营业额较上期 +50.0%", { exact: true })).toBeVisible();
+  const trend = page.getByRole("region", { name: "每日台账营业额趋势" });
+  await expect.poll(async () => ((await trend.locator("path.recharts-line-curve").first().getAttribute("d"))?.match(/M/g) ?? []).length).toBe(2);
+  const reading = page.getByLabel("趋势读数日期", { exact: true });
+  await reading.selectOption("2026-06-14");
+  await expect(page.getByRole("status", { name: "趋势读数" })).toContainText("2026-06-14：未录入，—");
+  await reading.focus();
+  await reading.press("ArrowUp");
+  await expect(page.getByRole("status", { name: "趋势读数" })).toContainText("2026-06-13：休息，€0");
+  const missingDate = page.getByRole("button", { name: "2026-06-01 未录入 —", exact: true });
+  await wheelToControl(page, missingDate);
+  const box = (await missingDate.boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  const detail = page.getByRole("region", { name: "2026-06-01 营业记录详情" });
+  await expect(detail).toContainText("未录入");
+  await expect(detail.getByRole("link", { name: "修改这天记录" })).toHaveAttribute("href", "/ledger?date=2026-06-01");
+  await detail.getByRole("button", { name: "返回记录" }).click();
+  await expect(page.getByText("第 2 / 2 页", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "2026年6月1日 星期一，未录入，—", exact: true })).toBeFocused();
+});
 
 for (const width of [320, 390, 768, 1024, 1280]) {
   test(`${width}px: switches between records and a complete analysis workspace without losing the historical page`, async ({ page }) => {
@@ -103,10 +157,12 @@ for (const width of [320, 390, 768, 1024, 1280]) {
     await page.mouse.move(width * 0.7, 500);
     await page.mouse.wheel(0, 2500);
     const expandOther = page.getByRole("button", { name: "展开其他数据（还有 2 项）", exact: true });
+    await wheelToControl(page, expandOther);
     await expect(expandOther).toBeInViewport({ ratio: 1 });
     const expandBox = (await expandOther.boundingBox())!;
     await page.mouse.click(expandBox.x + expandBox.width / 2, expandBox.y + expandBox.height / 2);
     await page.mouse.wheel(0, 1000);
+    await wheelToControl(page, page.getByText("其他数据 7", { exact: true }));
     await expect(page.getByText("其他数据 7", { exact: true })).toBeInViewport({ ratio: 1 });
   });
 }

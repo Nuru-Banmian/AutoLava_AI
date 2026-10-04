@@ -157,7 +157,7 @@ async def test_charts_deduplicates_explicit_categories_without_changing_kpis(
     assert response.status_code == 200
     payload = response.json()
     assert payload["kpis"]["total_revenue"] == 125
-    assert payload["daily"] == [{"date": "2026-07-12", "revenue": 125}]
+    assert payload["daily"] == [{"date": "2026-07-12", "revenue": 125, "is_open": "营业"}]
     assert payload["categories"] == [
         {"category_id": category.id, "category_name": "Optional", "amount": 25}
     ]
@@ -197,6 +197,19 @@ async def test_charts_returns_stable_empty_result(auth_client, db_session, store
         },
         "range": {"start": "2026-07-01", "end": "2026-07-31", "bucket": "day"},
         "comparison_kpis": None,
+        "period_coverage": {
+            "start": "2026-07-01", "end": "2026-07-31", "record_days": 0,
+            "interval_days": 31,
+        },
+        "comparison_coverage": {
+            "start": "2026-06-01", "end": "2026-06-30", "record_days": 0,
+            "interval_days": 30,
+        },
+        "comparison_daily": [],
+        "ledger_comparison": {
+            "current_revenue": 0, "previous_revenue": 0, "change_percent": None,
+            "status": "no_previous_records", "short_previous_month": True,
+        },
         "income_summary": {
             "daily_ledger_revenue": 0,
             "confirmed_settlement_income": 0,
@@ -352,7 +365,7 @@ async def test_charts_complete_calendar_month_includes_confirmed_settlement_hist
     ]
     assert payload["classified_included_total"] == 325
     assert payload["comparison_kpis"]["total_revenue"] == 100
-    assert payload["daily"] == [{"date": "2026-06-12", "revenue": 125}]
+    assert payload["daily"] == [{"date": "2026-06-12", "revenue": 125, "is_open": "营业"}]
     assert payload["monthly"] == [
         {
             "month": "2026-06",

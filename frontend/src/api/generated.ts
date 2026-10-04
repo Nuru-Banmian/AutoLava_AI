@@ -987,6 +987,9 @@ export interface components {
             categories: (components["schemas"]["PrimaryCategory"] | components["schemas"]["SettlementComposition"])[];
             /** Classified Included Total */
             classified_included_total: number;
+            comparison_coverage?: components["schemas"]["PeriodCoverage"] | null;
+            /** Comparison Daily */
+            comparison_daily?: components["schemas"]["DailyRevenue"][];
             comparison_kpis: components["schemas"]["ChartComparisonKpis"] | null;
             /** Daily */
             daily: components["schemas"]["DailyRevenue"][];
@@ -994,8 +997,10 @@ export interface components {
             excluded_categories: (components["schemas"]["PrimaryCategory"] | components["schemas"]["SettlementComposition"])[];
             income_summary: components["schemas"]["IncomeSummary"];
             kpis: components["schemas"]["ChartKpis"];
+            ledger_comparison?: components["schemas"]["LedgerComparison"] | null;
             /** Monthly */
             monthly: components["schemas"]["MonthlyRevenue"][];
+            period_coverage?: components["schemas"]["PeriodCoverage"] | null;
             range: components["schemas"]["ChartRange"];
             /** Weather */
             weather: components["schemas"]["WeatherRevenue"][];
@@ -1025,6 +1030,8 @@ export interface components {
         DailyRevenue: {
             /** Date */
             date: string;
+            /** Is Open */
+            is_open?: ("营业" | "休息" | "提前休息") | null;
             /** Revenue */
             revenue: number;
         };
@@ -1208,6 +1215,22 @@ export interface components {
              */
             weather_edited: boolean;
         };
+        /** LedgerComparison */
+        LedgerComparison: {
+            /** Change Percent */
+            change_percent: number | null;
+            /** Current Revenue */
+            current_revenue: number;
+            /** Previous Revenue */
+            previous_revenue: number | null;
+            /** Short Previous Month */
+            short_previous_month: boolean;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "comparable" | "no_previous_records" | "zero_previous" | "no_comparison" | "no_current_records";
+        };
         /** LedgerDeleteBody */
         LedgerDeleteBody: {
             /** Expected Identity */
@@ -1261,6 +1284,17 @@ export interface components {
             current_password: string;
             /** New Password */
             new_password: string;
+        };
+        /** PeriodCoverage */
+        PeriodCoverage: {
+            /** End */
+            end: string;
+            /** Interval Days */
+            interval_days: number;
+            /** Record Days */
+            record_days: number;
+            /** Start */
+            start: string;
         };
         /** PrimaryCategory */
         PrimaryCategory: {

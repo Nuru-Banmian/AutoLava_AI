@@ -28,11 +28,13 @@ export function RecordFilters({ mode, range, today, exporting, exportError, onCh
   const currentMonth = today.slice(0, 7);
   const selectedMonth = range.start.slice(0, 7);
   const [customDraft, setCustomDraft] = useState<MonthSelection>({ startMonth: selectedMonth, endMonth: range.end.slice(0, 7) });
+  const [dateDraft, setDateDraft] = useState(range);
   const [customOpen, setCustomOpen] = useState(mode === "custom");
   const [validationError, setValidationError] = useState("");
 
   useEffect(() => {
     setCustomDraft({ startMonth: range.start.slice(0, 7), endMonth: range.end.slice(0, 7) });
+    setDateDraft(range);
     setValidationError("");
   }, [range.start, range.end]);
   useEffect(() => {
@@ -63,14 +65,32 @@ export function RecordFilters({ mode, range, today, exporting, exportError, onCh
     setCustomDraft(next);
     setValidationError("");
     setCustomOpen(true);
-    onChange("custom", customMonthRange(next, today));
+    const nextRange = customMonthRange(next, today);
+    setDateDraft(nextRange);
+    onChange("custom", nextRange);
   };
   const updateCustom = (patch: Partial<MonthSelection>) => {
     const next = { ...customDraft, ...patch };
     const issue = monthSelectionIssue(next, currentMonth);
     setCustomDraft(next);
     setValidationError(issue ? monthSelectionMessages[issue] : "");
-    if (!issue) onChange("custom", customMonthRange(next, today));
+    if (!issue) {
+      const nextRange = customMonthRange(next, today);
+      setDateDraft(nextRange);
+      onChange("custom", nextRange);
+    }
+  };
+  const updateDate = (patch: Partial<typeof range>) => {
+    const next = { ...dateDraft, ...patch };
+    setDateDraft(next);
+    const error = !next.start || !next.end ? "请选择开始日期和结束日期"
+      : next.start > today || next.end > today ? "未来日期不可选择"
+        : next.start > next.end ? "结束日期不能早于开始日期" : "";
+    setValidationError(error);
+    if (!error) {
+      setCustomDraft({ startMonth: next.start.slice(0, 7), endMonth: next.end.slice(0, 7) });
+      onChange("custom", next);
+    }
   };
   const returnToMonth = () => {
     setCustomOpen(false);
@@ -99,6 +119,12 @@ export function RecordFilters({ mode, range, today, exporting, exportError, onCh
           </label>
           <label className="grid min-w-0 gap-1 text-sm font-medium">结束月份
             <Input aria-label="结束月份" className="h-10 min-w-0 px-2" max={currentMonth} onChange={(event) => updateCustom({ endMonth: event.target.value })} type="month" value={customDraft.endMonth} />
+          </label>
+          <label className="grid min-w-0 gap-1 text-sm font-medium">开始日期
+            <Input aria-label="开始日期" className="h-11 min-w-0 px-2" max={today} onChange={(event) => updateDate({ start: event.target.value })} type="date" value={dateDraft.start} />
+          </label>
+          <label className="grid min-w-0 gap-1 text-sm font-medium">结束日期
+            <Input aria-label="结束日期" className="h-11 min-w-0 px-2" max={today} onChange={(event) => updateDate({ end: event.target.value })} type="date" value={dateDraft.end} />
           </label>
         </div>
       )}

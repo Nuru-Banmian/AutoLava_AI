@@ -102,3 +102,13 @@ input:not([type="checkbox"]):not([type="radio"]), select, textarea {
   min-height: 44px;
   font-size: 16px;
 }
+
+/* Keyboard focus must stay above the fixed phone navigation. */
+@media (max-width: 767px) {
+  html {
+    scroll-padding-bottom: calc(5rem + env(safe-area-inset-bottom));
+  }
+  main :is(button, a, input, select, textarea) {
+    scroll-margin-bottom: calc(5rem + env(safe-area-inset-bottom));
+  }
+}
