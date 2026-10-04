@@ -1,6 +1,7 @@
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -152,6 +153,79 @@ def test_launcher_preflight_and_dependency_cache_are_repository_local() -> None:
     ]
     assert 'Assert-Command "uv"' not in startup_preflight
     assert ".autolava-local/" in read(".gitignore")
+
+
+@pytest.mark.skipif(shutil.which("powershell.exe") is None, reason="requires Windows PowerShell")
+@pytest.mark.parametrize("missing_dependencies", [True, False])
+def test_launcher_dependency_probe_detects_missing_runtime_packages(
+    tmp_path: Path, missing_dependencies: bool
+) -> None:
+    launcher = read("scripts/start-local.ps1")
+    probe = re.search(
+        r"function Test-BackendDependencies.*?^}", launcher, re.DOTALL | re.MULTILINE
+    )
+    assert probe
+    python = Path(sys.executable)
+    if missing_dependencies:
+        venv = tmp_path / "empty-venv"
+        subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(venv)], check=True)
+        python = venv / "Scripts" / "python.exe"
+    powershell = probe.group(0) + r'''
+$ErrorActionPreference = "Stop"
+$BackendPython = '%s'
+$healthy = Test-BackendDependencies
+if ($healthy -ne $%s) { throw "dependency probe returned the wrong result" }
+''' % (str(python).replace("'", "''"), str(not missing_dependencies).lower())
+    completed = subprocess.run(
+        [shutil.which("powershell.exe"), "-NoProfile", "-Command", powershell],
+        cwd=ROOT / "backend",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+@pytest.mark.skipif(shutil.which("powershell.exe") is None, reason="requires Windows PowerShell")
+@pytest.mark.parametrize("healthy", [True, False])
+def test_launcher_checks_dependencies_even_when_manifest_cache_matches(
+    tmp_path: Path, healthy: bool
+) -> None:
+    launcher = read("scripts/start-local.ps1")
+    ensure = re.search(r"function Ensure-Dependencies.*?^}", launcher, re.DOTALL | re.MULTILINE)
+    assert ensure
+    powershell = ensure.group(0) + r'''
+$ErrorActionPreference = "Stop"
+$StateDir = '%s'
+$BackendDir = $StateDir
+$FrontendDir = $StateDir
+$BackendVenv = $StateDir
+$BackendPython = Join-Path $StateDir "python.exe"
+New-Item -ItemType File -Path $BackendPython | Out-Null
+$script:healthy = $%s
+$script:checks = 0
+$script:installs = 0
+function Get-ManifestHash { return "same-hash" }
+function Test-HashCurrent { return $true }
+function Test-BackendDependencies { $script:checks++; return $script:healthy }
+function Test-Path { return $true }
+function Resolve-UvExecutable { return "mock-uv" }
+function Invoke-Checked { param($Label, $Action) $script:installs++; $script:healthy = $true }
+function Save-Hash {
+    if (-not $script:healthy) { throw "cached broken dependencies" }
+}
+function Stop-WithMessage { param($Message) throw $Message }
+Ensure-Dependencies
+if ($script:checks -lt 1) { throw "manifest cache bypassed dependency health check" }
+if ($script:installs -ne %s) { throw "unexpected dependency install count" }
+''' % (str(tmp_path).replace("'", "''"), str(healthy).lower(), 0 if healthy else 1)
+    completed = subprocess.run(
+        [shutil.which("powershell.exe"), "-NoProfile", "-Command", powershell],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
 
 
 @pytest.mark.skipif(shutil.which("powershell.exe") is None, reason="requires Windows PowerShell")
