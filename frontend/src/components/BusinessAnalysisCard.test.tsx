@@ -161,7 +161,7 @@ describe("BusinessAnalysisCard", () => {
     renderCard();
     const date = await screen.findByRole("button", { name: "2026-07-01 营业 €9.999.999.999" });
     expect(date).toHaveTextContent(/^1€9\.999\.999\.999营业$/);
-    expect(date).toHaveClass("bg-blue-400", "text-blue-950");
+    expect(date).toHaveClass("bg-blue-200", "text-blue-950");
     expect(screen.getByLabelText("营业额颜色图例")).toHaveTextContent("€0–€9.999.999.999");
     expect(date).toHaveAttribute("title", "2026-07-01 营业 €9.999.999.999");
     expect(screen.queryByLabelText("日历读数日期")).not.toBeInTheDocument();

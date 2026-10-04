@@ -4,11 +4,11 @@ import type { ChartsResponse } from "@/api/types";
 import { formatWholeEuro } from "@/lib/user-api";
 
 const revenueColors = [
-  "border-blue-200 bg-blue-50 text-blue-950",
+  "border-blue-200 bg-blue-100 text-blue-950",
+  "border-blue-200 bg-[#cde2fe] text-blue-950",
   "border-blue-300 bg-blue-200 text-blue-950",
-  "border-blue-400 bg-blue-400 text-blue-950",
-  "border-blue-600 bg-blue-600 text-white",
-  "border-blue-800 bg-blue-800 text-white",
+  "border-blue-300 bg-[#a9cefd] text-blue-950",
+  "border-blue-400 bg-blue-300 text-blue-950",
 ];
 
 export function BusinessCalendar({ data, today, onSelectDate }: {
