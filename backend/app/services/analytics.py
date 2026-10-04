@@ -11,9 +11,20 @@ from sqlalchemy.orm import selectinload
 from app.models.identity import Store
 from app.models.ledger import StoreDailyRecord
 from app.models.settlement import SettlementRecord
-from app.services.weather import LEGACY_WEATHER_LABEL, is_legacy_weather
+from app.services.weather import LEGACY_WEATHER_LABEL, RECORD_WEATHER_OPTIONS, is_legacy_weather
 
 OPERATING_STATES = frozenset({"营业", "提前休息"})
+WEATHER_GROUP_ORDER = {
+    weather: index for index, weather in enumerate(RECORD_WEATHER_OPTIONS)
+}
+
+
+def _weather_group_order(weather: str) -> tuple[int, str]:
+    if weather == LEGACY_WEATHER_LABEL:
+        return len(WEATHER_GROUP_ORDER) + 1, weather
+    if weather == "未记录":
+        return len(WEATHER_GROUP_ORDER) + 2, weather
+    return WEATHER_GROUP_ORDER.get(weather, len(WEATHER_GROUP_ORDER)), weather
 
 
 def _rounded_average(total: int, count: int) -> int:
@@ -368,13 +379,17 @@ class AnalyticsService:
                 {
                     "weather": weather,
                     "average_revenue": _rounded_average(sum(values), len(values)),
+                    "operating_day_count": len(values),
                 }
-                for weather, values in sorted(weather_totals.items())
+                for weather, values in sorted(
+                    weather_totals.items(), key=lambda row: _weather_group_order(row[0])
+                )
             ],
             "weekday": [
                 {
                     "weekday": weekday,
                     "average_revenue": _rounded_average(sum(values), len(values)),
+                    "operating_day_count": len(values),
                 }
                 for weekday, values in sorted(weekday_totals.items())
             ],

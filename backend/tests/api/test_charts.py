@@ -558,11 +558,13 @@ async def test_charts_uses_the_same_operating_days_for_current_and_comparison_ra
             "monthly_total_income": 200,
         }
     ]
-    assert payload["weather"] == [{"weather": "晴", "average_revenue": 67}]
+    assert payload["weather"] == [
+        {"weather": "晴", "average_revenue": 67, "operating_day_count": 3}
+    ]
     assert payload["weekday"] == [
-        {"weekday": 0, "average_revenue": 50},
-        {"weekday": 2, "average_revenue": 0},
-        {"weekday": 6, "average_revenue": 150},
+        {"weekday": 0, "average_revenue": 50, "operating_day_count": 1},
+        {"weekday": 2, "average_revenue": 0, "operating_day_count": 1},
+        {"weekday": 6, "average_revenue": 150, "operating_day_count": 1},
     ]
     assert payload["comparison_kpis"] == {
         "start": "2026-06-01",
@@ -604,7 +606,9 @@ async def test_charts_public_writes_keep_wash_sample_separate_from_settlement(
     assert partial["kpis"]["wash_count_covered_days"] == 1
     assert partial["kpis"]["open_days"] == 2
     assert partial["kpis"]["wash_count_coverage_status"] == "partial"
-    assert partial["weather"] == [{"weather": "晴", "average_revenue": 100}]
+    assert partial["weather"] == [
+        {"weather": "晴", "average_revenue": 100, "operating_day_count": 2}
+    ]
 
     company = await auth_client.post(
         f"/api/settlements/{store.id}/companies", json={"name": "Acme"}

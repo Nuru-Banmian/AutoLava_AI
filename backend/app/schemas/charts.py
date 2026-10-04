@@ -71,11 +71,13 @@ class IncomeSummary(BaseModel):
 class WeatherRevenue(BaseModel):
     weather: str
     average_revenue: int
+    operating_day_count: int = Field(ge=0)
 
 
 class WeekdayRevenue(BaseModel):
     weekday: int
     average_revenue: int
+    operating_day_count: int = Field(ge=0)
 
 
 class ChartRange(BaseModel):

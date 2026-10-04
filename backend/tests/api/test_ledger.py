@@ -472,7 +472,9 @@ async def test_legacy_weather_reads_exports_and_analysis_until_corrected(
     assert listing.json()["items"][0]["weather_legacy"] is True
     chart = await auth_client.get(f"/api/charts/{assigned_store.id}", params={"start": target, "end": target})
     assert chart.status_code == 200
-    assert chart.json()["weather"] == [{"weather": "历史未规范天气", "average_revenue": 200}]
+    assert chart.json()["weather"] == [
+        {"weather": "历史未规范天气", "average_revenue": 200, "operating_day_count": 1}
+    ]
     exported = await auth_client.get(f"/api/database/{assigned_store.id}/export.xlsx")
     assert exported.status_code == 200
     rows = load_workbook(BytesIO(exported.content), read_only=True)["经营记录"].values

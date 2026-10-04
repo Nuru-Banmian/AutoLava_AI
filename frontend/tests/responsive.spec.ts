@@ -394,7 +394,7 @@ test("database desktop gives analysis full width with a compact trend and access
   await expect(trend).toBeVisible();
   const mainBox = await page.locator("main").boundingBox();
   await expect.poll(() => analysisWorkspace.evaluate((node) => node.getBoundingClientRect().width)).toBeGreaterThan(mainBox!.width * 0.9);
-  await expect.poll(() => trend.evaluate((node) => node.getBoundingClientRect().height)).toBe(256);
+  await expect.poll(() => trend.evaluate((node) => node.getBoundingClientRect().height)).toBe(192);
 
   const recordFilters = page.getByRole("region", { name: "记录筛选" });
   const monthInput = recordFilters.getByLabel("月份", { exact: true });

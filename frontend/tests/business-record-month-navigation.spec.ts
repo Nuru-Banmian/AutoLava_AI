@@ -179,6 +179,7 @@ for (const width of [320, 390, 768, 1024, 1280]) {
     await page.mouse.move(firstBox.x + firstBox.width / 2, firstBox.y + firstBox.height / 2);
     await page.mouse.wheel(0, 2500);
     const pagination = page.getByRole("navigation", { name: "记录分页" });
+    await wheelToControl(page, pagination);
     await expect(pagination).toBeInViewport({ ratio: 1 });
     const next = pagination.getByRole("button", { name: "下一页" });
     const nextBox = (await next.boundingBox())!;
@@ -425,6 +426,8 @@ for (const width of [390, 1280]) {
     await expect(page.getByText("加载经营分析…", { exact: true })).toBeVisible();
     release();
     await expect(page.getByText("经营分析加载失败", { exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("region", { name: "星期经营表现", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "天气与营业额对比", exact: true })).toHaveCount(0);
     expect(attempts).toBeGreaterThan(1);
     await page.getByRole("button", { name: "记录", exact: true }).click();
     await expect(currentDate).toBeVisible();
@@ -437,6 +440,66 @@ for (const width of [390, 1280]) {
     await expect(page.getByText("经营分析加载失败", { exact: true })).not.toBeVisible();
     expect(fixture.requests.records.length).toBe(recordsReadCount);
     expect(fixture.contractErrors).toEqual([]);
+  });
+}
+
+for (const width of [390, 1280]) {
+  test(`${width}px: grouped readings survive refresh failures and discard late previous-scope charts`, async ({ page }) => {
+    await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
+    await page.setViewportSize({ width, height: 844 });
+    await mockEditableBusinessRecords(page);
+    let failJune = false;
+    let holdJuly = false;
+    let julyStarted = false;
+    let releaseJuly!: () => void;
+    const pendingJuly = new Promise<void>((resolve) => { releaseJuly = resolve; });
+    let markJulyFinished!: () => void;
+    const julyFinished = new Promise<void>((resolve) => { markJulyFinished = resolve; });
+    await page.route("**/api/charts/*?**", async (route) => {
+      const url = new URL(route.request().url());
+      const start = url.searchParams.get("start")!;
+      const storeId = Number(url.pathname.split("/").at(-1));
+      if (failJune && start === "2026-06-01") return route.fulfill({ status: 503, body: "{}", contentType: "application/json" });
+      const delayed = holdJuly && storeId === 1 && start === "2026-07-01";
+      if (delayed) { julyStarted = true; await pendingJuly; }
+      const amount = storeId === 2 ? 55 : start === "2026-06-01" ? 42 : 999;
+      const weather = storeId === 2 ? "多云" : start === "2026-06-01" ? "中雨" : "晴";
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+        kpis: { total_revenue: amount, record_days: 1, open_days: 1, average_revenue: amount, primary_categories: [], total_wash_count: null, average_ticket: null },
+        range: { start, end: url.searchParams.get("end"), bucket: "day" }, comparison_kpis: null,
+        income_summary: { daily_ledger_revenue: amount, confirmed_settlement_income: 0, total_income: amount, includes_settlement_income: false },
+        classified_included_total: 0, daily: [], categories: [], excluded_categories: [], monthly: [],
+        weekday: [{ weekday: 0, average_revenue: amount, operating_day_count: 1 }],
+        weather: [{ weather, average_revenue: amount, operating_day_count: 1 }],
+      }) });
+      if (delayed) markJulyFinished();
+    });
+    await page.goto("/database");
+    const filters = page.getByRole("region", { name: "记录筛选" });
+    await filters.getByLabel("月份", { exact: true }).fill("2026-06");
+    await page.getByRole("button", { name: "经营分析", exact: true }).click();
+    const juneGroup = page.getByRole("listitem", { name: "中雨：€42，1 天经营日样本", exact: true });
+    await expect(juneGroup).toBeVisible();
+    await filters.getByLabel("月份", { exact: true }).fill("2026-07");
+    await expect(page.getByRole("listitem", { name: "晴：€999，1 天经营日样本", exact: true })).toBeVisible();
+    failJune = true;
+    await filters.getByLabel("月份", { exact: true }).fill("2026-06");
+    await expect(page.getByText("刷新经营分析失败，当前显示上次取得的数据。", { exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(juneGroup).toBeVisible();
+    failJune = false;
+    await page.getByRole("button", { name: "重试经营分析", exact: true }).click();
+    await expect(page.getByText("刷新经营分析失败，当前显示上次取得的数据。", { exact: true })).toHaveCount(0);
+    holdJuly = true;
+    await filters.getByLabel("月份", { exact: true }).fill("2026-07");
+    await expect.poll(() => julyStarted).toBe(true);
+    const picker = page.getByTestId(width < 1024 ? "mobile-store-picker" : "desktop-store-picker");
+    await picker.getByLabel("门店", { exact: true }).selectOption("2");
+    await expect(page.getByRole("listitem", { name: "多云：€55，1 天经营日样本", exact: true })).toBeVisible();
+    releaseJuly();
+    await julyFinished;
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await expect(page.getByRole("listitem", { name: "晴：€999，1 天经营日样本", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("listitem", { name: "多云：€55，1 天经营日样本", exact: true })).toBeVisible();
   });
 }
 

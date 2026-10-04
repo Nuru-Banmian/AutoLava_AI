@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -38,6 +38,50 @@ afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
 describe("BusinessAnalysisCard", () => {
+  it("compares operating-day samples in fixed weekday and weather order with missing weekdays distinct from zero", async () => {
+    server.use(http.get("/api/charts/1", () => HttpResponse.json({ ...payload(),
+      weekday: [
+        { weekday: 4, average_revenue: 0, operating_day_count: 1 },
+        { weekday: 0, average_revenue: 101, operating_day_count: 2 },
+      ],
+      weather: [
+        { weather: "未记录", average_revenue: 80, operating_day_count: 3 },
+        { weather: "历史未规范天气", average_revenue: 20, operating_day_count: 1 },
+        { weather: "雷雨伴大冰雹", average_revenue: 200, operating_day_count: 1 },
+        { weather: "兼容类别", average_revenue: 42, operating_day_count: 2 },
+        { weather: "少云", average_revenue: 0, operating_day_count: 1 },
+        { weather: "晴", average_revenue: 101, operating_day_count: 2 },
+        { weather: "阴", average_revenue: 0, operating_day_count: 0 },
+      ],
+    })));
+    renderCard();
+    const weekday = await screen.findByRole("region", { name: "星期经营表现" });
+    expect(within(weekday).getAllByRole("listitem").map((row) => row.textContent)).toEqual([
+      "周一€1012 天", "周二—0 天", "周三—0 天", "周四—0 天", "周五€01 天", "周六—0 天", "周日—0 天",
+    ]);
+    const weather = screen.getByRole("region", { name: "天气与营业额对比" });
+    expect(within(weather).getAllByRole("listitem").map((row) => row.textContent)).toEqual([
+      "晴€1012 天", "少云€01 天", "雷雨伴大冰雹€2001 天", "兼容类别€422 天", "历史未规范天气€201 天", "未记录€803 天",
+    ]);
+    fireEvent.change(within(weekday).getByRole("combobox", { name: "星期经营表现读数分组" }), { target: { value: "周二" } });
+    expect(within(weekday).getByRole("status")).toHaveTextContent("周二：无经营日样本，—，0 天");
+    fireEvent.change(within(weather).getByRole("combobox", { name: "天气与营业额对比读数分组" }), { target: { value: "未记录" } });
+    expect(within(weather).getByRole("status")).toHaveTextContent("未记录：€80，3 天经营日样本");
+    expect(screen.getByText("未记录仅表示经营日缺少记录天气，金额和样本仍计入。")).toBeInTheDocument();
+  });
+  it("keeps all canonical weather groups in the agreed order regardless of API order or preview preferences", async () => {
+    const weatherNames = ["晴", "少云", "多云", "阴", "雾", "冻雾", "小毛毛雨", "毛毛雨", "大毛毛雨", "小冻毛毛雨", "冻毛毛雨", "小雨", "中雨", "大雨", "小冻雨", "冻雨", "小雪", "中雪", "大雪", "雪粒", "小阵雨", "阵雨", "大阵雨", "小阵雪", "大阵雪", "雷雨", "雷雨伴小冰雹", "雷雨伴大冰雹"];
+    localStorage.setItem("weatherOrder", JSON.stringify(["雷雨伴大冰雹", "晴"]));
+    server.use(http.get("/api/charts/1", () => HttpResponse.json({ ...payload(),
+      weather: weatherNames.slice().reverse().map((weather, index) => ({ weather, average_revenue: index, operating_day_count: index + 1 })),
+    })));
+    renderCard();
+    const weather = await screen.findByRole("region", { name: "天气与营业额对比" });
+    expect(within(weather).getAllByRole("listitem").map((row) => row.getAttribute("aria-label")!.split("：")[0])).toEqual(weatherNames);
+    expect(within(weather).queryByText("未记录")).not.toBeInTheDocument();
+    expect(within(weather).getByRole("combobox", { name: "天气与营业额对比读数分组" })).toBeInTheDocument();
+    localStorage.removeItem("weatherOrder");
+  });
   it("shows daily ledger coverage and readable missing, closed and zero values independently of settlements", async () => {
     server.use(http.get("/api/charts/1", () => HttpResponse.json({
       ...payload(),
@@ -71,8 +115,9 @@ describe("BusinessAnalysisCard", () => {
     renderCard();
 
     await screen.findByText("现金收入");
-    expect(screen.getByTestId("chart-panel-plot")).toHaveClass("h-64", "min-h-64");
+    expect(screen.getByTestId("chart-panel-plot")).toHaveClass("h-48", "min-h-48");
     expect(requests[0].pathname + requests[0].search).toBe("/api/charts/1?start=2026-07-01&end=2026-07-17&bucket=day");
+    expect(requests).toHaveLength(1);
     expect(screen.queryByLabelText("经营分析日期范围")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("分析开始日期")).not.toBeInTheDocument();
     expect(screen.getByText("比较区间：2026-06-01 至 2026-06-17")).toBeInTheDocument();
@@ -123,7 +168,10 @@ describe("BusinessAnalysisCard", () => {
 
   it("keeps cached content visible and labels a failed refresh", async () => {
     let fail = false;
-    server.use(http.get("/api/charts/1", () => fail ? HttpResponse.json({ detail: "failed" }, { status: 500 }) : HttpResponse.json(payload())));
+    server.use(http.get("/api/charts/1", () => fail ? HttpResponse.json({ detail: "failed" }, { status: 500 }) : HttpResponse.json({ ...payload(),
+      weekday: [{ weekday: 0, average_revenue: 77, operating_day_count: 2 }],
+      weather: [{ weather: "晴", average_revenue: 77, operating_day_count: 2 }],
+    })));
     const { client } = renderCard();
 
     expect((await screen.findAllByText("€100")).length).toBeGreaterThan(0);
@@ -131,6 +179,7 @@ describe("BusinessAnalysisCard", () => {
     await client.invalidateQueries({ queryKey: ["charts", 1] });
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("刷新经营分析失败，当前显示上次取得的数据。"));
     expect(screen.getAllByText("€100").length).toBeGreaterThan(0);
+    expect(screen.getByRole("listitem", { name: "晴：€77，2 天经营日样本" })).toBeInTheDocument();
   });
 
   it("avoids a numeric comparison when the prior total is zero", async () => {
@@ -214,8 +263,37 @@ describe("BusinessAnalysisCard", () => {
     expect(await screen.findByRole("button", { name: "重试经营分析" })).toBeInTheDocument();
     expect(requests).toBe(3);
     expect(screen.queryByRole("region", { name: "营业日历" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "星期经营表现" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "天气与营业额对比" })).not.toBeInTheDocument();
     fail = false;
     fireEvent.click(screen.getByRole("button", { name: "重试经营分析" }));
     expect(await screen.findByRole("region", { name: "营业日历" })).toBeInTheDocument();
+  });
+  it("does not retain another store or range's groups when its late response arrives", async () => {
+    let releaseOld!: () => void;
+    const delayed = new Promise<void>((resolve) => { releaseOld = resolve; });
+    let oldRequested = false;
+    let oldReturned = false;
+    server.use(http.get("/api/charts/:store", async ({ params, request }) => {
+      const start = new URL(request.url).searchParams.get("start")!;
+      if (params.store === "1" && start === "2026-07-01") {
+        oldRequested = true;
+        await delayed;
+        oldReturned = true;
+        return HttpResponse.json({ ...payload(), weather: [{ weather: "晴", average_revenue: 999, operating_day_count: 4 }] });
+      }
+      return HttpResponse.json({ ...payload(), range: { start, end: "2026-06-30", bucket: "day" },
+        weather: [{ weather: "中雨", average_revenue: 42, operating_day_count: 1 }],
+      });
+    }));
+    const { client, rerender } = renderCard();
+    await waitFor(() => expect(oldRequested).toBe(true));
+    rerender(<QueryClientProvider client={client}><BusinessAnalysisCard storeId={2} range={{ start: "2026-06-01", end: "2026-06-30" }} /></QueryClientProvider>);
+    expect(screen.queryByRole("region", { name: "天气与营业额对比" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("listitem", { name: "中雨：€42，1 天经营日样本" })).toBeInTheDocument();
+    releaseOld();
+    await waitFor(() => expect(oldReturned).toBe(true));
+    expect(screen.queryByRole("listitem", { name: "晴：€999，4 天经营日样本" })).not.toBeInTheDocument();
+    expect(screen.getByRole("listitem", { name: "中雨：€42，1 天经营日样本" })).toBeInTheDocument();
   });
 });

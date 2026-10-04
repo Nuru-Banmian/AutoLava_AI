@@ -1669,6 +1669,8 @@ export interface components {
         WeatherRevenue: {
             /** Average Revenue */
             average_revenue: number;
+            /** Operating Day Count */
+            operating_day_count: number;
             /** Weather */
             weather: string;
         };
@@ -1676,6 +1678,8 @@ export interface components {
         WeekdayRevenue: {
             /** Average Revenue */
             average_revenue: number;
+            /** Operating Day Count */
+            operating_day_count: number;
             /** Weekday */
             weekday: number;
         };
