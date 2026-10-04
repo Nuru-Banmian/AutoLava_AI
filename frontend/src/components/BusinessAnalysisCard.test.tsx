@@ -160,8 +160,9 @@ describe("BusinessAnalysisCard", () => {
     server.use(http.get("/api/charts/1", () => HttpResponse.json(payload({ daily: [{ date: "2026-07-01", revenue: 9999999999, is_open: "营业" }] }))));
     renderCard();
     const date = await screen.findByRole("button", { name: "2026-07-01 营业 €9.999.999.999" });
-    expect(date).toHaveTextContent(/^1营业$/);
-    expect(date).toHaveAttribute("style", "background-color: color-mix(in oklab, var(--primary) 40%, transparent);");
+    expect(date).toHaveTextContent(/^1€9\.999\.999\.999营业$/);
+    expect(date).toHaveClass("bg-blue-400", "text-blue-950");
+    expect(screen.getByLabelText("营业额颜色图例")).toHaveTextContent("€0–€9.999.999.999");
     expect(date).toHaveAttribute("title", "2026-07-01 营业 €9.999.999.999");
     expect(screen.queryByLabelText("日历读数日期")).not.toBeInTheDocument();
     expect(screen.queryByRole("status", { name: "日历读数" })).not.toBeInTheDocument();
@@ -202,8 +203,11 @@ describe("BusinessAnalysisCard", () => {
     expect(await screen.findByRole("region", { name: "营业日历" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "2026-07-01 范围外" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "2026-07-02 未录入 —" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "2026-07-02 未录入 —" })).toHaveClass("bg-amber-50", "border-dashed");
     expect(screen.getByRole("button", { name: "2026-07-03 休息 €0" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "2026-07-03 休息 €0" })).toHaveClass("bg-slate-200");
     expect(screen.getByRole("button", { name: "2026-07-04 营业 €0" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "2026-07-04 营业 €0" })).toHaveAttribute("aria-current", "date");
     expect(screen.getByRole("button", { name: "2026-07-05 未来" })).toBeDisabled();
   });
 
