@@ -99,27 +99,27 @@ export function SystemStatusPanel() {
   else if (latestWeatherFailed) summary = <p role="alert" className="text-destructive">最近天气任务未成功</p>;
   else summary = <p role="status" className="text-emerald-700">运行正常</p>;
 
-  return <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.7fr)]">
-    <section className="space-y-3 rounded-xl border bg-card p-5 shadow-sm" aria-labelledby="status-summary-title">
-      <h2 className="font-medium" id="status-summary-title">运行状态</h2>
+  return <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,0.7fr)]">
+    <section className="min-w-0 space-y-4 rounded-xl border border-border bg-card p-4 shadow-sm [overflow-wrap:anywhere] sm:p-5" aria-labelledby="status-summary-title">
+      <h2 className="text-lg font-semibold" id="status-summary-title">运行状态</h2>
       {summary}
-      {!loading && !failed && <dl className="grid gap-2 text-sm sm:grid-cols-2">
-        <div><dt className="text-muted-foreground">最近天气更新</dt><dd>{formatTimestamp(latestWeather?.parsed ?? null, weatherIssue)}</dd></div>
-        <div><dt className="text-muted-foreground">最近仪表盘生成</dt><dd>{formatTimestamp(dashboardGeneratedAt, dashboardIssue)}</dd></div>
-        <div><dt className="text-muted-foreground">最近有效本地备份</dt><dd>{formatTimestamp(parseTimestamp(diagnostics.data?.latest_valid_local_backup_at))}</dd></div>
-        <div><dt className="text-muted-foreground">本地快照</dt><dd>{diagnostics.data?.local_snapshot === "success" ? "已验证" : "无有效备份"}</dd></div>
-        <div><dt className="text-muted-foreground">异机复制</dt><dd>未配置</dd></div>
-        <div><dt className="text-muted-foreground">隔离恢复</dt><dd>未验证</dd></div>
-        <div><dt className="text-muted-foreground">最近天气任务结果</dt><dd>{diagnostics.data?.latest_tasks.weather_refresh?.status ?? "暂无记录"}</dd></div>
-        <div><dt className="text-muted-foreground">最近备份任务结果</dt><dd>{diagnostics.data?.latest_tasks.sqlite_backup?.status ?? "暂无记录"}</dd></div>
-        <div className="sm:col-span-2"><dt className="text-muted-foreground">各门店仪表盘</dt><dd><ul>{dashboardStates.map((state) => <li key={state.store.id}>{state.store.name}：{formatTimestamp(state.latest, state.issue)}</li>)}</ul></dd></div>
+      {!loading && !failed && <dl className="grid min-w-0 gap-4 text-sm leading-6 sm:grid-cols-2">
+        <div className="min-w-0 space-y-1"><dt className="text-muted-foreground">最近天气更新</dt><dd className="tabular-nums">{formatTimestamp(latestWeather?.parsed ?? null, weatherIssue)}</dd></div>
+        <div className="min-w-0 space-y-1"><dt className="text-muted-foreground">最近仪表盘生成</dt><dd className="tabular-nums">{formatTimestamp(dashboardGeneratedAt, dashboardIssue)}</dd></div>
+        <div className="min-w-0 space-y-1"><dt className="text-muted-foreground">最近有效本地备份</dt><dd className="tabular-nums">{formatTimestamp(parseTimestamp(diagnostics.data?.latest_valid_local_backup_at))}</dd></div>
+        <div className="min-w-0 space-y-1"><dt className="text-muted-foreground">本地快照</dt><dd>{diagnostics.data?.local_snapshot === "success" ? "已验证" : "无有效备份"}</dd></div>
+        <div className="min-w-0 space-y-1"><dt className="text-muted-foreground">异机复制</dt><dd>未配置</dd></div>
+        <div className="min-w-0 space-y-1"><dt className="text-muted-foreground">隔离恢复</dt><dd>未验证</dd></div>
+        <div className="min-w-0 space-y-1"><dt className="text-muted-foreground">最近天气任务结果</dt><dd>{diagnostics.data?.latest_tasks.weather_refresh?.status ?? "暂无记录"}</dd></div>
+        <div className="min-w-0 space-y-1"><dt className="text-muted-foreground">最近备份任务结果</dt><dd>{diagnostics.data?.latest_tasks.sqlite_backup?.status ?? "暂无记录"}</dd></div>
+        <div className="min-w-0 space-y-1 sm:col-span-2"><dt className="text-muted-foreground">各门店仪表盘</dt><dd><ul className="space-y-2">{dashboardStates.map((state) => <li key={state.store.id}>{state.store.name}：{formatTimestamp(state.latest, state.issue)}</li>)}</ul></dd></div>
       </dl>}
     </section>
-    {!loading && !failed && <section className="space-y-3 rounded-xl border bg-card p-5 shadow-sm" aria-labelledby="unresolved-alerts-title">
-      <h2 className="font-medium" id="unresolved-alerts-title">未解决告警（{unresolvedAlerts.length}）</h2>
+    {!loading && !failed && <section className="min-w-0 space-y-4 rounded-xl border border-border bg-card p-4 shadow-sm [overflow-wrap:anywhere] sm:p-5" aria-labelledby="unresolved-alerts-title">
+      <h2 className="text-lg font-semibold" id="unresolved-alerts-title">未解决告警（{unresolvedAlerts.length}）</h2>
       {unresolvedAlerts.length === 0
         ? <p className="text-sm text-muted-foreground">当前没有未解决告警</p>
-        : <ul className="space-y-2">{unresolvedAlerts.map((item) => <li className="rounded-md bg-muted/40 p-3 text-sm" key={item.id}><span className="font-medium">{item.level}</span> · {item.message}</li>)}</ul>}
+        : <ul className="space-y-2">{unresolvedAlerts.map((item) => <li className="min-w-0 rounded-lg border border-border bg-muted/40 p-3 text-sm leading-6" key={item.id}><span className="font-medium">{item.level}</span> · {item.message}</li>)}</ul>}
     </section>}
   </div>;
 }

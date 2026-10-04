@@ -41,16 +41,16 @@
 :root {
   font-size: 16px;
   --radius: 0.875rem;
-  --background: oklch(0.985 0.006 250);
+  --background: oklch(0.972 0.005 250);
   --foreground: oklch(0.24 0.03 255);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.24 0.03 255);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.24 0.03 255);
-  --primary: oklch(0.55 0.19 255);
+  --primary: oklch(0.36 0.1 255);
   --primary-foreground: oklch(0.99 0 0);
-  --primary-hover: oklch(0.48 0.17 255);
-  --primary-active: oklch(0.43 0.16 255);
+  --primary-hover: oklch(0.31 0.09 255);
+  --primary-active: oklch(0.27 0.075 255);
   --secondary: oklch(0.95 0.018 250);
   --secondary-foreground: oklch(0.28 0.04 255);
   --muted: oklch(0.96 0.012 250);
@@ -72,5 +72,33 @@
 
   body {
     @apply bg-background text-foreground;
+    margin: 0;
+    min-width: 0;
+    font-family: Inter, "Segoe UI", "Microsoft YaHei", sans-serif;
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
   }
+
+  h1, h2, h3, p, label, dt, dd, li, [role="alert"] {
+    overflow-wrap: anywhere;
+  }
+
+  select, textarea {
+    @apply rounded-lg border-input bg-card text-foreground;
+  }
+
+  button, [role="tab"], [role="menuitem"] {
+    min-height: 44px;
+  }
+
+  a:focus-visible, select:focus-visible, textarea:focus-visible {
+    @apply outline-2 outline-offset-2 outline-ring;
+  }
+}
+
+/* Native fields share the same readable, touch-sized baseline as Input. */
+input:not([type="checkbox"]):not([type="radio"]), select, textarea {
+  min-width: 0;
+  min-height: 44px;
+  font-size: 16px;
 }

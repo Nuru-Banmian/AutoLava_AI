@@ -150,7 +150,7 @@ describe("SystemStatusPanel", () => {
     expect(screen.getByText("最近备份任务结果").parentElement).toHaveTextContent("暂无记录");
   });
 
-  it("keeps named status cards in the desktop hierarchy", async () => {
+  it("keeps system state and unresolved alerts in separately named regions", async () => {
     mockStatus();
     renderStatus();
 
@@ -158,9 +158,12 @@ describe("SystemStatusPanel", () => {
     const summary = screen.getByRole("region", { name: "运行状态" });
     const unresolvedAlerts = screen.getByRole("region", { name: /未解决告警/ });
 
-    expect(summary.parentElement).toHaveClass("grid", "gap-4", "lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.7fr)]");
-    expect(summary).toHaveClass("space-y-3", "rounded-xl", "border", "bg-card", "p-5", "shadow-sm");
-    expect(unresolvedAlerts).toHaveClass("space-y-3", "rounded-xl", "border", "bg-card", "p-5", "shadow-sm");
+    expect(summary.parentElement).toBe(unresolvedAlerts.parentElement);
+    expect(summary).toContainElement(screen.getByRole("heading", { name: "运行状态" }));
+    expect(summary).toContainElement(screen.getByRole("status"));
+    expect(unresolvedAlerts).toContainElement(screen.getByRole("heading", { name: "未解决告警（0）" }));
+    expect(unresolvedAlerts).toHaveTextContent("当前没有未解决告警");
+    expect(summary).not.toHaveTextContent("当前没有未解决告警");
   });
 
   it("reports the production weather refresh task when its latest run failed", async () => {

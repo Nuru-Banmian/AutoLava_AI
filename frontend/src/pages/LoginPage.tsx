@@ -30,20 +30,20 @@ export function LoginPage() {
   }
 
   return (
-    <main className="flex min-h-screen w-full min-w-0 items-center justify-center overflow-x-hidden bg-slate-50 p-3 sm:p-6">
-      <section className="grid w-full min-w-0 max-w-5xl overflow-hidden rounded-2xl border border-blue-100 bg-white shadow-xl md:grid-cols-2">
-        <div className="flex min-w-0 flex-col justify-between bg-gradient-to-br from-blue-950 to-blue-800 p-6 text-white sm:p-10">
+    <main className="flex min-h-dvh w-full min-w-0 items-center justify-center bg-background p-3 sm:p-6">
+      <section className="grid w-full min-w-0 max-w-5xl overflow-hidden rounded-2xl border bg-card shadow-lg md:grid-cols-2">
+        <div className="flex min-w-0 flex-col justify-between bg-primary p-6 text-primary-foreground sm:p-10">
           <div>
             <div className="mb-8 flex size-12 items-center justify-center rounded-xl bg-white/15">
               <ShieldCheck aria-hidden="true" className="size-7" />
             </div>
-            <p className="text-sm font-semibold tracking-[0.2em] text-blue-100">AUTOLAVA</p>
+            <p className="text-sm font-semibold tracking-[0.2em]">AUTOLAVA</p>
             <p className="mt-3 text-2xl font-bold sm:text-3xl">让门店经营更简单</p>
-            <p className="mt-4 max-w-sm text-sm leading-6 text-blue-100">
+            <p className="mt-4 max-w-sm text-sm leading-6 text-primary-foreground/85">
               安全登录后即可查看经营数据、记录每日业务并管理门店。
             </p>
           </div>
-          <p className="mt-10 text-xs text-blue-100">安全、清晰、随时可用</p>
+          <p className="mt-6 text-xs text-primary-foreground/85 sm:mt-10">安全、清晰、随时可用</p>
         </div>
 
         <div className="min-w-0 p-6 sm:p-10">

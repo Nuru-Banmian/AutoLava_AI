@@ -60,7 +60,7 @@ function euro(value: number) {
 }
 
 const MAX_SETTLEMENT_AMOUNT = 9_999_999_999;
-const recordGridColumns = "md:grid-cols-[minmax(0,1fr)_8rem_7rem_11rem]";
+const recordGridColumns = "lg:grid-cols-[minmax(0,1fr)_8rem_7rem_11rem]";
 
 function validAmount(value: string) {
   const amount = Number(value);
@@ -503,7 +503,7 @@ function CompanyList({
             </form>
           ) : (
             <div className="flex min-w-0 items-center justify-between gap-2">
-              <span className="min-w-0 truncate text-sm font-medium" title={company.name}>
+              <span className="min-w-0 break-words text-sm font-medium" title={company.name}>
                 {company.name}
               </span>
               <CompanyActionMenu
@@ -1043,10 +1043,10 @@ export function CompanySettlementPage() {
     );
 
   return (
-    <section className="grid min-w-0 gap-6" aria-labelledby="settlement-title">
+    <section className="grid min-w-0 gap-5" aria-labelledby="settlement-title">
       <header className="flex min-w-0 flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 id="settlement-title" className="text-2xl font-semibold">
+          <h1 id="settlement-title" className="text-2xl font-semibold tracking-tight">
             公司结算
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">按开票月份登记记录并跟踪到账状态。</p>
@@ -1165,7 +1165,7 @@ export function CompanySettlementPage() {
                 结算公司
                 <select
                   aria-label="结算公司"
-                  className="h-9 min-w-0 rounded-md border border-input bg-transparent px-3 text-sm"
+                  className="h-11 min-w-0 w-full rounded-lg border border-input bg-card px-3 text-base"
                   onChange={(event) => {
                     recordDraftVersion.current += 1;
                     setCompanyId(event.target.value);
@@ -1266,7 +1266,7 @@ export function CompanySettlementPage() {
                     <div>
                       <div
                         aria-hidden="true"
-                        className={`mb-2 hidden gap-3 px-3 text-sm font-medium text-muted-foreground md:grid ${recordGridColumns}`}
+                        className={`mb-2 hidden gap-3 px-3 text-sm font-medium text-muted-foreground lg:grid ${recordGridColumns}`}
                       >
                         <span>公司名称</span>
                         <span className="text-right">金额</span>
@@ -1288,13 +1288,13 @@ export function CompanySettlementPage() {
                             >
                               <div className="min-w-0">
                                 <span
-                                  className="block truncate font-medium"
+                                  className="block break-words font-medium"
                                   title={record.company_name}
                                 >
                                   {record.company_name}
                                 </span>
                               </div>
-                              <div className="text-right">
+                              <div className="min-w-0 text-right">
                                 <span className="font-medium tabular-nums">
                                   {euro(record.amount)}
                                 </span>
@@ -1306,7 +1306,7 @@ export function CompanySettlementPage() {
                                   {record.status === "pending" ? "待到账" : "已确认"}
                                 </span>
                               </div>
-                              <div className="col-span-3 flex justify-end gap-2 md:col-span-1">
+                              <div className="col-span-3 flex flex-wrap justify-end gap-2 lg:col-span-1">
                                 {record.status === "pending" && (
                                   <Button
                                     aria-label={`确认${record.company_name}开票记录到账`}
@@ -1370,7 +1370,7 @@ export function CompanySettlementPage() {
                 编辑结算公司
                 <select
                   aria-label="编辑结算公司"
-                  className="h-9 rounded-md border border-input bg-transparent px-3 text-sm"
+                  className="h-11 min-w-0 w-full rounded-lg border border-input bg-card px-3 text-base"
                   disabled={editRecordMutation.isPending}
                   onChange={(event) => {
                     editDraftVersion.current += 1;
@@ -1527,11 +1527,11 @@ export function CompanySettlementPage() {
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
-          <section className="grid min-w-0 gap-3" aria-labelledby="company-management-title">
+          <section className="grid min-w-0 gap-3 rounded-xl border bg-card p-4 shadow-sm" aria-labelledby="company-management-title">
             <h2 id="company-management-title">
               <button
                 aria-expanded={companyManagementOpen}
-                className="group flex w-full min-w-0 items-center gap-3 py-2 text-left text-xl font-semibold text-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                className="group flex min-h-11 w-full min-w-0 items-center gap-3 py-2 text-left text-lg font-semibold text-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 onClick={() =>
                   setCompanyManagementStoreId((storeId) =>
                     storeId === selected.id ? null : selected.id,

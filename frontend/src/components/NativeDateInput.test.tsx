@@ -12,8 +12,8 @@ describe("NativeDateInput", () => {
     const trigger = screen.getByRole("button", { name: "打开开始日期日历" });
     expect(input).toHaveAttribute("type", "date");
     expect(input).toHaveAttribute("max", "2026-07-17");
-    expect(input).toHaveClass("h-10", "min-w-0", "pr-10");
-    expect(trigger).toHaveClass("size-10");
+    expect(input).toHaveClass("h-11", "min-w-0", "pr-11");
+    expect(trigger).toHaveClass("size-11");
   });
 
   it("opens the input's native picker from its calendar trigger", async () => {

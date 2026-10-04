@@ -1,6 +1,6 @@
 import { BookOpen, Building2, Database, Home, LogOut, Menu, Settings } from "lucide-react";
 import type { ComponentType, SVGProps } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { Link, matchPath, Outlet, useLocation } from "react-router-dom";
 
 import { useAuth } from "@/auth/AuthProvider";
 import { StorePicker } from "@/components/StorePicker";
@@ -23,22 +23,26 @@ const icons: Record<string, Icon> = {
 function Navigation({ surface }: { surface: "desktop" | "mobile" }) {
   const { user } = useAuth();
   const { selected } = useStore();
+  const { pathname } = useLocation();
   if (!user) return null;
 
   return <>
     {navigationFor(user.role, surface, selected?.company_settlement_enabled).map(({ to, label, end }) => {
       const Icon = icons[to];
-      return <NavLink
+      const isMorePage = to === "/more" && surface === "mobile" &&
+        ["/more", "/settlements", "/account", "/admin"].some((path) => Boolean(matchPath({ path, end: false }, pathname)));
+      const isActive = isMorePage || Boolean(matchPath({ path: to, end: end ?? false }, pathname));
+      return <Link
         key={to}
         to={to}
-        end={end}
-        className={({ isActive }) => surface === "desktop"
-          ? `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium ${isActive ? "bg-white/15 text-primary-foreground" : "text-primary-foreground/80 hover:bg-white/10 hover:text-primary-foreground"}`
-          : `flex min-w-0 flex-col items-center gap-1 rounded-md px-1 py-1 text-xs ${isActive ? "text-primary" : "text-muted-foreground"}`}
+        aria-current={isActive ? "page" : undefined}
+        className={surface === "desktop"
+          ? `flex min-h-11 items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white ${isActive ? "bg-white text-primary" : "text-primary-foreground/85 hover:bg-white/10 hover:text-primary-foreground"}`
+          : `flex min-h-12 min-w-0 flex-col items-center justify-center gap-1 rounded-lg px-1 py-1.5 text-xs font-semibold ${isActive ? "bg-accent text-primary" : "text-muted-foreground hover:bg-muted"}`}
       >
         <Icon aria-hidden="true" className="size-5 shrink-0" />
         <span className="truncate">{label}</span>
-      </NavLink>;
+      </Link>;
     })}
   </>;
 }
@@ -51,14 +55,14 @@ export function AppShell() {
   const isBusinessRecordsRoute = pathname === "/database";
 
   return (
-    <div className="min-h-screen bg-muted/20 md:pl-64">
+    <div className="min-h-dvh min-w-0 bg-background md:pl-64">
       <UnsavedRouteGuard />
-      <header className="border-b bg-background md:fixed md:left-0 md:top-0 md:z-40 md:w-64 md:border-0 md:bg-transparent md:text-primary-foreground">
-        <div className="flex items-center gap-3 px-4 py-3"><strong>AutoLava AI</strong>{!isAdminRoute && <div data-testid="mobile-store-picker" className="ml-auto w-40 max-w-[55vw] md:hidden"><StorePicker showLabel={false} /></div>}</div>
+      <header className="border-b bg-card md:fixed md:left-0 md:top-0 md:z-40 md:w-64 md:border-0 md:bg-transparent md:text-primary-foreground">
+        <div className="flex min-w-0 flex-wrap items-center gap-3 px-4 py-3 md:px-6 md:py-5"><strong className="shrink-0 text-base tracking-tight">AutoLava AI</strong>{!isAdminRoute && <div data-testid="mobile-store-picker" className="ml-auto min-w-0 max-w-full flex-1 basis-36 md:hidden"><StorePicker showLabel={false} /></div>}</div>
       </header>
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col bg-primary p-4 text-primary-foreground md:flex">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col overflow-y-auto bg-primary p-4 text-primary-foreground md:flex">
         <div className="mt-16 grid gap-3">
-          {!isAdminRoute && <div data-testid="desktop-store-picker" className="min-w-0 max-w-full [&_select]:bg-background [&_select]:text-foreground"><StorePicker /></div>}
+          {!isAdminRoute && <div data-testid="desktop-store-picker" className="min-w-0 max-w-full rounded-xl border border-white/15 bg-white/5 p-3"><StorePicker /></div>}
           <nav aria-label="主导航" className="grid gap-1"><Navigation surface="desktop" /></nav>
         </div>
         <div className="mt-auto grid gap-3 border-t border-white/20 pt-4 [&_select]:bg-background [&_select]:text-foreground">
@@ -68,12 +72,12 @@ export function AppShell() {
           </div>
         </div>
       </aside>
-      <main className={`mx-auto w-full max-w-7xl p-4 pb-24 md:p-6 md:pb-6 ${isBusinessRecordsRoute ? "lg:flex lg:h-dvh lg:flex-col lg:overflow-hidden" : ""}`}>
+      <main className={`mx-auto min-w-0 w-full max-w-7xl p-3 pb-28 sm:p-4 sm:pb-28 md:p-6 md:pb-6 ${isBusinessRecordsRoute ? "lg:flex lg:h-dvh lg:flex-col lg:overflow-hidden" : ""}`}>
         {logoutError && <p className="mb-4 text-sm text-destructive" role="alert">退出失败，请重试</p>}
         {!isAdminRoute && storeError && <div className="mb-4 flex flex-wrap items-center gap-2 text-sm text-destructive" role="alert"><span>门店加载失败，请重试</span><Button aria-label="重试门店" onClick={() => { void refetchStores(); }} size="sm" variant="outline">重试</Button></div>}
         <Outlet />
       </main>
-      <nav aria-label="移动导航" className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t bg-background px-1 py-2 md:hidden"><Navigation surface="mobile" /></nav>
+      <nav aria-label="移动导航" className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 gap-1 border-t bg-card px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-[0_-2px_12px_rgb(15_23_42_/_4%)] md:hidden"><Navigation surface="mobile" /></nav>
     </div>
   );
 }

@@ -129,7 +129,7 @@ async function expectNativeMonthInput(input: ReturnType<Page["getByLabel"]>, exp
   await expect(input).toHaveAttribute("type", "month");
   await expect(input).toHaveAttribute("aria-label", expected.ariaLabel);
   await expect(input).toHaveAttribute("max", expected.max);
-  await expect.poll(() => input.evaluate((node) => node.getBoundingClientRect().height)).toBe(40);
+  await expect.poll(() => input.evaluate((node) => node.getBoundingClientRect().height)).toBe(44);
 }
 
 test("desktop record and analysis workspaces share the viewport without outer scrolling", async ({ page }) => {
@@ -217,7 +217,7 @@ test("global store picker switches cleanly between mobile and desktop without he
   const monthControls = page.getByLabel("月份导航").locator("button, input");
   await expect(monthControls).toHaveCount(3);
   for (const control of await monthControls.all()) {
-    expect((await control.boundingBox())?.height).toBe(40);
+    expect((await control.boundingBox())?.height).toBe(44);
   }
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
 
@@ -262,8 +262,8 @@ test("320px record list, bottom sheet, and analysis remain reachable without cli
   expect(startBox).not.toBeNull();
   expect(endBox).not.toBeNull();
   expect(startBox!.y).toBe(endBox!.y);
-  expect(startBox!.height).toBe(40);
-  expect(endBox!.height).toBe(40);
+  expect(startBox!.height).toBe(44);
+  expect(endBox!.height).toBe(44);
   expect(startBox!.width).toBe(endBox!.width);
   expect(startBox!.x).toBeGreaterThanOrEqual(datesBox!.x);
   expect(endBox!.x + endBox!.width).toBeLessThanOrEqual(datesBox!.x + datesBox!.width);
@@ -460,8 +460,8 @@ test("database at 390px exposes all custom month inputs without horizontal overf
   expect(startBox).not.toBeNull();
   expect(endBox).not.toBeNull();
   expect(startBox!.y).toBe(endBox!.y);
-  expect(startBox!.height).toBe(40);
-  expect(endBox!.height).toBe(40);
+  expect(startBox!.height).toBe(44);
+  expect(endBox!.height).toBe(44);
   expect(startBox!.width).toBe(endBox!.width);
   expect(startBox!.x).toBeGreaterThanOrEqual(datesBox!.x);
   expect(endBox!.x + endBox!.width).toBeLessThanOrEqual(datesBox!.x + datesBox!.width);

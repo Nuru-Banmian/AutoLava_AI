@@ -372,6 +372,26 @@ test("rest normalizes operating values and legacy status cannot be generated", a
   expect(flow.ledgerWrites.at(-1)?.body.items.every((item) => item.amount === 0)).toBe(true);
 });
 
+test("320px ledger calendar has a reachable close target without covering month navigation", async ({ page }) => {
+  await page.clock.install({ time: new Date(`${today}T12:00:00Z`) });
+  await page.setViewportSize({ width: 320, height: 700 });
+  await mockMergedFlow(page);
+  await page.goto(`/ledger?date=${today}`);
+  const trigger = page.getByRole("button", { name: "选择台账日期：2026年7月17日" });
+  await trigger.click();
+  const calendar = page.getByRole("dialog", { name: "选择台账日期" });
+  const close = calendar.getByRole("button", { name: "Close" });
+  const [closeBox, nextBox] = await Promise.all([close.boundingBox(), calendar.getByRole("button", { name: "下个月" }).boundingBox()]);
+  expect(closeBox!.width).toBeGreaterThanOrEqual(44);
+  expect(closeBox!.height).toBeGreaterThanOrEqual(44);
+  expect(nextBox!.x + nextBox!.width).toBeLessThanOrEqual(closeBox!.x);
+  await calendar.getByRole("button", { name: "上个月" }).click();
+  await expect(calendar.getByText("2026年6月", { exact: true })).toBeVisible();
+  await close.click();
+  await expect(calendar).toBeHidden();
+  await expect(trigger).toBeFocused();
+});
+
 for (const viewport of [
   { name: "desktop", width: 1280, height: 900, desktop: true },
   { name: "390px", width: 390, height: 844, desktop: false },

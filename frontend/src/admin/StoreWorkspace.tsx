@@ -94,7 +94,7 @@ export function StoreWorkspace() {
     />;
   } else if (selectedStore) {
     const capturedStoreId = selectedStore.id;
-    cards = <div className="space-y-4">
+    cards = <div className="min-w-0 space-y-4">
       <IncomeItemsPanel key={`income-${selection}`} onDirtyChange={updateIncomeDirty} storeId={selectedStore.id} />
       <StoreDetailsCard
         key={`details-${selection}`}
@@ -123,18 +123,18 @@ export function StoreWorkspace() {
     </div>;
   }
 
-  return <div className="space-y-4">
-    {stores.error && <p role="alert" className="text-sm text-destructive">{friendlyApiError(stores.error, "门店加载失败")}</p>}
-    <div className="grid min-w-0 gap-4 md:grid-cols-[14rem_minmax(0,1fr)] md:grid-rows-[auto_1fr]">
+  return <div className="min-w-0 space-y-4">
+    {stores.error && <p role="alert" className="text-sm leading-6 text-destructive [overflow-wrap:anywhere]">{friendlyApiError(stores.error, "门店加载失败")}</p>}
+    <div className="grid min-w-0 gap-4 lg:grid-cols-[14rem_minmax(0,1fr)] lg:grid-rows-[auto_1fr]">
       <div
         aria-label="门店列表操作"
-        className="flex min-w-0 items-center gap-2 md:col-start-1 md:row-start-1"
+        className="flex min-w-0 items-center gap-2 lg:col-start-1 lg:row-start-1"
         role="toolbar"
       >
-        <span className="hidden min-w-0 flex-1 text-sm font-medium md:block">门店列表</span>
+        <span className="hidden min-w-0 flex-1 text-sm font-medium lg:block">门店列表</span>
         <select
           aria-label="门店"
-          className="h-9 min-w-0 flex-1 rounded-md border bg-background px-2 md:hidden"
+          className="h-11 min-w-0 flex-1 rounded-lg border border-input bg-card px-3 text-base outline-none focus-visible:ring-2 focus-visible:ring-ring lg:hidden"
           onChange={(event) => {
             if (event.target.value) select(Number(event.target.value));
           }}
@@ -143,19 +143,24 @@ export function StoreWorkspace() {
           <option hidden value="" />
           {list.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
         </select>
-        <Button type="button" onClick={() => select("new")}>新建门店</Button>
+        <Button className="shrink-0" type="button" onClick={() => select("new")}>新建门店</Button>
       </div>
-      <aside aria-label="门店列表" className="hidden md:col-start-1 md:row-start-2 md:block">
-        <ul className="divide-y rounded-lg border bg-card">
+      <aside aria-label="门店列表" className="hidden min-w-0 lg:col-start-1 lg:row-start-2 lg:block">
+        <ul className="divide-y overflow-hidden rounded-xl border border-border bg-card shadow-sm">
           {list.map((store) => <li key={store.id}>
-            <button className="w-full p-3 text-left hover:bg-accent" onClick={() => select(store.id)} type="button">
-              <span className="block font-medium">{store.name}</span>
-              <span className="text-xs text-muted-foreground">{store.address}</span>
+            <button
+              aria-pressed={selection === store.id}
+              className={`min-h-11 w-full border-l-4 p-3 text-left transition-colors [overflow-wrap:anywhere] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${selection === store.id ? "border-l-primary bg-primary/10 text-primary" : "border-l-transparent hover:bg-accent"}`}
+              onClick={() => select(store.id)}
+              type="button"
+            >
+              <span className="block font-semibold">{store.name}</span>
+              <span className="mt-1 block text-xs leading-5 text-muted-foreground">{store.address}</span>
             </button>
           </li>)}
         </ul>
       </aside>
-      <main className="min-w-0 md:col-start-2 md:row-span-2 md:row-start-1">{cards}</main>
+      <main className="min-w-0 lg:col-start-2 lg:row-span-2 lg:row-start-1">{cards}</main>
     </div>
   </div>;
 }

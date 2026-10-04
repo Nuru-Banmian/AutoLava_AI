@@ -23,7 +23,7 @@ function targetFor(selection: UserSelection) {
 
 function ErrorMessage({ error }: { error: Error | null }) {
   if (!error) return null;
-  return <p className="text-sm text-destructive" role="alert">
+  return <p className="text-sm leading-6 text-destructive [overflow-wrap:anywhere]" role="alert">
     {error instanceof ApiError ? error.detail : "请求失败"}
   </p>;
 }
@@ -238,9 +238,9 @@ export function UsersPanel() {
   } else if (!selectedUser) {
     editor = null;
   } else if (selectedUser.role === "admin" && !actor?.is_owner) {
-    editor = <section className="rounded-lg border bg-card p-4">
-      <h2 className="font-medium">{selectedUser.username}</h2>
-      <p className="text-sm text-muted-foreground">管理员账号只能由最终管理员编辑</p>
+    editor = <section className="min-w-0 space-y-2 rounded-xl border border-border bg-card p-4 shadow-sm [overflow-wrap:anywhere] sm:p-5">
+      <h2 className="text-lg font-semibold">{selectedUser.username}</h2>
+      <p className="text-sm leading-6 text-muted-foreground">管理员账号只能由最终管理员编辑</p>
     </section>;
   } else {
     editor = <UserEditor
@@ -258,22 +258,22 @@ export function UsersPanel() {
     />;
   }
 
-  return <div className="space-y-4">
+  return <div className="min-w-0 space-y-4">
     <ErrorMessage error={users.error} />
     <ErrorMessage error={stores.error} />
-    <div className="grid min-w-0 gap-4 md:grid-cols-[minmax(13rem,18rem)_minmax(0,1fr)] md:grid-rows-[auto_1fr]">
+    <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(13rem,18rem)_minmax(0,1fr)] lg:grid-rows-[auto_1fr]">
       <div
         aria-label="用户列表操作"
-        className="flex min-w-0 items-center gap-2 md:col-start-1 md:row-start-1"
+        className="flex min-w-0 items-center gap-2 lg:col-start-1 lg:row-start-1"
         data-testid="user-panel-controls"
         role="toolbar"
       >
-        <span className="hidden min-w-0 flex-1 text-sm font-medium md:block">用户列表</span>
-        <label className="min-w-0 flex-1 md:hidden">
+        <span className="hidden min-w-0 flex-1 text-sm font-medium lg:block">用户列表</span>
+        <label className="min-w-0 flex-1 lg:hidden">
           <span className="sr-only">用户</span>
           <select
             aria-label="用户"
-            className="h-9 w-full rounded-md border bg-background px-2"
+            className="h-11 w-full min-w-0 rounded-lg border border-input bg-card px-3 text-base outline-none focus-visible:ring-2 focus-visible:ring-ring"
             onChange={(event) => {
               if (event.target.value) select(Number(event.target.value));
             }}
@@ -283,19 +283,20 @@ export function UsersPanel() {
             {list.map((user) => <option key={user.id} value={user.id}>{user.username}</option>)}
           </select>
         </label>
-        <Button className="ml-auto" onClick={() => select("new")} type="button">
+        <Button className="ml-auto shrink-0" onClick={() => select("new")} type="button">
           新建用户
         </Button>
       </div>
-      <aside aria-label="用户列表" className="hidden md:col-start-1 md:row-start-2 md:block">
-        <ul className="divide-y rounded-lg border bg-card">
+      <aside aria-label="用户列表" className="hidden min-w-0 lg:col-start-1 lg:row-start-2 lg:block">
+        <ul className="divide-y overflow-hidden rounded-xl border border-border bg-card shadow-sm">
           {list.map((user) => <li key={user.id}>
             <button
-              className="w-full p-3 text-left hover:bg-accent disabled:opacity-50"
+              aria-pressed={selection === user.id}
+              className={`min-h-11 w-full border-l-4 p-3 text-left transition-colors [overflow-wrap:anywhere] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:opacity-50 ${selection === user.id ? "border-l-primary bg-primary/10 text-primary" : "border-l-transparent hover:bg-accent"}`}
               onClick={() => select(user.id)}
               type="button"
             >
-              <span className="block font-medium">{user.username}</span>
+              <span className="block font-semibold">{user.username}</span>
               <span className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
                 <span>{user.role === "admin" ? "管理员" : "普通用户"}</span>
                 <span>{user.is_active ? "启用" : "停用"}</span>
@@ -305,7 +306,7 @@ export function UsersPanel() {
           </li>)}
         </ul>
       </aside>
-      <main className="min-w-0 md:col-start-2 md:row-span-2 md:row-start-1">{editor}</main>
+      <main className="min-w-0 lg:col-start-2 lg:row-span-2 lg:row-start-1">{editor}</main>
     </div>
   </div>;
 }

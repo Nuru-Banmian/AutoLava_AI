@@ -125,11 +125,11 @@ export function UserEditor({
     .map((id) => stores.find((store) => store.id === id) ?? id)
     .filter((storeOrId) => typeof storeOrId === "number" || !storeOrId.is_active);
 
-  return <section className="rounded-lg border bg-card p-4">
+  return <section className="min-w-0 rounded-xl border border-border bg-card p-4 shadow-sm [overflow-wrap:anywhere] sm:p-5">
     <h2 className="text-lg font-semibold">{mode === "create" ? "新建用户" : `编辑 ${user?.username ?? ""}`}</h2>
     <form className="mt-4 space-y-4" onSubmit={submit}>
-      {mode === "create" ? <div className="space-y-1">
-        <label htmlFor="user-username">用户名</label>
+      {mode === "create" ? <div className="space-y-2">
+        <label className="block text-sm font-medium" htmlFor="user-username">用户名</label>
         <Input
           disabled={pending}
           id="user-username"
@@ -138,12 +138,12 @@ export function UserEditor({
           required
           value={draft.username}
         />
-      </div> : <p className="text-sm text-muted-foreground">用户名：{draft.username}</p>}
+      </div> : <p className="text-sm leading-6 text-muted-foreground">用户名：{draft.username}</p>}
 
-      <div className="space-y-1">
-        <label htmlFor="user-role">角色</label>
+      <div className="space-y-2">
+        <label className="block text-sm font-medium" htmlFor="user-role">角色</label>
         <select
-          className="h-9 w-full rounded-md border bg-background px-2 disabled:cursor-not-allowed disabled:opacity-50"
+          className="h-11 w-full min-w-0 rounded-lg border border-input bg-card px-3 text-base outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
           disabled={pending}
           id="user-role"
           onChange={(event) => update((current) => ({ ...current, role: event.target.value as UserRole }))}
@@ -154,8 +154,9 @@ export function UserEditor({
         </select>
       </div>
 
-      {mode === "edit" && <label className="flex items-center gap-2">
+      {mode === "edit" && <label className="flex min-h-11 cursor-pointer items-center gap-3 py-2 text-sm font-medium">
         <input
+          className="size-4 shrink-0 accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           checked={draft.is_active}
           disabled={pending}
           onChange={(event) => update((current) => ({ ...current, is_active: event.target.checked }))}
@@ -164,38 +165,40 @@ export function UserEditor({
         账号启用
       </label>}
 
-      {draft.role === "user" && <fieldset className="space-y-2">
-        <legend className="font-medium">可访问门店</legend>
-        {stores.filter((store) => store.is_active).map((store) => <label className="flex items-center gap-2" key={store.id}>
+      {draft.role === "user" && <fieldset className="min-w-0 space-y-2">
+        <legend className="text-sm font-medium">可访问门店</legend>
+        {stores.filter((store) => store.is_active).map((store) => <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm" key={store.id}>
           <input
+            className="size-4 shrink-0 accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             checked={draft.store_ids.includes(store.id)}
             disabled={pending}
             onChange={(event) => toggleStore(store.id, event.target.checked)}
             type="checkbox"
           />
-          {store.name}
+          <span className="min-w-0 [overflow-wrap:anywhere]">{store.name}</span>
         </label>)}
         {assignedUnavailable.map((storeOrId) => {
           const id = typeof storeOrId === "number" ? storeOrId : storeOrId.id;
           const label = typeof storeOrId === "number"
             ? `未知门店 #${storeOrId}（不可用）`
             : `${storeOrId.name}（已停用，不可用）`;
-          return <label className="flex items-center gap-2 text-muted-foreground" key={id}>
+          return <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground" key={id}>
             <input
+              className="size-4 shrink-0 accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               checked={draft.store_ids.includes(id)}
               disabled={pending}
               onChange={(event) => toggleStore(id, event.target.checked)}
               type="checkbox"
             />
-            {label}
+            <span className="min-w-0 [overflow-wrap:anywhere]">{label}</span>
           </label>;
         })}
         {stores.filter((store) => store.is_active).length === 0 && assignedUnavailable.length === 0
           && <p className="text-sm text-muted-foreground">暂无可用门店</p>}
       </fieldset>}
 
-      <div className="space-y-1">
-        <label htmlFor="user-password">{mode === "create" ? "初始密码" : "重置密码（可选）"}</label>
+      <div className="space-y-2">
+        <label className="block text-sm font-medium" htmlFor="user-password">{mode === "create" ? "初始密码" : "重置密码（可选）"}</label>
         <Input
           disabled={pending}
           id="user-password"
@@ -208,11 +211,11 @@ export function UserEditor({
         />
       </div>
 
-      {error && <p className="text-sm text-destructive" role="alert">
+      {error && <p className="text-sm leading-6 text-destructive" role="alert">
         {error instanceof ApiError ? error.detail : "请求失败"}
       </p>}
 
-      <div className="flex items-center justify-between gap-3" data-testid="user-editor-actions">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-t border-border pt-4" data-testid="user-editor-actions">
         {mode === "edit" && onDelete && <AlertDialog>
           <AlertDialogTrigger asChild>
             <Button disabled={pending} type="button" variant="destructive">永久删除</Button>
