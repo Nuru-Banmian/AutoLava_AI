@@ -571,7 +571,7 @@ for (const width of [390, 1280]) {
 for (const width of [320, 390, 768, 1024, 1280]) {
   test(`${width}px: historical editing, missing-date entry, deletion, and export preserve the second page`, async ({ page }) => {
     await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
-    await page.setViewportSize({ width, height: 844 });
+    await page.setViewportSize({ width, height: width === 768 ? 744 : 844 });
     const fixture = await mockEditableBusinessRecords(page);
     let deleteStarted = false;
     let refreshStarted = false;
@@ -600,18 +600,43 @@ for (const width of [320, 390, 768, 1024, 1280]) {
     await expect(recordEntry(page, width, "2026年6月13日 星期六，休息，€0")).toBeVisible();
     await expect(recordEntry(page, width, "2026年6月12日 星期五，提前休息，€75")).toBeVisible();
     await expect(recordEntry(page, width, "2026年6月11日 星期四，营业，€0")).toBeVisible();
-    await recordEntry(page, width, "2026年6月15日 星期一，营业，€150").click();
+    const original = recordEntry(page, width, "2026年6月15日 星期一，营业，€150");
+    let originalListScroll = 0;
+    if (width < 1024) {
+      await page.mouse.move(width / 2, 400);
+      await page.mouse.wheel(0, -2500);
+      await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+      await page.mouse.wheel(0, 180);
+      await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(180);
+      await expect(original).toBeInViewport({ ratio: 1 });
+      originalListScroll = await page.evaluate(() => window.scrollY);
+      const originalBox = (await original.boundingBox())!;
+      await page.mouse.click(originalBox.x + originalBox.width / 2, originalBox.y + originalBox.height / 2);
+    } else await original.click();
     let detail = recordDetail(page, width, "2026-06-15", "2026年6月15日 星期一");
     await detail.getByRole("link", { name: "修改这天记录" }).click();
     await expect(page).toHaveURL(/ledger\?date=2026-06-15$/);
     await expect(page.getByLabel("当日营业额", { exact: true })).toHaveValue("150");
     await page.getByLabel("当日营业额", { exact: true }).fill("250");
-    await page.getByLabel("事件", { exact: true }).fill("修改后的可控测试事件");
+    const editedActivity = width < 1024 ? "修改后的可控测试事件\n".repeat(20) : "修改后的可控测试事件";
+    await page.getByLabel("事件", { exact: true }).fill(editedActivity);
     await page.getByRole("button", { name: "保存修改", exact: true }).click();
     await expect(page).toHaveURL(width < 1024 ? /database\?date=2026-06-15$/ : /database$/);
     await expect(detail).toContainText("€250");
     await expect(detail).toContainText("修改后的可控测试事件");
-    if (width < 1024) await detail.getByRole("button", { name: "返回记录", exact: true }).click();
+    if (width < 1024) {
+      await expect(page.getByText("正在刷新记录…", { exact: true })).not.toBeVisible();
+      await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      expect(await page.evaluate(() => document.documentElement.scrollHeight - window.innerHeight)).toBeGreaterThan(originalListScroll);
+      await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+      await expect(detail.getByRole("heading", { name: "2026年6月15日 星期一", exact: true })).toBeInViewport({ ratio: 1 });
+      await expect(detail.getByRole("heading", { name: "2026年6月15日 星期一", exact: true })).toBeFocused();
+      const back = detail.getByRole("button", { name: "返回记录", exact: true });
+      await expect(back).toBeInViewport({ ratio: 1 });
+      const backBox = (await back.boundingBox())!;
+      await page.mouse.click(backBox.x + backBox.width / 2, backBox.y + backBox.height / 2);
+      await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(originalListScroll);
+    }
     await expect(filters.getByLabel("月份", { exact: true })).toHaveValue("2026-06");
     await expect(page.getByText("第 2 / 2 页", { exact: true })).toBeVisible();
     const updated = recordEntry(page, width, "2026年6月15日 星期一，营业，€250");

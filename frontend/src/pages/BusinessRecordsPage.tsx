@@ -132,11 +132,12 @@ export function BusinessRecordsPage() {
     if (!restored || !records.isSuccess || records.isFetching || scrollRestored.current) return;
     if (range.start !== restored.range.start || range.end !== restored.range.end || page !== restored.page) return;
     const frame = requestAnimationFrame(() => {
-      window.scrollTo({ top: restored.scrollY });
+      const restoringMobileDetail = mobileRecord && !window.matchMedia?.("(min-width: 1024px)").matches;
+      window.scrollTo({ top: restoringMobileDetail ? 0 : restored.scrollY });
       scrollRestored.current = true;
     });
     return () => cancelAnimationFrame(frame);
-  }, [records.isSuccess, records.isFetching, restored, range.start, range.end, page]);
+  }, [records.isSuccess, records.isFetching, restored, range.start, range.end, page, mobileRecord?.date]);
 
   const selectedRecordFromResponse = recordStateReady ? records.data?.items.find((item) => (
     item.date === selectedDate && item.store_id === selected?.id

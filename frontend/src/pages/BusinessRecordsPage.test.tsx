@@ -370,8 +370,10 @@ describe("BusinessRecordsPage", () => {
       expect(chartRequests.at(-1)?.searchParams.get("start")).toBe("2026-06-01");
       expect(chartRequests.at(-1)?.searchParams.get("end")).toBe("2026-06-30");
     });
-    expect(window.scrollTo).toHaveBeenCalledWith({ top: 320 });
     await waitFor(() => expect(screen.getByLabelText("路由状态")).toHaveTextContent("/database?date=2026-06-15|null"));
+    fireEvent.click(within(screen.getByRole("region", { name: "2026-06-15 营业记录详情" })).getByRole("button", { name: "返回记录" }));
+    await waitFor(() => expect(window.scrollTo).toHaveBeenLastCalledWith({ top: 320 }));
+    expect(screen.getByText("第 2 / 2 页")).toBeInTheDocument();
   });
 
   it("ignores and consumes an invalid restore snapshot", async () => {
