@@ -53,8 +53,13 @@ test("320px: calendar cells use income shading and expose amounts through exact 
   const date = page.getByRole("button", { name: "2026-06-02 营业 €999.900.000", exact: true });
   await wheelToControl(page, date);
   await expect(date).toHaveText("2营业");
-  await expect(date).toHaveCSS("background-color", "rgba(30, 58, 95, 0.2)");
-  await expect(page.getByRole("button", { name: "2026-06-01 未录入 —", exact: true })).toHaveCSS("background-color", "rgba(30, 58, 95, 0)");
+  const originalColor = await date.evaluate((element) => getComputedStyle(element).backgroundColor);
+  await page.evaluate(() => document.documentElement.style.setProperty("--primary", "oklch(0.5 0.15 255)"));
+  await expect.poll(() => date.evaluate((element) => getComputedStyle(element).backgroundColor)).not.toBe(originalColor);
+  await expect(date).toHaveCSS("background-color", /\/ 0.2\)/);
+  await expect(page.getByRole("button", { name: "2026-06-01 未录入 —", exact: true })).toHaveCSS("background-color", /\/ 0\)/);
+  await page.evaluate(() => document.documentElement.style.removeProperty("--primary"));
+  await expect(date).toHaveCSS("background-color", originalColor);
   await page.getByLabel("日历读数日期", { exact: true }).selectOption("2026-06-02");
   await expect(page.getByRole("status", { name: "日历读数" })).toHaveText("2026-06-02 营业 €999.900.000");
 });

@@ -117,7 +117,7 @@ describe("BusinessAnalysisCard", () => {
     renderCard();
     const date = await screen.findByRole("button", { name: "2026-07-01 营业 €9.999.999.999" });
     expect(date).toHaveTextContent(/^1营业$/);
-    expect(date).toHaveStyle({ backgroundColor: "rgba(30, 58, 95, 0.2)" });
+    expect(date).toHaveAttribute("style", "background-color: color-mix(in oklab, var(--primary) 20%, transparent);");
     expect(screen.getByRole("status", { name: "日历读数" })).toHaveTextContent("€9.999.999.999");
   });
 

@@ -35,7 +35,7 @@ export function BusinessCalendar({ data, today, onSelectDate }: {
         const opacity = record && enabled ? 0.04 + (record.revenue / maximum) * 0.16 : 0;
         return <button key={date} type="button" aria-label={label(date)} title={label(date)} disabled={!enabled}
           className="flex min-h-[76px] min-w-0 flex-col items-center justify-start gap-1 rounded-md border px-0 py-2 text-xs tabular-nums disabled:bg-muted/30 disabled:text-muted-foreground focus-visible:outline-2 focus-visible:outline-primary"
-          style={enabled ? { backgroundColor: `rgba(30, 58, 95, ${opacity})` } : undefined}
+          style={enabled ? { backgroundColor: `color-mix(in oklab, var(--primary) ${opacity * 100}%, transparent)` } : undefined}
           onFocus={() => setSelectedDate(date)} onPointerEnter={() => enabled && setSelectedDate(date)} onClick={() => { setSelectedDate(date); onSelectDate?.(date); }}>
           <span className="font-semibold">{Number(date.slice(8))}</span><span className="break-all leading-tight">{state(date)}</span>
         </button>;
@@ -49,6 +49,6 @@ export function BusinessCalendar({ data, today, onSelectDate }: {
       <p role="status" aria-label="日历读数" className="break-words text-sm tabular-nums">{label(selected)}</p>
       {onSelectDate && <Button type="button" variant="outline" className="h-11" onClick={() => onSelectDate(selected)}>查看 {selected} 每日台账</Button>}
     </div>}
-    <p className="text-sm text-muted-foreground">颜色越深表示每日台账营业额越高；日期格保留日期和状态，选中日期可查看完整金额。休息和已记录零营业额为真实 €0，未录入为 —。公司结算不分摊到日期。</p>
+    <p className="text-sm text-muted-foreground">主题蓝色越深表示每日台账营业额越高；日期格保留日期和状态，选中日期可查看完整金额。休息和已记录零营业额为真实 €0，未录入为 —。公司结算不分摊到日期。</p>
   </section>;
 }
