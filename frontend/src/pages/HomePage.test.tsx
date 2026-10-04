@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
+import { MemoryRouter } from "react-router-dom";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 import { useAuth } from "@/auth/AuthProvider";
 import { HomePage } from "@/pages/HomePage";
@@ -10,6 +11,18 @@ vi.mock("@/auth/AuthProvider", () => ({ useAuth: vi.fn() }));
 function StoreControls() { const { select } = useStore(); return <><button onClick={() => select(1)}>choose1</button><button onClick={() => select(2)}>choose2</button></>; }
 const server = setupServer(http.get("/api/ledger/:store/:date", () => HttpResponse.json({ detail: "Not found" }, { status: 404 }))); beforeAll(() => server.listen({ onUnhandledRequest: "error" })); afterEach(() => { server.resetHandlers(); vi.useRealTimers(); }); afterAll(() => server.close());
 const emptyFields = { revenue: null, weather: null, weekday: null, temperature_max: null, temperature_min: null, precipitation: null, hint: null };
+
+it("offers a read-only view of an archived store's recorded daily ledger", async () => {
+  server.use(
+    http.get("/api/stores/accessible", () => HttpResponse.json([{ id: 1, name: "Archived", timezone: "Europe/Berlin", is_active: false }])),
+    http.get("/api/dashboard/1", () => HttpResponse.json([])),
+    http.get("/api/ledger/1/:date", () => HttpResponse.json({ is_open: "营业", daily_revenue: 73 })),
+  );
+  render(<MemoryRouter><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><StoreProvider><HomePage /></StoreProvider></QueryClientProvider></MemoryRouter>);
+  expect(await screen.findByText("今日已记录")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "查看今日台账" })).toHaveAttribute("href", "/database");
+  expect(screen.queryByRole("link", { name: "修改今日台账" })).not.toBeInTheDocument();
+});
 
 it("uses the store-local today's daily ledger instead of a stale recorded briefing", async () => {
   vi.mocked(useAuth).mockReturnValue({ user: { id: 2, username: "user", role: "user", is_owner: false } } as ReturnType<typeof useAuth>);

@@ -19,7 +19,7 @@ function validDateParameter(value: string | null) {
 }
 
 export function LedgerPage() {
-  const { selected } = useStore(); const client = useQueryClient(); const { markDirty, requestTransition, resetUnsavedChanges } = useUnsavedChanges();
+  const { selected } = useStore(); const client = useQueryClient(); const { dirty, markDirty, requestTransition, resetUnsavedChanges } = useUnsavedChanges();
   const location = useLocation(); const navigate = useNavigate(); const returnToBusinessRecords = ledgerReturnState(location.state);
   const [searchParams, setSearchParams] = useSearchParams(); const hasDateParameter = searchParams.has("date"); const parameterDate = validDateParameter(searchParams.get("date"));
   const today = selected ? storeLocalToday(selected) : ""; const allowedParameterDate = today && parameterDate && parameterDate <= today ? parameterDate : null; const [dateSelection, setDateSelection] = useState<{ storeId: number | null; date: string }>({ storeId: null, date: "" }); const storedDate = dateSelection.storeId === selected?.id && dateSelection.date <= today ? dateSelection.date : ""; const date = hasDateParameter ? allowedParameterDate ?? today : storedDate || today; const [visibleMonth, setVisibleMonth] = useState(() => date.slice(0, 7)); const [calendarOpen, setCalendarOpen] = useState(false); const [message, setMessage] = useState(""); const [savedSubmission, setSavedSubmission] = useState<{ revision: number; storeId: number; date: string; body: LedgerBody; canonicalRequested: boolean; canonicalReady: boolean } | null>(null);
@@ -78,13 +78,6 @@ export function LedgerPage() {
         const canonical = client.getQueryState<RecordSnapshot | null>(ledgerRecordKey(variables.storeId, variables.date));
         setSavedSubmission((previous) => previous?.body === variables.body ? { ...previous, canonicalRequested: true, canonicalReady: canonical?.status === "success" && Boolean(canonical.data) } : previous);
       }
-      const canReturnToBusinessRecords = returnToBusinessRecords?.storeId === variables.storeId
-        && returnToBusinessRecords.range.start <= variables.date
-        && variables.date <= returnToBusinessRecords.range.end;
-      if (isCurrentScope && canReturnToBusinessRecords) {
-        resetUnsavedChanges();
-        navigate("/database", { replace: true, state: { restoreBusinessRecords: returnToBusinessRecords } });
-      }
     },
     onError: (error, variables) => {
       if (scopeRef.current.storeId !== variables.storeId || scopeRef.current.date !== variables.date) return;
@@ -103,6 +96,15 @@ export function LedgerPage() {
       } else setMessage(friendlyApiError(error, "保存失败，草稿已保留，请重试"));
     },
   });
+  useEffect(() => {
+    if (!save.isSuccess || save.isPending || !currentSavedSubmission || dirty || record.error) return;
+    if (returnToBusinessRecords?.storeId !== selected?.id
+      || !returnToBusinessRecords
+      || date < returnToBusinessRecords.range.start
+      || date > returnToBusinessRecords.range.end) return;
+    resetUnsavedChanges();
+    navigate("/database", { replace: true, state: { restoreBusinessRecords: returnToBusinessRecords } });
+  }, [currentSavedSubmission, date, dirty, navigate, record.error, resetUnsavedChanges, returnToBusinessRecords, save.isPending, save.isSuccess, selected?.id]);
   if (!selected) return <section><h1 className="text-2xl font-semibold">记账</h1><p role="status">请先选择门店。</p></section>;
   return <section className="min-w-0">
     <div className="mx-auto grid w-full max-w-4xl min-w-0 gap-4">

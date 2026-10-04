@@ -473,6 +473,30 @@ describe("LedgerPage", () => {
     await waitFor(() => expect(screen.getByLabelText("当前位置")).toHaveTextContent("/database"));
   });
 
+  it("keeps new input after a records-launched pending save instead of returning and discarding it", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    renderLedger([http.put("/api/ledger/1/:date", async () => { await gate; return HttpResponse.json({ id: 9, date: "2026-07-15", daily_revenue: 1 }); })], {
+      pathname: "/ledger", search: "?date=2026-07-15", state: { returnToBusinessRecords: {
+        storeId: 1, recordMode: "month", range: { start: "2026-07-01", end: "2026-07-31" }, page: 2,
+        selectedDate: "2026-07-15", mobileRecordDate: null, scrollY: 100,
+      } },
+    });
+    fireEvent.change(await screen.findByLabelText("现金"), { target: { value: "1" } });
+    fillBlankLedgerAmounts();
+    fireEvent.click(screen.getByRole("button", { name: "保存今日记录" }));
+    expect(await screen.findByRole("button", { name: "保存中…" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("现金"), { target: { value: "99" } });
+    release();
+    expect(await screen.findByRole("status")).toHaveTextContent("保存成功");
+    await waitFor(() => expect(screen.getByRole("button", { name: "保存今日记录" })).toBeEnabled());
+    expect(screen.getByLabelText("当前位置")).toHaveTextContent("/ledger");
+    expect(screen.getByLabelText("现金")).toHaveValue("99");
+    const event = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
   it("stays on the ledger when the saved date is outside the source record range", async () => {
     renderLedger([
       http.put("/api/ledger/1/:date", () => HttpResponse.json({ id: 9, date: "2026-07-15", daily_revenue: 1 })),

@@ -313,3 +313,34 @@ test("date and store transitions require a choice before discarding unsaved amou
   await assertNoOverflow(page);
   expect(flow.contractErrors).toEqual([]);
 });
+
+test("a records-launched save retains additional input entered before its response", async ({ page }) => {
+  await page.clock.install({ time: new Date(`${today}T12:00:00Z`) });
+  await page.setViewportSize({ width: 390, height: 844 });
+  const flow = await mockHomeLedger(page);
+  await page.goto("/");
+  await homeState(page).getByRole("link", { name: "立即记账" }).click();
+  await page.getByLabel(categories[0].name, { exact: true }).fill("120");
+  await page.getByRole("button", { name: "保存今日记录", exact: true }).click();
+  await waitForSaved(page);
+  await navigation(page, 390).getByRole("link", { name: "记录", exact: true }).click();
+  await page.locator('main button[aria-label^="2026年7月17日"]').first().click();
+  await page.getByRole("dialog").getByRole("link", { name: "修改这天记录" }).click();
+  await page.getByLabel(categories[0].name, { exact: true }).fill("150");
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route(`**/api/ledger/1/${today}`, async (route) => {
+    if (route.request().method() === "PUT") await gate;
+    await route.fallback();
+  });
+  await page.getByRole("button", { name: "保存修改", exact: true }).click();
+  await expect(page.getByRole("button", { name: "保存中…" })).toBeDisabled();
+  await page.getByLabel(categories[0].name, { exact: true }).fill("220");
+  release();
+  await expect.poll(() => flow.accepted.length).toBe(2);
+  await expect(page).toHaveURL(new RegExp(`ledger\\?date=${today}$`));
+  await expect(page.getByRole("button", { name: "保存修改", exact: true })).toBeEnabled();
+  await expect(page.getByLabel(categories[0].name, { exact: true })).toHaveValue("220");
+  await navigation(page, 390).getByRole("link", { name: "首页", exact: true }).click();
+  await expect(page.getByRole("alertdialog", { name: "放弃未保存的修改？" })).toBeVisible();
+});

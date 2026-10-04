@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
+import { Link } from "react-router-dom";
 import { api, ApiError, friendlyApiError } from "@/api/client";
 import type { BriefingCard } from "@/api/types";
 import { BriefingCards } from "@/components/BriefingCards";
@@ -38,7 +39,10 @@ export function HomePage() {
       {record.error && hasRecordResult && <p role="alert">今日状态刷新失败，当前显示上次读取的结果。</p>}
       {record.isFetching && hasRecordResult && <p role="status" className="text-sm text-muted-foreground">正在刷新今日状态…</p>}
       <div className="flex flex-wrap gap-2">
-        {selected.is_active !== false ? <a className={buttonVariants()} href={`/ledger?date=${today}`}>{record.data ? "修改今日台账" : hasRecordResult ? "立即记账" : "进入记账"}</a> : <p role="status">该门店已归档，仅可查看历史数据和经营分析。</p>}
+        {selected.is_active !== false ? <a className={buttonVariants()} href={`/ledger?date=${today}`}>{record.data ? "修改今日台账" : hasRecordResult ? "立即记账" : "进入记账"}</a> : <>
+          <p className="w-full" role="status">该门店已归档，仅可查看历史数据和经营分析。</p>
+          {record.data && <Link className={buttonVariants({ variant: "outline" })} to="/database" state={{ restoreBusinessRecords: { storeId: selected.id, recordMode: "custom", range: { start: today, end: today }, page: 1, selectedDate: today, mobileRecordDate: today, scrollY: 0 } }}>查看今日台账</Link>}
+        </>}
         {record.error && <Button variant="outline" disabled={record.isFetching} onClick={() => void record.refetch()}>重试今日状态</Button>}
       </div>
     </section>
