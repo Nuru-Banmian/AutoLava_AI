@@ -16,11 +16,11 @@ $BackendVenv = Join-Path $BackendDir ".venv"
 $BackendPython = Join-Path $BackendVenv "Scripts\python.exe"
 
 function Write-Stage([string]$Message) {
-    Write-Host "[AutoLava] $Message" -ForegroundColor Cyan
+    Write-Host "[门店管理系统] $Message" -ForegroundColor Cyan
 }
 
 function Stop-WithMessage([string]$Message) {
-    throw "[AutoLava] $Message"
+    throw "[门店管理系统] $Message"
 }
 
 function Assert-Command([string]$Name) {
@@ -192,16 +192,33 @@ function Save-Hash([string]$Marker, [string]$Hash) {
     [IO.File]::WriteAllText($Marker, $Hash, [Text.UTF8Encoding]::new($false))
 }
 
+function Test-BackendDependencies {
+    if (-not (Test-Path -LiteralPath $BackendPython)) { return $false }
+    $probe = "import alembic.__main__, aiosqlite, bcrypt, cryptography, fastapi, httpx, openpyxl, pydantic_settings, jwt, sqlalchemy, uvicorn; import uvicorn.loops.auto, uvicorn.protocols.http.auto, uvicorn.protocols.websockets.auto"
+    # A matching manifest hash does not guarantee that the venv is still intact.
+    try {
+        & $BackendPython -c $probe *> $null
+        return $LASTEXITCODE -eq 0
+    } catch {
+        # Windows PowerShell turns native stderr into an exception under Stop.
+        return $false
+    }
+}
+
 function Ensure-Dependencies {
     New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
     $backendHash = Get-ManifestHash (Join-Path $BackendDir "pyproject.toml")
     $backendMarker = Join-Path $StateDir "backend.sha256"
-    if (-not (Test-Path $BackendPython) -or -not (Test-HashCurrent $backendMarker $backendHash)) {
+    if (-not (Test-Path $BackendPython) -or -not (Test-HashCurrent $backendMarker $backendHash) -or
+        -not (Test-BackendDependencies)) {
         $uv = Resolve-UvExecutable
         if (-not (Test-Path $BackendPython)) {
             Invoke-Checked "创建 Python 虚拟环境" { & $uv venv $BackendVenv }
         }
         Invoke-Checked "安装后端依赖" { & $uv pip install --python $BackendPython -e $BackendDir }
+        if (-not (Test-BackendDependencies)) {
+            Stop-WithMessage "后端依赖检查失败，请检查虚拟环境和依赖安装输出后重试。"
+        }
         Save-Hash $backendMarker $backendHash
     }
 
@@ -297,7 +314,7 @@ try {
     Wait-Healthy "http://127.0.0.1:8000/health" $backendProcess
     $frontendProcess = Start-Frontend
     Wait-Healthy "http://127.0.0.1:5173/health" $frontendProcess
-    Write-Host "AutoLava AI 已就绪：http://127.0.0.1:5173" -ForegroundColor Green
+    Write-Host "门店管理系统 已就绪：http://127.0.0.1:5173" -ForegroundColor Green
     if (-not $NoBrowser) { Start-Process "http://127.0.0.1:5173" | Out-Null }
 
     while ($true) {

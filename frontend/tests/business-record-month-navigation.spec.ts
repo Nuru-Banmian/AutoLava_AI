@@ -37,7 +37,7 @@ async function wheelToControl(page: Page, control: Locator) {
   await expect(control).toBeInViewport({ ratio: 1 });
 }
 
-test("320px: calendar cells shade revenue with the theme blue and expose exact readings", async ({ page }) => {
+test("320px: calendar cells use distinct light blue bands and expose exact amounts", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
   await page.setViewportSize({ width: 320, height: 844 });
   await mockEditableBusinessRecords(page);
@@ -52,16 +52,23 @@ test("320px: calendar cells shade revenue with the theme blue and expose exact r
   await page.getByRole("button", { name: "经营分析", exact: true }).click();
   const date = page.getByRole("button", { name: "2026-06-02 营业 €999.900.000", exact: true });
   await wheelToControl(page, date);
-  await expect(date).toHaveText("2营业");
-  const originalColor = await date.evaluate((element) => getComputedStyle(element).backgroundColor);
-  await page.evaluate(() => document.documentElement.style.setProperty("--primary", "oklch(0.5 0.15 255)"));
-  await expect.poll(() => date.evaluate((element) => getComputedStyle(element).backgroundColor)).not.toBe(originalColor);
-  await expect(date).toHaveCSS("background-color", /\/ 0.4\)/);
-  await expect(page.getByRole("button", { name: "2026-06-03 营业 €499.950.000", exact: true })).toHaveCSS("background-color", /\/ 0.24\)/);
-  await expect(page.getByRole("button", { name: "2026-06-04 营业 €0", exact: true })).toHaveCSS("background-color", /\/ 0.08\)/);
-  await expect(page.getByRole("button", { name: "2026-06-01 未录入 —", exact: true })).toHaveCSS("background-color", /\/ 0\)/);
-  await page.evaluate(() => document.documentElement.style.removeProperty("--primary"));
-  await expect(date).toHaveCSS("background-color", originalColor);
+  await expect(date).toHaveText("2€999.900.000营业");
+  const calendar = page.getByRole("region", { name: "营业日历", exact: true });
+  const bands = await Promise.all([date,
+    page.getByRole("button", { name: "2026-06-03 营业 €499.950.000", exact: true }),
+    page.getByRole("button", { name: "2026-06-04 营业 €0", exact: true }),
+  ].map((cell) => cell.evaluate((element) => ({
+    background: getComputedStyle(element).backgroundColor,
+    text: getComputedStyle(element).color,
+    clipped: element.scrollHeight > element.clientHeight,
+  }))));
+  expect(new Set(bands.map((band) => band.background)).size).toBe(3);
+  expect(new Set(bands.map((band) => band.text)).size).toBe(1);
+  expect(bands.every((band) => !band.clipped)).toBe(true);
+  const missing = page.getByRole("button", { name: "2026-06-01 未录入 —", exact: true });
+  await expect(missing).toHaveCSS("border-top-style", "dashed");
+  expect(await missing.evaluate((element) => getComputedStyle(element).backgroundColor)).not.toBe(bands[2].background);
+  await expect(calendar.getByLabel("营业额颜色图例")).toContainText("€499.950.001–€999.900.000");
   await page.getByRole("region", { name: "营业日历", exact: true }).screenshot({ path: "output/theme-calendar-320.png" });
   await expect(date).toHaveAttribute("title", "2026-06-02 营业 €999.900.000");
   await expect(page.getByLabel("日历读数日期", { exact: true })).toHaveCount(0);
