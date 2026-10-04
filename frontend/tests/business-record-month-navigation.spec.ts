@@ -63,6 +63,54 @@ for (const width of [320, 390, 768, 1024, 1280]) {
   });
 }
 
+for (const width of [320, 390, 768, 1024, 1280]) {
+  test(`${width}px: native wheel reaches record pagination and lower analysis controls`, async ({ page }) => {
+    await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
+    await page.setViewportSize({ width, height: 844 });
+    await mockEditableBusinessRecords(page);
+    await page.route("**/api/charts/1?**", (route) => {
+      const params = new URL(route.request().url()).searchParams;
+      const categories = Array.from({ length: 7 }, (_, index) => ({ category_id: index + 1, category_name: `收入分类 ${index + 1}`, amount: 100 }));
+      const excluded = Array.from({ length: 7 }, (_, index) => ({ category_id: index + 11, category_name: `其他数据 ${index + 1}`, amount: 10 }));
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+        kpis: { total_revenue: 700, record_days: 7, open_days: 7, average_revenue: 100, primary_categories: [], total_wash_count: null, average_ticket: null },
+        range: { start: params.get("start"), end: params.get("end"), bucket: params.get("bucket") },
+        comparison_kpis: null,
+        income_summary: { daily_ledger_revenue: 700, confirmed_settlement_income: 0, total_income: 700, includes_settlement_income: false },
+        classified_included_total: 700,
+        daily: [{ date: "2026-07-17", revenue: 700 }], categories, excluded_categories: excluded, monthly: [], weather: [], weekday: [],
+      }) });
+    });
+    await page.goto("/database");
+    const firstEntry = recordEntry(page, width, "2026年7月18日 星期六，未录入，—");
+    await expect(firstEntry).toBeVisible();
+    const firstBox = (await firstEntry.boundingBox())!;
+    await page.mouse.move(firstBox.x + firstBox.width / 2, firstBox.y + firstBox.height / 2);
+    await page.mouse.wheel(0, 2500);
+    const pagination = page.getByRole("navigation", { name: "记录分页" });
+    await expect(pagination).toBeInViewport({ ratio: 1 });
+    const next = pagination.getByRole("button", { name: "下一页" });
+    const nextBox = (await next.boundingBox())!;
+    await page.mouse.click(nextBox.x + nextBox.width / 2, nextBox.y + nextBox.height / 2);
+    await expect(page.getByText("第 2 / 2 页", { exact: true })).toBeVisible();
+
+    await page.mouse.wheel(0, -2500);
+    const analysis = page.getByRole("button", { name: "经营分析", exact: true });
+    await expect(analysis).toBeInViewport({ ratio: 1 });
+    const analysisBox = (await analysis.boundingBox())!;
+    await page.mouse.click(analysisBox.x + analysisBox.width / 2, analysisBox.y + analysisBox.height / 2);
+    await expect(page.getByRole("region", { name: "收入构成", exact: true })).toBeVisible();
+    await page.mouse.move(width * 0.7, 500);
+    await page.mouse.wheel(0, 2500);
+    const expandOther = page.getByRole("button", { name: "展开其他数据（还有 2 项）", exact: true });
+    await expect(expandOther).toBeInViewport({ ratio: 1 });
+    const expandBox = (await expandOther.boundingBox())!;
+    await page.mouse.click(expandBox.x + expandBox.width / 2, expandBox.y + expandBox.height / 2);
+    await page.mouse.wheel(0, 1000);
+    await expect(page.getByText("其他数据 7", { exact: true })).toBeInViewport({ ratio: 1 });
+  });
+}
+
 async function mockBusinessRecords(page: Page, requests: {
   records: RangeRequest[];
   charts: RangeRequest[];
