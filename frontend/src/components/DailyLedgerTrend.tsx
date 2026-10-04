@@ -3,6 +3,7 @@ import { useState } from "react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import type { ChartsResponse } from "@/api/types";
+import { formatCompactEuro } from "@/lib/compact-euro";
 import { formatWholeEuro } from "@/lib/user-api";
 
 export function DailyLedgerTrend({ data }: { data: ChartsResponse }) {
@@ -58,7 +59,7 @@ export function DailyLedgerTrend({ data }: { data: ChartsResponse }) {
         <LineChart data={rows} margin={{ top: 10, right: 12, bottom: 8, left: 0 }}>
           <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
           <XAxis dataKey="date" tickFormatter={(date: string) => date.slice(8)} minTickGap={26} tick={{ fontSize: 12 }} />
-          <YAxis width={52} tick={{ fontSize: 12 }} tickFormatter={(value: number) => value >= 1000 ? `${Number((value / 1000).toFixed(1))}k` : String(value)} />
+          <YAxis width={52} tick={{ fontSize: 12 }} tickFormatter={formatCompactEuro} />
           <Tooltip content={({ active, payload }) => {
             const row = payload?.[0]?.payload as typeof rows[number] | undefined;
             return active && row ? <div className="max-w-60 rounded-md border bg-white p-3 text-sm shadow-sm"><p>本期 {readable(row.date)}</p><p>上期 {readable(row.previousDate, true)}</p></div> : null;
@@ -68,6 +69,7 @@ export function DailyLedgerTrend({ data }: { data: ChartsResponse }) {
         </LineChart>
       </ResponsiveContainer>
     </div>
+    <p className="text-xs text-muted-foreground">坐标缩写：k 为千欧元，m 为百万欧元，b 为十亿欧元；读数显示完整整数金额。</p>
     {selected && <div className="grid min-w-0 gap-2 rounded-md bg-muted/40 p-3">
       <label htmlFor="trend-date" className="text-sm font-medium">趋势读数日期</label>
       <select id="trend-date" value={selected.date} onChange={(event) => setSelectedDate(event.target.value)} className="h-11 w-full min-w-0 rounded-md border bg-white px-3 text-base focus-visible:outline-2 focus-visible:outline-primary">

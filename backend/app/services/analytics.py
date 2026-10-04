@@ -72,6 +72,17 @@ def _month_start(value: date) -> date:
     return value.replace(day=1)
 
 
+def _daily_revenue_rows(records: list[StoreDailyRecord]) -> list[dict[str, object]]:
+    return [
+        {
+            "date": record.date.isoformat(),
+            "revenue": record.daily_revenue,
+            "is_open": record.is_open,
+        }
+        for record in records
+    ]
+
+
 def _monthly_revenue_rows(
     daily_by_month: dict[str, int],
     settlement_by_month: dict[str, int],
@@ -332,14 +343,7 @@ class AnalyticsService:
                 "status": comparison_status,
                 "short_previous_month": short_previous_month,
             },
-            "comparison_daily": [
-                {
-                    "date": record.date.isoformat(),
-                    "revenue": record.daily_revenue,
-                    "is_open": record.is_open,
-                }
-                for record in comparison_records
-            ],
+            "comparison_daily": _daily_revenue_rows(comparison_records),
             "income_summary": {
                 "daily_ledger_revenue": daily_ledger_revenue,
                 "confirmed_settlement_income": confirmed_settlement_income,
@@ -353,14 +357,7 @@ class AnalyticsService:
                 "record_days": len(records),
                 "interval_days": max(0, (end - start).days + 1),
             },
-            "daily": [
-                {
-                    "date": record.date.isoformat(),
-                    "revenue": record.daily_revenue,
-                    "is_open": record.is_open,
-                }
-                for record in records
-            ],
+            "daily": _daily_revenue_rows(records),
             "categories": compositions,
             "excluded_categories": excluded_rows,
             "monthly": _monthly_revenue_rows(
