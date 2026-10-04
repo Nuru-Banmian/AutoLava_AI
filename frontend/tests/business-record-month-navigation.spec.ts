@@ -37,7 +37,7 @@ async function wheelToControl(page: Page, control: Locator) {
   await expect(control).toBeInViewport({ ratio: 1 });
 }
 
-test("320px: calendar cells use income shading and expose amounts through exact readings", async ({ page }) => {
+test("320px: calendar cells share the theme blue and expose amounts through exact readings", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
   await page.setViewportSize({ width: 320, height: 844 });
   await mockEditableBusinessRecords(page);
@@ -56,10 +56,13 @@ test("320px: calendar cells use income shading and expose amounts through exact 
   const originalColor = await date.evaluate((element) => getComputedStyle(element).backgroundColor);
   await page.evaluate(() => document.documentElement.style.setProperty("--primary", "oklch(0.5 0.15 255)"));
   await expect.poll(() => date.evaluate((element) => getComputedStyle(element).backgroundColor)).not.toBe(originalColor);
-  await expect(date).toHaveCSS("background-color", /\/ 0.2\)/);
-  await expect(page.getByRole("button", { name: "2026-06-01 未录入 —", exact: true })).toHaveCSS("background-color", /\/ 0\)/);
+  await expect(date).toHaveCSS("background-color", "oklch(0.5 0.15 255)");
+  await expect(date).toHaveCSS("color", "oklch(0.99 0 0)");
+  await expect(page.getByRole("button", { name: "2026-06-01 未录入 —", exact: true })).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await page.evaluate(() => document.documentElement.style.removeProperty("--primary"));
   await expect(date).toHaveCSS("background-color", originalColor);
+  await expect(date).toHaveCSS("background-color", "oklch(0.55 0.19 255)");
+  await page.getByRole("region", { name: "营业日历", exact: true }).screenshot({ path: "output/theme-calendar-320.png" });
   await expect(date).toHaveAttribute("title", "2026-06-02 营业 €999.900.000");
   await expect(page.getByLabel("日历读数日期", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("status", { name: "日历读数" })).toHaveCount(0);

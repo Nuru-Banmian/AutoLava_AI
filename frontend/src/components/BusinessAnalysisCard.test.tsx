@@ -157,12 +157,12 @@ describe("BusinessAnalysisCard", () => {
     expect(screen.queryByText("该范围暂无经营数据")).not.toBeInTheDocument();
   });
 
-  it("uses income shading without a resident calendar amount and preserves the exact reading", async () => {
+  it("uses the theme blue without a resident calendar amount and preserves the exact reading", async () => {
     server.use(http.get("/api/charts/1", () => HttpResponse.json(payload({ daily: [{ date: "2026-07-01", revenue: 9999999999, is_open: "营业" }] }))));
     renderCard();
     const date = await screen.findByRole("button", { name: "2026-07-01 营业 €9.999.999.999" });
     expect(date).toHaveTextContent(/^1营业$/);
-    expect(date).toHaveAttribute("style", "background-color: color-mix(in oklab, var(--primary) 20%, transparent);");
+    expect(date).toHaveClass("bg-primary", "text-primary-foreground");
     expect(date).toHaveAttribute("title", "2026-07-01 营业 €9.999.999.999");
     expect(screen.queryByLabelText("日历读数日期")).not.toBeInTheDocument();
     expect(screen.queryByRole("status", { name: "日历读数" })).not.toBeInTheDocument();
