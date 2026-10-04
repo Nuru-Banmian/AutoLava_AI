@@ -113,12 +113,12 @@ export function LedgerForm({ categories, config, record, weather, weatherOptions
   };
   const semanticSignature = (values: { status: LedgerStatus; wash: string; weatherValue: string; weatherEdited: boolean; activity: string; directTotal: string; amounts: Record<number, string> }) => JSON.stringify({
     is_open: values.status,
-    daily_revenue: composed ? null : semanticAmount(values.directTotal),
+    daily_revenue: composed ? null : values.status === "休息" ? 0 : semanticAmount(values.directTotal),
     wash_count: normalizedFormWashCount(values.status, values.wash),
     weather: values.weatherValue || null,
     weather_edited: values.weatherEdited,
     activity: normalizedActivity(values.activity),
-    items: composed ? effectiveCategories.map((category) => [category.id, semanticAmount(values.amounts[category.id] ?? "0")]) : [],
+    items: composed ? effectiveCategories.map((category) => [category.id, values.status === "休息" ? 0 : semanticAmount(values.amounts[category.id] ?? "0")]) : [],
   });
   const submittedSignature = (body: LedgerBody) => JSON.stringify({
     is_open: body.is_open,
@@ -219,20 +219,20 @@ export function LedgerForm({ categories, config, record, weather, weatherOptions
       items: composed ? items : [],
     });
   }
-  return <form className="grid min-w-0 gap-5" onSubmit={submit}>
-    <section role="group" aria-label="状态与天气" className="grid min-w-0 gap-4 md:grid-cols-2">
+  return <form className="grid min-w-0 gap-4" onSubmit={submit}>
+    <section role="group" aria-label="状态与天气" className={`grid min-w-0 grid-cols-2 gap-3 ${washCountEnabled ? "md:grid-cols-3" : ""}`}>
       <label className="grid min-w-0 gap-1.5 font-medium">状态<select aria-label="状态" value={status} onChange={(event) => changeStatus(event.target.value as LedgerStatus)} className={LEDGER_FIELD_CLASS}><option>营业</option><option>休息</option><option>提前休息</option></select></label>
       <div className="grid min-w-0 gap-1.5"><span className="font-medium">天气</span><Select value={weatherValue} onValueChange={(value) => { setWeatherValue(value === "__clear_weather__" ? "" : value); setWeatherEdited(true); }}><SelectTrigger aria-label="天气" className="h-11 text-base"><SelectValue placeholder="请选择天气">{legacyWeather ? `历史旧值：${weatherValue}` : weatherValue || undefined}</SelectValue></SelectTrigger><SelectContent><SelectItem value="__clear_weather__">清空天气</SelectItem>{weatherOptions.map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectContent></Select>{legacyWeather && <p className="text-sm text-destructive">历史旧值：{weatherValue}。重新保存前请选择有效天气或清空。</p>}</div>
-    </section>
-    {composed ? <fieldset aria-label="收入项目" disabled={status === "休息"} className="grid min-w-0 gap-3"><legend className="font-semibold">收入项目</legend><div className="grid min-w-0 gap-4 md:grid-cols-2">{effectiveCategories.map((category) => <label className="grid min-w-0 gap-1.5 font-medium" key={category.id}>{category.name}<input aria-label={category.name} inputMode="numeric" type="text" value={amounts[category.id] ?? ""} onChange={(event) => setAmounts((old) => ({ ...old, [category.id]: event.target.value }))} className={LEDGER_FIELD_CLASS} /></label>)}</div></fieldset> : <label className="grid min-w-0 gap-1.5 font-medium">当日营业额<input aria-label="当日营业额" inputMode="numeric" type="text" disabled={status === "休息"} value={directTotal} onChange={(event) => setDirectTotal(event.target.value)} className={LEDGER_FIELD_CLASS} /></label>}
-    <section className={`grid min-w-0 gap-4 rounded-lg border bg-background p-4 ${washCountEnabled ? "md:grid-cols-2" : ""}`}>
       {washCountEnabled && <label className="grid min-w-0 gap-1.5 font-medium">洗车数量<input aria-label="洗车数量" inputMode="numeric" type="text" disabled={status === "休息"} value={wash} onChange={(event) => setWash(event.target.value)} className={LEDGER_FIELD_CLASS} /></label>}
+    </section>
+    {composed ? <fieldset aria-label="收入项目" disabled={status === "休息"} className="grid min-w-0 gap-3"><legend className="font-semibold">收入项目</legend><div className="grid min-w-0 grid-cols-2 items-end gap-3 md:grid-cols-3 xl:grid-cols-4">{effectiveCategories.map((category) => <label className="grid min-w-0 gap-1.5 font-medium" key={category.id}><span className="break-words">{category.name}{!category.include_in_total && <span className="block text-sm font-normal text-muted-foreground">其他数据</span>}</span><input aria-label={category.name} inputMode="numeric" type="text" value={amounts[category.id] ?? ""} onChange={(event) => setAmounts((old) => ({ ...old, [category.id]: event.target.value }))} className={LEDGER_FIELD_CLASS} /></label>)}</div></fieldset> : <label className="grid min-w-0 gap-1.5 font-medium">当日营业额（€）<input aria-label="当日营业额" inputMode="numeric" type="text" disabled={status === "休息"} value={directTotal} onChange={(event) => setDirectTotal(event.target.value)} className={LEDGER_FIELD_CLASS} /></label>}
+    <section className="grid min-w-0 gap-3">
       <label className="grid min-w-0 gap-1.5 font-medium">事件<textarea aria-label="事件" placeholder="记录可能影响经营的特殊情况，如当地活动、泥雨等（选填）" value={activity} onChange={(event) => setActivity(event.target.value)} className={`${LEDGER_FIELD_CLASS} resize-y`} /></label>
     </section>
     {validationError && <p role="alert" className="text-sm text-destructive">{validationError}</p>}
-    <footer className="flex min-w-0 flex-col gap-4 rounded-lg bg-muted/50 p-4 sm:flex-row sm:items-center sm:justify-between">
+    <footer className="flex min-w-0 flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
       {composed && <p className="text-xl font-semibold tabular-nums">合计金额 {formatWholeEuro(status === "休息" ? 0 : latestValidTotal)}</p>}
-      <Button className="min-h-11 w-full px-6 text-base sm:ml-auto sm:w-auto sm:min-w-40" disabled={saving} type="submit">{submitLabel}</Button>
+      <Button className="min-h-11 w-full px-6 text-base sm:ml-auto sm:w-auto sm:min-w-40" disabled={saving} type="submit">{saving ? "保存中…" : submitLabel}</Button>
     </footer>
   </form>;
 }
