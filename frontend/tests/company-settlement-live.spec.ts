@@ -11,7 +11,7 @@ test("real backend browser creates, confirms, and revokes a settlement record", 
   await page.getByLabel("用户名").fill(username);
   await page.getByLabel("密码", { exact: true }).fill(password);
   await page.getByRole("button", { name: "登录" }).click();
-  await expect(page.getByRole("heading", { name: "仪表盘" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "首页" })).toBeVisible();
 
   const createdStore = await page.request.post("/api/admin/stores", {
     data: {

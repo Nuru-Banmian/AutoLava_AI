@@ -9,17 +9,11 @@ function CardShell({ title, children }: { title: string; children: React.ReactNo
   return <Card><CardHeader><CardTitle>{title}</CardTitle></CardHeader><CardContent className="space-y-2">{children}</CardContent></Card>;
 }
 
-function YesterdayCard({ card, backfillHref }: { card?: CardFor<"yesterday">; backfillHref: string }) {
+function YesterdayCard({ card, backfillHref }: { card?: CardFor<"yesterday">; backfillHref?: string }) {
   if (!card || card.state === "unavailable") return <CardShell title="昨日"><p>昨日简报暂不可用</p></CardShell>;
-  if (card.state === "missing") return <CardShell title="昨日"><p>昨日尚未记录</p><a className={buttonVariants({ variant: "outline", size: "sm" })} href={backfillHref}>补记昨日</a></CardShell>;
+  if (card.state === "missing") return <CardShell title="昨日"><p>昨日尚未记录</p>{backfillHref && <a className={buttonVariants({ variant: "outline", size: "sm" })} href={backfillHref}>补记昨日</a>}</CardShell>;
   const status = card.state === "rest" ? "昨日休息" : card.state === "early_closed" ? "昨日提前休息" : "昨日已记录";
   return <CardShell title="昨日"><p>{status}</p>{card.revenue !== null && <p className="text-2xl font-semibold">{formatWholeEuro(card.revenue)}</p>}</CardShell>;
-}
-
-function TodayCard({ card }: { card?: CardFor<"today"> }) {
-  if (!card || card.state === "unavailable") return <CardShell title="今日"><p>今日简报暂不可用</p></CardShell>;
-  const status = card.state === "missing" ? "今日尚未记账" : card.state === "rest" ? "今日休息" : card.state === "early_closed" ? "今日提前休息" : "今日已记录";
-  return <CardShell title="今日"><p>{status}</p>{card.revenue !== null && <p className="text-2xl font-semibold">{formatWholeEuro(card.revenue)}</p>}{card.weather && <p>{card.weather}</p>}</CardShell>;
 }
 
 function TomorrowCard({ card }: { card?: CardFor<"tomorrow"> }) {
@@ -33,13 +27,11 @@ function TomorrowCard({ card }: { card?: CardFor<"tomorrow"> }) {
   </CardShell>;
 }
 
-export function BriefingCards({ cards, yesterdayHref }: { cards: BriefingCard[]; yesterdayHref: string }) {
+export function BriefingCards({ cards, yesterdayHref }: { cards: BriefingCard[]; yesterdayHref?: string }) {
   const yesterday = cards.find((card): card is CardFor<"yesterday"> => card.card_type === "yesterday");
-  const today = cards.find((card): card is CardFor<"today"> => card.card_type === "today");
   const tomorrow = cards.find((card): card is CardFor<"tomorrow"> => card.card_type === "tomorrow");
-  return <div className="grid gap-4 md:grid-cols-3">
+  return <div className="grid gap-4 md:grid-cols-2">
     <YesterdayCard card={yesterday} backfillHref={yesterdayHref} />
-    <TodayCard card={today} />
     <TomorrowCard card={tomorrow} />
   </div>;
 }

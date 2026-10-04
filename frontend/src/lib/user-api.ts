@@ -1,6 +1,6 @@
 import type { QueryClient } from "@tanstack/react-query";
-import { api } from "@/api/client";
-import type { AccessibleStore, CategoryDescriptor, DatabaseResponse, LedgerStatus } from "@/api/types";
+import { api, ApiError } from "@/api/client";
+import type { AccessibleStore, CategoryDescriptor, DatabaseResponse, LedgerStatus, RecordSnapshot } from "@/api/types";
 
 export const categoryCatalogKey = (storeId: number, start: string, end = start) => ["categoryCatalog", storeId, start, end] as const;
 export const incomeConfigKey = (storeId: number) => ["income-config", storeId, "current"] as const;
@@ -12,6 +12,15 @@ export const chartsKey = (storeId: number, query: string) => ["charts", storeId,
 export const databaseKey = (storeId: number, query: string) => ["database", "records", storeId, query] as const;
 
 const DATABASE_PAGE_SIZE = 200;
+
+export async function loadLedgerRecord(storeId: number, date: string, signal?: AbortSignal): Promise<RecordSnapshot | null> {
+  try {
+    return await api<RecordSnapshot>(`/ledger/${storeId}/${date}`, { signal });
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return null;
+    throw error;
+  }
+}
 
 async function loadRecordPages(
   storeId: number,

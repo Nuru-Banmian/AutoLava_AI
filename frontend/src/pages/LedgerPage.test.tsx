@@ -6,6 +6,7 @@ import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LedgerPage } from "@/pages/LedgerPage";
+import type { LedgerBody } from "@/api/types";
 import { StoreProvider, useStore } from "@/stores/StoreProvider";
 import { LedgerForm } from "@/components/LedgerForm";
 import { weatherOptions } from "@/test/weather-options";
@@ -90,6 +91,15 @@ const singleConfig = {
 };
 
 describe("LedgerPage", () => {
+  it("retries a failed initial daily ledger query without treating it as a missing record", async () => {
+    let failing = true;
+    renderLedger([http.get("/api/ledger/1/:date", () => failing ? HttpResponse.json({ detail: "Unavailable" }, { status: 500 }) : HttpResponse.json({ detail: "not found" }, { status: 404 }))]);
+    expect(await screen.findByRole("alert")).toHaveTextContent("服务器暂时不可用");
+    expect(screen.queryByRole("button", { name: "保存今日记录" })).not.toBeInTheDocument();
+    failing = false;
+    fireEvent.click(screen.getByRole("button", { name: "重试台账" }));
+    expect(await screen.findByRole("button", { name: "保存今日记录" })).toBeInTheDocument();
+  });
   it("uses a valid date query parameter for the visible date and API requests", async () => {
     const requestedDates = new Set<string>();
     renderLedger([
@@ -463,6 +473,30 @@ describe("LedgerPage", () => {
     await waitFor(() => expect(screen.getByLabelText("当前位置")).toHaveTextContent("/database"));
   });
 
+  it("keeps new input after a records-launched pending save instead of returning and discarding it", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    renderLedger([http.put("/api/ledger/1/:date", async () => { await gate; return HttpResponse.json({ id: 9, date: "2026-07-15", daily_revenue: 1 }); })], {
+      pathname: "/ledger", search: "?date=2026-07-15", state: { returnToBusinessRecords: {
+        storeId: 1, recordMode: "month", range: { start: "2026-07-01", end: "2026-07-31" }, page: 2,
+        selectedDate: "2026-07-15", mobileRecordDate: null, scrollY: 100,
+      } },
+    });
+    fireEvent.change(await screen.findByLabelText("现金"), { target: { value: "1" } });
+    fillBlankLedgerAmounts();
+    fireEvent.click(screen.getByRole("button", { name: "保存今日记录" }));
+    expect(await screen.findByRole("button", { name: "保存中…" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("现金"), { target: { value: "99" } });
+    release();
+    expect(await screen.findByRole("status")).toHaveTextContent("保存成功");
+    await waitFor(() => expect(screen.getByRole("button", { name: "保存今日记录" })).toBeEnabled());
+    expect(screen.getByLabelText("当前位置")).toHaveTextContent("/ledger");
+    expect(screen.getByLabelText("现金")).toHaveValue("99");
+    const event = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
   it("stays on the ledger when the saved date is outside the source record range", async () => {
     renderLedger([
       http.put("/api/ledger/1/:date", () => HttpResponse.json({ id: 9, date: "2026-07-15", daily_revenue: 1 })),
@@ -673,6 +707,61 @@ describe("LedgerPage", () => {
       window.dispatchEvent(event);
       expect(event.defaultPrevented).toBe(false);
     });
+  });
+
+  it("clears operating amounts after saving rest and allows navigation without a false draft warning", async () => {
+    let saved = false;
+    renderLedger([
+      http.get("/api/ledger/1/:date", () => HttpResponse.json(saved ? { ...recordSnapshot(0), is_open: "休息", wash_count: 0 } : recordSnapshot(12))),
+      http.put("/api/ledger/1/:date", async ({ request }) => {
+        const body = await request.json() as LedgerBody;
+        expect(body.is_open).toBe("休息");
+        expect(body.items.map((item) => item.amount)).toEqual([0, 0, 0]);
+        saved = true;
+        return HttpResponse.json({ ...recordSnapshot(0), is_open: "休息", wash_count: 0 });
+      }),
+    ]);
+    await screen.findByRole("button", { name: "保存修改" });
+    fireEvent.change(screen.getByLabelText("状态"), { target: { value: "休息" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("保存成功");
+    await waitFor(() => expect(screen.getByLabelText("现金")).toHaveValue("0"));
+    const event = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "选择台账日期：2026年7月15日" }));
+    fireEvent.click(screen.getByRole("button", { name: "2026年7月13日" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("preserves a new operating draft entered while a rest save is pending", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let saved = false;
+    renderLedger([
+      http.get("/api/ledger/1/:date", () => HttpResponse.json(saved ? { ...recordSnapshot(0), is_open: "休息", wash_count: 0 } : recordSnapshot(12))),
+      http.put("/api/ledger/1/:date", async () => {
+        await gate;
+        saved = true;
+        return HttpResponse.json({ ...recordSnapshot(0), is_open: "休息", wash_count: 0 });
+      }),
+    ]);
+    await screen.findByRole("button", { name: "保存修改" });
+    fireEvent.change(screen.getByLabelText("状态"), { target: { value: "休息" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+    expect(await screen.findByRole("button", { name: "保存中…" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("状态"), { target: { value: "营业" } });
+    fireEvent.change(screen.getByLabelText("现金"), { target: { value: "99" } });
+    fireEvent.change(screen.getByLabelText("事件"), { target: { value: "新的营业草稿" } });
+    release();
+    expect(await screen.findByRole("status")).toHaveTextContent("保存成功");
+    await waitFor(() => expect(screen.getByRole("button", { name: "保存修改" })).toBeEnabled());
+    expect(screen.getByLabelText("状态")).toHaveValue("营业");
+    expect(screen.getByLabelText("现金")).toHaveValue("99");
+    expect(screen.getByLabelText("事件")).toHaveValue("新的营业草稿");
+    const event = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
   });
 
   it("waits for the post-save record before absorbing delayed automatic weather", async () => {

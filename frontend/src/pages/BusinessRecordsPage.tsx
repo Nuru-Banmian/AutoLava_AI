@@ -31,6 +31,7 @@ export function BusinessRecordsPage() {
   const navigate = useNavigate();
   const today = selected ? storeLocalToday(selected) : "1970-01-01";
   const isAdmin = user?.role === "admin";
+  const canWrite = selected?.is_active !== false;
   const restored = useRef(restoredBusinessRecordsState(location.state, selected?.id)).current;
   const hasNavigationEnvelope = Boolean(
     location.state
@@ -243,7 +244,7 @@ export function BusinessRecordsPage() {
             {hasWindowData && visibleRecords.length === 0 && (
               <div className="grid gap-2 rounded-md border border-dashed p-4">
                 <p>暂无可查看记录</p>
-                <Link className="w-fit text-primary underline-offset-4 hover:underline" to={`/ledger?date=${today}`} onClick={(event) => { event.preventDefault(); editRecord(today); }}>补记记录</Link>
+                {canWrite && <Link className="w-fit text-primary underline-offset-4 hover:underline" to={`/ledger?date=${today}`} onClick={(event) => { event.preventDefault(); editRecord(today); }}>补记记录</Link>}
               </div>
             )}
           </div>
@@ -259,8 +260,8 @@ export function BusinessRecordsPage() {
             {selectedTableRow ? (
               <RecordDetailPanel
                 record={selectedTableRow}
-                canEdit
-                canDelete={isAdmin && selectedTableRow.id !== null}
+                canEdit={canWrite}
+                canDelete={canWrite && isAdmin && selectedTableRow.id !== null}
                 washCountEnabled={selected.wash_count_enabled ?? true}
                 timeZone={selected.timezone}
                 onEdit={editRecord}
@@ -273,7 +274,7 @@ export function BusinessRecordsPage() {
             ) : (
               <div className="grid gap-2 rounded-md border border-dashed p-4">
                 <p>暂无可查看记录</p>
-                {hasWindowData && (
+                {hasWindowData && canWrite && (
                   <Link className="w-fit text-primary underline-offset-4 hover:underline" to={`/ledger?date=${today}`} onClick={(event) => { event.preventDefault(); editRecord(today); }}>补记记录</Link>
                 )}
               </div>
@@ -286,8 +287,8 @@ export function BusinessRecordsPage() {
         <MobileRecordSheet
           open
           record={mobileRecord}
-          canEdit
-          canDelete={isAdmin && mobileRecord.id !== null}
+          canEdit={canWrite}
+          canDelete={canWrite && isAdmin && mobileRecord.id !== null}
           washCountEnabled={selected.wash_count_enabled ?? true}
           timeZone={selected.timezone}
           onEdit={editRecord}

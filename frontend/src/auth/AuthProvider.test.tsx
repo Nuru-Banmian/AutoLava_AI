@@ -67,7 +67,7 @@ describe("authenticated application shell", () => {
 
     renderTestRouter("/login");
 
-    expect(await screen.findByRole("heading", { name: "仪表盘" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "首页" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "登录" })).not.toBeInTheDocument();
   });
 
@@ -86,7 +86,7 @@ describe("authenticated application shell", () => {
     expect(screen.queryByLabelText("用户名")).not.toBeInTheDocument();
     await waitFor(() => expect(resolveMe).toBeDefined());
     resolveMe();
-    expect(await screen.findByRole("heading", { name: "仪表盘" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "首页" })).toBeInTheDocument();
   });
 
   it("shows the login form only after a delayed session check returns 401", async () => {
@@ -141,7 +141,7 @@ describe("authenticated application shell", () => {
     fireEvent.change(screen.getByLabelText("密码"), { target: { value: "long-password" } });
     fireEvent.click(screen.getByRole("button", { name: "登录" }));
 
-    expect(await screen.findByRole("heading", { name: "仪表盘" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "首页" })).toBeInTheDocument();
     expect(loginBody).toEqual({ username: "admin", password: "long-password" });
   });
 
@@ -196,7 +196,7 @@ describe("authenticated application shell", () => {
     fireEvent.click(await screen.findByRole("button", { name: "退出登录" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("退出失败，请重试");
-    expect(screen.getByRole("heading", { name: "仪表盘" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "首页" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "退出登录" })).toBeEnabled();
   });
 
@@ -312,7 +312,7 @@ describe("authenticated application shell", () => {
     );
     renderTestRouter("/admin");
 
-    expect(await screen.findByRole("heading", { name: "仪表盘" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "首页" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "管理中心" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "系统管理" })).not.toBeInTheDocument();
   });

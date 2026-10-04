@@ -423,7 +423,7 @@ for (const viewport of [
     const [mainBox, cardBox, statusAndWeatherBox, statusBox, weatherBox, firstIncomeBox, secondIncomeBox, washCountBox, eventBox] = await Promise.all([
       page.locator("main").boundingBox(), card.boundingBox(), statusAndWeatherGroup.boundingBox(), status.boundingBox(), weather.boundingBox(),
       firstIncome.boundingBox(), secondIncome.boundingBox(),
-      washCount.locator("xpath=..").boundingBox(), event.locator("xpath=..").boundingBox(),
+      washCount.boundingBox(), event.locator("xpath=..").boundingBox(),
     ]);
     for (const box of [mainBox, cardBox, statusAndWeatherBox, statusBox, weatherBox, firstIncomeBox, secondIncomeBox, washCountBox, eventBox]) expect(box).not.toBeNull();
     expect(statusBox!.height).toBeGreaterThanOrEqual(44);
@@ -436,10 +436,12 @@ for (const viewport of [
       expect(Math.abs(cardBox!.x + cardBox!.width / 2 - (mainBox!.x + mainBox!.width / 2))).toBeLessThanOrEqual(1);
       expect(Math.abs(statusBox!.y - weatherBox!.y)).toBeLessThanOrEqual(1);
       expect(Math.abs(firstIncomeBox!.y - secondIncomeBox!.y)).toBeLessThanOrEqual(1);
-      expect(Math.abs(washCountBox!.y - eventBox!.y)).toBeLessThanOrEqual(1);
+      expect(Math.abs(statusBox!.y - washCountBox!.y)).toBeLessThanOrEqual(1);
+      expect(eventBox!.y).toBeGreaterThan(firstIncomeBox!.y);
     } else {
-      expect(weatherBox!.y).toBeGreaterThanOrEqual(statusBox!.y + statusBox!.height + 8);
-      expect(secondIncomeBox!.y).toBeGreaterThanOrEqual(firstIncomeBox!.y + firstIncomeBox!.height + 8);
+      expect(Math.abs(statusBox!.y - weatherBox!.y)).toBeLessThanOrEqual(1);
+      expect(Math.abs(firstIncomeBox!.y - secondIncomeBox!.y)).toBeLessThanOrEqual(1);
+      expect(washCountBox!.y).toBeGreaterThanOrEqual(statusBox!.y + statusBox!.height + 8);
       expect(eventBox!.y).toBeGreaterThanOrEqual(washCountBox!.y + washCountBox!.height + 8);
       await expect.poll(() => page.evaluate(() => ({
         body: document.body.scrollWidth,
