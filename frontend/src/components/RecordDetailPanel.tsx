@@ -1,4 +1,5 @@
 import { isValid, parseISO } from "date-fns";
+import { ArrowLeft } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import type { RecordSnapshot } from "@/api/types";
@@ -18,6 +19,7 @@ export interface RecordDetailPanelProps {
   onEdit?(date: string): void;
   onDelete(trigger: HTMLButtonElement): void;
   mobile?: boolean;
+  onBack?(): void;
 }
 
 const statusClasses = {
@@ -53,6 +55,7 @@ export function RecordDetailPanel({
   onEdit,
   onDelete,
   mobile = false,
+  onBack,
 }: RecordDetailPanelProps) {
   const isUnrecorded = record.id === null;
   const composedItems = !isUnrecorded && record.income_mode === "composed" ? record.items : [];
@@ -75,14 +78,17 @@ export function RecordDetailPanel({
     }));
 
   return (
-    <Card className={mobile ? "border-0 shadow-none" : "overflow-hidden"}>
-      <CardHeader className={`flex-row flex-wrap items-center gap-2 space-y-0 ${mobile ? "p-1 pb-5 pr-14" : "p-5 pb-4"}`}>
-        <CardTitle className={mobile ? "text-2xl leading-tight" : "text-xl leading-tight"}>{formatBusinessRecordDate(record.date)}</CardTitle>
+    <Card className="overflow-hidden">
+      <CardHeader className={`space-y-0 ${mobile ? "grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2 p-3 pb-4" : "flex-row flex-wrap items-center gap-2 p-5 pb-4"}`}>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <CardTitle tabIndex={mobile ? -1 : undefined} className={mobile ? "text-base leading-snug" : "text-xl leading-tight"}>{formatBusinessRecordDate(record.date)}</CardTitle>
         <span className={`rounded-full px-2.5 py-1 text-sm font-medium ${isUnrecorded ? "bg-muted text-muted-foreground" : statusClasses[record.is_open]}`}>
           {status}
         </span>
+        </div>
+        {mobile && onBack && <Button type="button" variant="outline" className="h-11 gap-1 px-2 text-sm" onClick={onBack}><ArrowLeft className="size-4" aria-hidden="true" />返回记录</Button>}
       </CardHeader>
-      <CardContent className={mobile ? "grid gap-5 p-1 pt-0" : "grid gap-5 p-5 pt-0"}>
+      <CardContent className={mobile ? "grid gap-4 p-3 pt-0" : "grid gap-5 p-5 pt-0"}>
         <section aria-label="营业摘要" className="grid grid-cols-2 gap-3 text-sm">
           <div className={summaryItemClass}><p className="text-muted-foreground">营业额</p><p className={summaryValueClass}>{isUnrecorded ? "—" : formatWholeEuro(record.daily_revenue)}</p></div>
           <div className={summaryItemClass}><p className="text-muted-foreground">天气</p><p className={summaryValueClass}>{isUnrecorded ? "—" : record.weather_legacy ? `历史旧值：${record.weather}` : record.weather ?? "—"}</p></div>

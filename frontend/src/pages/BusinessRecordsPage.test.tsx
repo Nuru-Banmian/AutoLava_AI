@@ -127,6 +127,57 @@ afterEach(() => {
 afterAll(() => server.close());
 
 describe("BusinessRecordsPage", () => {
+  it("keeps the chosen analysis view when a linked date's records refresh in the background", async () => {
+    let revenue = 100;
+    server.use(
+      http.get("/api/database/1/records", () => HttpResponse.json(databaseResponse([{ ...record, daily_revenue: revenue }]))),
+      http.get("/api/charts/1", () => HttpResponse.json(chartsPayload)),
+    );
+    const view = renderPage("admin", "/database?date=2026-07-14");
+    await screen.findByRole("region", { name: "2026-07-14 营业记录详情" });
+    fireEvent.click(screen.getByRole("button", { name: "经营分析" }));
+    revenue = 200;
+    await view.client.invalidateQueries({ queryKey: ["database", "records", 1] });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    expect(screen.getByRole("button", { name: "经营分析" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("retains analysis amounts after a failed refresh and offers its own retry", async () => {
+    let failing = false;
+    server.use(
+      http.get("/api/database/1/records", () => HttpResponse.json(databaseResponse([record]))),
+      http.get("/api/charts/1", () => failing
+        ? HttpResponse.json({ detail: "offline" }, { status: 503 })
+        : HttpResponse.json(chartsPayload)),
+    );
+    const view = renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "经营分析" }));
+    await screen.findByText("现金");
+    failing = true;
+    await view.client.invalidateQueries({ queryKey: ["charts", 1] });
+    expect(await screen.findByText("刷新经营分析失败，当前显示上次取得的数据。")).toBeInTheDocument();
+    expect(screen.getAllByText("现金").length).toBeGreaterThan(0);
+    failing = false;
+    fireEvent.click(screen.getByRole("button", { name: "重试经营分析" }));
+    await waitFor(() => expect(screen.queryByText("刷新经营分析失败，当前显示上次取得的数据。")).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "记录" }));
+    expect(screen.getByRole("button", { name: "2026年7月14日 星期二，营业，€100" })).toBeInTheDocument();
+  });
+
+  it("opens a valid linked date on its fifteen-date page and returns focus to that record", async () => {
+    server.use(
+      http.get("/api/database/1/records", () => HttpResponse.json(databaseResponse([record]))),
+      http.get("/api/charts/1", () => HttpResponse.json(chartsPayload)),
+    );
+    window.scrollTo = vi.fn();
+    renderPage("admin", "/database?date=2026-07-01");
+    const detail = await screen.findByRole("region", { name: "2026-07-01 营业记录详情" });
+    expect(within(detail).getByText("未录入", { exact: true })).toBeInTheDocument();
+    expect(screen.getByText("第 2 / 2 页")).toBeInTheDocument();
+    fireEvent.click(within(detail).getByRole("button", { name: "返回记录" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "2026年7月1日 星期三，未录入，—" })).toHaveFocus());
+  });
+
   it("waits for the current window before showing missing dates and retries an initial failure", async () => {
     let release!: () => void;
     const pending = new Promise<void>((resolve) => { release = resolve; });
@@ -235,7 +286,7 @@ describe("BusinessRecordsPage", () => {
     await screen.findByRole("heading", { name: "2026年6月15日 星期一" });
     fireEvent.click(screen.getByRole("button", { name: "下一页" }));
     fireEvent.click(screen.getByRole("button", { name: "2026年6月15日 星期一，营业，€100" }));
-    const mobileDetail = await screen.findByRole("dialog", { name: "2026-06-15 营业记录详情" });
+    const mobileDetail = await screen.findByRole("region", { name: "2026-06-15 营业记录详情" });
     fireEvent.click(within(mobileDetail).getByRole("link", { name: "修改这天记录" }));
 
     const routeState = screen.getByLabelText("路由状态");
@@ -284,14 +335,13 @@ describe("BusinessRecordsPage", () => {
     expect(await screen.findByText("第 2 / 2 页")).toBeInTheDocument();
     expect(recordRequests[0].searchParams.get("start")).toBe("2026-06-01");
     expect(recordRequests[0].searchParams.get("end")).toBe("2026-06-30");
-    expect(screen.getByRole("heading", { name: "2026年6月15日 星期一" })).toBeInTheDocument();
-    expect(await screen.findByRole("dialog", { name: "2026-06-15 营业记录详情" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "2026-06-15 营业记录详情" })).toHaveTextContent("2026年6月15日 星期一");
     await waitFor(() => {
       expect(chartRequests.at(-1)?.searchParams.get("start")).toBe("2026-06-01");
       expect(chartRequests.at(-1)?.searchParams.get("end")).toBe("2026-06-30");
     });
     expect(window.scrollTo).toHaveBeenCalledWith({ top: 320 });
-    await waitFor(() => expect(screen.getByLabelText("路由状态")).toHaveTextContent("/database|null"));
+    await waitFor(() => expect(screen.getByLabelText("路由状态")).toHaveTextContent("/database?date=2026-06-15|null"));
   });
 
   it("ignores and consumes an invalid restore snapshot", async () => {
@@ -330,10 +380,6 @@ describe("BusinessRecordsPage", () => {
     expect(await screen.findByRole("heading", { name: "2026年7月14日 星期二" })).toBeInTheDocument();
     expect(recordRequests[0]).toBe("/api/database/1/records?start=2026-07-01&end=2026-07-31&page=1&page_size=200");
     expect(screen.getByText("洗车 8 辆")).toBeInTheDocument();
-    const desktopGrid = [...document.querySelectorAll("div")].find((element) => (
-      element.className.includes("lg:grid-cols-[minmax(0,1fr)_minmax(30rem,32rem)]")
-    ));
-    expect(desktopGrid).toHaveClass("lg:grid-cols-[minmax(0,1fr)_minmax(30rem,32rem)]");
     const table = screen.getByRole("table");
     expect(within(table).getByRole("row", { name: /2026年7月17日 星期五 未录入 — —/ })).toBeInTheDocument();
   });
@@ -349,13 +395,13 @@ describe("BusinessRecordsPage", () => {
     fireEvent.click(within(screen.getByRole("table")).getByText("2026年7月17日 星期五").closest("tr")!);
 
     const detailTitle = await screen.findByRole("heading", { name: "2026年7月17日 星期五" });
-    const detailCard = detailTitle.parentElement?.parentElement;
+    const detailCard = detailTitle.closest<HTMLElement>("[data-slot='card']") ?? detailTitle.parentElement?.parentElement?.parentElement;
     expect(within(detailCard!).getByText("未录入", { exact: true })).toBeInTheDocument();
     expect(within(detailCard!).getByRole("link", { name: "修改这天记录" })).toHaveAttribute("href", "/ledger?date=2026-07-17");
     expect(within(detailCard!).queryByRole("button", { name: "删除记录" })).not.toBeInTheDocument();
   });
 
-  it("opens an editable mobile sheet for an unrecorded date", async () => {
+  it("opens an editable mobile detail for an unrecorded date", async () => {
     server.use(
       http.get("/api/database/1/records", () => HttpResponse.json(databaseResponse([record]))),
       http.get("/api/charts/1", () => HttpResponse.json(chartsPayload)),
@@ -365,7 +411,7 @@ describe("BusinessRecordsPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "2026年7月17日 星期五，未录入，—" }));
 
-    const sheet = await screen.findByRole("dialog");
+    const sheet = await screen.findByRole("region", { name: "2026-07-17 营业记录详情" });
     expect(within(sheet).getByText("未录入", { exact: true })).toBeInTheDocument();
     expect(within(sheet).getByRole("link", { name: "修改这天记录" })).toHaveAttribute("href", "/ledger?date=2026-07-17");
     expect(within(sheet).queryByRole("button", { name: "删除记录" })).not.toBeInTheDocument();
@@ -380,7 +426,7 @@ describe("BusinessRecordsPage", () => {
     await screen.findByRole("heading", { name: "2026年7月14日 星期二" });
 
     fireEvent.click(screen.getByRole("button", { name: "2026年7月14日 星期二，营业，€100" }));
-    const sheet = await screen.findByRole("dialog", { name: "2026-07-14 营业记录详情" });
+    const sheet = await screen.findByRole("region", { name: "2026-07-14 营业记录详情" });
     fireEvent.click(within(sheet).getByRole("button", { name: "删除记录" }));
 
     expect(await screen.findByRole("alertdialog", { name: "确认永久删除记录？" })).toBeInTheDocument();
@@ -430,8 +476,10 @@ describe("BusinessRecordsPage", () => {
       http.get("/api/charts/1", () => HttpResponse.json(chartsPayload)),
     );
     const first = renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "经营分析" }));
     expect(await screen.findByText("现金")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "记录" }));
+    expect(await screen.findByRole("button", { name: "重试" })).toBeInTheDocument();
     first.unmount();
 
     server.use(
@@ -440,6 +488,7 @@ describe("BusinessRecordsPage", () => {
     );
     renderPage();
     expect(await screen.findByRole("heading", { name: "2026年7月14日 星期二" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "经营分析" }));
     expect(await screen.findByRole("button", { name: "重试经营分析" })).toBeInTheDocument();
   });
 
@@ -453,8 +502,7 @@ describe("BusinessRecordsPage", () => {
     await waitFor(() => expect(screen.getAllByText("暂无可查看记录")).toHaveLength(2));
     expect(screen.getAllByRole("link", { name: "补记记录" })).toHaveLength(2);
     expect(screen.getAllByRole("link", { name: "补记记录" })[0]).toHaveAttribute("href", "/ledger?date=2026-07-17");
-    expect(screen.getByText("经营分析")).toBeInTheDocument();
-    expect(screen.getByText("现金")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "经营分析" })).toBeInTheDocument();
     fireEvent.click(screen.getAllByRole("link", { name: "补记记录" })[0]);
     expect(screen.getByLabelText("路由状态")).toHaveTextContent("/ledger?date=2026-07-17");
     expect(screen.getByLabelText("路由状态")).toHaveTextContent('"returnToBusinessRecords"');
@@ -497,7 +545,7 @@ describe("BusinessRecordsPage", () => {
     expect(screen.queryByRole("button", { name: "2026年7月14日 星期二，营业，€100" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "2026年7月14日 星期二，未录入，—" })).toBeInTheDocument();
     expect(storeTwoRequests[0].pathname + storeTwoRequests[0].search).toBe("/api/database/2/records?start=2026-07-01&end=2026-07-31&page=1&page_size=200");
-    expect(screen.queryByRole("dialog", { name: "2026-07-14 营业记录详情" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "2026-07-14 营业记录详情" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "确认永久删除记录？" })).not.toBeInTheDocument();
     releaseOld();
   });
@@ -564,7 +612,9 @@ describe("BusinessRecordsPage", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("删除成功");
     expect((await screen.findAllByText("暂无可查看记录")).length).toBeGreaterThan(0);
     await waitFor(() => expect(chartRequests).toBe(2));
-    expect(screen.queryByRole("heading", { name: "2026年7月14日 星期二" })).not.toBeInTheDocument();
+    const remainingDetail = screen.getByRole("heading", { name: "2026年7月14日 星期二" }).parentElement?.parentElement?.parentElement;
+    expect(remainingDetail).toHaveTextContent("未录入");
+    expect(within(remainingDetail!).queryByRole("button", { name: "删除记录" })).not.toBeInTheDocument();
     expect(screen.queryByText(/历史|回滚/)).not.toBeInTheDocument();
   });
 

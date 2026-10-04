@@ -30,9 +30,10 @@ export function DeleteRecordDialog({ storeId, record, open, returnFocusTo, onOpe
   const currentScope = useRef<DeleteScope>({ storeId, date: targetDate ?? "", identity: record?.identity ?? "", revision: record?.revision ?? 0 });
   currentScope.current = { storeId, date: targetDate ?? "", identity: record?.identity ?? "", revision: record?.revision ?? 0 };
   const [latest, setLatest] = useState<RecordSnapshot | null | undefined>(undefined);
+  const deletionCompleted = useRef(false);
 
   useEffect(() => {
-    if (open) { setMessage(""); setLatest(undefined); }
+    if (open) { setMessage(""); setLatest(undefined); deletionCompleted.current = false; }
   }, [open, targetDate]);
 
   const matchesCurrentScope = (scope: DeleteScope) => (
@@ -44,11 +45,12 @@ export function DeleteRecordDialog({ storeId, record, open, returnFocusTo, onOpe
     mutationFn: (scope: DeleteScope) => api<void>(`/ledger/${scope.storeId}/${scope.date}`, { method: "DELETE", body: JSON.stringify({ expected_identity: scope.identity, expected_revision: scope.revision }) }),
     onSuccess: async (_data, scope) => {
       if (matchesCurrentScope(scope)) {
+        deletionCompleted.current = true;
         setMessage("删除成功");
         onOpenChange(false);
-        onCompleted();
       }
       await invalidateUserData(client, scope.storeId);
+      if (deletionCompleted.current && currentScope.current.storeId === scope.storeId) onCompleted();
     },
     onError: (error, scope) => {
       if (!matchesCurrentScope(scope)) return;
@@ -70,7 +72,7 @@ export function DeleteRecordDialog({ storeId, record, open, returnFocusTo, onOpe
     {record && <AlertDialog open={open} onOpenChange={handleOpenChange}>
       <AlertDialogContent onCloseAutoFocus={(event) => {
         event.preventDefault();
-        returnFocusTo?.focus();
+        if (!deletionCompleted.current) returnFocusTo?.focus();
       }}>
         <AlertDialogHeader>
           <AlertDialogTitle>确认永久删除记录？</AlertDialogTitle>

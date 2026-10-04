@@ -87,7 +87,7 @@ describe("BusinessAnalysisCard", () => {
     expect((await screen.findAllByText("€100")).length).toBeGreaterThan(0);
     fail = true;
     await client.invalidateQueries({ queryKey: ["charts", 1] });
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("刷新失败"));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("刷新经营分析失败，当前显示上次取得的数据。"));
     expect(screen.getAllByText("€100").length).toBeGreaterThan(0);
   });
 

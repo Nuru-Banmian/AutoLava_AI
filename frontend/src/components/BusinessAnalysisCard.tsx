@@ -48,7 +48,7 @@ export function BusinessAnalysisCard({ storeId, range }: BusinessAnalysisCardPro
   const charts = useQuery({
     queryKey: chartsKey(storeId, queryString),
     enabled: resolved !== null,
-    queryFn: () => api<ChartsResponse>(`/charts/${storeId}?${queryString}`),
+    queryFn: ({ signal }) => api<ChartsResponse>(`/charts/${storeId}?${queryString}`, { signal }),
   });
   const data = charts.data;
   const trend = data ? (data.range.bucket === "day"
@@ -65,7 +65,8 @@ export function BusinessAnalysisCard({ storeId, range }: BusinessAnalysisCardPro
       {!resolved && <p role="alert">请选择有效的日期范围</p>}
       {charts.isLoading && !data && <p role="status">加载经营分析…</p>}
       {charts.error && !data && <div role="alert" className="flex items-center gap-3"><span>经营分析加载失败</span><Button type="button" size="sm" variant="outline" onClick={() => void charts.refetch()}>重试经营分析</Button></div>}
-      {charts.isRefetchError && data && <p role="alert">刷新失败</p>}
+      {charts.isFetching && data && !charts.isError && <p role="status">正在刷新经营分析…</p>}
+      {charts.isRefetchError && data && <div role="alert" className="grid gap-2"><p>刷新经营分析失败，当前显示上次取得的数据。</p><Button type="button" className="w-fit" variant="outline" onClick={() => void charts.refetch()}>重试经营分析</Button></div>}
       {data && <>
         {data.income_summary.includes_settlement_income ? (
           <div className="grid min-w-0 gap-2 sm:grid-cols-3" aria-label="月度收入汇总" role="region">

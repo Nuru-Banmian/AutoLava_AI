@@ -222,6 +222,7 @@ test("settlement corrections feed current partial-month analysis without narrow-
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 
   await page.goto("/database");
+  await page.getByRole("button", { name: "经营分析", exact: true }).click();
   const summary = page.getByRole("region", { name: "月度收入汇总" });
   await expect(summary.getByText("日常营业额")).toBeVisible();
   await expect(summary.getByText("公司结算收入")).toBeVisible();

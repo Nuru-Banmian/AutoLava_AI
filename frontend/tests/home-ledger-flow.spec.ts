@@ -325,7 +325,7 @@ test("a records-launched save retains additional input entered before its respon
   await waitForSaved(page);
   await navigation(page, 390).getByRole("link", { name: "记录", exact: true }).click();
   await page.locator('main button[aria-label^="2026年7月17日"]').first().click();
-  await page.getByRole("dialog").getByRole("link", { name: "修改这天记录" }).click();
+  await page.getByRole("region", { name: `${today} 营业记录详情` }).getByRole("link", { name: "修改这天记录" }).click();
   await page.getByLabel(categories[0].name, { exact: true }).fill("150");
   let release!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; });
@@ -357,7 +357,7 @@ test("an archived store's homepage opens the recorded date without edit or delet
   await page.route("**/api/stores/accessible", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify([{ id: 1, name: "Archived synthetic store", timezone: "Europe/Berlin", is_active: false, wash_count_enabled: true }]) }));
   await page.goto("/");
   await homeState(page).getByRole("link", { name: "查看今日台账" }).click();
-  const detail = page.getByRole("dialog", { name: `${today} 营业记录详情` });
+  const detail = page.getByRole("region", { name: `${today} 营业记录详情` });
   await expect(detail.getByText("€120", { exact: true }).first()).toBeVisible();
   await expect(detail.getByRole("link", { name: "修改这天记录" })).toHaveCount(0);
   await expect(detail.getByRole("button", { name: "删除记录" })).toHaveCount(0);
