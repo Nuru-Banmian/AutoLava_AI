@@ -995,6 +995,8 @@ export interface components {
             daily: components["schemas"]["DailyRevenue"][];
             /** Excluded Categories */
             excluded_categories: (components["schemas"]["PrimaryCategory"] | components["schemas"]["SettlementComposition"])[];
+            /** Income Composition */
+            income_composition?: (components["schemas"]["PrimaryCategory"] | components["schemas"]["SettlementComposition"] | components["schemas"]["UnclassifiedComposition"])[];
             income_summary: components["schemas"]["IncomeSummary"];
             kpis: components["schemas"]["ChartKpis"];
             ledger_comparison?: components["schemas"]["LedgerComparison"] | null;
@@ -1598,6 +1600,18 @@ export interface components {
         TimezoneResponse: {
             /** Timezone */
             timezone: string;
+        };
+        /** UnclassifiedComposition */
+        UnclassifiedComposition: {
+            /** Amount */
+            amount: number;
+            /** Category Id */
+            category_id?: null;
+            /**
+             * Category Name
+             * @constant
+             */
+            category_name: "未分类营业额";
         };
         /** UserCreate */
         UserCreate: {

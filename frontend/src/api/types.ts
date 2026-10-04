@@ -48,6 +48,7 @@ export type WeatherResponse = Schema["WeatherResponse"];
 
 export type ChartBucket = Schema["ChartRange"]["bucket"];
 export type CategoryComposition = Schema["PrimaryCategory"] | Schema["SettlementComposition"];
+export type IncomeCompositionItem = CategoryComposition | Schema["UnclassifiedComposition"];
 export type ChartComparisonKpis = Schema["ChartComparisonKpis"];
 export type IncomeSummary = Schema["IncomeSummary"];
 export type MonthlyRevenue = Schema["MonthlyRevenue"];

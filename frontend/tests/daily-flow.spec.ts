@@ -197,6 +197,9 @@ async function mockMergedFlow(
           total_income: 100, includes_settlement_income: false,
         },
         classified_included_total: 100,
+        income_composition: categories.slice(0, 7).map((category, index) => ({
+          category_id: category.id, category_name: category.name, amount: index === 0 ? 40 : 10,
+        })),
         daily: [{ date: "2026-07-14", revenue: 100 }],
         categories: categories.slice(0, 7).map((category, index) => ({
           category_id: category.id,

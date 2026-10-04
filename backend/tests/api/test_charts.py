@@ -219,6 +219,7 @@ async def test_charts_returns_stable_empty_result(auth_client, db_session, store
         "classified_included_total": 0,
         "daily": [],
         "categories": [],
+        "income_composition": [],
         "excluded_categories": [],
         "monthly": [],
         "weather": [],

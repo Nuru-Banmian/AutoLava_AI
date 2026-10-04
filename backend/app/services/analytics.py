@@ -276,7 +276,22 @@ class AnalyticsService:
             company_settlement_enabled or confirmed_settlement_income > 0
         )
         total_income = daily_ledger_revenue + confirmed_settlement_income
+        # Complete composition is independent of the legacy category filter.
+        # Keep historical item snapshots and the existing classified subtotal intact.
+        income_composition = list(included_rows)
+        unclassified_revenue = daily_ledger_revenue - classified_included_total
+        if unclassified_revenue:
+            income_composition.append({
+                "category_id": None,
+                "category_name": "未分类营业额",
+                "amount": unclassified_revenue,
+            })
         if confirmed_settlement_income:
+            income_composition.append({
+                "category_id": None,
+                "category_name": "公司结算",
+                "amount": confirmed_settlement_income,
+            })
             compositions.append(
                 {
                     "category_id": None,
@@ -370,6 +385,7 @@ class AnalyticsService:
             },
             "daily": _daily_revenue_rows(records),
             "categories": compositions,
+            "income_composition": income_composition,
             "excluded_categories": excluded_rows,
             "monthly": _monthly_revenue_rows(
                 monthly_totals,

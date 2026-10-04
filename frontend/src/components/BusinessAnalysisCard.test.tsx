@@ -19,6 +19,7 @@ function payload(overrides: Partial<ChartsResponse> = {}): ChartsResponse {
     classified_included_total: 100,
     daily: [{ date: "2026-07-01", revenue: 100 }],
     categories: [{ category_id: 1, category_name: "现金收入", amount: 100 }],
+    income_composition: [{ category_id: 1, category_name: "现金收入", amount: 100 }],
     excluded_categories: [{ category_id: 2, category_name: "代收款", amount: 20 }],
     monthly: [{ month: "2026-07", revenue: 100, daily_ledger_revenue: 100, confirmed_settlement_income: 0, monthly_total_income: 100 }],
     weather: [],
@@ -119,7 +120,7 @@ describe("BusinessAnalysisCard", () => {
     expect(screen.queryByLabelText("经营分析日期范围")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("分析开始日期")).not.toBeInTheDocument();
     expect(screen.getByText("比较区间：2026-06-01 至 2026-06-17")).toBeInTheDocument();
-    expect(screen.getByText(/按日/)).toBeInTheDocument();
+    expect(screen.getByText(/^当前区间：.*（按日）$/)).toBeInTheDocument();
     expect(screen.getByText("经营日")).toBeInTheDocument();
     expect(screen.getByText("经营日均台账营业额")).toBeInTheDocument();
     expect(screen.getByText("代收款")).toBeInTheDocument();
@@ -136,7 +137,7 @@ describe("BusinessAnalysisCard", () => {
 
     const first = renderCard();
     expect(await screen.findByText("该范围暂无经营数据")).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "收入构成" })).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "收入构成" })).toHaveTextContent("暂无收入构成");
     first.unmount();
 
     server.use(http.get("/api/charts/1", () => HttpResponse.json({ detail: "failed" }, { status: 500 })));
@@ -217,6 +218,10 @@ describe("BusinessAnalysisCard", () => {
         includes_settlement_income: true,
       },
       classified_included_total: 420,
+      income_composition: [
+        { category_id: 1, category_name: "现金收入", amount: 300 },
+        { category_id: null, category_name: "公司结算", amount: 120 },
+      ],
       categories: [
         { category_id: 1, category_name: "现金收入", amount: 300 },
         { category_id: null, category_name: "公司结算", amount: 120 },
@@ -225,11 +230,11 @@ describe("BusinessAnalysisCard", () => {
     renderCard();
 
     expect(await screen.findByText("日常营业额")).toBeInTheDocument();
-    expect(screen.getByText("公司结算收入")).toBeInTheDocument();
+    expect(screen.getByText("已确认公司结算收入")).toBeInTheDocument();
     expect(screen.getByText("月度总收入")).toBeInTheDocument();
     expect(screen.getAllByText("€300")).toHaveLength(2);
     expect(screen.getAllByText("€120")).toHaveLength(2);
-    expect(screen.getByText("€420")).toBeInTheDocument();
+    expect(screen.getAllByText("€420")).toHaveLength(2);
     expect(screen.getByLabelText("收入分类")).toHaveTextContent("公司结算");
     expect(screen.getByLabelText("公司结算 占比 28.6%")).toBeInTheDocument();
   });

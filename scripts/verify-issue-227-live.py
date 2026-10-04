@@ -97,7 +97,8 @@ def expected(rows: list[dict]) -> dict:
     }
 
 
-def main() -> None:
+def main(*, prepare=None, test_match="grouped-performance-live.spec.ts", artifacts=ARTIFACTS) -> None:
+    ARTIFACTS = artifacts
     if not PYTHON.is_file():
         raise RuntimeError("backend/.venv/Scripts/python.exe is required")
     npx = shutil.which("npx.cmd") or shutil.which("npx")
@@ -201,7 +202,8 @@ def main() -> None:
                 for field in ["weekday", "weather"]:
                     sort_key = "weekday" if field == "weekday" else "weather"
                     assert sorted(actual[field], key=lambda row: row[sort_key]) == sorted(scope["expected"][field], key=lambda row: row[sort_key]), f"Independent public HTTP calculation differs: {scope['month']} {field}"
-            manifest = {"stores": stores, "scopes": scopes, "weather_provider": "no-data synthetic provider; no supplier calls"}
+            extra = prepare(api, database) if prepare else {}
+            manifest = {"stores": stores, "scopes": scopes, "weather_provider": "no-data synthetic provider; no supplier calls", **extra}
             manifest_path = ARTIFACTS / "fixture-and-http-evidence.json"
             manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
             env["AUTOLAVA_GROUPS_MANIFEST"] = str(manifest_path)
@@ -212,7 +214,7 @@ def main() -> None:
             web_process = launch([npx, "vite", "--config", str(vite_config), "--host", "127.0.0.1", "--port", str(web_port), "--strictPort"], FRONTEND, "vite")
             wait_ready(web_process, f"http://127.0.0.1:{web_port}/")
             playwright_config = runtime / "playwright.config.mts"
-            playwright_config.write_text("import { defineConfig } from " + json.dumps((FRONTEND / "node_modules/@playwright/test/index.mjs").as_posix()) + ";\nexport default defineConfig(" + json.dumps({"testDir": str(FRONTEND / "tests"), "testMatch": "grouped-performance-live.spec.ts", "workers": 1, "timeout": 90000, "reporter": [["line"], ["json", {"outputFile": str(ARTIFACTS / "playwright-results.json")}]], "outputDir": str(ARTIFACTS / "browser-results"), "use": {"baseURL": f"http://127.0.0.1:{web_port}", "trace": "retain-on-failure"}}) + ");\n", encoding="utf-8")
+            playwright_config.write_text("import { defineConfig } from " + json.dumps((FRONTEND / "node_modules/@playwright/test/index.mjs").as_posix()) + ";\nexport default defineConfig(" + json.dumps({"testDir": str(FRONTEND / "tests"), "testMatch": test_match, "workers": 1, "timeout": 90000, "reporter": [["line"], ["json", {"outputFile": str(ARTIFACTS / "playwright-results.json")}]], "outputDir": str(ARTIFACTS / "browser-results"), "use": {"baseURL": f"http://127.0.0.1:{web_port}", "trace": "retain-on-failure"}}) + ");\n", encoding="utf-8")
             print("Independent public HTTP calculations passed for three synthetic scopes; running five-width real browser checks.", flush=True)
             run([npx, "playwright", "test", "--config", str(playwright_config)], FRONTEND)
             print(f"Live grouped chart validation passed. Evidence: {ARTIFACTS}", flush=True)
