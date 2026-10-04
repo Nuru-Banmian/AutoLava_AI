@@ -58,6 +58,7 @@ const chartsPayload: ChartsResponse = {
   classified_included_total: 100,
   daily: [{ date: "2026-07-14", revenue: 100 }],
   categories: [{ category_id: 1, category_name: "现金", amount: 100 }],
+  income_composition: [{ category_id: 1, category_name: "现金", amount: 100 }],
   excluded_categories: [],
   monthly: [{ month: "2026-07", revenue: 100, daily_ledger_revenue: 100, confirmed_settlement_income: 0, monthly_total_income: 100 }],
   weather: [],

@@ -154,7 +154,7 @@ async function mockSettlementAnalysis(page: Page) {
           total_income: 900 + confirmed,
           includes_settlement_income: true,
         },
-        classified_included_total: confirmed,
+        classified_included_total: confirmed, income_composition: [{ category_id: null, category_name: "未分类营业额", amount: 900 }, ...(confirmed > 0 ? [{ category_id: null, category_name: "公司结算", amount: confirmed }] : [])],
         daily: [{ date: "2026-07-10", revenue: 900 }],
         categories: confirmed > 0
           ? [{ category_id: null, category_name: "公司结算", amount: confirmed }]
@@ -225,7 +225,7 @@ test("settlement corrections feed current partial-month analysis without narrow-
   await page.getByRole("button", { name: "经营分析", exact: true }).click();
   const summary = page.getByRole("region", { name: "月度收入汇总" });
   await expect(summary.getByText("日常营业额")).toBeVisible();
-  await expect(summary.getByText("公司结算收入")).toBeVisible();
+  await expect(summary.getByText("已确认公司结算收入")).toBeVisible();
   await expect(summary.getByText("月度总收入")).toBeVisible();
   await expect(summary.getByText("€900")).toBeVisible();
   await expect(summary.getByText("€250")).toBeVisible();

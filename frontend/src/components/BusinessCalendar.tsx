@@ -19,9 +19,12 @@ export function BusinessCalendar({ data, today, onSelectDate }: {
       : records.get(date)?.is_open ?? (records.has(date) ? "已记录" : "未录入");
   const label = (date: string) => `${date} ${state(date)}${available.includes(date) ? ` ${records.has(date) ? formatWholeEuro(records.get(date)!.revenue) : "—"}` : ""}`;
 
-  return <section role="region" aria-label="营业日历" className="grid w-full min-w-0 max-w-[420px] gap-2">
+  return <section role="region" aria-label="营业日历" className="flex w-full min-w-0 flex-col gap-3 rounded-lg border bg-white p-2.5 sm:p-3 lg:row-span-3 lg:grid lg:grid-rows-subgrid">
+    <header className="grid gap-0.5">
     <h3 className="font-semibold">营业日历</h3>
-    <p className="text-sm text-muted-foreground">{format(month, "yyyy-MM")}</p>
+    <p className="text-xs text-muted-foreground">{format(month, "yyyy-MM")} · 每日台账营业额</p>
+    </header>
+    <div className="grid w-full max-w-[420px] content-start gap-2">
     <div className="grid grid-cols-7 gap-1 text-center text-sm" aria-hidden="true">{["一", "二", "三", "四", "五", "六", "日"].map((day) => <span key={day}>周{day}</span>)}</div>
     <div className="grid grid-cols-7 gap-1" aria-label="按周排列的每日台账">
       {Array.from({ length: offset }, (_, index) => <span key={`blank-${index}`} aria-hidden="true" />)}
@@ -37,5 +40,7 @@ export function BusinessCalendar({ data, today, onSelectDate }: {
         </button>;
       })}
     </div>
+    </div>
+    <footer className="border-t pt-2 text-xs text-muted-foreground">颜色深浅表示营业额；休息、提前休息及未录入按日期标明。公司结算不分摊到每日。</footer>
   </section>;
 }

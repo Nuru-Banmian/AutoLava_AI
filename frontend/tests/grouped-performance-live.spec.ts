@@ -102,7 +102,7 @@ for (const width of [320, 390, 768, 1024, 1280]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
     const calendar = page.getByRole("region", { name: "营业日历", exact: true });
     const calendarBounds = await rect(calendar);
-    expect(calendarBounds.width).toBeLessThanOrEqual(420);
+    expect((await rect(calendar.getByLabel("按周排列的每日台账", { exact: true }))).width).toBeLessThanOrEqual(420);
     if (width >= 1024) {
       const cell = await rect(calendar.getByRole("button").first());
       expect(Math.abs(cell.width - cell.height)).toBeLessThanOrEqual(3);

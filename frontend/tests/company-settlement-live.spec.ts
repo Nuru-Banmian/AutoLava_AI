@@ -29,6 +29,9 @@ test("real backend browser creates, confirms, and revokes a settlement record", 
   });
   expect(enabled.ok()).toBe(true);
 
+  await page.reload();
+  await page.getByTestId("desktop-store-picker").getByLabel("门店").selectOption(String(storeId));
+
   await page.goto("/settlements");
   await expect(page.getByRole("heading", { name: "公司结算" })).toBeVisible();
   await page.getByRole("button", { name: "结算公司管理" }).click();
@@ -40,6 +43,25 @@ test("real backend browser creates, confirms, and revokes a settlement record", 
   await page.getByRole("spinbutton", { name: "金额（整数欧元）" }).fill("120");
   await page.getByRole("button", { name: "登记待到账记录" }).click();
   await expect(page.getByRole("button", { name: "确认Issue 194 Fleet开票记录到账" })).toBeVisible();
+  const monthBeforeConfirmation = await page.getByLabel("开票月份").inputValue();
+  const beforeEdit = await page.request.get(`/api/settlements/${storeId}/months/${monthBeforeConfirmation}`);
+  const latest = (await beforeEdit.json()).records[0];
+  await page.getByRole("button", { name: "Issue 194 Fleet开票记录更多操作" }).click();
+  await page.getByRole("menuitem", { name: "编辑Issue 194 Fleet开票记录" }).click();
+  await page.getByLabel("编辑金额（整数欧元）").fill("130");
+  const competingEdit = await page.request.patch(`/api/settlements/${storeId}/records/${latest.id}`, {
+    data: { revision: latest.revision, amount: 120 },
+  });
+  expect(competingEdit.ok()).toBe(true);
+  const submit = page.getByRole("button", { name: "保存开票记录修改" });
+  await submit.click();
+  const review = page.getByRole("group", { name: "冲突最新记录" });
+  await expect(review).toBeVisible();
+  await expect(submit).toBeDisabled();
+  await expect(page.getByLabel("编辑金额（整数欧元）")).toHaveValue("130");
+  await review.getByRole("button", { name: "已核对最新记录，使用新版本" }).click();
+  await submit.click();
+  await expect(page.getByText("开票记录已修改", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "确认Issue 194 Fleet开票记录到账" }).click();
   await page.getByRole("alertdialog", { name: "确认整笔到账？" }).getByRole("button", { name: "确认到账" }).click();
   await expect(page.getByRole("status")).toContainText("开票记录已确认到账");
@@ -48,7 +70,7 @@ test("real backend browser creates, confirms, and revokes a settlement record", 
   const confirmed = await page.request.get(`/api/settlements/${storeId}/months/${month}`);
   expect(confirmed.ok()).toBe(true);
   const confirmedRecord = (await confirmed.json() as { records: { status: string; amount: number }[] }).records[0];
-  expect(confirmedRecord).toMatchObject({ status: "confirmed", amount: 120 });
+  expect(confirmedRecord).toMatchObject({ status: "confirmed", amount: 130 });
 
   await page.getByRole("button", { name: "Issue 194 Fleet开票记录更多操作" }).click();
   await page.getByRole("menuitem", { name: "撤销Issue 194 Fleet开票记录到账确认" }).click();

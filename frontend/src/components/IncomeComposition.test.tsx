@@ -20,7 +20,7 @@ function renderComposition(props: Partial<ComponentProps<typeof IncomeCompositio
     <IncomeComposition
       included={included}
       excluded={excluded}
-      classifiedIncludedTotal={100}
+      totalIncome={100}
       {...props}
     />,
   );
@@ -43,10 +43,10 @@ it("shows five rows per group initially and expands each group independently", a
   expect(screen.queryByText("其他数据6")).not.toBeInTheDocument();
 });
 
-it("omits the entire composition region when neither group has rows", () => {
-  renderComposition({ included: [], excluded: [] });
+it("shows a valid empty composition when total income is zero", () => {
+  renderComposition({ included: [], excluded: [], totalIncome: 0 });
 
-  expect(screen.queryByRole("region", { name: "收入构成" })).not.toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "收入构成" })).toHaveTextContent("暂无收入构成");
 });
 
 it("shows only the groups that contain rows and uses the domain term other data", () => {
@@ -60,7 +60,7 @@ it("shows only the groups that contain rows and uses the domain term other data"
     <IncomeComposition
       included={[]}
       excluded={excluded}
-      classifiedIncludedTotal={0}
+      totalIncome={0}
     />,
   );
 
@@ -72,16 +72,16 @@ it("shows only the groups that contain rows and uses the domain term other data"
   expect(screen.queryByText(/历史总额记录/)).not.toBeInTheDocument();
 });
 
-it("does not render proportion bars for a single category or zero classified total", () => {
-  const { rerender } = renderComposition({ included: [included[0]], excluded: [], classifiedIncludedTotal: 50 });
+it("shows 100 percent for a single item and no proportions for zero income", () => {
+  const { rerender } = renderComposition({ included: [included[0]], excluded: [], totalIncome: 50 });
 
-  expect(screen.queryByTestId("composition-proportion")).not.toBeInTheDocument();
+  expect(screen.getByText("100.0%")).toBeInTheDocument();
 
   rerender(
     <IncomeComposition
       included={included}
       excluded={[]}
-      classifiedIncludedTotal={0}
+      totalIncome={0}
     />,
   );
 
@@ -90,4 +90,17 @@ it("does not render proportion bars for a single category or zero classified tot
 
 it("rounds composition percentages from whole amounts", () => {
   expect(compositionPercentage(1, 3)).toBe("33.3%");
+});
+
+it("explains the entire summary denominator and keeps special income visible when collapsed", () => {
+  renderComposition({
+    included: [...included,
+      { category_id: null, category_name: "未分类营业额", amount: 100 },
+      { category_id: null, category_name: "公司结算", amount: 300 }],
+    totalIncome: 500,
+  });
+  expect(screen.getByLabelText("收入分类1 占比 10.0%")).toBeInTheDocument();
+  expect(screen.getByLabelText("未分类营业额 占比 20.0%")).toBeInTheDocument();
+  expect(screen.getByLabelText("公司结算 占比 60.0%")).toBeInTheDocument();
+  expect(screen.getByText("收入构成合计").parentElement).toHaveTextContent("€500");
 });

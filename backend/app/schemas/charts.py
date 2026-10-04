@@ -50,7 +50,14 @@ class SettlementComposition(BaseModel):
     amount: int
 
 
+class UnclassifiedComposition(BaseModel):
+    category_id: None = None
+    category_name: Literal["未分类营业额"]
+    amount: int
+
+
 CategoryComposition = PrimaryCategory | SettlementComposition
+IncomeComposition = CategoryComposition | UnclassifiedComposition
 
 
 class MonthlyRevenue(BaseModel):
@@ -106,6 +113,7 @@ class ChartsResponse(BaseModel):
     comparison_coverage: PeriodCoverage | None = None
     ledger_comparison: LedgerComparison | None = None
     categories: list[CategoryComposition]
+    income_composition: list[IncomeComposition] = Field(default_factory=list)
     excluded_categories: list[CategoryComposition]
     monthly: list[MonthlyRevenue]
     weather: list[WeatherRevenue]

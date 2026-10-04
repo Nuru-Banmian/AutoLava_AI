@@ -77,12 +77,12 @@ export function BusinessAnalysisCard({ storeId, range, today = range.end, onSele
         {data.income_summary.includes_settlement_income ? (
           <div className="grid min-w-0 gap-2 sm:grid-cols-3" aria-label="月度收入汇总" role="region">
             <Kpi title="日常营业额" value={formatWholeEuro(data.income_summary.daily_ledger_revenue)} />
-            <Kpi title="公司结算收入" value={formatWholeEuro(data.income_summary.confirmed_settlement_income)} />
+            <Kpi title="已确认公司结算收入" value={formatWholeEuro(data.income_summary.confirmed_settlement_income)} />
             <Kpi title={isSingleMonth ? "月度总收入" : "月度总收入汇总"} value={formatWholeEuro(data.income_summary.total_income)} />
           </div>
         ) : (
           <div className="grid gap-2 sm:grid-cols-3">
-            <Kpi title="总营业额" value={formatWholeEuro(data.kpis.total_revenue)} />
+            <Kpi title="每日台账营业额" value={formatWholeEuro(data.income_summary.daily_ledger_revenue)} />
             <Kpi title="经营日" value={`${data.kpis.open_days} 天`} />
             <Kpi title="经营日均台账营业额" value={formatWholeEuro(data.kpis.average_revenue)} />
           </div>
@@ -95,8 +95,8 @@ export function BusinessAnalysisCard({ storeId, range, today = range.end, onSele
         {!hasBusinessData && <p>该范围暂无经营数据</p>}
         {data.range.bucket === "day" ? <DailyLedgerTrend key={`trend-${data.range.start}-${data.range.end}`} data={data} /> : <ChartPanel embedded title="月度总收入趋势" kind="line" data={trend} xKey="label" valueKey="revenue" emptyMessage="暂无趋势数据" heightClassName="h-64 min-h-64" />}
         <GroupedPerformanceCharts key={`${storeId}:${data.range.start}:${data.range.end}`} data={data} />
-        <div className={`grid min-w-0 items-start gap-4 ${isSingleMonth ? "lg:grid-cols-2" : ""}`}>
-          <div className={`min-w-0 ${isSingleMonth ? "" : "lg:max-w-xl"}`}><IncomeComposition included={data.categories} excluded={data.excluded_categories} classifiedIncludedTotal={data.classified_included_total} /></div>
+        <div className={`grid min-w-0 items-stretch gap-3 ${isSingleMonth ? "lg:grid-cols-2 lg:grid-rows-[auto_1fr_auto]" : "lg:max-w-xl"}`}>
+          <IncomeComposition key={`composition-${storeId}-${data.range.start}-${data.range.end}`} included={data.income_composition ?? []} excluded={data.excluded_categories} totalIncome={data.income_summary.total_income} />
           {isSingleMonth && <BusinessCalendar key={`calendar-${data.range.start}-${data.range.end}`} data={data} today={today} onSelectDate={onSelectDate} />}
         </div>
       </>}
