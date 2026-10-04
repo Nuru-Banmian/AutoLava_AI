@@ -58,7 +58,7 @@ describe("AccountPasswordPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "更新密码" }));
 
     expect(await screen.findByRole("heading", { level: 1, name: "更多" })).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("密码已更新");
+    expect(screen.getByText("密码已更新")).toHaveAttribute("role", "status");
     expect(body).toEqual({ current_password: "OldPassword1", new_password: "NewPassword2" });
   });
 

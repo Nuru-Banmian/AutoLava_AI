@@ -46,9 +46,9 @@ function sameDraft(left: StoreDraft, right: StoreDraft) {
 function ErrorMessage({ error, deletion }: { error: unknown; deletion: boolean }) {
   if (!error) return null;
   if (deletion && error instanceof ApiError && error.status === 409) {
-    return <p role="alert" className="text-sm text-destructive">该门店已有经营或历史记录，只能停用门店。</p>;
+    return <p role="alert" className="text-sm leading-6 text-destructive [overflow-wrap:anywhere]">该门店已有经营或历史记录，只能停用门店。</p>;
   }
-  return <p role="alert" className="text-sm text-destructive">{error instanceof ApiError ? error.detail : "请求失败"}</p>;
+  return <p role="alert" className="text-sm leading-6 text-destructive [overflow-wrap:anywhere]">{error instanceof ApiError ? error.detail : "请求失败"}</p>;
 }
 
 export function StoreDetailsCard({ mode, store, onDirtyChange, onSaved, onDeleteRequested, onDeleteFailed, onDeleted }: StoreDetailsCardProps) {
@@ -193,13 +193,13 @@ export function StoreDetailsCard({ mode, store, onDirtyChange, onSaved, onDelete
     }
   }
 
-  return <section className="space-y-4 rounded-lg border bg-card p-4" aria-labelledby="store-details-title">
-    <h2 id="store-details-title" className="font-medium">{title}</h2>
+  return <section className="min-w-0 space-y-4 rounded-xl border border-border bg-card p-4 shadow-sm [overflow-wrap:anywhere] sm:p-5" aria-labelledby="store-details-title">
+    <h2 id="store-details-title" className="text-lg font-semibold">{title}</h2>
     <ErrorMessage deletion={errorOperation === "delete"} error={error} />
-    <fieldset className="space-y-4" disabled={pending}>
-      <form className={mode === "edit" ? "grid gap-3 md:grid-cols-[minmax(10rem,1fr)_minmax(12rem,1.4fr)_auto_auto] md:items-end" : "grid gap-3 md:grid-cols-2"} onSubmit={(event) => void save(event)}>
-        <div>
-          <label htmlFor={`store-name-${mode}-${store?.id ?? "new"}`}>{mode === "edit" ? `门店名称 ${store?.name ?? ""}` : "门店名称"}</label>
+    <fieldset className="min-w-0 space-y-4" disabled={pending}>
+      <form className="grid min-w-0 gap-4 sm:grid-cols-2 sm:items-end" onSubmit={(event) => void save(event)}>
+        <div className="min-w-0 space-y-2">
+          <label className="block text-sm font-medium leading-6" htmlFor={`store-name-${mode}-${store?.id ?? "new"}`}>{mode === "edit" ? `门店名称 ${store?.name ?? ""}` : "门店名称"}</label>
           <Input
             id={`store-name-${mode}-${store?.id ?? "new"}`}
             required
@@ -208,57 +208,57 @@ export function StoreDetailsCard({ mode, store, onDirtyChange, onSaved, onDelete
           />
         </div>
         {mode === "edit" ? <>
-          <div>
+          <div className="min-w-0 space-y-2">
             <p className="text-sm font-medium">位置摘要</p>
-            <p className="truncate text-sm text-muted-foreground">{location?.label ?? store?.address}</p>
+            <p className="text-sm leading-6 text-muted-foreground">{location?.label ?? store?.address}</p>
           </div>
           <StoreLocationPicker buttonLabel="修改位置" onConfirm={setLocation} value={location} />
           <Button aria-busy={pending || undefined} disabled={!location || !name.trim()} type="submit">保存</Button>
         </> : <>
-          <div className="space-y-2">
+          <div className="min-w-0 space-y-2">
             <p className="text-sm font-medium">门店位置</p>
             <StoreLocationPicker onConfirm={setLocation} value={location} />
-            {location && <p className="text-sm text-muted-foreground">{location.label}</p>}
+            {location && <p className="text-sm leading-6 text-muted-foreground">{location.label}</p>}
           </div>
           <Button className="self-end" disabled={!location || !name.trim()} type="submit">{pending ? "添加中…" : "添加门店"}</Button>
         </>}
       </form>
       {mode === "edit" && store && <section aria-labelledby={`settlement-setting-${store.id}`} className="border-t pt-4">
         <h3 id={`settlement-setting-${store.id}`} className="font-medium">公司结算</h3>
-        <label className="mt-2 flex items-start gap-3">
+        <label className="mt-2 flex min-h-11 cursor-pointer items-start gap-3 py-2">
           <input
             checked={store.company_settlement_enabled ?? false}
-            className="mt-1 size-4"
+            className="mt-1 size-4 shrink-0 accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             onChange={() => void toggleStoreSetting({
               company_settlement_enabled: !store.company_settlement_enabled,
             })}
             type="checkbox"
           />
-          <span>
+          <span className="min-w-0">
             <span className="block text-sm font-medium">为此门店启用公司结算</span>
-            <span className="block text-sm text-muted-foreground">关闭后保留既有历史，但不再允许新的公司结算业务操作。</span>
+            <span className="mt-1 block text-sm leading-6 text-muted-foreground">关闭后保留既有历史，但不再允许新的公司结算业务操作。</span>
           </span>
         </label>
       </section>}
       {mode === "edit" && store && <section aria-labelledby={`wash-count-setting-${store.id}`} className="border-t pt-4">
         <h3 id={`wash-count-setting-${store.id}`} className="font-medium">记录洗车数量</h3>
-        <label className="mt-2 flex items-start gap-3">
+        <label className="mt-2 flex min-h-11 cursor-pointer items-start gap-3 py-2">
           <input
             checked={store.wash_count_enabled ?? true}
-            className="mt-1 size-4"
+            className="mt-1 size-4 shrink-0 accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             onChange={() => void toggleStoreSetting({
               wash_count_enabled: !(store.wash_count_enabled ?? true),
             })}
             type="checkbox"
           />
-          <span>
+          <span className="min-w-0">
             <span className="block text-sm font-medium">为此门店记录洗车数量</span>
-            <span className="block text-sm text-muted-foreground">关闭后保留历史洗车数量，但记账时不再录入；重新开启即可恢复使用。</span>
+            <span className="mt-1 block text-sm leading-6 text-muted-foreground">关闭后保留历史洗车数量，但记账时不再录入；重新开启即可恢复使用。</span>
           </span>
         </label>
       </section>}
       {mode === "edit" && store && <section aria-label="危险操作" className="border-t border-destructive/30 pt-4">
-        <p className="mb-3 text-sm text-muted-foreground">有经营记录的门店只能停用；只有从未使用的误建门店才能永久删除。</p>
+        <p className="mb-3 text-sm leading-6 text-muted-foreground">有经营记录的门店只能停用；只有从未使用的误建门店才能永久删除。</p>
         <div className="flex flex-wrap gap-2">
           <Button aria-label={`${store.is_active ? "停用" : "启用"}门店 ${store.name}`} type="button" variant="outline" onClick={() => void toggleActive()}>{store.is_active ? "停用" : "启用"}</Button>
           <Button aria-label={`永久删除门店 ${store.name}`} type="button" variant="destructive" onClick={() => void remove()}>永久删除</Button>

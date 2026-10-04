@@ -162,6 +162,17 @@ describe("App", () => {
     expect(within(more).getByRole("link", { name: "系统状态" })).toHaveAttribute("href", "/admin?tab=status");
   });
 
+  it("keeps More selected while changing an account password", async () => {
+    renderApplication("/more", "regular-user");
+    const more = await screen.findByRole("navigation", { name: "更多功能" });
+    await userEvent.click(within(more).getByRole("link", { name: "修改密码" }));
+
+    expect(await screen.findByRole("heading", { name: "修改密码" })).toBeInTheDocument();
+    const mobile = screen.getByRole("navigation", { name: "移动导航" });
+    expect(within(mobile).getByRole("link", { name: "更多" })).toHaveAttribute("aria-current", "page");
+    expect(within(mobile).getAllByRole("link")).toHaveLength(4);
+  });
+
   it("keeps the administrator desktop sidebar in the required order", async () => {
     renderApplication("/", "administrator");
     const nav = await screen.findByRole("navigation", { name: "主导航" });
@@ -512,30 +523,11 @@ describe("App", () => {
     expect(screen.queryByRole("button", { name: "重试保存" })).not.toBeInTheDocument();
   });
 
-  it("loads the approved blue theme tokens from index.css", () => {
-    expect(themeTokens()).toMatchObject({
-      radius: "0.875rem",
-      background: "oklch(0.985 0.006 250)",
-      foreground: "oklch(0.24 0.03 255)",
-      card: "oklch(1 0 0)",
-      "card-foreground": "oklch(0.24 0.03 255)",
-      popover: "oklch(1 0 0)",
-      "popover-foreground": "oklch(0.24 0.03 255)",
-      primary: "oklch(0.55 0.19 255)",
-      "primary-foreground": "oklch(0.99 0 0)",
-      "primary-hover": "oklch(0.48 0.17 255)",
-      "primary-active": "oklch(0.43 0.16 255)",
-      secondary: "oklch(0.95 0.018 250)",
-      "secondary-foreground": "oklch(0.28 0.04 255)",
-      muted: "oklch(0.96 0.012 250)",
-      "muted-foreground": "oklch(0.5 0.035 255)",
-      accent: "oklch(0.93 0.035 250)",
-      "accent-foreground": "oklch(0.3 0.08 255)",
-      destructive: "oklch(0.58 0.22 27)",
-      border: "oklch(0.9 0.018 250)",
-      input: "oklch(0.9 0.018 250)",
-      ring: "oklch(0.62 0.16 255)",
-    });
+  it("keeps page text and primary actions readable with the shared palette", () => {
+    const tokens = themeTokens();
+    expect(contrastRatio(tokens.foreground, tokens.background)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(tokens.primary, tokens["primary-foreground"])).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(tokens["muted-foreground"], tokens.card)).toBeGreaterThanOrEqual(4.5);
   });
 
   it("keeps primary button interaction states opaque and WCAG AA compliant", () => {

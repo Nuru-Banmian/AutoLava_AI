@@ -33,12 +33,12 @@ export function DatabaseBackupPanel() {
 
   return (
     <section
-      className="space-y-3 rounded-xl border bg-card p-5 shadow-sm"
+      className="min-w-0 space-y-4 rounded-xl border border-border bg-card p-4 shadow-sm [overflow-wrap:anywhere] sm:p-5"
       aria-labelledby="database-backup-title"
     >
-      <div>
-        <h2 className="font-medium" id="database-backup-title">数据库备份</h2>
-        <p className="text-sm text-muted-foreground">
+      <div className="space-y-2">
+        <h2 className="text-lg font-semibold" id="database-backup-title">数据库备份</h2>
+        <p className="text-sm leading-6 text-muted-foreground">
           生成当前数据库的一致快照，用于离线保管。
         </p>
       </div>
@@ -64,7 +64,7 @@ export function DatabaseBackupPanel() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+      {error && <p role="alert" className="text-sm leading-6 text-destructive">{error}</p>}
     </section>
   );
 }

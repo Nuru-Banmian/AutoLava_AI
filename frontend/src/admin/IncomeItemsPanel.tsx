@@ -38,7 +38,7 @@ function configItems(config: IncomeConfigResponse): DraftItem[] {
 
 function ErrorMessage({ error }: { error: unknown }) {
   if (!error) return null;
-  return <p role="alert" className="text-sm text-destructive">{friendlyApiError(error, "请求失败，请稍后重试")}</p>;
+  return <p role="alert" className="text-sm leading-6 text-destructive [overflow-wrap:anywhere]">{friendlyApiError(error, "请求失败，请稍后重试")}</p>;
 }
 
 export interface IncomeItemsPanelProps {
@@ -284,35 +284,35 @@ export function IncomeItemsPanel({ storeId, onDirtyChange }: IncomeItemsPanelPro
   const operationPending = Boolean(operation?.storeId === storeId && operation?.pending);
   const mutationError = operation?.storeId === storeId ? operation.error : null;
 
-  return <section className="space-y-4 rounded-lg border bg-card p-4" aria-labelledby="income-items-title">
-    <h2 id="income-items-title" className="font-medium">收入项目</h2>
+  return <section className="min-w-0 space-y-4 rounded-xl border border-border bg-card p-4 shadow-sm [overflow-wrap:anywhere] sm:p-5" aria-labelledby="income-items-title">
+    <h2 id="income-items-title" className="text-lg font-semibold">收入项目</h2>
     <ErrorMessage error={currentConfig.error ?? categories.error ?? mutationError} />
-    {conflictingConfig && <div role="group" aria-label="最新收入配置" className="space-y-2 rounded-md border p-3">
+    {conflictingConfig && <div role="group" aria-label="最新收入配置" className="min-w-0 space-y-3 rounded-xl border border-primary/20 bg-accent/50 p-4 text-sm leading-6">
       <p>收入配置已变化，草稿已保留。最新修订号：{conflictingConfig.revision}；记账方式：{conflictingConfig.enabled ? "分类记账" : "总额记账"}。</p>
-      <p>最新项目：</p><ol>{[...conflictingConfig.items].sort((left, right) => left.sort_order - right.sort_order).map((item) => <li key={item.id}>{item.sort_order + 1}. {item.name}；{item.include_in_total ? "计入营业额" : "不计入营业额"}；{item.is_active ? "启用" : "停用"}{item.archived_at ? "；已归档" : ""}</li>)}</ol>
-      <button type="button" className="underline" onClick={() => { setDraftRevision(conflictingConfig.revision); setConflictingConfig(null); setOperation(null); }}>已核对最新配置，继续编辑草稿</button>
+      <p>最新项目：</p><ol className="space-y-2">{[...conflictingConfig.items].sort((left, right) => left.sort_order - right.sort_order).map((item) => <li key={item.id}>{item.sort_order + 1}. {item.name}；{item.include_in_total ? "计入营业额" : "不计入营业额"}；{item.is_active ? "启用" : "停用"}{item.archived_at ? "；已归档" : ""}</li>)}</ol>
+      <Button type="button" variant="outline" className="h-auto min-h-11 w-full whitespace-normal text-left sm:w-auto" onClick={() => { setDraftRevision(conflictingConfig.revision); setConflictingConfig(null); setOperation(null); }}>已核对最新配置，继续编辑草稿</Button>
     </div>}
     <>
-      <label className="flex items-center gap-2">
-        <input aria-label="启用收入项目明细" checked={draftEnabled} disabled={operationPending || currentConfig.isLoading || draftStoreId !== storeId} type="checkbox" onChange={(event) => {
+      <label className="flex min-h-11 cursor-pointer items-center gap-3 py-2 text-sm font-medium">
+        <input className="size-4 shrink-0 accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" aria-label="启用收入项目明细" checked={draftEnabled} disabled={operationPending || currentConfig.isLoading || draftStoreId !== storeId} type="checkbox" onChange={(event) => {
           setDraftEnabled(event.target.checked);
           setIsDirty(true);
         }} />
         启用收入项目明细
       </label>
-      <div className="rounded-lg border bg-muted/30 p-4">
+      <div className="min-w-0 space-y-2 rounded-xl border border-border bg-muted/40 p-4">
         <p className="font-medium">营业额计算预览</p>
-        <p className="text-sm text-muted-foreground">{formula}</p>
+        <p className="text-sm leading-6 text-muted-foreground">{formula}</p>
       </div>
-      <div className="flex flex-col gap-2 rounded-lg border p-4 sm:flex-row">
-        <Input aria-label="新收入项目名称" disabled={operationPending} placeholder="例如：现金、刷卡" value={newName} onChange={(event) => setNewName(event.target.value)} />
-        <Button disabled={operationPending} type="button" variant="outline" onClick={addItem}>添加收入项目</Button>
+      <div className="flex min-w-0 flex-col gap-3 rounded-xl border border-border p-4 sm:flex-row">
+        <Input className="min-w-0 flex-1" aria-label="新收入项目名称" disabled={operationPending} placeholder="例如：现金、刷卡" value={newName} onChange={(event) => setNewName(event.target.value)} />
+        <Button className="shrink-0" disabled={operationPending} type="button" variant="outline" onClick={addItem}>添加收入项目</Button>
       </div>
       {currentConfig.isLoading ? <p>正在加载收入项目…</p> : <ol className="space-y-3">
-        {items.map((item, index) => <li className="grid gap-3 rounded-lg border p-3 md:grid-cols-[minmax(10rem,1fr)_auto_auto]" key={item.key}>
+        {items.map((item, index) => <li className="grid min-w-0 gap-3 rounded-xl border border-border p-3 sm:p-4 lg:grid-cols-[minmax(0,1fr)_auto]" key={item.key}>
           <Input aria-label={`项目名称 ${item.name}`} disabled={operationPending} value={item.name} onChange={(event) => update(item.key, { name: event.target.value })} />
-          <label className="flex items-center gap-2"><input aria-label={`计入营业额 ${item.name}`} checked={item.include_in_total} disabled={operationPending} type="checkbox" onChange={(event) => update(item.key, { include_in_total: event.target.checked })} />计入营业额</label>
-          <div className="flex flex-wrap gap-2">
+          <label className="flex min-h-11 cursor-pointer items-center gap-3 text-sm"><input className="size-4 shrink-0 accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" aria-label={`计入营业额 ${item.name}`} checked={item.include_in_total} disabled={operationPending} type="checkbox" onChange={(event) => update(item.key, { include_in_total: event.target.checked })} />计入营业额</label>
+          <div className="flex min-w-0 flex-wrap gap-2 lg:col-span-2">
             <Button aria-label={`上移 ${item.name}`} disabled={operationPending || index === 0} type="button" variant="outline" onClick={() => move(index, -1)}>上移</Button>
             <Button aria-label={`下移 ${item.name}`} disabled={operationPending || index === items.length - 1} type="button" variant="outline" onClick={() => move(index, 1)}>下移</Button>
             {item.category_id !== null
@@ -325,11 +325,11 @@ export function IncomeItemsPanel({ storeId, onDirtyChange }: IncomeItemsPanelPro
         </li>)}
       </ol>}
       <Button aria-busy={operationPending || undefined} disabled={operationPending || conflictingConfig !== null || currentConfig.isLoading || draftStoreId !== storeId || items.some((item) => !item.name.trim())} type="button" onClick={() => void publishDraft()}>保存</Button>
-      {archived.length > 0 && <section className="space-y-2 rounded-lg border p-4" aria-label="已归档收入项目">
+      {archived.length > 0 && <section className="min-w-0 space-y-3 rounded-xl border border-border bg-muted/30 p-4" aria-label="已归档收入项目">
         <h2 className="font-medium">已归档项目</h2>
         <ul className="space-y-2">{archived.map((category) => <li className="flex flex-wrap items-center justify-between gap-2" key={category.id}>
-          <span>{category.name}</span>
-          <div className="flex gap-2">
+          <span className="min-w-0 font-medium [overflow-wrap:anywhere]">{category.name}</span>
+          <div className="flex min-w-0 flex-wrap gap-2">
             <Button aria-label={`恢复 ${category.name}`} disabled={operationPending} type="button" variant="outline" onClick={() => void restoreCategory(category.id, category.store_id)}>恢复</Button>
             <Button aria-label={`永久删除 ${category.name}`} disabled={operationPending} type="button" variant="outline" onClick={() => {
               if (window.confirm(`永久删除后无法恢复，确定删除“${category.name}”吗？`)) {
