@@ -47,10 +47,10 @@ export function RecordTable({ records, selectedDate, loading, error, onSelect, o
                 onKeyDown={(event) => activateFromKeyboard(event, record)}
                 className={selected ? "cursor-pointer border-l-4 border-primary bg-primary/10" : "cursor-pointer border-l-4 border-transparent hover:bg-muted/60"}
               >
-                <td className="whitespace-normal break-keep px-3 py-3">{dateLabel}</td>
-                <td className="px-3 py-3">{isUnrecorded ? "未录入" : record.is_open}</td>
-                <td className="px-3 py-3 tabular-nums">{isUnrecorded ? "—" : formatWholeEuro(record.daily_revenue)}</td>
-                <td className="px-3 py-3">{isUnrecorded ? "—" : record.weather_legacy ? `历史旧值：${record.weather}` : record.weather ?? "—"}</td>
+                <td className="whitespace-normal break-keep px-3 py-1.5">{dateLabel}</td>
+                <td className="px-3 py-1.5">{isUnrecorded ? "未录入" : record.is_open}</td>
+                <td className="px-3 py-1.5 tabular-nums">{isUnrecorded ? "—" : formatWholeEuro(record.daily_revenue)}</td>
+                <td className="px-3 py-1.5">{isUnrecorded ? "—" : record.weather_legacy ? `历史旧值：${record.weather}` : record.weather ?? "—"}</td>
               </tr>
             );
           })}

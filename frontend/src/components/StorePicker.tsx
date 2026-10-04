@@ -11,7 +11,6 @@ export function StorePicker({ showLabel = true }: { showLabel?: boolean }) {
       </select>
     </label>
     {isLoading && <p className="text-xs" role="status">正在加载门店…</p>}
-    {selected && <p className="text-xs leading-5 opacity-80"><span className="sr-only">当前门店：</span>{currentName}</p>}
     {!isLoading && !error && !stores.length && <p className="text-xs" role="status">暂无可访问门店</p>}
     {!isLoading && stores.length > 1 && !selected && <p className="text-xs" role="status">请先选择门店以查看数据。</p>}
   </div>;

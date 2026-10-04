@@ -100,6 +100,20 @@ for (const width of [320, 390, 768, 1024, 1280]) {
       expect(dayCard.y + dayCard.height - lastDay.y - lastDay.height).toBeLessThan(30);
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    const calendar = page.getByRole("region", { name: "营业日历", exact: true });
+    const calendarBounds = await rect(calendar);
+    expect(calendarBounds.width).toBeLessThanOrEqual(420);
+    if (width >= 1024) {
+      const cell = await rect(calendar.getByRole("button").first());
+      expect(Math.abs(cell.width - cell.height)).toBeLessThanOrEqual(3);
+      const composition = page.getByRole("region", { name: "收入构成", exact: true });
+      if (await composition.count()) {
+        const compositionBounds = await rect(composition);
+        expect(Math.abs(compositionBounds.y - calendarBounds.y)).toBeLessThanOrEqual(1);
+        expect(compositionBounds.x + compositionBounds.width).toBeLessThan(calendarBounds.x);
+      }
+      await calendar.locator("..").screenshot({ path: join(process.env.AUTOLAVA_GROUPS_ARTIFACTS!, `analysis-bottom-${width}.png`), animations: "disabled" });
+    }
     writeFileSync(join(process.env.AUTOLAVA_GROUPS_ARTIFACTS!, `geometry-${width}.json`), JSON.stringify({ width, dayCard, weatherCard, firstDay, firstWeather, pageHeight: await page.evaluate(() => document.documentElement.scrollHeight) }, null, 2));
     await page.screenshot({ path: join(process.env.AUTOLAVA_GROUPS_ARTIFACTS!, `dense-${width}.png`), fullPage: true, animations: "disabled" });
     if (width === 390 || width === 1280) {

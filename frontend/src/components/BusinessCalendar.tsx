@@ -12,13 +12,14 @@ export function BusinessCalendar({ data, today, onSelectDate }: {
   const dates = eachDayOfInterval({ start: startOfMonth(month), end: endOfMonth(month) }).map((date) => format(date, "yyyy-MM-dd"));
   const offset = (getDay(startOfMonth(month)) + 6) % 7;
   const records = new Map(data.daily.map((row) => [row.date, row]));
+  const maximum = Math.max(1, ...data.daily.map((row) => row.revenue));
   const available = dates.filter((date) => date >= data.range.start && date <= data.range.end && date <= today);
   const state = (date: string) => date > today ? "未来"
     : date < data.range.start || date > data.range.end ? "范围外"
       : records.get(date)?.is_open ?? (records.has(date) ? "已记录" : "未录入");
   const label = (date: string) => `${date} ${state(date)}${available.includes(date) ? ` ${records.has(date) ? formatWholeEuro(records.get(date)!.revenue) : "—"}` : ""}`;
 
-  return <section role="region" aria-label="营业日历" className="grid min-w-0 gap-2">
+  return <section role="region" aria-label="营业日历" className="grid w-full min-w-0 max-w-[420px] gap-2">
     <h3 className="font-semibold">营业日历</h3>
     <p className="text-sm text-muted-foreground">{format(month, "yyyy-MM")}</p>
     <div className="grid grid-cols-7 gap-1 text-center text-sm" aria-hidden="true">{["一", "二", "三", "四", "五", "六", "日"].map((day) => <span key={day}>周{day}</span>)}</div>
@@ -27,8 +28,10 @@ export function BusinessCalendar({ data, today, onSelectDate }: {
       {dates.map((date) => {
         const record = records.get(date);
         const enabled = available.includes(date);
+        const opacity = record && enabled ? 0.08 + (record.revenue / maximum) * 0.32 : 0;
         return <button key={date} type="button" aria-label={label(date)} title={label(date)} disabled={!enabled}
-          className={`flex min-h-[60px] min-w-0 flex-col items-center justify-start gap-0.5 rounded-md border px-0 py-1.5 text-xs tabular-nums disabled:bg-muted/30 disabled:text-muted-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${record && enabled ? "border-primary bg-primary text-primary-foreground hover:bg-primary-hover active:bg-primary-active" : ""}`}
+          className="flex min-h-[60px] min-w-0 flex-col items-center justify-start gap-0.5 rounded-md border px-0 py-1.5 text-xs tabular-nums disabled:bg-muted/30 disabled:text-muted-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary lg:aspect-square lg:min-h-11 lg:justify-center"
+          style={enabled ? { backgroundColor: `color-mix(in oklab, var(--primary) ${opacity * 100}%, transparent)` } : undefined}
           onClick={() => onSelectDate?.(date)}>
           <span className="font-semibold">{Number(date.slice(8))}</span><span className="break-all leading-tight">{state(date)}</span>
         </button>;

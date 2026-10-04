@@ -59,7 +59,7 @@ export function RecordDetailPanel({
 }: RecordDetailPanelProps) {
   const isUnrecorded = record.id === null;
   const composedItems = !isUnrecorded && record.income_mode === "composed" ? record.items : [];
-  const summaryItemClass = "rounded-xl bg-muted/50 p-3";
+  const summaryItemClass = "rounded-xl bg-muted/50 p-2";
   const summaryValueClass = "mt-1 text-lg font-semibold";
   const status = isUnrecorded ? "未录入" : record.is_open;
   const showWashCount = !isUnrecorded && washCountEnabled && typeof record.wash_count === "number" && record.wash_count > 0;
@@ -79,7 +79,7 @@ export function RecordDetailPanel({
 
   return (
     <Card className="overflow-hidden">
-      <CardHeader className={`space-y-0 ${mobile ? "grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2 p-3 pb-4" : "flex-row flex-wrap items-center gap-2 p-5 pb-4"}`}>
+      <CardHeader className={`space-y-0 p-3 pb-2 sm:p-3 sm:pb-2 ${mobile ? "grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2" : "flex-row flex-wrap items-center gap-2"}`}>
         <div className="flex min-w-0 flex-wrap items-center gap-2">
         <CardTitle tabIndex={mobile ? -1 : undefined} className={mobile ? "text-base leading-snug" : "text-xl leading-tight"}>{formatBusinessRecordDate(record.date)}</CardTitle>
         <span className={`rounded-full px-2.5 py-1 text-sm font-medium ${isUnrecorded ? "bg-muted text-muted-foreground" : statusClasses[record.is_open]}`}>
@@ -88,8 +88,8 @@ export function RecordDetailPanel({
         </div>
         {mobile && onBack && <Button type="button" variant="outline" className="h-11 gap-1 px-2 text-sm" onClick={onBack}><ArrowLeft className="size-4" aria-hidden="true" />返回记录</Button>}
       </CardHeader>
-      <CardContent className={mobile ? "grid gap-4 p-3 pt-0" : "grid gap-5 p-5 pt-0"}>
-        <section aria-label="营业摘要" className="grid grid-cols-2 gap-3 text-sm">
+      <CardContent className="grid gap-3 p-3 pt-0 sm:p-3 sm:pt-0">
+        <section aria-label="营业摘要" className="grid grid-cols-2 gap-2 text-sm">
           <div className={summaryItemClass}><p className="text-muted-foreground">营业额</p><p className={summaryValueClass}>{isUnrecorded ? "—" : formatWholeEuro(record.daily_revenue)}</p></div>
           <div className={summaryItemClass}><p className="text-muted-foreground">天气</p><p className={summaryValueClass}>{isUnrecorded ? "—" : record.weather_legacy ? `历史旧值：${record.weather}` : record.weather ?? "—"}</p></div>
         </section>
@@ -138,7 +138,7 @@ export function RecordDetailPanel({
             </ol>
           </section>
         )}
-        <div className={`flex flex-wrap gap-2 border-t pt-4 ${mobile ? "" : "items-center"}`}>
+        <div className={`flex flex-wrap gap-2 border-t pt-2 ${mobile ? "" : "items-center"}`}>
           {canEdit && <Button asChild className={mobile ? "h-11 w-full text-base" : "h-10 text-base"}><Link to={`/ledger?date=${record.date}`} onClick={onEdit ? (event) => { event.preventDefault(); onEdit(record.date); } : undefined}>修改这天记录</Link></Button>}
           {canDelete && !isUnrecorded && <Button className={mobile ? "h-11 w-full text-base" : "h-10 text-base"} type="button" variant="destructive" onClick={(event) => onDelete(event.currentTarget)}>删除记录</Button>}
         </div>

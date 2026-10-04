@@ -37,7 +37,7 @@ async function wheelToControl(page: Page, control: Locator) {
   await expect(control).toBeInViewport({ ratio: 1 });
 }
 
-test("320px: calendar cells share the theme blue and expose amounts through exact readings", async ({ page }) => {
+test("320px: calendar cells shade revenue with the theme blue and expose exact readings", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
   await page.setViewportSize({ width: 320, height: 844 });
   await mockEditableBusinessRecords(page);
@@ -45,7 +45,7 @@ test("320px: calendar cells share the theme blue and expose amounts through exac
     kpis: { total_revenue: 999900000, record_days: 1, open_days: 1, average_revenue: 999900000, primary_categories: [], total_wash_count: null, average_ticket: null },
     range: { start: "2026-06-01", end: "2026-06-30", bucket: "day" }, comparison_kpis: null,
     income_summary: { daily_ledger_revenue: 999900000, confirmed_settlement_income: 0, total_income: 999900000, includes_settlement_income: false }, classified_included_total: 0,
-    daily: [{ date: "2026-06-02", revenue: 999900000, is_open: "营业" }], categories: [], excluded_categories: [], monthly: [], weather: [], weekday: [],
+    daily: [{ date: "2026-06-02", revenue: 999900000, is_open: "营业" }, { date: "2026-06-03", revenue: 499950000, is_open: "营业" }, { date: "2026-06-04", revenue: 0, is_open: "营业" }], categories: [], excluded_categories: [], monthly: [], weather: [], weekday: [],
   }) }));
   await page.goto("/database");
   await page.getByLabel("月份", { exact: true }).fill("2026-06");
@@ -56,12 +56,12 @@ test("320px: calendar cells share the theme blue and expose amounts through exac
   const originalColor = await date.evaluate((element) => getComputedStyle(element).backgroundColor);
   await page.evaluate(() => document.documentElement.style.setProperty("--primary", "oklch(0.5 0.15 255)"));
   await expect.poll(() => date.evaluate((element) => getComputedStyle(element).backgroundColor)).not.toBe(originalColor);
-  await expect(date).toHaveCSS("background-color", "oklch(0.5 0.15 255)");
-  await expect(date).toHaveCSS("color", "oklch(0.99 0 0)");
-  await expect(page.getByRole("button", { name: "2026-06-01 未录入 —", exact: true })).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(date).toHaveCSS("background-color", /\/ 0.4\)/);
+  await expect(page.getByRole("button", { name: "2026-06-03 营业 €499.950.000", exact: true })).toHaveCSS("background-color", /\/ 0.24\)/);
+  await expect(page.getByRole("button", { name: "2026-06-04 营业 €0", exact: true })).toHaveCSS("background-color", /\/ 0.08\)/);
+  await expect(page.getByRole("button", { name: "2026-06-01 未录入 —", exact: true })).toHaveCSS("background-color", /\/ 0\)/);
   await page.evaluate(() => document.documentElement.style.removeProperty("--primary"));
   await expect(date).toHaveCSS("background-color", originalColor);
-  await expect(date).toHaveCSS("background-color", "oklch(0.55 0.19 255)");
   await page.getByRole("region", { name: "营业日历", exact: true }).screenshot({ path: "output/theme-calendar-320.png" });
   await expect(date).toHaveAttribute("title", "2026-06-02 营业 €999.900.000");
   await expect(page.getByLabel("日历读数日期", { exact: true })).toHaveCount(0);
@@ -619,7 +619,7 @@ for (const width of [1024, 1280]) {
   for (const entry of ["record row", "date detail link"]) {
     test(`${width}px: ${entry} editing returns to the actual scroll position`, async ({ page }) => {
       await page.clock.install({ time: new Date("2026-07-17T12:00:00Z") });
-      await page.setViewportSize({ width, height: 844 });
+      await page.setViewportSize({ width, height: 600 });
       const fixture = await mockEditableBusinessRecords(page, [editableRecord(1, "2026-07-17", 170)]);
       let saved = false;
       let releaseReturnRefresh!: () => void;
@@ -646,8 +646,10 @@ for (const width of [1024, 1280]) {
       await expect(detail).toContainText("€170");
       const headingBox = (await detail.getByRole("heading", { name: "2026年7月17日 星期五", exact: true }).boundingBox())!;
       await page.mouse.move(headingBox.x + headingBox.width / 2, headingBox.y + headingBox.height / 2);
+      const expectedScroll = Math.min(300, (await measureScroll()).scrollMax);
+      expect(expectedScroll).toBeGreaterThan(0);
       await page.mouse.wheel(0, 300);
-      await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(300);
+      await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(expectedScroll);
       const edit = detail.getByRole("link", { name: "修改这天记录", exact: true });
       await expect(edit).toBeInViewport({ ratio: 1 });
       const recordScroll = await page.evaluate(() => window.scrollY);
