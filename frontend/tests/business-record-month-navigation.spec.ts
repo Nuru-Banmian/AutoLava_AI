@@ -18,7 +18,7 @@ async function wheelToControl(page: Page, control: Locator) {
   await page.mouse.move(viewport.width * 0.75, viewport.height * 0.5);
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const box = (await control.boundingBox())!;
-    const navigation = await page.getByRole("navigation", { name: "移动导航" }).boundingBox();
+    const navigation = await page.getByRole("navigation", { name: "移动导航", includeHidden: true }).boundingBox();
     const bottom = navigation?.y ?? viewport.height;
     if (box.y >= 8 && box.y + box.height <= bottom - 8) return;
     await page.mouse.wheel(0, box.y + box.height / 2 - bottom / 2);
