@@ -150,9 +150,13 @@ jobs:
         run: npm run build
 
   frontend-e2e:
-    name: Frontend end-to-end
+    name: Frontend end-to-end (${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     container:
       image: mcr.microsoft.com/playwright:v1.61.1-noble
       options: --ipc=host
@@ -174,13 +178,13 @@ jobs:
         run: npm ci
 
       - name: Run end-to-end tests
-        run: npm run test:e2e
+        run: npm run test:e2e -- --shard=${{ matrix.shard }}/2 --workers=2
 
       - name: Upload Playwright diagnostics
         if: ${{ failure() && !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          name: playwright-diagnostics-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: frontend/test-results
           if-no-files-found: ignore
           retention-days: 7
