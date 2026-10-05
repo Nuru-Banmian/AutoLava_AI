@@ -6,6 +6,7 @@ import { AppShell } from "@/layouts/AppShell";
 import { StoreProvider } from "@/stores/StoreProvider";
 
 const AdminPage = lazy(() => import("@/pages/AdminPage").then((module) => ({ default: module.AdminPage })));
+const AgentChatPage = lazy(() => import("@/pages/AgentChatPage").then((module) => ({ default: module.AgentChatPage })));
 const LoginPage = lazy(() => import("@/pages/LoginPage").then((module) => ({ default: module.LoginPage })));
 const HomePage = lazy(() => import("@/pages/HomePage").then((module) => ({ default: module.HomePage })));
 const LedgerPage = lazy(() => import("@/pages/LedgerPage").then((module) => ({ default: module.LedgerPage })));
@@ -64,6 +65,7 @@ const routes: RouteObject[] = [{
       { path: "more", element: <MoreRoute /> },
       { path: "account/password", element: <Page><AccountPasswordPage /></Page> },
       { path: "admin", element: <AdminRoute /> },
+      { path: "ai", element: <Page><AgentChatPage /></Page> },
     ] },
   ],
 }];

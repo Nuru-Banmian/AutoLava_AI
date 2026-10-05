@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Building2, ChevronRight, KeyRound, Settings, Activity, UserRound } from "lucide-react";
+import { Building2, ChevronRight, KeyRound, Settings, Activity, UserRound, MessageSquare } from "lucide-react";
 
 import { useAuth } from "@/auth/AuthProvider";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,7 @@ export function MorePage() {
       <div className="min-w-0"><p className="font-semibold">{user?.username}</p><p className="text-xs text-muted-foreground">{user?.is_owner ? "最终管理员" : user?.role === "admin" ? "管理员" : "门店用户"}</p></div>
     </div>
     <nav aria-label="更多功能" className="grid gap-2 sm:grid-cols-2">
+      {user?.role === "admin" && <Link className={moreLinkClass} to="/ai"><MessageSquare aria-hidden="true" className="size-5 shrink-0 text-primary" /><span className="min-w-0 flex-1">AI 对话</span><ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" /></Link>}
       {selected?.company_settlement_enabled && <Link className={moreLinkClass} to="/settlements"><Building2 aria-hidden="true" className="size-5 shrink-0 text-primary" /><span className="min-w-0 flex-1">公司结算</span><ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" /></Link>}
       <Link className={moreLinkClass} to="/account/password"><KeyRound aria-hidden="true" className="size-5 shrink-0 text-primary" /><span className="min-w-0 flex-1">修改密码</span><ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" /></Link>
       {user?.role === "admin" && <Link className={moreLinkClass} to="/admin"><Settings aria-hidden="true" className="size-5 shrink-0 text-primary" /><span className="min-w-0 flex-1">管理中心</span><ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" /></Link>}

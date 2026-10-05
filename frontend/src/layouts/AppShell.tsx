@@ -1,4 +1,4 @@
-import { BookOpen, Building2, Database, Home, LogOut, Menu, Settings } from "lucide-react";
+import { BookOpen, Building2, Database, Home, LogOut, Menu, MessageSquare, Settings } from "lucide-react";
 import type { ComponentType, SVGProps } from "react";
 import { Link, matchPath, Outlet, useLocation } from "react-router-dom";
 
@@ -17,6 +17,7 @@ const icons: Record<string, Icon> = {
   "/settlements": Building2,
   "/database": Database,
   "/admin": Settings,
+  "/ai": MessageSquare,
   "/more": Menu,
 };
 
@@ -30,7 +31,7 @@ function Navigation({ surface }: { surface: "desktop" | "mobile" }) {
     {navigationFor(user.role, surface, selected?.company_settlement_enabled).map(({ to, label, end }) => {
       const Icon = icons[to];
       const isMorePage = to === "/more" && surface === "mobile" &&
-        ["/more", "/settlements", "/account", "/admin"].some((path) => Boolean(matchPath({ path, end: false }, pathname)));
+        ["/more", "/settlements", "/account", "/admin", "/ai"].some((path) => Boolean(matchPath({ path, end: false }, pathname)));
       const isActive = isMorePage || Boolean(matchPath({ path: to, end: end ?? false }, pathname));
       return <Link
         key={to}

@@ -28,6 +28,22 @@ class Settings(BaseSettings):
     cookie_secure: bool = False
     cors_origins: list[str] = ["http://localhost:5173"]
     weather_max_inflight: int = Field(default=4, ge=1, le=32)
+    # Each workload has its own deployment parameters. No paid model is selected implicitly.
+    agent_chat_base_url: str = ""
+    agent_chat_api_key: SecretStr = SecretStr("")
+    agent_chat_model: str = ""
+    agent_memory_base_url: str = ""
+    agent_memory_api_key: SecretStr = SecretStr("")
+    agent_memory_model: str = ""
+    agent_embedding_base_url: str = ""
+    agent_embedding_api_key: SecretStr = SecretStr("")
+    agent_embedding_model: str = ""
+    agent_embedding_dimensions: int | None = Field(default=None, ge=1)
+    agent_max_calls: int = Field(default=2, ge=1, le=3)
+    agent_timeout_seconds: float = Field(default=60, gt=0, le=180)
+    agent_context_chars: int = Field(default=24000, ge=8000, le=64000)
+    agent_output_chars: int = Field(default=16000, ge=1, le=32000)
+    agent_output_tokens: int = Field(default=4096, ge=1, le=8192)
 
     @model_validator(mode="after")
     def validate_production_settings(self) -> "Settings":

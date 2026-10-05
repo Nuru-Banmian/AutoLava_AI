@@ -25,5 +25,5 @@ export function navigationFor(role: UserRole, surface: "desktop" | "mobile", com
   if (surface === "mobile") return mobileModules;
   const availableModules = desktopModules.filter((module) => !("capability" in module) || companySettlementEnabled);
   if (role !== "admin") return availableModules;
-  return [...availableModules, adminModule];
+  return [...availableModules, { to: "/ai", label: "AI 对话" }, adminModule];
 }

@@ -135,6 +135,8 @@ EXPECTED_TABLES = {
     "settlement_audit_events",
     "agent_conversations",
     "agent_messages",
+    "agent_runs",
+    "agent_events",
     # The replacement runtime does not map or use these archival tables. They
     # remain in the physical schema so upgrading does not destroy old chats.
     "retired_agent_system_settings",
@@ -400,7 +402,7 @@ def test_applied_revision_0004_upgrades_without_losing_existing_data(tmp_path: P
 
     with closing(sqlite3.connect(database_path)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0022",
+            "0023",
         )
         assert connection.execute("SELECT username FROM users").fetchall() == [
             ("existing-admin",)
@@ -414,6 +416,8 @@ def test_applied_revision_0004_upgrades_without_losing_existing_data(tmp_path: P
         assert {table for table in tables if table.startswith("agent_")} == {
             "agent_conversations",
             "agent_messages",
+            "agent_runs",
+            "agent_events",
         }
 
 
@@ -498,6 +502,8 @@ def test_previous_agent_data_is_retired_without_touching_business_data(tmp_path:
         assert {table for table in tables if table.startswith("agent_")} == {
             "agent_conversations",
             "agent_messages",
+            "agent_runs",
+            "agent_events",
         }
         assert connection.execute("SELECT COUNT(*) FROM agent_messages").fetchone() == (0,)
         assert {
@@ -578,7 +584,7 @@ def test_reused_legacy_revision_0010_upgrades_to_new_agent_schema(
 
     with closing(sqlite3.connect(database_path)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0022",
+            "0023",
         )
         tables = {
             name
@@ -589,6 +595,8 @@ def test_reused_legacy_revision_0010_upgrades_to_new_agent_schema(
         assert {table for table in tables if table.startswith("agent_")} == {
             "agent_conversations",
             "agent_messages",
+            "agent_runs",
+            "agent_events",
         }
         assert connection.execute("SELECT username FROM users").fetchall() == [
             ("existing-admin",)
