@@ -10,6 +10,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.router import api_router
+from app.agents import ChatRunner
+from app.agents.assistant.graph import ChatModel
+from app.agents.providers.bailian import BailianChat
+from app.agents.runtime.repository import ChatRepository
 from app.api.routes.dashboard import RefreshLimiter
 from app.core.config import get_settings
 from app.core.database import async_session_factory, engine
@@ -29,8 +33,13 @@ def create_app(
     *,
     session_factory: async_sessionmaker[AsyncSession] = async_session_factory,
     weather_service: WeatherService | None = None,
+    agent_model: ChatModel | None = None,
 ) -> FastAPI:
     settings = get_settings()
+    agent_runner = ChatRunner(
+        agent_model if agent_model is not None else BailianChat(settings),
+        ChatRepository(session_factory), settings,
+    )
     provider = OpenMeteoProvider(max_inflight=settings.weather_max_inflight)
     if weather_service is None:
         weather_service = WeatherService(provider)
@@ -86,6 +95,7 @@ def create_app(
         try:
             yield
         finally:
+            await agent_runner.close()
             if maintenance_scheduler is not None:
                 await maintenance_scheduler.stop()
             await scheduler.stop()
@@ -93,6 +103,7 @@ def create_app(
             await provider.aclose()
 
     app = FastAPI(title="门店管理系统 API", lifespan=lifespan)
+    app.state.agent_runner = agent_runner
     app.state.open_meteo_provider = provider
     app.state.weather_service = weather_service
     app.state.dashboard_refresh_limiter = RefreshLimiter()

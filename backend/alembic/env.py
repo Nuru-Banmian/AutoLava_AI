@@ -10,6 +10,7 @@ from app.core.config import get_settings
 from app.core.database import sqlite_url
 from app.models.base import Base
 import app.models.identity  # noqa: F401
+import app.models.agent  # noqa: F401
 import app.models.ledger  # noqa: F401
 import app.models.operations  # noqa: F401
 
