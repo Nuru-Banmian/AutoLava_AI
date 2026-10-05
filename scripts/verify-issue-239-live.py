@@ -75,7 +75,7 @@ def main():
             vite_config.write_text(
                 "import base from " + json.dumps((FRONTEND / "vite.config.ts").as_posix()) + ";\n"
                 "import { mergeConfig } from " + json.dumps((FRONTEND / "node_modules/vite/dist/node/index.js").as_posix()) + ";\n"
-                "export default mergeConfig(base, " + json.dumps({"root": str(FRONTEND), "server": {
+                "export default mergeConfig(base, " + json.dumps({"root": str(FRONTEND), "cacheDir": str(runtime / "vite-cache"), "server": {
                     "proxy": {"/api": {"target": api_base}, "/health": {"target": api_base}}}}) + ");\n",
                 encoding="utf-8",
             )

@@ -124,6 +124,15 @@ test("real account switching protects drafts and isolates a delayed old save res
   await expect(guard).toBeVisible();
   await guard.getByRole("button", { name: "继续编辑" }).click();
   await expect(description).toHaveValue("账号切换草稿");
+  await page.route("**/api/auth/logout", route => route.fulfill({ status: 503, body: "" }));
+  await page.getByRole("button", { name: "退出登录", exact: true }).click();
+  await guard.getByRole("button", { name: "放弃修改" }).click();
+  await expect(page.getByText("退出失败，请重试", { exact: true })).toBeVisible();
+  await expect(description).toHaveValue("账号切换草稿");
+  await page.getByRole("navigation", { name: "主导航", exact: true }).getByRole("link", { name: "首页" }).click();
+  await expect(guard).toBeVisible();
+  await guard.getByRole("button", { name: "继续编辑" }).click();
+  await page.unroute("**/api/auth/logout");
   let release!: () => void;
   let arrived!: () => void;
   let delivered!: () => void;

@@ -47,7 +47,7 @@ function OwnerLoginProbe() {
 }
 
 describe("authenticated application shell", () => {
-  it("protects a description draft before logout", async () => {
+  it.each([204, 503])("protects a description draft before logout and after a %i result", async (status) => {
     let logoutRequests = 0;
     server.use(
       http.get("/api/auth/me", () => HttpResponse.json(admin)),
@@ -62,7 +62,7 @@ describe("authenticated application shell", () => {
       })),
       http.post("/api/auth/logout", () => {
         logoutRequests += 1;
-        return new HttpResponse(null, { status: 204 });
+        return new HttpResponse(null, { status });
       }),
     );
     renderTestRouter("/admin");
@@ -76,6 +76,12 @@ describe("authenticated application shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "退出登录" }));
     fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "放弃修改" }));
     await waitFor(() => expect(logoutRequests).toBe(1));
+    if (status === 503) {
+      expect(await screen.findByText("退出失败，请重试")).toBeVisible();
+      expect(description).toHaveValue("尚未保存的行业背景");
+      fireEvent.click(within(screen.getByRole("navigation", { name: "主导航" })).getByRole("link", { name: "首页" }));
+      expect(await screen.findByRole("alertdialog", { name: "放弃未保存的修改？" })).toBeVisible();
+    }
   });
   it("redirects unauthenticated visitors to login", async () => {
     server.use(

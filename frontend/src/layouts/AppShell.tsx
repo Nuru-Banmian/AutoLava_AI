@@ -74,7 +74,7 @@ export function AppShell() {
         <div className="mt-auto grid gap-3 border-t border-white/20 pt-4 [&_select]:bg-background [&_select]:text-foreground">
           <div className="flex items-center justify-between gap-2">
             <span className="min-w-0 truncate text-sm">{user?.username}</span>
-            <Button aria-label="退出登录" disabled={isLoggingOut} onClick={() => requestTransition(() => { void logout().catch(() => undefined); })} size="icon" variant="secondary"><LogOut /></Button>
+            <Button aria-label="退出登录" disabled={isLoggingOut} onClick={() => requestTransition(() => { void logout().catch(() => undefined); }, undefined, { preserveDirty: true })} size="icon" variant="secondary"><LogOut /></Button>
           </div>
         </div>
       </aside>
