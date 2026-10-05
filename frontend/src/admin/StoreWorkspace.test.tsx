@@ -100,6 +100,32 @@ function deferredResponse() {
   return { promise, resolve };
 }
 
+it("keeps the description draft on conflict and requires reviewing the latest version", async () => {
+  const user = userEvent.setup();
+  let submitted: unknown;
+  mockStoreWorkspace();
+  server.use(http.patch("/api/admin/stores/9", async ({ request }) => {
+    submitted = await request.json();
+    return HttpResponse.json({ detail: {
+      code: "store_description_revision_conflict",
+      message: "门店描述已被修改，请核对最新描述后再保存",
+      latest: { description: "另一位管理员保存的背景", description_revision: 2 },
+    } }, { status: 409 });
+  }));
+  renderWorkspace();
+  const description = await screen.findByLabelText("门店描述");
+  await user.type(description, "社区烘焙店{enter}周边居民");
+  const details = screen.getByRole("region", { name: "门店资料" });
+  await user.click(within(details).getByRole("button", { name: "保存" }));
+  expect(await screen.findByText("另一位管理员保存的背景")).toBeVisible();
+  expect(description).toHaveValue("社区烘焙店\n周边居民");
+  expect(submitted).toMatchObject({ description: "社区烘焙店\n周边居民", expected_description_revision: 1 });
+  expect(within(details).getByRole("button", { name: "保存" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "已核对，保留草稿" }));
+  await user.click(within(details).getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(submitted).toMatchObject({ expected_description_revision: 2 }));
+});
+
 it("selects the first store on initial load and renders income before details", async () => {
   mockStoreWorkspace({ stores: [roma, milano] });
   renderWorkspace();

@@ -135,6 +135,11 @@ def _request_for(
             f"/api/admin/stores/{store_id}",
             json={"name": "Changed after wait"},
         )
+    if operation == "description-patch":
+        return client.patch(
+            f"/api/admin/stores/{store_id}",
+            json={"description": "Changed after wait", "expected_description_revision": 1},
+        )
     if operation == "store-delete":
         return client.delete(f"/api/admin/stores/{store_id}")
     if operation == "members-replace":
@@ -161,6 +166,7 @@ def _request_for(
         "user-patch",
         "store-create",
         "store-patch",
+        "description-patch",
         "store-delete",
         "members-replace",
     ],

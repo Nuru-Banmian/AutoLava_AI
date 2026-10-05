@@ -263,7 +263,7 @@ test("owner configures shared-store income, a user membership, and a mapped stor
   await page.getByRole("button", { name: "Milano, Italia" }).click();
   await page.getByRole("button", { name: "确认位置" }).click();
   await page.getByRole("button", { name: "添加门店" }).click();
-  await expect.poll(() => capture.createdStore).toEqual({ name: "Milano", address: "Milano, Italia", latitude: 45.4642, longitude: 9.19, timezone: "Europe/Rome" });
+  await expect.poll(() => capture.createdStore).toEqual({ name: "Milano", description: "", address: "Milano, Italia", latitude: 45.4642, longitude: 9.19, timezone: "Europe/Rome" });
   await page.goto("/");
   const globalStorePicker = page.getByTestId("desktop-store-picker").getByRole("combobox", { name: "门店" });
   await expect(globalStorePicker).toBeVisible();

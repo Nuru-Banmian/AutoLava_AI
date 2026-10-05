@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, ApiError } from "@/api/client";
 import type { components } from "@/api/generated";
 import type { AdminStore } from "@/api/types";
+import { currentSessionScope } from "@/auth/sessionScope";
 import { StoreLocationPicker } from "@/components/StoreLocationPicker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,23 +25,42 @@ export interface StoreDetailsCardProps {
 
 interface StoreDraft {
   name: string;
+  description: string;
   location: MapLocation | null;
 }
 
 function draftFor(store: AdminStore | null): StoreDraft {
   return store ? {
     name: store.name,
+    description: store.description ?? "",
     location: {
       label: store.address,
       latitude: Number(store.latitude),
       longitude: Number(store.longitude),
       timezone: store.timezone,
     },
-  } : { name: "", location: null };
+  } : { name: "", description: "", location: null };
 }
 
 function sameDraft(left: StoreDraft, right: StoreDraft) {
-  return left.name === right.name && JSON.stringify(left.location) === JSON.stringify(right.location);
+  return left.name === right.name && left.description === right.description
+    && JSON.stringify(left.location) === JSON.stringify(right.location);
+}
+
+type DescriptionSnapshot = Pick<AdminStore, "description" | "description_revision">;
+
+function descriptionConflict(error: unknown): DescriptionSnapshot | null {
+  if (!(error instanceof ApiError) || error.status !== 409) return null;
+  const body = error.responseBody;
+  if (!body || typeof body !== "object" || !("detail" in body)) return null;
+  const detail = body.detail;
+  if (!detail || typeof detail !== "object" || !("code" in detail)
+    || detail.code !== "store_description_revision_conflict" || !("latest" in detail)) return null;
+  const latest = detail.latest;
+  if (!latest || typeof latest !== "object" || !("description" in latest)
+    || typeof latest.description !== "string" || !("description_revision" in latest)
+    || typeof latest.description_revision !== "number") return null;
+  return { description: latest.description, description_revision: latest.description_revision };
 }
 
 function ErrorMessage({ error, deletion }: { error: unknown; deletion: boolean }) {
@@ -55,13 +75,18 @@ export function StoreDetailsCard({ mode, store, onDirtyChange, onSaved, onDelete
   const queryClient = useQueryClient();
   const initialRef = useRef(draftFor(store));
   const [name, setName] = useState(initialRef.current.name);
+  const [description, setDescription] = useState(initialRef.current.description);
+  const descriptionRevision = useRef(store?.description_revision ?? 1);
+  const [conflict, setConflict] = useState<DescriptionSnapshot | null>(null);
   const [location, setLocation] = useState<MapLocation | null>(initialRef.current.location);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [errorOperation, setErrorOperation] = useState<"save" | "delete" | null>(null);
   const mountedRef = useRef(false);
   const requestSequence = useRef(0);
-  const dirty = !sameDraft({ name, location }, initialRef.current);
+  const dirty = !sameDraft({ name, description, location }, initialRef.current);
+  const descriptionLength = Array.from(description).length;
+  const canSave = Boolean(location && name.trim() && descriptionLength <= 3000 && !conflict);
   const title = mode === "create" ? "新建门店" : "门店资料";
 
   useEffect(() => {
@@ -98,24 +123,34 @@ export function StoreDetailsCard({ mode, store, onDirtyChange, onSaved, onDelete
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!location || (mode === "edit" && !store)) return;
+    if (!canSave || !location || (mode === "edit" && !store)) return;
     const requestId = beginRequest();
+    const sessionScope = currentSessionScope();
     const body = {
       name: name.trim(),
       address: location.label,
       latitude: mode === "create" ? location.latitude : String(location.latitude),
       longitude: mode === "create" ? location.longitude : String(location.longitude),
       timezone: location.timezone,
-    } satisfies Omit<components["schemas"]["StoreCreate"], "wash_count_enabled">;
+    } satisfies Omit<components["schemas"]["StoreCreate"], "wash_count_enabled" | "description">;
     try {
       const saved = mode === "create"
-        ? await api<AdminStore>("/admin/stores", { method: "POST", body: JSON.stringify(body) })
-        : await api<AdminStore>(`/admin/stores/${store!.id}`, { method: "PATCH", body: JSON.stringify(body) });
+        ? await api<AdminStore>("/admin/stores", { method: "POST", body: JSON.stringify({ ...body, description }) })
+        : await api<AdminStore>(`/admin/stores/${store!.id}`, { method: "PATCH", body: JSON.stringify({
+          ...body,
+          ...(description !== initialRef.current.description ? {
+            description, expected_description_revision: descriptionRevision.current,
+          } : {}),
+        } satisfies components["schemas"]["StorePatch"]) });
+      if (sessionScope !== currentSessionScope()) return;
       await invalidateStores();
       if (!isCurrent(requestId)) return;
       const next = draftFor(saved);
       initialRef.current = next;
       setName(next.name);
+      setDescription(next.description);
+      descriptionRevision.current = saved.description_revision ?? 1;
+      setConflict(null);
       setLocation(next.location);
       setPending(false);
       onDirtyChange(false);
@@ -125,6 +160,7 @@ export function StoreDetailsCard({ mode, store, onDirtyChange, onSaved, onDelete
       setPending(false);
       setErrorOperation("save");
       setError(reason);
+      setConflict(descriptionConflict(reason));
     }
   }
 
@@ -160,7 +196,7 @@ export function StoreDetailsCard({ mode, store, onDirtyChange, onSaved, onDelete
       await invalidateStores();
       if (!isCurrent(requestId)) return;
       setPending(false);
-      onSaved(saved);
+      if (!dirty) onSaved(saved);
     } catch (reason) {
       if (!isCurrent(requestId)) return;
       setPending(false);
@@ -198,6 +234,41 @@ export function StoreDetailsCard({ mode, store, onDirtyChange, onSaved, onDelete
     <ErrorMessage deletion={errorOperation === "delete"} error={error} />
     <fieldset className="min-w-0 space-y-4" disabled={pending}>
       <form className="grid min-w-0 gap-4 sm:grid-cols-2 sm:items-end" onSubmit={(event) => void save(event)}>
+        <div className="min-w-0 space-y-2 sm:col-span-2">
+          <label className="block text-sm font-medium" htmlFor={`store-description-${mode}-${store?.id ?? "new"}`}>门店描述</label>
+          <textarea
+            id={`store-description-${mode}-${store?.id ?? "new"}`}
+            aria-describedby="store-description-help store-description-count"
+            aria-invalid={descriptionLength > 3000 || undefined}
+            className="min-h-32 w-full min-w-0 resize-y rounded-lg border border-input bg-card px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            rows={5}
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+          />
+          <p id="store-description-help" className="text-sm leading-6 text-muted-foreground">可填写行业、主营业务、客户特点等稳定背景，例如烘焙、零售、维修或洗车。支持多行纯文本；留空或仅空白表示清空。</p>
+          <p id="store-description-count" role={descriptionLength > 3000 ? "alert" : undefined} className={descriptionLength > 3000 ? "text-sm text-destructive" : "text-sm text-muted-foreground"}>{descriptionLength} / 3000 字符{descriptionLength > 3000 ? "，请缩短描述" : ""}</p>
+          <Button disabled={!description} onClick={() => setDescription("")} type="button" variant="outline">清空描述</Button>
+          {conflict && <section aria-label="描述冲突核对" className="min-w-0 space-y-3 rounded-lg border p-3">
+            <p className="text-sm font-medium">最新已保存描述（版本 {conflict.description_revision}）</p>
+            <p className="whitespace-pre-wrap text-sm [overflow-wrap:anywhere]">{conflict.description || "（空描述）"}</p>
+            <p className="text-sm text-muted-foreground">你的草稿仍保留在输入框中。请核对后选择，再点击保存。</p>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" onClick={() => {
+                descriptionRevision.current = conflict.description_revision;
+                initialRef.current = { ...initialRef.current, description: conflict.description };
+                setConflict(null);
+                setError(null);
+              }}>已核对，保留草稿</Button>
+              <Button type="button" variant="outline" onClick={() => {
+                descriptionRevision.current = conflict.description_revision;
+                initialRef.current = { ...initialRef.current, description: conflict.description };
+                setDescription(conflict.description);
+                setConflict(null);
+                setError(null);
+              }}>采用最新描述</Button>
+            </div>
+          </section>}
+        </div>
         <div className="min-w-0 space-y-2">
           <label className="block text-sm font-medium leading-6" htmlFor={`store-name-${mode}-${store?.id ?? "new"}`}>{mode === "edit" ? `门店名称 ${store?.name ?? ""}` : "门店名称"}</label>
           <Input
@@ -213,14 +284,14 @@ export function StoreDetailsCard({ mode, store, onDirtyChange, onSaved, onDelete
             <p className="text-sm leading-6 text-muted-foreground">{location?.label ?? store?.address}</p>
           </div>
           <StoreLocationPicker buttonLabel="修改位置" onConfirm={setLocation} value={location} />
-          <Button aria-busy={pending || undefined} disabled={!location || !name.trim()} type="submit">保存</Button>
+          <Button aria-busy={pending || undefined} disabled={!canSave} type="submit">保存</Button>
         </> : <>
           <div className="min-w-0 space-y-2">
             <p className="text-sm font-medium">门店位置</p>
             <StoreLocationPicker onConfirm={setLocation} value={location} />
             {location && <p className="text-sm leading-6 text-muted-foreground">{location.label}</p>}
           </div>
-          <Button className="self-end" disabled={!location || !name.trim()} type="submit">{pending ? "添加中…" : "添加门店"}</Button>
+          <Button className="self-end" disabled={!canSave} type="submit">{pending ? "添加中…" : "添加门店"}</Button>
         </>}
       </form>
       {mode === "edit" && store && <section aria-labelledby={`settlement-setting-${store.id}`} className="border-t pt-4">

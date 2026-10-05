@@ -47,6 +47,42 @@ function OwnerLoginProbe() {
 }
 
 describe("authenticated application shell", () => {
+  it.each([204, 503])("protects a description draft before logout and after a %i result", async (status) => {
+    let logoutRequests = 0;
+    server.use(
+      http.get("/api/auth/me", () => HttpResponse.json(admin)),
+      http.get("/api/stores/accessible", () => HttpResponse.json([])),
+      http.get("/api/admin/income-categories", () => HttpResponse.json([])),
+      http.get("/api/admin/stores", () => HttpResponse.json([{
+        id: 1, name: "烘焙店", address: "Roma", latitude: "45", longitude: "9",
+        timezone: "Europe/Rome", is_active: true, description: "", description_revision: 1,
+      }])),
+      http.get("/api/income-config/1/current", () => HttpResponse.json({
+        store_id: 1, enabled: false, revision: 1, items: [], formula: "总额记账",
+      })),
+      http.post("/api/auth/logout", () => {
+        logoutRequests += 1;
+        return new HttpResponse(null, { status });
+      }),
+    );
+    renderTestRouter("/admin");
+    const description = await screen.findByLabelText("门店描述");
+    fireEvent.change(description, { target: { value: "尚未保存的行业背景" } });
+    fireEvent.click(screen.getByRole("button", { name: "退出登录" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "放弃未保存的修改？" });
+    expect(logoutRequests).toBe(0);
+    fireEvent.click(within(dialog).getByRole("button", { name: "继续编辑" }));
+    expect(description).toHaveValue("尚未保存的行业背景");
+    fireEvent.click(screen.getByRole("button", { name: "退出登录" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "放弃修改" }));
+    await waitFor(() => expect(logoutRequests).toBe(1));
+    if (status === 503) {
+      expect(await screen.findByText("退出失败，请重试")).toBeVisible();
+      expect(description).toHaveValue("尚未保存的行业背景");
+      fireEvent.click(within(screen.getByRole("navigation", { name: "主导航" })).getByRole("link", { name: "首页" }));
+      expect(await screen.findByRole("alertdialog", { name: "放弃未保存的修改？" })).toBeVisible();
+    }
+  });
   it("redirects unauthenticated visitors to login", async () => {
     server.use(
       http.get("/api/auth/me", () =>

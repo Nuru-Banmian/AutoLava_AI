@@ -6,12 +6,13 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 interface PendingTransition {
   proceed(): void;
   cancel?(): void;
+  preserveDirty?: boolean;
 }
 
 interface UnsavedChangesValue {
   dirty: boolean;
   markDirty(dirty: boolean): void;
-  requestTransition(proceed: () => void, cancel?: () => void): void;
+  requestTransition(proceed: () => void, cancel?: () => void, options?: { preserveDirty?: boolean }): void;
   resetUnsavedChanges(): void;
 }
 
@@ -29,7 +30,7 @@ export function UnsavedChangesProvider({ children }: PropsWithChildren) {
   const [dirty, setDirty] = useState(false);
   const [pending, setPending] = useState<PendingTransition | null>(null);
   const pendingRef = useRef<PendingTransition | null>(null);
-  const requestTransition = useCallback((proceed: () => void, cancel?: () => void) => {
+  const requestTransition = useCallback((proceed: () => void, cancel?: () => void, options?: { preserveDirty?: boolean }) => {
     if (!dirty) {
       proceed();
       return;
@@ -38,7 +39,7 @@ export function UnsavedChangesProvider({ children }: PropsWithChildren) {
       cancel?.();
       return;
     }
-    const next = { proceed, cancel };
+    const next = { proceed, cancel, preserveDirty: options?.preserveDirty };
     pendingRef.current = next;
     setPending(next);
   }, [dirty]);
@@ -56,11 +57,12 @@ export function UnsavedChangesProvider({ children }: PropsWithChildren) {
     setPending(null);
   };
   const discard = () => {
-    const proceed = pendingRef.current?.proceed;
+    const active = pendingRef.current;
     pendingRef.current = null;
     setPending(null);
-    setDirty(false);
-    proceed?.();
+    // Async transitions such as logout keep guarding the mounted form until they succeed.
+    if (!active?.preserveDirty) setDirty(false);
+    active?.proceed();
   };
 
   return <UnsavedChangesContext.Provider value={{ dirty, markDirty: setDirty, requestTransition, resetUnsavedChanges }}>

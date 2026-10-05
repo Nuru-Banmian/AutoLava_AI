@@ -7,6 +7,7 @@ from sqlalchemy import (
     ForeignKey,
     Numeric,
     String,
+    Text,
     DateTime,
     UniqueConstraint,
     func,
@@ -42,6 +43,8 @@ class Store(Base):
     __tablename__ = "stores"
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(120))
+    description: Mapped[str] = mapped_column(Text, default="", server_default="")
+    description_revision: Mapped[int] = mapped_column(default=1, server_default="1")
     address: Mapped[str] = mapped_column(String(255))
     latitude: Mapped[Decimal] = mapped_column(Numeric(9, 6))
     longitude: Mapped[Decimal] = mapped_column(Numeric(9, 6))

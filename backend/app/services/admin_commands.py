@@ -66,6 +66,8 @@ def _store_payload(store: Store) -> dict[str, Any]:
     return {
         "id": store.id,
         "name": store.name,
+        "description": store.description,
+        "description_revision": store.description_revision,
         "address": store.address,
         "latitude": _decimal(store.latitude),
         "longitude": _decimal(store.longitude),
@@ -281,14 +283,27 @@ async def patch_store(
     actor: User,
 ) -> dict[str, Any]:
     actor_id = actor.id
-    async with sqlite_short_write(session):
+    async with sqlite_short_write(session, begin_immediate=True):
         fresh_actor = await require_fresh_user(
             session, user_id=actor_id, capability="stores.manage"
         )
         store = await session.get(Store, store_id, populate_existing=True)
         if store is None or not store.is_active:
             raise HTTPException(404, "Store not found")
-        changes = body.model_dump(exclude_none=True)
+        changes = body.model_dump(exclude_none=True, exclude={"expected_description_revision"})
+        if "description" in body.model_fields_set:
+            if body.expected_description_revision is None:
+                raise HTTPException(422, "保存门店描述需要提供描述版本")
+            if body.expected_description_revision != store.description_revision:
+                raise HTTPException(409, {
+                    "code": "store_description_revision_conflict",
+                    "message": "门店描述已被修改，请核对最新描述后再保存",
+                    "latest": {
+                        "description": store.description,
+                        "description_revision": store.description_revision,
+                    },
+                })
+            store.description_revision += 1
         previous_location = FrozenWeatherLocation.from_store(store)
         previous_settlement_enabled = store.company_settlement_enabled
         for field, value in changes.items():

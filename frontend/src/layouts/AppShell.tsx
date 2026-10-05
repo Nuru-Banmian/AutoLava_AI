@@ -7,7 +7,7 @@ import { StorePicker } from "@/components/StorePicker";
 import { Button } from "@/components/ui/button";
 import { navigationFor } from "@/navigation/modules";
 import { useStore } from "@/stores/StoreProvider";
-import { UnsavedRouteGuard } from "@/navigation/UnsavedChanges";
+import { UnsavedRouteGuard, useUnsavedChanges } from "@/navigation/UnsavedChanges";
 
 type Icon = ComponentType<SVGProps<SVGSVGElement>>;
 
@@ -48,6 +48,7 @@ function Navigation({ surface }: { surface: "desktop" | "mobile" }) {
 }
 
 export function AppShell() {
+  const { requestTransition } = useUnsavedChanges();
   const { user, logout, isLoggingOut, logoutError } = useAuth();
   const { error: storeError, refetch: refetchStores } = useStore();
   const { pathname } = useLocation();
@@ -73,7 +74,7 @@ export function AppShell() {
         <div className="mt-auto grid gap-3 border-t border-white/20 pt-4 [&_select]:bg-background [&_select]:text-foreground">
           <div className="flex items-center justify-between gap-2">
             <span className="min-w-0 truncate text-sm">{user?.username}</span>
-            <Button aria-label="退出登录" disabled={isLoggingOut} onClick={() => { void logout().catch(() => undefined); }} size="icon" variant="secondary"><LogOut /></Button>
+            <Button aria-label="退出登录" disabled={isLoggingOut} onClick={() => requestTransition(() => { void logout().catch(() => undefined); }, undefined, { preserveDirty: true })} size="icon" variant="secondary"><LogOut /></Button>
           </div>
         </div>
       </aside>
