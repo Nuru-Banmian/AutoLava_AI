@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import AfterValidator, BaseModel, Field, StringConstraints
+from pydantic import AfterValidator, BaseModel, Field, StrictInt, StringConstraints, field_validator
 
 
 def _nonblank(value: str) -> str:
@@ -27,6 +27,9 @@ CategoryName = Annotated[str, StringConstraints(max_length=100), AfterValidator(
 TimeZoneName = Annotated[str, StringConstraints(max_length=64), AfterValidator(_timezone)]
 Latitude = Annotated[Decimal, Field(ge=-90, le=90)]
 Longitude = Annotated[Decimal, Field(ge=-180, le=180)]
+StoreDescription = Annotated[
+    str, StringConstraints(max_length=3000), AfterValidator(lambda value: value if value.strip() else "")
+]
 
 
 class UserCreate(BaseModel):
@@ -45,6 +48,7 @@ class UserPatch(BaseModel):
 
 class StoreCreate(BaseModel):
     name: StoreName
+    description: StoreDescription = ""
     address: StoreAddress
     latitude: Latitude
     longitude: Longitude
@@ -53,6 +57,8 @@ class StoreCreate(BaseModel):
 
 
 class StorePatch(BaseModel):
+    description: StoreDescription | None = None
+    expected_description_revision: StrictInt | None = Field(default=None, ge=1)
     name: StoreName | None = None
     address: StoreAddress | None = None
     latitude: Latitude | None = None
@@ -61,6 +67,13 @@ class StorePatch(BaseModel):
     is_active: bool | None = None
     company_settlement_enabled: bool | None = None
     wash_count_enabled: bool | None = None
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def description_not_null(cls, value):
+        if value is None:
+            raise ValueError("门店描述不能为 null；清空请使用空字符串")
+        return value
 
 
 class MemberReplace(BaseModel):
@@ -100,6 +113,8 @@ class UserSummaryResponse(BaseModel):
 
 class AdminStoreResponse(BaseModel):
     id: int
+    description: str
+    description_revision: int
     name: str
     address: str
     latitude: str | None

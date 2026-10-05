@@ -827,6 +827,10 @@ export interface components {
             address: string;
             /** Company Settlement Enabled */
             company_settlement_enabled: boolean;
+            /** Description */
+            description: string;
+            /** Description Revision */
+            description_revision: number;
             /** Id */
             id: number;
             /** Is Active */
@@ -1529,6 +1533,11 @@ export interface components {
         StoreCreate: {
             /** Address */
             address: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
             /** Latitude */
             latitude: number | string;
             /** Longitude */
@@ -1559,6 +1568,10 @@ export interface components {
             address?: string | null;
             /** Company Settlement Enabled */
             company_settlement_enabled?: boolean | null;
+            /** Description */
+            description?: string | null;
+            /** Expected Description Revision */
+            expected_description_revision?: number | null;
             /** Is Active */
             is_active?: boolean | null;
             /** Latitude */
