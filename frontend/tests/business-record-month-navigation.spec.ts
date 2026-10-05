@@ -2,6 +2,9 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import type { LedgerBody, RecordSnapshot } from "../src/api/types";
 import { weatherOptions } from "../src/test/weather-options";
 
+// Each test owns its page and mocked records; let CI shards split this large file.
+test.describe.configure({ mode: "parallel" });
+
 interface RangeRequest {
   storeId: number;
   start: string;
