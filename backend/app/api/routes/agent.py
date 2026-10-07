@@ -9,7 +9,7 @@ from app.agents.context import ChatScope
 from app.api.deps import Session, StoreAccess, require_admin, require_store_access
 from app.models.identity import User
 from app.core.database import end_read_transaction
-from app.schemas.agent import ChatConversation, ChatRun, ChatSubmit
+from app.schemas.agent import ChatConversation, ChatGeneration, ChatRun, ChatSubmit
 from app.services.owner import is_administrator
 from app.services.sessions import current_credentials
 
@@ -40,12 +40,22 @@ async def conversation(request: Request, scope: Scope, before: int | None = Quer
 
 @router.post("/messages", response_model=ChatRun, status_code=202)
 async def submit(payload: ChatSubmit, request: Request, scope: Scope):
-    return await request.app.state.agent_runner.submit(scope, payload.content)
+    return await request.app.state.agent_runner.submit(scope, payload.content, payload.request_id, payload.generation)
 
 
 @router.get("/runs/{run_id}", response_model=ChatRun)
 async def run_status(run_id: str, request: Request, scope: Scope):
     return await request.app.state.agent_runner.storage.run(scope, run_id)
+
+
+@router.post("/runs/{run_id}/stop", response_model=ChatRun)
+async def stop(run_id: str, request: Request, scope: Scope):
+    return await request.app.state.agent_runner.stop(scope, run_id)
+
+
+@router.post("/conversation/reset", response_model=ChatConversation)
+async def reset(payload: ChatGeneration, request: Request, scope: Scope):
+    return await request.app.state.agent_runner.reset(scope, payload.generation)
 
 
 @router.get("/runs/{run_id}/events", response_class=StreamingResponse)

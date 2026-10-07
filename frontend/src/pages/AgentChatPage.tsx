@@ -21,6 +21,8 @@ const failures: Record<string, string> = {
   output_budget: "回答达到输出上限，请缩小问题范围。",
   access_revoked: "当前会话或门店权限已失效。",
   interrupted: "本次回答已中断。",
+  cancelled: "本次回答已停止。",
+  reset: "对话已重置。",
 };
 
 function Chat({ storeId }: { storeId: number }) {
@@ -30,24 +32,33 @@ function Chat({ storeId }: { storeId: number }) {
   const [error, setError] = useState("");
   const [connection, setConnection] = useState("");
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const [controlling, setControlling] = useState(false);
+  const epoch = useRef(0);
+  const reads = useRef(0);
+  const pending = useRef<{ content: string; request_id: string; generation: number } | null>(null);
   const alive = useRef(false);
   const generation = useRef(currentSessionScope());
-  const valid = () => alive.current && generation.current === currentSessionScope();
+  const valid = (version = epoch.current) => alive.current && generation.current === currentSessionScope() && version === epoch.current;
   const base = `/agent/${storeId}`;
 
   async function reload() {
+    const version = epoch.current;
+    const read = ++reads.current;
     try {
       const value = await api<Conversation>(`${base}/conversation`);
-      if (valid()) { setConversation(value); setError(""); }
+      if (valid(version) && read === reads.current) {
+        if (value.run?.request_id === pending.current?.request_id) pending.current = null;
+        setConversation(value); setError("");
+      }
     } catch (cause) {
-      if (valid()) setError(friendlyApiError(cause, "对话加载失败，请重试"));
+      if (valid(version) && read === reads.current) setError(friendlyApiError(cause, "对话加载失败，请重试"));
     }
   }
 
   useEffect(() => {
     alive.current = true;
     void reload();
-    return () => { alive.current = false; };
+    return () => { alive.current = false; epoch.current++; };
     // Each store/session has its own keyed component and event lifetime.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -55,14 +66,19 @@ function Chat({ storeId }: { storeId: number }) {
   const runId = conversation?.run?.id;
   const status = conversation?.run?.status;
   useEffect(() => {
-    if (!runId || status !== "running") return;
+    if (!runId || status !== "running" || controlling) return;
+    const version = epoch.current;
     const source = new EventSource(`/api${base}/runs/${runId}/events`, { withCredentials: true });
     let output = "";
     let disposed = false;
-    const current = () => !disposed && valid();
+    let lastEventId = 0;
+    const current = () => !disposed && valid(version);
     source.onopen = () => { if (current()) setConnection(""); };
     source.addEventListener("delta", (event) => {
       if (!current()) return;
+      const id = Number((event as MessageEvent).lastEventId);
+      if (id && id <= lastEventId) return;
+      if (id) lastEventId = id;
       output += (JSON.parse((event as MessageEvent).data) as { text: string }).text;
       setConversation((previous) => previous?.run?.id === runId
         ? { ...previous, run: { ...previous.run, output } } : previous);
@@ -75,6 +91,13 @@ function Chat({ storeId }: { storeId: number }) {
       source.close();
       if (!current()) return;
       const { error_code } = JSON.parse((event as MessageEvent).data) as { error_code: string };
+      if (error_code === "reset") {
+        epoch.current++;
+        pending.current = null;
+        setSending(false);
+        void reload();
+        return;
+      }
       setConversation((previous) => previous?.run?.id === runId
         ? { ...previous, run: { ...previous.run, status: "failed", error_code } } : previous);
     });
@@ -83,45 +106,90 @@ function Chat({ storeId }: { storeId: number }) {
     };
     return () => { disposed = true; source.close(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runId, status, base]);
+  }, [runId, status, base, controlling]);
 
-  async function send() {
-    if (sending || status === "running" || !draft.trim()) return;
+  async function send(content = draft) {
+    if (sending || controlling || status === "running" || !content.trim() || !conversation) return;
+    const version = epoch.current;
+    const chatGeneration = conversation.generation ?? 0;
+    if (!pending.current || pending.current.content !== content || pending.current.generation !== chatGeneration) {
+      pending.current = { content, request_id: crypto.randomUUID(), generation: chatGeneration };
+    }
     setSending(true);
     setError("");
     try {
-      const run = await api<Run>(`${base}/messages`, { method: "POST", body: JSON.stringify({ content: draft }) });
-      if (!valid()) return;
+      const run = await api<Run>(`${base}/messages`, { method: "POST", body: JSON.stringify(pending.current) });
+      if (!valid(version)) return;
+      pending.current = null;
+      reads.current++;
       setDraft("");
       setConversation((previous) => previous && { ...previous, run });
       await reload();
     } catch (cause) {
-      if (valid()) {
-        // Submission is never automatically retried: a lost response may already have started a run.
+      if (valid(version)) {
+        // Keep the request identity when its response is lost; retries must reuse it.
         await reload();
-        if (valid()) setError(friendlyApiError(cause, "发送结果未确认，已尝试重新读取对话，请确认后再发送。"));
+        if (valid(version)) setError(friendlyApiError(cause, "发送结果未确认，已尝试重新读取对话，请确认后再发送。"));
       }
     } finally {
-      if (valid()) setSending(false);
+      if (valid(version)) setSending(false);
     }
   }
 
   async function older() {
     if (!conversation?.next_before || loadingOlder) return;
     setLoadingOlder(true);
+    const version = epoch.current;
     try {
       const history = await api<Conversation>(`${base}/conversation?before=${conversation.next_before}`);
-      if (valid()) setConversation((previous) => previous && {
+      if (valid(version)) setConversation((previous) => previous && {
         ...previous, messages: [...history.messages, ...previous.messages], next_before: history.next_before,
       });
     } catch (cause) {
-      if (valid()) setError(friendlyApiError(cause, "历史对话加载失败，请重试"));
+      if (valid(version)) setError(friendlyApiError(cause, "历史对话加载失败，请重试"));
     } finally {
-      if (valid()) setLoadingOlder(false);
+      if (valid(version)) setLoadingOlder(false);
+    }
+  }
+
+  async function control(action: "stop" | "reset") {
+    if (!conversation || controlling) return;
+    const version = ++epoch.current;
+    reads.current++;
+    setControlling(true);
+    setSending(false);
+    setLoadingOlder(false);
+    setConnection("");
+    pending.current = null;
+    try {
+      if (action === "reset") {
+        const value = await api<Conversation>(`${base}/conversation/reset`, {
+          method: "POST", body: JSON.stringify({ generation: conversation.generation ?? 0 }),
+        });
+        if (valid(version)) { setConversation(value); setDraft(""); setError(""); }
+      } else if (runId) {
+        const value = await api<Run>(`${base}/runs/${runId}/stop`, { method: "POST" });
+        if (valid(version)) {
+          setConversation((previous) => previous && { ...previous, run: value });
+          setError("");
+        }
+      }
+    } catch (cause) {
+      if (valid(version)) {
+        await reload();
+        if (valid(version)) setError(friendlyApiError(cause, "操作结果未确认，请重新读取对话。"));
+      }
+    } finally {
+      if (valid(version)) setControlling(false);
     }
   }
 
   return <div className="grid min-w-0 gap-4">
+    <div className="flex gap-2">
+      {status === "running" && <Button variant="outline" disabled={controlling} onClick={() => void control("stop")}>停止生成</Button>}
+      <Button variant="outline" disabled={!conversation || controlling} onClick={() => void control("reset")}>重置对话</Button>
+      {status === "failed" && conversation?.messages.at(-1)?.role === "user" && <Button variant="outline" disabled={sending || controlling} onClick={() => void send(conversation.messages.at(-1)!.content)}>重试</Button>}
+    </div>
     {!conversation && !error && <p role="status">正在读取对话…</p>}
     {error && <div role="alert" className="text-destructive">{error} <Button variant="outline" onClick={() => void reload()}>重新读取</Button></div>}
     <div aria-label="聊天记录" className="grid min-w-0 gap-3">
@@ -142,7 +210,7 @@ function Chat({ storeId }: { storeId: number }) {
     <form className="grid gap-2" onSubmit={(event) => { event.preventDefault(); void send(); }}>
       <label htmlFor="chat-message" className="font-semibold">发送消息</label>
       <textarea id="chat-message" className="min-h-28 w-full rounded-lg border bg-card p-3" maxLength={6000} value={draft} onChange={(event) => setDraft(event.target.value)} />
-      <div className="flex items-center justify-between gap-3"><p className="text-xs text-muted-foreground">最多 6,000 字；当前版本支持通用聊天。</p><Button type="submit" disabled={!conversation || sending || status === "running" || !draft.trim()}>发送</Button></div>
+      <div className="flex items-center justify-between gap-3"><p className="text-xs text-muted-foreground">最多 6,000 字；当前版本支持通用聊天。</p><Button type="submit" disabled={!conversation || sending || controlling || status === "running" || !draft.trim()}>发送</Button></div>
     </form>
   </div>;
 }

@@ -1,11 +1,13 @@
-# AI 对话（T2 / #240）
+# AI 对话（T2 / #240、T3 / #241）
 
 管理员从当前门店进入 `/ai`，通过 `/api/agent/{store_id}` 访问：
 
-- `POST /messages`：提交 `{"content":"你好"}`，202 返回运行。一个管理员、一个门店同时只允许一个运行，繁忙返回 409。
+- `POST /messages`：提交 `{"content":"你好","request_id":"客户端生成的唯一标识","generation":0}`，202 返回运行。世代取自当前对话；同范围、同标识及内容的请求返回同一运行，不再次调用模型。标识内容冲突、旧世代或另一运行占用时返回 409。
 - `GET /conversation`：读取最近 100 条持久消息和最新运行，包括未完成的回答片段；`next_before` 配合 `?before=` 和页面“读取更早对话”入口向前翻页。
 - `GET /runs/{run_id}`：运行状态、失败代码、配置模型名、调用尝试次数、可获得的 token 用量。
 - `GET /runs/{run_id}/events`：持久事件 SSE；支持 `Last-Event-ID` 或 `after` 续读。连接或刷新不会提交新模型调用。
+- `POST /runs/{run_id}/stop`：持久标记 `failed/cancelled` 后取消任务，保留已有片段供辨认；迟到片段不能追加或完成。
+- `POST /conversation/reset`：提交 `{"generation":当前世代}`，清空聊天内容并递增世代。旧请求、旧运行及待提交的整理来源失效；保留不含聊天正文的运行审计状态。旧世代重置重试返回 409，不能清除新对话。
 
 服务端通过已登录身份构造范围，并沿用“管理员可访问全部启用门店”的既有权限规则。运行的每次片段写入及 SSE 发送前重新验证当前会话、管理员能力、门店状态。查询不存在或其他范围的运行返回 404。页面在账号/门店切换时关闭旧流并丢弃迟到响应。
 
@@ -28,13 +30,27 @@
 
 后续实际接入工具、技能、记忆 Agent 时，按 #238 的目标布局增设 `registry.py`、`tools/`、`skills/`、`memory_curator/`、`memory/` 等。T2 不创建空的未来模块，也不假称已查询经营数据、读取门店描述或保存长期记忆。
 
-T3 负责停止、重置、请求幂等和异常进程中断恢复。T2 的正常应用退出会取消任务并记录 `interrupted`；突然终止进程后的遗留运行恢复尚不属于本次交付。当前运行方式为单个 FastAPI 进程，不支持热重载期间透明续跑。
+0024 增加对话世代和持久请求标识。当前运行方式为单个 FastAPI 进程：启动 lifespan 将遗留运行标记为 `failed/interrupted`，不自动恢复模型调用；用户可主动重试。正常退出也记录中断。停止和重置不意味着能够撤销已经发往供应商的计算或费用，只保证旧结果不能继续提交。
+
+页面区分请求送达不确定时的同标识重试与已确认失败后的新运行重试。停止、重置及账号/门店切换立即作废旧异步响应；另一个页面收到 reset SSE 后重新读取当前世代。
+
+后续记忆整理任务必须保存来源世代，并在每次外部等待后的提交事务内调用 `ChatRepository.authorize_generation(session, scope, generation)`，与实际写入共用短事务。已独立提交的记忆应使用独立存储；聊天重置只修改聊天表。工具与记忆尚未接入，本票不声称已验证真实工具执行或记忆保留。
 
 ## 验证入口
 
 `uv run pytest tests/api/test_agent_chat.py` 使用真实登录、临时文件 SQLite 和向前迁移，模型/百炼网络响应为可控替身。真实百炼调用、向量库、内容质量和部署须分别验收，不能由上述测试推断通过。
 
 协议依据：[百炼流式响应](https://help.aliyun.com/en/model-studio/stream)、[LangGraph 图工厂](https://reference.langchain.com/python/langgraph/graph/state/StateGraph)。
+
+### 2026-10-07 T3 本地验收记录
+
+- 后端全量 502 passed，覆盖率 87%；Agent 公开 HTTP/SSE 验收 17 项，使用真实迁移 SQLite、真实登录及可控模型，包括忽略取消后仍返回结果的模型。活动 SSE 在收到片段后精确断开，再按游标恢复，覆盖完成和重置。保留既有 SQLite 连接 ResourceWarning。
+- 前端全量 375 passed，TypeScript、生产构建、Ruff、OpenAPI 与 diff 检查通过。页面测试覆盖响应丢失后的请求去重、首次主动重试、迟到提交及旧 SSE 隔离。
+- 真实 Chromium + 临时迁移 SQLite + 可控模型通过停止、重置、生成中/完成后刷新、双页面重置通知、生成中门店与账号切换；390px 布局截图已检查。证据位于本地 `output/playwright/issue241/`。
+- 全量 Playwright 为 94 passed、20 skipped、2 failed。日历金额文本断言在原始基线 `2330acff` 的独立副本复现；分析加载失败提示的 390px 用例在基线与当前代码单独复测均通过。未修改这些无关页面或断言，保留 `.autolava-test/e2e-241-full.log`、`e2e-241-baseline.log`、`e2e-241-analysis-recheck.log`。
+- 后端前两次并行全量的限流替身测试超过原 10 秒状态等待；单独复测通过。状态等待预算调整到覆盖默认 60 秒运行预算后，全量通过；竞争顺序仍由确定性屏障控制。最终日志 `.autolava-test/backend-241-final.log`，前序失败保留在 `backend-241-full.log` 和 `backend-241-verified.log`。前端一次全量的无关登录草稿测试失败后，单独复测和最终全量均通过；原记录保留在 `frontend-241-verified.log`。
+- Standards / Spec 独立审查发现并修复事件游标复用与失败首次重试两项问题，复审均无剩余发现。固定基线 `2330acff`；仅提交 T3 文件及共享文件内的 T3 变更，保留其他工作区改动。
+- 真实百炼调用、真实向量存储/Embedding、回答内容质量、工具/记忆集成、Docker 与生产部署未执行。当前仍是上下文 → 模型生成图；按用户要求，这批 Issue 完成前不额外改造 ReAct 推理范式。
 
 ### 2026-10-05 本地验收记录
 

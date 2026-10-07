@@ -19,13 +19,30 @@ class ChatRunner:
         self.settings = settings
         self.graph = create_graph(model, storage, settings)
         self.tasks: set[asyncio.Task] = set()
+        self.runs: dict[str, asyncio.Task] = {}
 
-    async def submit(self, scope: ChatScope, content: str):
-        run = await self.storage.submit(scope, content, self.model.model_name)
+    async def submit(self, scope: ChatScope, content: str, request_id: str, generation: int):
+        run, created = await self.storage.submit(scope, content, self.model.model_name, request_id, generation)
+        if not created:
+            return run
         task = asyncio.create_task(self._execute(scope, run.id))
+        self.runs[run.id] = task
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)
+        task.add_done_callback(lambda _: self.runs.pop(run.id, None))
         return run
+
+    async def stop(self, scope: ChatScope, run_id: str):
+        run = await self.storage.stop(scope, run_id)
+        if task := self.runs.get(run_id):
+            task.cancel()
+        return run
+
+    async def reset(self, scope: ChatScope, generation: int):
+        for run_id in await self.storage.reset(scope, generation):
+            if task := self.runs.get(run_id):
+                task.cancel()
+        return await self.storage.conversation(scope)
 
     async def _execute(self, scope: ChatScope, run_id: str):
         code = None

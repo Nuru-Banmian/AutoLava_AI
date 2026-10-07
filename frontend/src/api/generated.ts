@@ -318,6 +318,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent/{store_id}/conversation/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reset */
+        post: operations["reset_api_agent__store_id__conversation_reset_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent/{store_id}/messages": {
         parameters: {
             query?: never;
@@ -363,6 +380,23 @@ export interface paths {
         get: operations["run_events_api_agent__store_id__runs__run_id__events_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent/{store_id}/runs/{run_id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stop */
+        post: operations["stop_api_agent__store_id__runs__run_id__stop_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1083,11 +1117,21 @@ export interface components {
         };
         /** ChatConversation */
         ChatConversation: {
+            /**
+             * Generation
+             * @default 0
+             */
+            generation: number;
             /** Messages */
             messages: components["schemas"]["ChatMessage"][];
             /** Next Before */
             next_before?: number | null;
             run: components["schemas"]["ChatRun"] | null;
+        };
+        /** ChatGeneration */
+        ChatGeneration: {
+            /** Generation */
+            generation: number;
         };
         /** ChatMessage */
         ChatMessage: {
@@ -1107,12 +1151,16 @@ export interface components {
             calls: number;
             /** Error Code */
             error_code: string | null;
+            /** Generation */
+            generation: number;
             /** Id */
             id: string;
             /** Model */
             model: string;
             /** Output */
             output: string;
+            /** Request Id */
+            request_id: string | null;
             /**
              * Status
              * @enum {string}
@@ -1127,6 +1175,10 @@ export interface components {
         ChatSubmit: {
             /** Content */
             content: string;
+            /** Generation */
+            generation: number;
+            /** Request Id */
+            request_id: string;
         };
         /** CompanyCreate */
         CompanyCreate: {
@@ -2717,6 +2769,43 @@ export interface operations {
             };
         };
     };
+    reset_api_agent__store_id__conversation_reset_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                store_id: number;
+            };
+            cookie?: {
+                access_token?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatGeneration"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatConversation"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     submit_api_agent__store_id__messages_post: {
         parameters: {
             query?: never;
@@ -2812,6 +2901,40 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stop_api_agent__store_id__runs__run_id__stop_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+                store_id: number;
+            };
+            cookie?: {
+                access_token?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatRun"];
+                };
             };
             /** @description Validation Error */
             422: {

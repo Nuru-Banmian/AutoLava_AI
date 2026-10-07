@@ -1,4 +1,4 @@
-"""Chat history uses the existing 0017 tables; runs/events extend them in 0023."""
+"""0017 history, 0023 runs/events, and 0024 request identities and generations."""
 
 from datetime import datetime
 
@@ -14,6 +14,7 @@ class AgentConversation(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id", ondelete="CASCADE"))
+    generation: Mapped[int] = mapped_column(default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
     __table_args__ = (UniqueConstraint("user_id", "store_id", name="uq_agent_conversations_user_store"),)
@@ -36,6 +37,9 @@ class AgentRun(Base):
     __tablename__ = "agent_runs"
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     conversation_id: Mapped[int] = mapped_column(ForeignKey("agent_conversations.id", ondelete="CASCADE"))
+    generation: Mapped[int] = mapped_column(default=0, server_default="0")
+    request_id: Mapped[str | None] = mapped_column(String(80))
+    input: Mapped[str] = mapped_column(Text, default="", server_default="")
     status: Mapped[str] = mapped_column(String(16), default="running")
     output: Mapped[str] = mapped_column(Text, default="")
     error_code: Mapped[str | None] = mapped_column(String(40))
@@ -45,6 +49,7 @@ class AgentRun(Base):
     created_at: Mapped[datetime] = mapped_column(default=utc_now, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
     __table_args__ = (
+        UniqueConstraint("conversation_id", "request_id", name="uq_agent_run_request"),
         CheckConstraint("status in ('running','completed','failed')", name="agent_run_status"),
         Index("ix_agent_runs_conversation_id", "conversation_id"),
         Index("uq_agent_runs_active", "conversation_id", unique=True,
