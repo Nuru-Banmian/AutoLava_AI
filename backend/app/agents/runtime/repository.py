@@ -3,7 +3,7 @@
 from uuid import uuid4
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agents.context import ChatScope
@@ -30,7 +30,29 @@ class ChatRepository:
             raise HTTPException(404, "Run not found")
         return run
 
-    async def submit(self, scope: ChatScope, content: str, model: str) -> ChatRun:
+    async def authorize_generation(self, session, scope: ChatScope, generation: int):
+        """Use inside the caller's short write transaction after every external wait.
+
+        Memory jobs must carry this generation and check it before committing sources;
+        already committed memory lives independently of chat reset.
+        """
+        await scope.authorize(session)
+        conversation = await self._conversation(session, scope)
+        if conversation is None or conversation.generation != generation:
+            raise HTTPException(409, "对话已重置")
+        return conversation
+
+    async def stop(self, scope: ChatScope, run_id: str) -> ChatRun:
+        async with self.sessions() as session, sqlite_short_write(session, begin_immediate=True):
+            await scope.authorize(session)
+            run = await self._run(session, scope, run_id)
+            if run.status == "running":
+                run.status = "failed"
+                run.error_code = "cancelled"
+                session.add(AgentEvent(run_id=run.id, kind="failed", payload={"error_code": "cancelled"}))
+            return ChatRun.model_validate(run)
+
+    async def reset(self, scope: ChatScope, generation: int) -> list[str]:
         async with self.sessions() as session, sqlite_short_write(session, begin_immediate=True):
             await scope.authorize(session)
             conversation = await self._conversation(session, scope)
@@ -38,17 +60,69 @@ class ChatRepository:
                 conversation = AgentConversation(user_id=scope.user_id, store_id=scope.store_id)
                 session.add(conversation)
                 await session.flush()
+            if conversation.generation != generation:
+                raise HTTPException(409, "对话已重置，请重新读取")
+            runs = list(await session.scalars(select(AgentRun).where(
+                AgentRun.conversation_id == conversation.id,
+            )))
+            cutoff = await session.scalar(select(func.max(AgentEvent.id))) or 0
+            active = []
+            for run in runs:
+                if run.status == "running":
+                    active.append(run.id)
+                    run.status = "failed"
+                    run.error_code = "reset"
+                run.input = ""
+                run.output = ""
+                session.add(AgentEvent(run_id=run.id, kind="failed", payload={"error_code": "reset"}))
+            # Allocate terminal cursors before removing content: SQLite may reuse deleted IDs.
+            await session.flush()
+            await session.execute(delete(AgentEvent).where(
+                AgentEvent.run_id.in_([r.id for r in runs]), AgentEvent.id <= cutoff,
+            ))
+            await session.execute(delete(AgentMessage).where(AgentMessage.conversation_id == conversation.id))
+            conversation.generation += 1
+            return active
+
+    async def recover(self):
+        """Single-process startup: never transparently repeat a provider call."""
+        async with self.sessions() as session, sqlite_short_write(session, begin_immediate=True):
+            runs = await session.scalars(select(AgentRun).where(AgentRun.status == "running"))
+            for run in runs:
+                run.status = "failed"
+                run.error_code = "interrupted"
+                session.add(AgentEvent(run_id=run.id, kind="failed", payload={"error_code": "interrupted"}))
+
+    async def submit(self, scope: ChatScope, content: str, model: str,
+                     request_id: str, generation: int) -> tuple[ChatRun, bool]:
+        async with self.sessions() as session, sqlite_short_write(session, begin_immediate=True):
+            await scope.authorize(session)
+            conversation = await self._conversation(session, scope)
+            if conversation is None:
+                conversation = AgentConversation(user_id=scope.user_id, store_id=scope.store_id)
+                session.add(conversation)
+                await session.flush()
+            if conversation.generation != generation:
+                raise HTTPException(409, "对话已重置，请重新读取后再发送")
+            existing = await session.scalar(select(AgentRun).where(
+                AgentRun.conversation_id == conversation.id, AgentRun.request_id == request_id,
+            ))
+            if existing:
+                if existing.input != content or existing.generation != generation:
+                    raise HTTPException(409, "请求标识已用于其他消息")
+                return ChatRun.model_validate(existing), False
             active = await session.scalar(select(AgentRun.id).where(
                 AgentRun.conversation_id == conversation.id, AgentRun.status == "running",
             ))
             if active:
                 raise HTTPException(409, "当前对话正在处理中，请等待完成")
             session.add(AgentMessage(conversation_id=conversation.id, role="user", content=content))
-            run = AgentRun(id=uuid4().hex, conversation_id=conversation.id, model=model)
+            run = AgentRun(id=uuid4().hex, conversation_id=conversation.id, model=model,
+                           request_id=request_id, generation=generation, input=content)
             session.add(run)
             await session.flush()
             session.add(AgentEvent(run_id=run.id, kind="running", payload={"status": "running"}))
-            return ChatRun.model_validate(run)
+            return ChatRun.model_validate(run), True
 
     async def conversation(self, scope: ChatScope, before: int | None = None) -> ChatConversation:
         async with self.sessions() as session:
@@ -64,8 +138,10 @@ class ChatRepository:
             messages = messages[:100]
             run = await session.scalar(select(AgentRun).where(
                 AgentRun.conversation_id == conversation.id,
+                AgentRun.generation == conversation.generation,
             ).order_by(AgentRun.created_at.desc(), AgentRun.id.desc()).limit(1))
             return ChatConversation(
+                generation=conversation.generation,
                 messages=[ChatMessage.model_validate(item) for item in reversed(messages)],
                 run=ChatRun.model_validate(run) if run else None,
                 next_before=messages[-1].id if has_more else None,
@@ -80,15 +156,19 @@ class ChatRepository:
         async with self.sessions() as session:
             await scope.authorize(session)
             run = await self._run(session, scope, run_id)
-            events = list(await session.scalars(select(AgentEvent).where(
+            query = select(AgentEvent).where(
                 AgentEvent.run_id == run_id, AgentEvent.id > after,
-            ).order_by(AgentEvent.id).limit(1)))
+            )
+            if run.error_code in {"cancelled", "reset", "access_revoked"}:
+                query = query.where(AgentEvent.kind == "failed")
+            events = list(await session.scalars(query.order_by(AgentEvent.id).limit(1)))
             return [(item.id, item.kind, item.payload) for item in events], run.status
 
     async def record(self, scope: ChatScope, run_id: str, kind: str, payload: dict):
         async with self.sessions() as session, sqlite_short_write(session, begin_immediate=True):
             await scope.authorize(session)
             run = await self._run(session, scope, run_id)
+            await self.authorize_generation(session, scope, run.generation)
             if run.status != "running":
                 raise RuntimeError("Run already ended")
             if kind == "delta":

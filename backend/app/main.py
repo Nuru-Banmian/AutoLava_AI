@@ -84,6 +84,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        await agent_runner.storage.recover()
         provider.client = httpx.AsyncClient(
             limits=httpx.Limits(max_connections=settings.weather_max_inflight),
             timeout=httpx.Timeout(8),

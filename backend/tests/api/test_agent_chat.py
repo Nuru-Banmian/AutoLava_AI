@@ -7,6 +7,7 @@ from pathlib import Path
 import sqlite3
 import subprocess
 import sys
+from uuid import uuid4
 
 import pytest
 import httpx
@@ -87,7 +88,9 @@ async def chat_app(tmp_path, model, *, historical_messages=0):
 
 
 async def completed(client, run_id, store=1):
-    async with asyncio.timeout(10):
+    # Allow the configured run budget under parallel Windows CI load. This polls
+    # observable status; concurrency tests use provider/transport barriers instead.
+    async with asyncio.timeout(65):
         while True:
             response = await client.get(f"/api/agent/{store}/runs/{run_id}")
             assert response.status_code == 200, response.text
@@ -103,7 +106,7 @@ async def test_stream_save_reload_and_scope_isolation(tmp_path):
         before = await client.get("/api/agent/1/conversation")
         assert before.status_code == 200
         assert [item["content"] for item in before.json()["messages"]] == ["历史问题", "历史回答"]
-        response = await client.post("/api/agent/1/messages", json={"content": "你好"})
+        response = await client.post("/api/agent/1/messages", json={"request_id": uuid4().hex, "generation": 0, "content": "你好"})
         assert response.status_code == 202, response.text
         run_id = response.json()["id"]
         assert (await completed(client, run_id))["status"] == "completed"
@@ -156,7 +159,7 @@ async def test_provider_errors_are_bounded_and_saved(tmp_path, status, body, cod
             return_value=httpx.Response(status, text=body),
         )
         async with chat_app(tmp_path, provider()) as (client, _, _):
-            response = await client.post("/api/agent/1/messages", json={"content": "私人问题"})
+            response = await client.post("/api/agent/1/messages", json={"request_id": uuid4().hex, "generation": 0, "content": "私人问题"})
             run = await completed(client, response.json()["id"])
             assert run["status"] == "failed" and run["error_code"] == code
             assert run["calls"] == transport.call_count == calls
@@ -182,7 +185,7 @@ async def test_bailian_stream_and_usage_through_public_api(tmp_path):
             side_effect=[httpx.Response(503), httpx.Response(200, text=body)],
         )
         async with chat_app(tmp_path, provider()) as (client, _, _):
-            response = await client.post("/api/agent/1/messages", json={"content": "你好"})
+            response = await client.post("/api/agent/1/messages", json={"request_id": uuid4().hex, "generation": 0, "content": "你好"})
             run = await completed(client, response.json()["id"])
             assert run["status"] == "completed" and run["output"] == "你好"
             assert run["usage"] == {"prompt_tokens": 20, "completion_tokens": 2, "total_tokens": 22}
@@ -201,25 +204,168 @@ class WaitingModel(StreamingModel):
         self.entered = asyncio.Event()
         self.release = asyncio.Event()
         self.closed = asyncio.Event()
+        self.ignore_cancel = False
 
     async def stream(self, messages):
         try:
             self.calls.append(messages)
             yield "已有片段"
             self.entered.set()
-            await self.release.wait()
+            try:
+                await self.release.wait()
+            except asyncio.CancelledError:
+                if not self.ignore_cancel:
+                    raise
+                await self.release.wait()
             yield "不得泄漏的迟到回答"
         finally:
             self.closed.set()
 
 
+async def test_request_identity_deduplicates_concurrent_submissions(tmp_path):
+    model = WaitingModel()
+    async with chat_app(tmp_path, model) as (client, _, _):
+        payload = {"content": "只运行一次", "request_id": "same-request", "generation": 0}
+        first, retry = await asyncio.gather(*[
+            client.post("/api/agent/1/messages", json=payload) for _ in range(2)
+        ])
+        assert first.status_code == retry.status_code == 202
+        assert first.json()["id"] == retry.json()["id"]
+        await asyncio.wait_for(model.entered.wait(), 5)
+        busy = await client.post("/api/agent/1/messages", json=payload | {"request_id": "different"})
+        assert busy.status_code == 409
+        conflict = await client.post("/api/agent/1/messages", json=payload | {"content": "不同问题"})
+        assert conflict.status_code == 409
+        model.release.set()
+        run = await completed(client, first.json()["id"])
+        again = await client.post("/api/agent/1/messages", json=payload)
+        assert again.json() == run
+        assert len(model.calls) == 1
+        history = (await client.get("/api/agent/1/conversation")).json()["messages"]
+        assert [m["content"] for m in history].count("只运行一次") == 1
+
+
+@pytest.mark.parametrize("action", ["stop", "reset"])
+async def test_stop_and_reset_fence_late_model_and_retries(tmp_path, action):
+    model = WaitingModel()
+    model.ignore_cancel = True
+    async with chat_app(tmp_path, model) as (client, _, _):
+        payload = {"content": "等待", "request_id": "old-request", "generation": 0}
+        run = (await client.post("/api/agent/1/messages", json=payload)).json()
+        await asyncio.wait_for(model.entered.wait(), 5)
+        path = f'/runs/{run["id"]}/stop' if action == "stop" else "/conversation/reset"
+        result = await client.post(f"/api/agent/1{path}", json={"generation": 0})
+        assert result.status_code == 200, result.text
+        model.release.set()
+        await asyncio.wait_for(model.closed.wait(), 5)
+        saved = (await client.get(f'/api/agent/1/runs/{run["id"]}')).json()
+        assert saved["status"] == "failed"
+        assert saved["error_code"] == ("cancelled" if action == "stop" else "reset")
+        events = (await client.get(f'/api/agent/1/runs/{run["id"]}/events')).text
+        assert "不得泄漏" not in events and "event: completed" not in events
+        history = (await client.get("/api/agent/1/conversation")).json()
+        retry = await client.post("/api/agent/1/messages", json=payload)
+        if action == "reset":
+            assert history == {"generation": 1, "messages": [], "run": None, "next_before": None}
+            assert retry.status_code == 409
+            # A retried reset cannot erase a newer generation.
+            assert (await client.post("/api/agent/1/conversation/reset", json={"generation": 0})).status_code == 409
+        else:
+            assert history["messages"][-1]["content"] == "等待"
+            assert retry.json()["id"] == run["id"]
+        assert len(model.calls) == 1
+        new = await client.post("/api/agent/1/messages", json=payload | {
+            "request_id": "new-request", "generation": history["generation"],
+        })
+        assert new.status_code == 202
+        assert (await completed(client, new.json()["id"]))["status"] == "completed"
+
+
+async def test_startup_marks_orphan_interrupted_without_calling_model(tmp_path):
+    model = WaitingModel()
+    async with chat_app(tmp_path, model) as (client, app, factory):
+        payload = {"content": "服务中断", "request_id": "orphan", "generation": 0}
+        run = (await client.post("/api/agent/1/messages", json=payload)).json()
+        await asyncio.wait_for(model.entered.wait(), 5)
+        fresh_model = StreamingModel()
+        restarted = create_app(session_factory=factory, agent_model=fresh_model, weather_service=NoWeather())
+        restarted.dependency_overrides[get_session] = app.dependency_overrides[get_session]
+        async with restarted.router.lifespan_context(restarted):
+            async with AsyncClient(transport=ASGITransport(restarted), base_url="http://testserver",
+                                   cookies=client.cookies) as fresh:
+                restored = (await fresh.get("/api/agent/1/conversation")).json()["run"]
+                assert restored["status"] == "failed" and restored["error_code"] == "interrupted"
+                assert restored["output"] == "已有片段"
+                replay = await fresh.get(f'/api/agent/1/runs/{run["id"]}/events')
+                assert "interrupted" in replay.text and "event: completed" not in replay.text
+                assert (await fresh.post("/api/agent/1/messages", json=payload)).json() == restored
+                assert fresh_model.calls == []
+                model.release.set()
+                await asyncio.wait_for(model.closed.wait(), 5)
+                retry = await fresh.post("/api/agent/1/messages", json=payload | {"request_id": "explicit-retry"})
+                assert (await completed(fresh, retry.json()["id"]))["status"] == "completed"
+                assert len(fresh_model.calls) == 1
+
+
+@pytest.mark.parametrize("reset", [False, True])
+async def test_disconnect_active_sse_and_resume_from_consumed_cursor(tmp_path, reset):
+    model = WaitingModel()
+    async with chat_app(tmp_path, model) as (client, app, _):
+        run = (await client.post("/api/agent/1/messages", json={
+            "content": "断线", "request_id": "disconnect", "generation": 0,
+        })).json()
+        await asyncio.wait_for(model.entered.wait(), 5)
+        path = f'/api/agent/1/runs/{run["id"]}/events'
+        request = client.build_request("GET", path)
+        disconnected = asyncio.Event()
+        bodies = []
+        received = False
+
+        async def receive():
+            nonlocal received
+            if not received:
+                received = True
+                return {"type": "http.request", "body": b"", "more_body": False}
+            await disconnected.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            if message["type"] == "http.response.body":
+                bodies.append(message.get("body", b""))
+                if b"event: delta" in bodies[-1]:
+                    disconnected.set()
+
+        # ASGI's HTTP transport lets the client disconnect at an exact streamed event,
+        # without buffering the entire response or sleeping to race the provider.
+        await asyncio.wait_for(app({
+            "type": "http", "asgi": {"version": "3.0", "spec_version": "2.0"},
+            "http_version": "1.1", "method": "GET", "scheme": "http", "path": path,
+            "raw_path": path.encode(), "query_string": b"", "root_path": "",
+            "headers": [(name.lower(), value) for name, value in request.headers.raw],
+            "server": ("testserver", 80), "client": ("127.0.0.1", 1234),
+        }, receive, send), 5)
+        text = b"".join(bodies).decode()
+        cursor = [line[4:] for line in text.splitlines() if line.startswith("id: ")][-1]
+        assert "已有片段" in text
+        if reset:
+            assert (await client.post("/api/agent/1/conversation/reset", json={"generation": 0})).status_code == 200
+        model.release.set()
+        await completed(client, run["id"])
+        resumed = await client.get(path, headers={"Last-Event-ID": cursor})
+        assert "已有片段" not in resumed.text
+        assert ("reset" if reset else "event: completed") in resumed.text
+        ids = [int(line[4:]) for line in resumed.text.splitlines() if line.startswith("id: ")]
+        assert ids and min(ids) > int(cursor)
+        assert len(model.calls) == 1
+
+
 async def test_waiting_model_does_not_lock_business_and_revoked_session_cannot_finish(tmp_path):
     model = WaitingModel()
     async with chat_app(tmp_path, model) as (client, _, _):
-        submitted = await client.post("/api/agent/1/messages", json={"content": "等待"})
+        submitted = await client.post("/api/agent/1/messages", json={"request_id": uuid4().hex, "generation": 0, "content": "等待"})
         run_id = submitted.json()["id"]
         await asyncio.wait_for(model.entered.wait(), 5)
-        assert (await client.post("/api/agent/1/messages", json={"content": "重复"})).status_code == 409
+        assert (await client.post("/api/agent/1/messages", json={"request_id": uuid4().hex, "generation": 0, "content": "重复"})).status_code == 409
         # An actual unrelated business write completes while the provider is suspended.
         async with asyncio.timeout(2):
             response = await client.patch("/api/admin/stores/2", json={"name": "等待期间修改"})
@@ -238,7 +384,7 @@ async def test_waiting_model_does_not_lock_business_and_revoked_session_cannot_f
 async def test_missing_configuration_timeout_and_output_budget(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTOLAVA_AGENT_CHAT_MODEL", "")
     async with chat_app(tmp_path, None) as (client, _, _):
-        run = (await client.post("/api/agent/1/messages", json={"content": "你好"})).json()
+        run = (await client.post("/api/agent/1/messages", json={"request_id": uuid4().hex, "generation": 0, "content": "你好"})).json()
         assert (await completed(client, run["id"]))["error_code"] == "model_not_configured"
     # Each case uses its own real migrated database.
     timeout_path = tmp_path / "timeout"
@@ -247,7 +393,7 @@ async def test_missing_configuration_timeout_and_output_budget(tmp_path, monkeyp
     from app.core.config import get_settings
     get_settings.cache_clear()
     async with chat_app(timeout_path, WaitingModel()) as (client, _, _):
-        run = (await client.post("/api/agent/1/messages", json={"content": "等待"})).json()
+        run = (await client.post("/api/agent/1/messages", json={"request_id": uuid4().hex, "generation": 0, "content": "等待"})).json()
         assert (await completed(client, run["id"]))["error_code"] == "model_timeout"
     output_path = tmp_path / "output"
     output_path.mkdir()
@@ -255,7 +401,7 @@ async def test_missing_configuration_timeout_and_output_budget(tmp_path, monkeyp
     monkeypatch.setenv("AUTOLAVA_AGENT_OUTPUT_CHARS", "2")
     get_settings.cache_clear()
     async with chat_app(output_path, StreamingModel()) as (client, _, _):
-        run = (await client.post("/api/agent/1/messages", json={"content": "等待"})).json()
+        run = (await client.post("/api/agent/1/messages", json={"request_id": uuid4().hex, "generation": 0, "content": "等待"})).json()
         assert (await completed(client, run["id"]))["error_code"] == "output_budget"
 
 
@@ -270,12 +416,14 @@ async def test_history_pagination_input_scope_and_context_budget(tmp_path, monke
         assert older["messages"][0]["content"] == "历史问题"
         assert len(older["messages"]) == 3
         for content in ("上一条" * 1500, "当前问题" * 1500):
-            run = (await client.post("/api/agent/1/messages", json={"content": content})).json()
+            run = (await client.post("/api/agent/1/messages", json={"request_id": uuid4().hex, "generation": 0, "content": content})).json()
             assert (await completed(client, run["id"]))["status"] == "completed"
         assert sum(len(item["content"]) for item in model.calls[-1]) <= 8000
         assert model.calls[-1][-1]["content"] == "当前问题" * 1500
         for body in ({"content": " "}, {"content": "x" * 6001}, {"content": "hi", "user_id": 2}):
-            assert (await client.post("/api/agent/1/messages", json=body)).status_code == 422
+            assert (await client.post("/api/agent/1/messages", json={
+                "request_id": uuid4().hex, "generation": 0, **body,
+            })).status_code == 422
         assert (await client.get("/api/agent/999/conversation")).status_code == 404
 
 
@@ -284,7 +432,7 @@ async def test_final_administrator_and_store_revocation(tmp_path, monkeypatch):
     model = WaitingModel()
     async with chat_app(tmp_path, model) as (client, _, _):
         await client.post("/api/auth/login", json={"username": "user-3", "password": "Password123"})
-        submitted = await client.post("/api/agent/1/messages", json={"content": "最终管理员"})
+        submitted = await client.post("/api/agent/1/messages", json={"request_id": uuid4().hex, "generation": 0, "content": "最终管理员"})
         assert submitted.status_code == 202
         run_id = submitted.json()["id"]
         await asyncio.wait_for(model.entered.wait(), 5)
@@ -297,5 +445,5 @@ async def test_final_administrator_and_store_revocation(tmp_path, monkeypatch):
         stream = await asyncio.wait_for(replay, 5)
         assert "不得泄漏" not in stream.text
         assert stream.status_code == 404 or "access_revoked" in stream.text
-        allowed = (await client.post("/api/agent/2/messages", json={"content": "另一个启用门店"})).json()
+        allowed = (await client.post("/api/agent/2/messages", json={"request_id": uuid4().hex, "generation": 0, "content": "另一个启用门店"})).json()
         assert (await completed(client, allowed["id"], store=2))["status"] == "completed"
