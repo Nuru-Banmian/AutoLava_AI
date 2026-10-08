@@ -10,7 +10,7 @@ from app.api.deps import Session, StoreAccess, require_admin, require_store_acce
 from app.models.identity import User
 from app.core.database import end_read_transaction
 from app.schemas.agent import ChatConversation, ChatGeneration, ChatRun, ChatSubmit
-from app.schemas.memory import MemoryList, MemorySourceList
+from app.schemas.memory import MemoryList, MemorySourceList, MemoryItem, MemoryCorrection, MemoryVersion, MemoryClear
 from app.services.owner import is_administrator
 from app.services.sessions import current_credentials
 
@@ -42,6 +42,21 @@ async def memories(request: Request, scope: Scope, before: str | None = Query(No
 @router.get("/memories/{memory_id}/sources", response_model=MemorySourceList)
 async def memory_sources(memory_id: str, request: Request, scope: Scope, before: int | None = Query(None, ge=1)):
     return await request.app.state.agent_runner.memory.sources(scope, memory_id, before)
+
+
+@router.patch("/memories/{memory_id}", response_model=MemoryItem)
+async def correct_memory(memory_id: str, payload: MemoryCorrection, request: Request, scope: Scope):
+    return await request.app.state.agent_runner.memory.change(scope, memory_id, payload.expected_version, payload.content)
+
+
+@router.delete("/memories/{memory_id}", status_code=204)
+async def delete_memory(memory_id: str, payload: MemoryVersion, request: Request, scope: Scope):
+    await request.app.state.agent_runner.memory.change(scope, memory_id, payload.expected_version)
+
+
+@router.post("/memories/clear", response_model=MemoryList)
+async def clear_memories(payload: MemoryClear, request: Request, scope: Scope):
+    return await request.app.state.agent_runner.memory.clear(scope, payload.expected_revision)
 
 
 @router.get("/conversation", response_model=ChatConversation)

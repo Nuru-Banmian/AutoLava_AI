@@ -7,6 +7,8 @@ import pytest
 import httpx
 import respx
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.providers.bailian import ToolCall, ModelFailure
 from app.core.database import get_session
@@ -217,6 +219,168 @@ class WaitingCurator(Curator):
         await self.release.wait()
         async for chunk in super().stream_tools(messages, tools):
             yield chunk
+
+
+async def test_correct_memory_keeps_evidence_and_rejects_stale_input(tmp_path):
+    async with chat_app(tmp_path, StreamingModel(), memory_model=Curator()) as (client, app, factory):
+        await save(client)
+        item = (await client.get("/api/agent/1/memories")).json()["items"][0]
+        path = f'/api/agent/1/memories/{item["id"]}'
+        body = {"expected_version": 1, "content": "以后先列数据，再给结论"}
+        result = await client.patch(path, json=body)
+        assert result.status_code == 200, result.text
+        updated = result.json()
+        assert updated["version"] == 2 and updated["content"] == body["content"]
+        assert updated["index_status"] == "pending"
+        assert updated["sources"] == item["sources"]
+        assert updated["changes"][0]["previous_content"] == item["content"]
+        assert updated["changes"][0]["content"] == body["content"]
+        conflict = await client.patch(path, json={**body, "content": "我的过期输入"})
+        assert conflict.status_code == 409
+        assert conflict.json()["detail"]["current"]["content"] == body["content"]
+        assert (await client.get("/api/agent/1/memories")).json()["items"][0] == updated
+        assert (await client.request("DELETE", path, json={"expected_version": 1})).status_code == 409
+        for invalid in ("   ", "字" * 2001):
+            assert (await client.patch(path, json={"expected_version": 2, "content": invalid})).status_code == 422
+        assert (await client.patch(path, json={"expected_version": 2, "content": "越权", "user_id": 2})).status_code == 422
+        await client.post("/api/agent/1/conversation/reset", json={"generation": 0})
+        restarted = create_app(session_factory=factory, agent_model=StreamingModel(), memory_model=Curator())
+        restarted.dependency_overrides[get_session] = app.dependency_overrides[get_session]
+        async with AsyncClient(transport=ASGITransport(restarted), base_url="http://testserver", cookies=client.cookies) as fresh:
+            assert (await fresh.get("/api/agent/1/memories")).json()["items"][0] == updated
+            assert (await fresh.request("DELETE", path, json={"expected_version": 2})).status_code == 204
+        assert (await client.get("/api/agent/1/memories")).json()["items"] == []
+        await client.post("/api/auth/login", json={"username": "user-3", "password": "Password123"})
+        for method, target, payload in (
+            ("PATCH", path, {"expected_version": 2, "content": "普通用户修改"}),
+            ("DELETE", path, {"expected_version": 2}),
+            ("POST", "/api/agent/1/memories/clear", {"expected_revision": 0}),
+        ):
+            assert (await client.request(method, target, json=payload)).status_code == 403
+
+
+@pytest.mark.parametrize("action", ["correct", "delete", "clear", "clear_empty"])
+async def test_manual_changes_reject_waiting_old_proposals_and_allow_new_instructions(tmp_path, action):
+    curator = WaitingCurator()
+    curator.release.set()
+    chat = StreamingModel()
+    async with chat_app(tmp_path, chat, memory_model=curator) as (client, _, _):
+        if action != "clear_empty":
+            await save(client)
+        listing = (await client.get("/api/agent/1/memories")).json()
+        curator.release.clear()
+        curator.entered.clear()
+        response = await client.post("/api/agent/1/messages", json={
+            "content": "记住：以后分析先给结论，再列数据", "generation": 0, "request_id": uuid4().hex,
+        })
+        await asyncio.wait_for(curator.entered.wait(), 5)
+        async with asyncio.timeout(5):
+            if action.startswith("clear"):
+                result = await client.post("/api/agent/1/memories/clear", json={"expected_revision": listing["revision"]})
+            else:
+                path = f'/api/agent/1/memories/{listing["items"][0]["id"]}'
+                result = await client.request("PATCH" if action == "correct" else "DELETE", path, json={
+                    "expected_version": 1, **({"content": "以后先列数据，再给结论"} if action == "correct" else {}),
+                })
+            assert result.status_code in (200, 204), result.text
+        curator.release.set()
+        run = await completed(client, response.json()["id"])
+        assert run["status"] == "failed" and run["error_code"] == "memory_version_conflict", run
+        current = (await client.get("/api/agent/1/memories")).json()
+        assert len(current["items"]) == (1 if action == "correct" else 0)
+        if listing["items"] and action != "correct":
+            old_id = listing["items"][0]["id"]
+            assert (await client.get(f'/api/agent/1/memories/{old_id}/sources')).status_code == 404
+            assert (await client.patch(f'/api/agent/1/memories/{old_id}', json={
+                "expected_version": 1, "content": "尝试恢复旧记录",
+            })).status_code == 404
+        await save(client, "你好")
+        background = json.loads(chat.calls[-1][2]["content"])["store_background"]
+        assert [m["content"] for m in background["memories"]] == (
+            ["以后先列数据，再给结论"] if action == "correct" else []
+        )
+        assert (await save(client))["status"] == "completed"
+        assert any(m["content"] == "以后分析先给结论，再列数据"
+                   for m in (await client.get("/api/agent/1/memories")).json()["items"])
+
+
+async def test_clear_is_versioned_scoped_and_keeps_store_description_and_chat(tmp_path):
+    curator = Curator()
+    chat = StreamingModel()
+    async with chat_app(tmp_path, chat, memory_model=curator) as (client, _, _):
+        await client.patch("/api/admin/stores/1", json={"description": "社区烘焙店", "expected_description_revision": 1})
+        await save(client)
+        initial = (await client.get("/api/agent/1/memories")).json()
+        item = initial["items"][0]
+        path = f'/api/agent/1/memories/{item["id"]}'
+        # Both a different store and a different administrator cannot mutate this row.
+        assert (await client.patch(path.replace("/agent/1/", "/agent/2/"), json={
+            "expected_version": 1, "content": "越权纠正",
+        })).status_code == 404
+        await client.post("/api/auth/login", json={"username": "user-2", "password": "Password123"})
+        assert (await client.request("DELETE", path, json={"expected_version": 1})).status_code == 404
+        await save(client)
+        await client.post("/api/agent/1/memories/clear", json={"expected_revision": 1})
+        await client.post("/api/auth/login", json={"username": "user-1", "password": "Password123"})
+        assert (await client.get("/api/agent/1/memories")).json() == initial
+        curator.proposal = {"action": "conflict", "content": "以后先列数据，再给结论", "category": "preference"}
+        await save(client, "记住：以后先列数据，再给结论")
+        assert (await client.post("/api/agent/1/memories/clear", json={"expected_revision": initial["revision"]})).status_code == 409
+        listing = (await client.get("/api/agent/1/memories")).json()
+        candidate = next(m for m in listing["items"] if m["status"] == "pending_confirmation")
+        corrected = await client.patch(f'/api/agent/1/memories/{candidate["id"]}', json={
+            "expected_version": candidate["version"], "content": "请在结论后提供更详细的数据",
+        })
+        assert corrected.status_code == 200 and corrected.json()["status"] == "pending_confirmation"
+        assert corrected.json()["index_status"] == "not_scheduled"
+        listing = (await client.get("/api/agent/1/memories")).json()
+        before = (await client.get("/api/agent/1/conversation")).json()
+        result = await client.post("/api/agent/1/memories/clear", json={"expected_revision": listing["revision"]})
+        assert result.status_code == 200 and result.json()["items"] == []
+        assert (await client.get("/api/agent/1/conversation")).json() == before
+        await save(client, "你好")
+        store = json.loads(chat.calls[-1][2]["content"])["store_background"]
+        assert store["description"] == "社区烘焙店" and store["memories"] == []
+
+
+async def test_clear_from_paused_listing_cannot_remove_an_unseen_new_memory(tmp_path, monkeypatch):
+    # Pause at the real database adapter after its memory SELECT, not at a memory
+    # service method. All behavior and assertions go through authenticated HTTP.
+    entered, release = asyncio.Event(), asyncio.Event()
+    armed = False
+    original = AsyncSession.scalars
+
+    async def paused_scalars(session, statement, *args, **kwargs):
+        nonlocal armed
+        result = await original(session, statement, *args, **kwargs)
+        if armed and str(statement).startswith("SELECT agent_memories."):
+            armed = False
+            entered.set()
+            await release.wait()
+        return result
+
+    curator = Curator()
+    async with chat_app(tmp_path, StreamingModel(), memory_model=curator) as (client, _, factory):
+        # Match the deployed connection's WAL setting so a consistent reader and
+        # a concurrent writer can progress independently.
+        async with factory() as session:
+            await session.execute(text("PRAGMA journal_mode=WAL"))
+            await session.commit()
+        await save(client)
+        monkeypatch.setattr(AsyncSession, "scalars", paused_scalars)
+        armed = True
+        listing_task = asyncio.create_task(client.get("/api/agent/1/memories"))
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            curator.proposal = {"action": "save", "category": "preference", "content": "回答尽量简洁"}
+            assert (await save(client, "记住：回答尽量简洁"))["status"] == "completed"
+        finally:
+            release.set()
+        listing = (await listing_task).json()
+        assert [m["content"] for m in listing["items"]] == ["以后分析先给结论，再列数据"]
+        result = await client.post("/api/agent/1/memories/clear", json={"expected_revision": listing["revision"]})
+        assert result.status_code == 409, result.text
+        assert len((await client.get("/api/agent/1/memories")).json()["items"]) == 2
 
 
 @pytest.mark.parametrize("action", ["description", "reset", "stop", "revoke"])
