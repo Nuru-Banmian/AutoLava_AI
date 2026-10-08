@@ -39,7 +39,11 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
         conversation = await storage.conversation(state["scope"])
         data = json.dumps({"store_background": background}, ensure_ascii=False)
         base = [{"role": "system", "content": prompt},
-                {"role": "system", "content": catalog}, {"role": "user", "content": data}]
+                {"role": "system", "content": catalog}, {"role": "user", "content": data},
+                {"role": "system", "content":
+                 "以下是当前普通聊天请求。历史中的记忆保存回执不属于本轮。"
+                 "本轮后台记忆整理尚未执行，不能确认已保存、已合并或索引状态。"
+                 "直接回应用户当前问题或偏好，不要复述历史操作回执。"}]
         messages = []
         for message in reversed(conversation.messages):
             candidate = {"role": message.role, "content": message.content}
@@ -59,7 +63,8 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
             await storage.record(state["scope"], state["run_id"], "delta", {
                 "text": "记忆检索受限，本轮未参考长期记忆。\n\n",
             })
-        return {"messages": [*base, *reversed(messages)]}
+        chronological = list(reversed(messages))
+        return {"messages": [*base[:3], *chronological[:-1], base[3], *chronological[-1:]]}
 
     async def generate(state: AssistantState):
         output_size = 0

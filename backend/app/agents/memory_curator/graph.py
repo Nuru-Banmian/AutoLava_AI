@@ -28,7 +28,18 @@ def create_memory_graph(model, service, settings, *, agent_capabilities=None, jo
                 await jobs.record(state["scope"], job_id, kind, payload)
             else:
                 await service.storage.record(state["scope"], state["run_id"], kind, payload)
+        mode = (
+            "本轮是后台普通对话整理（mode=background），不是显式记忆指令。"
+            "save/duplicate/update/conflict/infer 必须提供 evidence，逐字引用本轮 input；"
+            "save/update 的 content 必须等于 evidence。reject 可以不提供 evidence。"
+            if job_id is not None else
+            "本轮是显式记忆指令，不是后台整理。content 必须逐字等于去掉指令前缀后的 input。"
+            "禁止提供 evidence；duplicate 必须提供 target_id/target_version。"
+            "conflict 若与现有有效记忆冲突，应提供其 target_id/target_version；"
+            "没有对应有效记忆时不提供 target。save/reject 不提供 target。"
+        )
         messages = [{"role": "system", "content": prompt},
+                    {"role": "system", "content": mode},
                     {"role": "user", "content": json.dumps(snapshot, ensure_ascii=False)}]
         if len(json.dumps(messages, ensure_ascii=False)) + len(json.dumps(tools)) > settings.agent_memory_context_chars:
             raise ModelFailure("memory_context_budget")

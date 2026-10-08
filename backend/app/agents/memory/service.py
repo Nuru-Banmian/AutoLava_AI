@@ -325,7 +325,9 @@ class MemoryService:
                 if versions != {m["id"]: m["version"] for m in snapshot["memories"]}:
                     raise ModelFailure("memory_version_conflict")
                 target = next((m for m in rows if m.id == proposal.target_id), None)
-                if proposal.action == "duplicate":
+                if proposal.action == "duplicate" or (
+                        proposal.action == "conflict" and (
+                            proposal.target_id is not None or proposal.target_version is not None)):
                     if (not target or target.status != "active"
                             or target.version != proposal.target_version
                             or target.category != proposal.category):
@@ -335,13 +337,18 @@ class MemoryService:
                 # Exact normalization is server-enforced even if the model misses it.
                 exact = next((m for m in rows if normalized(m.content) == normalized(payload)
                               and m.category == proposal.category
-                              and (proposal.action != "conflict" or m.status == "pending_confirmation")), None)
+                              and (proposal.action != "conflict" or (
+                                  m.status == "pending_confirmation"
+                                  and m.target_id == proposal.target_id
+                                  and m.target_version == proposal.target_version))), None)
                 memory = target if proposal.action == "duplicate" else exact
                 if memory is None:
                     memory = AgentMemory(id=uuid4().hex, user_id=scope.user_id,
                                          store_id=scope.store_id, content=payload,
                                          category=proposal.category, version=1,
-                                         status="pending_confirmation" if proposal.action == "conflict" else "active")
+                                         status="pending_confirmation" if proposal.action == "conflict" else "active",
+                                         target_id=target.id if proposal.action == "conflict" and target else None,
+                                         target_version=target.version if proposal.action == "conflict" and target else None)
                     session.add(memory)
                     await session.flush()
                     if memory.status == "active":
