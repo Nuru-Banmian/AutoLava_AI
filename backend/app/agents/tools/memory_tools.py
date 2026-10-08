@@ -1,4 +1,5 @@
 """The curator may propose one operation; only the memory service can commit it."""
+from copy import deepcopy
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -19,3 +20,25 @@ MEMORY_TOOLS = [{"type": "function", "function": {
     "description": "提出当前用户来源的保存、合并、更正、候选或拒绝操作。不能直接写入。",
     "parameters": MemoryProposal.model_json_schema(),
 }}]
+
+
+def background_tools(tools, memories):
+    """Guide selection toward active snapshot targets; commit still checks pairs."""
+    scoped = deepcopy(tools)
+    active = [memory for memory in memories if memory["status"] == "active"]
+    for tool in scoped:
+        parameters = tool["function"]["parameters"]
+        properties = parameters["properties"]
+        properties["target_id"] = {
+            "anyOf": ([{"type": "string", "enum": [memory["id"] for memory in active]}]
+                      if active else []) + [{"type": "null"}],
+            "description": "仅可选择 memories 中同类别的 active 目标；不能选择 pending_candidates。",
+        }
+        properties["target_version"] = {
+            "anyOf": ([{"type": "integer", "enum": sorted({memory["version"] for memory in active})}]
+                      if active else []) + [{"type": "null"}],
+            "description": "必须与所选 target_id 的当前 version 配对；无目标时不提供。",
+        }
+        if not active:
+            properties["action"]["enum"] = ["save", "conflict", "infer", "reject"]
+    return scoped

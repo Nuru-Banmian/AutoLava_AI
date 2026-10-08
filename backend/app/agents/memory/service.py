@@ -243,8 +243,12 @@ class MemoryService:
             return {"status": "not_saved"}
         candidate = proposal.action in {"conflict", "infer"}
         explicit = re.search(r"以后|今后|一直|习惯|偏好|喜欢|主营|我们店|我的店|更正|纠正|改为", evidence)
+        if proposal.action == "duplicate" and not explicit:
+            raise ModelFailure("memory_invalid_proposal")
         repeated = proposal.action == "duplicate" and any(
-            m["id"] == proposal.target_id and m["content"] == proposal.content for m in snapshot["memories"])
+            m["id"] == proposal.target_id and m["version"] == proposal.target_version
+            and m["category"] == proposal.category and m["status"] == "active"
+            and m["content"] == proposal.content for m in snapshot["memories"])
         if not candidate and (((proposal.content != evidence or not explicit) and not repeated)
                               or re.search(r"可能|猜测|推测|大概|似乎", snapshot["input"])):
             candidate = True
@@ -325,7 +329,9 @@ class MemoryService:
                 if versions != {m["id"]: m["version"] for m in snapshot["memories"]}:
                     raise ModelFailure("memory_version_conflict")
                 target = next((m for m in rows if m.id == proposal.target_id), None)
-                if proposal.action == "duplicate":
+                if proposal.action == "duplicate" or (
+                        proposal.action == "conflict" and (
+                            proposal.target_id is not None or proposal.target_version is not None)):
                     if (not target or target.status != "active"
                             or target.version != proposal.target_version
                             or target.category != proposal.category):
@@ -335,13 +341,18 @@ class MemoryService:
                 # Exact normalization is server-enforced even if the model misses it.
                 exact = next((m for m in rows if normalized(m.content) == normalized(payload)
                               and m.category == proposal.category
-                              and (proposal.action != "conflict" or m.status == "pending_confirmation")), None)
+                              and (proposal.action != "conflict" or (
+                                  m.status == "pending_confirmation"
+                                  and m.target_id == proposal.target_id
+                                  and m.target_version == proposal.target_version))), None)
                 memory = target if proposal.action == "duplicate" else exact
                 if memory is None:
                     memory = AgentMemory(id=uuid4().hex, user_id=scope.user_id,
                                          store_id=scope.store_id, content=payload,
                                          category=proposal.category, version=1,
-                                         status="pending_confirmation" if proposal.action == "conflict" else "active")
+                                         status="pending_confirmation" if proposal.action == "conflict" else "active",
+                                         target_id=target.id if proposal.action == "conflict" and target else None,
+                                         target_version=target.version if proposal.action == "conflict" and target else None)
                     session.add(memory)
                     await session.flush()
                     if memory.status == "active":

@@ -1,0 +1,1734 @@
+{
+  "date": "2026-10-08",
+  "review_baseline": "f331fa38cfd711d523297db3ef9fa3c41713fa60",
+  "implementation_head": "30e6170e29211c51b65172dbb8f66b4d7987609f",
+  "scope": "Synthetic isolated data, real Bailian chat/memory/embedding, persistent local SQLite/Qdrant; Weather is a controlled substitute.",
+  "authorization_increment": {
+    "source": "Direct user authorization in continuation request 2026-10-08",
+    "old_limits": {
+      "model_call_limit": 80,
+      "observed_text_token_limit": 170000
+    },
+    "new_limits": {
+      "model_call_limit": 90,
+      "observed_text_token_limit": 200000
+    },
+    "embedding_limit": 150,
+    "counters_reset": false,
+    "historical_unknown_usage_calls": [
+      56,
+      61,
+      67,
+      70
+    ],
+    "exclusions_unchanged": "3 preflight calls and 1 direct comparison remain excluded",
+    "reservation_semantics": "Operational estimate, not a proven provider-token upper bound; unknown new usage retains reservation and breach stops future calls."
+  },
+  "budget_offline_validation": {
+    "tests": 17,
+    "seconds": 1.8,
+    "pytest_exit": 0,
+    "ruff_exit": 0,
+    "py_compile_exit": 0,
+    "log": "budget-audit-final-20261008T183137384.log"
+  },
+  "old_evidence_unchanged": {
+    "sha256": "f53c80b336ec28dd0069e4a4f13fa3415fa0f6adfc6bd8a69940108cc2ee8012",
+    "labels": 29,
+    "observations": 104
+  },
+  "old_provider_prefix_unchanged": {
+    "bytes": 462052,
+    "sha256": "e85db4d020c448a7821ad0aeb3d6ed8cfef8e2733cfd201d5882748913b3f34b"
+  },
+  "usage_before": {
+    "model_calls": 78,
+    "tokens": 154576,
+    "embedding_calls": 34,
+    "unresolved_usage_calls": [
+      56,
+      61,
+      67,
+      70
+    ],
+    "model_call_limit": 80,
+    "observed_text_token_limit": 170000
+  },
+  "usage_after": {
+    "model_calls": 84,
+    "tokens": 169676,
+    "embedding_calls": 36,
+    "unresolved_usage_calls": [
+      56,
+      61,
+      67,
+      70
+    ],
+    "model_call_limit": 90,
+    "observed_text_token_limit": 200000,
+    "unresolved_token_reservations": {},
+    "model_usage_observations": {
+      "79": {
+        "accounted_tokens": 1878,
+        "reservation": 15200,
+        "prompt_tokens": 1809,
+        "completion_tokens": 69,
+        "total_tokens": 1878
+      },
+      "80": {
+        "accounted_tokens": 3582,
+        "reservation": 23321,
+        "prompt_tokens": 3448,
+        "completion_tokens": 134,
+        "total_tokens": 3582
+      },
+      "81": {
+        "accounted_tokens": 1907,
+        "reservation": 17286,
+        "prompt_tokens": 1780,
+        "completion_tokens": 127,
+        "total_tokens": 1907
+      },
+      "82": {
+        "accounted_tokens": 2044,
+        "reservation": 16195,
+        "prompt_tokens": 1975,
+        "completion_tokens": 69,
+        "total_tokens": 2044
+      },
+      "83": {
+        "accounted_tokens": 3746,
+        "reservation": 24316,
+        "prompt_tokens": 3614,
+        "completion_tokens": 132,
+        "total_tokens": 3746
+      },
+      "84": {
+        "accounted_tokens": 1943,
+        "reservation": 17410,
+        "prompt_tokens": 1817,
+        "completion_tokens": 126,
+        "total_tokens": 1943
+      }
+    }
+  },
+  "usage_increment": {
+    "model_calls": 6,
+    "tokens": 15100,
+    "embedding_calls": 2
+  },
+  "unknown_usage_calls_unchanged": [
+    56,
+    61,
+    67,
+    70
+  ],
+  "excluded_calls_unchanged": "3 preflight and 1 direct comparison; observed tokens are not a complete bill",
+  "turns": [
+    {
+      "label": "retest90_20261008T103212805320Z_updated",
+      "source_sha256": "dafb2571b6e3afbe6420d7d4b5ba856622e740bb4545686708e2407a8f630486",
+      "raw_provider_sha256": "233a0e27eaff73d87fef4b07b034c86bcf761007f51d31900e8af27decf21d95",
+      "raw_sse_sha256": "8e552317ebf084fd2abe6a2e0878ade0e45d90ec9f147a3bd3a5e370173af189",
+      "input": "请根据当前门店背景解释2026年10月1日至2日经营情况，说明能否计算平均每车收入，并沿用我惯用的篇幅和顺序。",
+      "store": 1,
+      "generation": 6,
+      "description": {
+        "before": {
+          "id": 1,
+          "description": "花店，主营鲜切花和婚礼花艺。",
+          "description_revision": 15,
+          "name": "T10社区烘焙店",
+          "address": "Synthetic Roma",
+          "latitude": "45.000000",
+          "longitude": "9.000000",
+          "timezone": "Europe/Rome",
+          "is_active": true,
+          "company_settlement_enabled": false,
+          "wash_count_enabled": false
+        },
+        "patch": {
+          "id": 1,
+          "description": "花店，主营鲜切花和婚礼花艺。",
+          "description_revision": 16,
+          "name": "T10社区烘焙店",
+          "address": "Synthetic Roma",
+          "latitude": "45.000000",
+          "longitude": "9.000000",
+          "timezone": "Europe/Rome",
+          "is_active": true,
+          "company_settlement_enabled": false,
+          "wash_count_enabled": false
+        },
+        "readback": {
+          "id": 1,
+          "description": "花店，主营鲜切花和婚礼花艺。",
+          "description_revision": 16,
+          "name": "T10社区烘焙店",
+          "address": "Synthetic Roma",
+          "latitude": "45.000000",
+          "longitude": "9.000000",
+          "timezone": "Europe/Rome",
+          "is_active": true,
+          "company_settlement_enabled": false,
+          "wash_count_enabled": false
+        }
+      },
+      "run": {
+        "id": "3c133afa37c149a7819230799a38f506",
+        "generation": 6,
+        "request_id": "c28adacbb4564225a0d8f82c6cfc4768",
+        "status": "completed",
+        "output": "1. 2026年10月1日至2日期间，门店共经营2天，实现台账营业额225欧元，已确认公司结算收入为0欧元，总收入合计225欧元；经营日均台账营业额为113欧元。金额单位为整数欧元，平均值四舍五入，因记录洗车数量功能关闭，本期不包含洗车相关指标。\n2. 当前门店主营鲜切花和婚礼花艺，且工具明确提示记录洗车数量已关闭导致平均每车收入不可用，因此无法计算该指标；建议继续聚焦花艺产品品质与婚礼订单服务，以稳定日常营收。",
+        "error_code": null,
+        "model": "qwen3.6-plus",
+        "calls": 2,
+        "usage": {
+          "prompt_tokens": 5257,
+          "total_tokens": 5460,
+          "completion_tokens": 203
+        }
+      },
+      "job": {
+        "id": 22,
+        "run_id": "3c133afa37c149a7819230799a38f506",
+        "message_id": 28,
+        "generation": 6,
+        "memory_revision": 18,
+        "memory_epoch": 7,
+        "description_revision": 16,
+        "status": "failed",
+        "attempts": 1,
+        "calls": 1,
+        "error_code": "memory_invalid_proposal",
+        "failures": [
+          {
+            "code": "memory_invalid_proposal",
+            "attempt": 1
+          }
+        ],
+        "result": null,
+        "updated_at": "2026-10-08T10:32:48.903249"
+      },
+      "index": {
+        "status": "available",
+        "error_code": null,
+        "failed": 0,
+        "pending": 0
+      },
+      "events": [
+        {
+          "id": "1199",
+          "kind": "running",
+          "data": {
+            "status": "running"
+          }
+        },
+        {
+          "id": "1200",
+          "kind": "context",
+          "data": {
+            "source": "stores.description",
+            "revision": 16
+          }
+        },
+        {
+          "id": "1201",
+          "kind": "retrieval",
+          "data": {
+            "status": "available",
+            "references": [
+              {
+                "id": "490478089dea483aafbe6f70be7410fd",
+                "version": 1
+              },
+              {
+                "id": "faea8e26fbd24a18a13f0da10428e07f",
+                "version": 2
+              }
+            ]
+          }
+        },
+        {
+          "id": "1202",
+          "kind": "attempt",
+          "data": {
+            "number": 1
+          }
+        },
+        {
+          "id": "1203",
+          "kind": "usage",
+          "data": {
+            "prompt_tokens": 1809,
+            "total_tokens": 1878,
+            "completion_tokens": 69
+          }
+        },
+        {
+          "id": "1204",
+          "kind": "plan",
+          "data": {
+            "kind": "business",
+            "queries": [
+              {
+                "start": "2026-10-01",
+                "end": "2026-10-02"
+              }
+            ]
+          }
+        },
+        {
+          "id": "1205",
+          "kind": "tool",
+          "data": {
+            "name": "read_skill",
+            "status": "completed"
+          }
+        },
+        {
+          "id": "1206",
+          "kind": "tool",
+          "data": {
+            "name": "store_overview",
+            "status": "completed",
+            "range": {
+              "start": "2026-10-01",
+              "end": "2026-10-02"
+            }
+          }
+        },
+        {
+          "id": "1207",
+          "kind": "grounding",
+          "data": {
+            "run_id": "3c133afa37c149a7819230799a38f506",
+            "generation": 6,
+            "store_id": 1,
+            "tool_call_id": "124777de4ce7460d9ee71ed3487ef367",
+            "source": "AnalyticsService",
+            "requested_range": {
+              "start": "2026-10-01",
+              "end": "2026-10-02"
+            },
+            "range": {
+              "start": "2026-10-01",
+              "end": "2026-10-02"
+            }
+          }
+        },
+        {
+          "id": "1208",
+          "kind": "attempt",
+          "data": {
+            "number": 2
+          }
+        },
+        {
+          "id": "1245",
+          "kind": "usage",
+          "data": {
+            "prompt_tokens": 3448,
+            "total_tokens": 3582,
+            "completion_tokens": 134
+          }
+        },
+        {
+          "id": "1246",
+          "kind": "completed",
+          "data": {
+            "status": "completed"
+          }
+        }
+      ],
+      "event_order": [
+        "running",
+        "context",
+        "retrieval",
+        "attempt",
+        "usage",
+        "plan",
+        "tool",
+        "tool",
+        "grounding",
+        "attempt",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "usage",
+        "completed"
+      ],
+      "calls": [
+        {
+          "call": 79,
+          "kind": "chat",
+          "model": "qwen3.6-plus",
+          "enable_thinking": false,
+          "token_reservation_estimate": 15200,
+          "input_record_sha256": "98b95a383811b25b47a2df7a6afde8f26655359849d1297f547d4b4a7acf73ef",
+          "background": {
+            "source": "stores.description",
+            "store_id": 1,
+            "revision": 16,
+            "description": "花店，主营鲜切花和婚礼花艺。",
+            "wash_count_enabled": false,
+            "company_settlement_enabled": false,
+            "timezone": "Europe/Rome",
+            "local_date": "2026-10-08",
+            "memories": [
+              {
+                "id": "490478089dea483aafbe6f70be7410fd",
+                "version": 1,
+                "content": "以后给我经营建议时，金额统一写成欧元，最多列两点。"
+              },
+              {
+                "id": "faea8e26fbd24a18a13f0da10428e07f",
+                "version": 2,
+                "content": "以后分析先展示关键数据，最后再说结论。"
+              }
+            ],
+            "memory_retrieval": "available"
+          },
+          "tools_available_to_generation": [],
+          "memory_snapshot": null,
+          "outputs": [
+            {
+              "event": "usage",
+              "call": 79,
+              "kind": "chat",
+              "usage": {
+                "prompt_tokens": 1809,
+                "total_tokens": 1878,
+                "completion_tokens": 69
+              }
+            },
+            {
+              "event": "tool",
+              "call": 79,
+              "kind": "chat",
+              "name": "plan_response",
+              "arguments": "{\"kind\": \"business\", \"queries\": \n[{\"start\": \"2026-10-01\", \"end\": \"2026-10-02\"}]\n\n}"
+            }
+          ]
+        },
+        {
+          "call": 80,
+          "kind": "chat",
+          "model": "qwen3.6-plus",
+          "enable_thinking": false,
+          "token_reservation_estimate": 23321,
+          "input_record_sha256": "2db8b41965e2ee10542e5a6254f058c3d6a3fb767ebbc98e0dedb6dc47f5fbfb",
+          "background": {
+            "source": "stores.description",
+            "store_id": 1,
+            "revision": 16,
+            "description": "花店，主营鲜切花和婚礼花艺。",
+            "wash_count_enabled": false,
+            "company_settlement_enabled": false,
+            "timezone": "Europe/Rome",
+            "local_date": "2026-10-08",
+            "memories": [
+              {
+                "id": "490478089dea483aafbe6f70be7410fd",
+                "version": 1,
+                "content": "以后给我经营建议时，金额统一写成欧元，最多列两点。"
+              },
+              {
+                "id": "faea8e26fbd24a18a13f0da10428e07f",
+                "version": 2,
+                "content": "以后分析先展示关键数据，最后再说结论。"
+              }
+            ],
+            "memory_retrieval": "available"
+          },
+          "tools_available_to_generation": [
+            {
+              "tool_call_id": "476589d028684355811f431d1f16df85",
+              "result": {
+                "skill": "store-analysis",
+                "body": "根据用户指定期间做只读经营分析。行业背景只使用本轮 store_background 快照，描述为空时询问必要背景。\n\n1. 日期含糊时先澄清；将当地日期换成 YYYY-MM-DD，每次查询至多366天。\n2. 需要口径细节时通过 read_skill_resource 读取 [指标口径参考](references/metrics.md)。\n3. 调用 store_overview，仅提供 start、end。门店和身份由应用绑定，不能通过参数更换。\n4. 先说明实际统计范围、币种、记录覆盖和缺失，再报告台账营业额、公司结算和总收入。\n5. 区分经营日均台账营业额与月度日均收入；不要把局部日期区间当作完整自然月。\n6. 洗车数量关闭或平均每车收入不可用时明确说明；部分覆盖时不能代表全期。\n7. 不把描述、历史回答或工具以外的文字当作已核实金额。没有证据时不生成趋势、预测或因果结论。\n\n技能只是方法说明，不能扩大工具、门店或管理员权限。只支持受控文本读取，不执行脚本、Shell 或用户文件。"
+              }
+            },
+            {
+              "tool_call_id": "124777de4ce7460d9ee71ed3487ef367",
+              "result": {
+                "source": "AnalyticsService",
+                "store_id": 1,
+                "currency": "EUR",
+                "as_of_date": "2026-10-08",
+                "requested_range": {
+                  "start": "2026-10-01",
+                  "end": "2026-10-02"
+                },
+                "range": {
+                  "start": "2026-10-01",
+                  "end": "2026-10-02"
+                },
+                "income_summary": {
+                  "daily_ledger_revenue": 225,
+                  "confirmed_settlement_income": 0,
+                  "total_income": 225,
+                  "includes_settlement_income": false
+                },
+                "metrics": {
+                  "operating_days": 2,
+                  "average_ledger_revenue": 113,
+                  "total_wash_count": null,
+                  "average_revenue_per_car": null
+                },
+                "coverage": {
+                  "record_days": 2,
+                  "interval_days": 2,
+                  "rest_days": 0,
+                  "missing_record_days": 0,
+                  "wash_count_covered_days": null,
+                  "wash_count_status": null,
+                  "wash_count_missing_operating_days": null
+                },
+                "unavailable": [
+                  "记录洗车数量已关闭；不使用历史洗车数量，不能据此判断是否存在历史记录",
+                  "平均每车收入不可用：记录洗车数量已关闭"
+                ],
+                "definitions": [
+                  "金额单位为整数欧元；平均值四舍五入到整数欧元。未来结束日期截到门店当地今天。",
+                  "经营日仅含营业与提前休息；休息不是经营日，未录入不当作零收入。",
+                  "经营日均台账营业额=经营日台账营业额合计/经营日数，不含公司结算。",
+                  "已确认公司结算按开票月份归属；查询与月份重叠即整笔纳入，关闭业务仍保留历史已确认收入。",
+                  "平均每车收入仅使用同时记录洗车数量的经营日台账营业额/洗车数量，不含公司结算；部分覆盖不能外推全期。",
+                  "本概览不计算任意局部期间的月度日均收入，不提供预测或因果结论。"
+                ]
+              }
+            }
+          ],
+          "memory_snapshot": null,
+          "outputs": [
+            {
+              "event": "usage",
+              "call": 80,
+              "kind": "chat",
+              "usage": {
+                "prompt_tokens": 3448,
+                "total_tokens": 3582,
+                "completion_tokens": 134
+              }
+            }
+          ]
+        },
+        {
+          "call": 81,
+          "kind": "memory",
+          "model": "qwen-plus",
+          "enable_thinking": null,
+          "token_reservation_estimate": 17286,
+          "input_record_sha256": "470b4c9ae0dd365ab4199854ab6da8ed8fe0e62074e42ae3f09604470877a4c4",
+          "background": null,
+          "tools_available_to_generation": [],
+          "memory_snapshot": {
+            "input": "请根据当前门店背景解释2026年10月1日至2日经营情况，说明能否计算平均每车收入，并沿用我惯用的篇幅和顺序。",
+            "message_id": 28,
+            "conversation": [
+              {
+                "message_id": 16,
+                "content": "请查2026年10月1日至2日经营表现，按我惯用的篇幅和顺序总结。"
+              },
+              {
+                "message_id": 18,
+                "content": "请根据当前门店背景解释2026年10月1日至2日经营情况，说明能否计算平均每车收入。"
+              },
+              {
+                "message_id": 19,
+                "content": "请分析2026年10月1日至2日经营情况，目前能确定主营业务和平均每车收入吗？"
+              },
+              {
+                "message_id": 20,
+                "content": "请根据当前门店背景解释2026年10月1日至2日经营情况，说明能否计算平均每车收入，并沿用我惯用的篇幅和顺序。"
+              },
+              {
+                "message_id": 22,
+                "content": "请分析2026年10月1日至2日经营情况，目前能确定主营业务和平均每车收入吗？沿用我惯用的篇幅和顺序。"
+              },
+              {
+                "message_id": 24,
+                "content": "请分析2026年10月1日至2日经营情况，目前能确定主营业务和平均每车收入吗？沿用我惯用的篇幅和顺序。"
+              },
+              {
+                "message_id": 26,
+                "content": "请根据当前门店背景解释2026年10月1日至2日经营情况，说明能否计算平均每车收入，并沿用我惯用的篇幅和顺序。"
+              },
+              {
+                "message_id": 28,
+                "content": "请根据当前门店背景解释2026年10月1日至2日经营情况，说明能否计算平均每车收入，并沿用我惯用的篇幅和顺序。"
+              }
+            ],
+            "description": "花店，主营鲜切花和婚礼花艺。",
+            "description_revision": 16,
+            "mode": "background",
+            "memories": [
+              {
+                "id": "3f09c90198d145c988d6f7105c45bfa5",
+                "version": 1,
+                "content": "用户偏好经营数据总结的篇幅和顺序，但未明确说明具体篇幅和顺序细节",
+                "category": "preference",
+                "status": "pending_confirmation"
+              },
+              {
+                "id": "490478089dea483aafbe6f70be7410fd",
+                "version": 1,
+                "content": "以后给我经营建议时，金额统一写成欧元，最多列两点。",
+                "category": "preference",
+                "status": "active"
+              },
+              {
+                "id": "faea8e26fbd24a18a13f0da10428e07f",
+                "version": 2,
+                "content": "以后分析先展示关键数据，最后再说结论。",
+                "category": "preference",
+                "status": "active"
+              },
+              {
+                "id": "ff69ee02308a4da798ef15d7a5bd3085",
+                "version": 1,
+                "content": "用户偏好经营数据总结的篇幅和顺序",
+                "category": "preference",
+                "status": "pending_confirmation"
+              }
+            ]
+          },
+          "outputs": [
+            {
+              "event": "usage",
+              "call": 81,
+              "kind": "memory",
+              "usage": {
+                "prompt_tokens": 1780,
+                "total_tokens": 1907,
+                "completion_tokens": 127
+              }
+            },
+            {
+              "event": "tool",
+              "call": 81,
+              "kind": "memory",
+              "name": "propose_memory",
+              "arguments": "{\"action\": \"duplicate\", \"content\": \"用户偏好经营数据总结的篇幅和顺序\", \"category\": \"preference\", \"target_id\": \"ff69ee02308a4da798ef15d7a5bd3085\", \"target_version\": 1, \"evidence\": \"请根据当前门店背景解释2026年10月1日至2日经营情况，说明能否计算平均每车收入，并沿用我惯用的篇幅和顺序。\"}"
+            }
+          ]
+        }
+      ],
+      "memory_before": {
+        "items": [
+          {
+            "id": "ff69ee02308a4da798ef15d7a5bd3085",
+            "content": "用户偏好经营数据总结的篇幅和顺序",
+            "category": "preference",
+            "status": "pending_confirmation",
+            "version": 1,
+            "updated_at": "2026-10-08T08:33:06.786134",
+            "index_status": "not_scheduled",
+            "index_attempts": 0,
+            "index_error_code": null,
+            "sources": [
+              {
+                "id": 11,
+                "run_id": "0b249eeb62084a5b90ecc06a084acc62",
+                "message_id": 16,
+                "evidence": "请查2026年10月1日至2日经营表现，按我惯用的篇幅和顺序总结。",
+                "created_at": "2026-10-08T08:33:06.786859"
+              }
+            ],
+            "sources_next_before": null,
+            "changes": []
+          },
+          {
+            "id": "faea8e26fbd24a18a13f0da10428e07f",
+            "content": "以后分析先展示关键数据，最后再说结论。",
+            "category": "preference",
+            "status": "active",
+            "version": 2,
+            "updated_at": "2026-10-08T08:08:59.191807",
+            "index_status": "ready",
+            "index_attempts": 1,
+            "index_error_code": null,
+            "sources": [
+              {
+                "id": 7,
+                "run_id": "0db18df6866440258c79224883b5e99c",
+                "message_id": 3,
+                "evidence": "以后分析先展示关键数据，最后再说结论。",
+                "created_at": "2026-10-08T08:08:17.959032"
+              }
+            ],
+            "sources_next_before": null,
+            "changes": []
+          },
+          {
+            "id": "490478089dea483aafbe6f70be7410fd",
+            "content": "以后给我经营建议时，金额统一写成欧元，最多列两点。",
+            "category": "preference",
+            "status": "active",
+            "version": 1,
+            "updated_at": "2026-10-08T08:24:03.022158",
+            "index_status": "ready",
+            "index_attempts": 1,
+            "index_error_code": null,
+            "sources": [
+              {
+                "id": 9,
+                "run_id": "095178e9f5264da9a5cead8e17ec0872",
+                "message_id": 16,
+                "evidence": "以后给我经营建议时，金额统一写成欧元，最多列两点。",
+                "created_at": "2026-10-08T08:24:03.023382"
+              }
+            ],
+            "sources_next_before": null,
+            "changes": []
+          },
+          {
+            "id": "3f09c90198d145c988d6f7105c45bfa5",
+            "content": "用户偏好经营数据总结的篇幅和顺序，但未明确说明具体篇幅和顺序细节",
+            "category": "preference",
+            "status": "pending_confirmation",
+            "version": 1,
+            "updated_at": "2026-10-08T08:28:10.658888",
+            "index_status": "not_scheduled",
+            "index_attempts": 0,
+            "index_error_code": null,
+            "sources": [
+              {
+                "id": 10,
+                "run_id": "fa56fa1efbfa4f1383dc0140d75ac3be",
+                "message_id": 16,
+                "evidence": "请查2026年10月1日至2日经营表现，按我惯用的篇幅和顺序总结。",
+                "created_at": "2026-10-08T08:28:10.659603"
+              }
+            ],
+            "sources_next_before": null,
+            "changes": []
+          }
+        ],
+        "next_before": null,
+        "revision": 18,
+        "retrieval_status": "available"
+      },
+      "memory_after": {
+        "items": [
+          {
+            "id": "ff69ee02308a4da798ef15d7a5bd3085",
+            "content": "用户偏好经营数据总结的篇幅和顺序",
+            "category": "preference",
+            "status": "pending_confirmation",
+            "version": 1,
+            "updated_at": "2026-10-08T08:33:06.786134",
+            "index_status": "not_scheduled",
+            "index_attempts": 0,
+            "index_error_code": null,
+            "sources": [
+              {
+                "id": 11,
+                "run_id": "0b249eeb62084a5b90ecc06a084acc62",
+                "message_id": 16,
+                "evidence": "请查2026年10月1日至2日经营表现，按我惯用的篇幅和顺序总结。",
+                "created_at": "2026-10-08T08:33:06.786859"
+              }
+            ],
+            "sources_next_before": null,
+            "changes": []
+          },
+          {
+            "id": "faea8e26fbd24a18a13f0da10428e07f",
+            "content": "以后分析先展示关键数据，最后再说结论。",
+            "category": "preference",
+            "status": "active",
+            "version": 2,
+            "updated_at": "2026-10-08T08:08:59.191807",
+            "index_status": "ready",
+            "index_attempts": 1,
+            "index_error_code": null,
+            "sources": [
+              {
+                "id": 7,
+                "run_id": "0db18df6866440258c79224883b5e99c",
+                "message_id": 3,
+                "evidence": "以后分析先展示关键数据，最后再说结论。",
+                "created_at": "2026-10-08T08:08:17.959032"
+              }
+            ],
+            "sources_next_before": null,
+            "changes": []
+          },
+          {
+            "id": "490478089dea483aafbe6f70be7410fd",
+            "content": "以后给我经营建议时，金额统一写成欧元，最多列两点。",
+            "category": "preference",
+            "status": "active",
+            "version": 1,
+            "updated_at": "2026-10-08T08:24:03.022158",
+            "index_status": "ready",
+            "index_attempts": 1,
+            "index_error_code": null,
+            "sources": [
+              {
+                "id": 9,
+                "run_id": "095178e9f5264da9a5cead8e17ec0872",
+                "message_id": 16,
+                "evidence": "以后给我经营建议时，金额统一写成欧元，最多列两点。",
+                "created_at": "2026-10-08T08:24:03.023382"
+              }
+            ],
+            "sources_next_before": null,
+            "changes": []
+          },
+          {
+            "id": "3f09c90198d145c988d6f7105c45bfa5",
+            "content": "用户偏好经营数据总结的篇幅和顺序，但未明确说明具体篇幅和顺序细节",
+            "category": "preference",
+            "status": "pending_confirmation",
+            "version": 1,
+            "updated_at": "2026-10-08T08:28:10.658888",
+            "index_status": "not_scheduled",
+            "index_attempts": 0,
+            "index_error_code": null,
+            "sources": [
+              {
+                "id": 10,
+                "run_id": "fa56fa1efbfa4f1383dc0140d75ac3be",
+                "message_id": 16,
+                "evidence": "请查2026年10月1日至2日经营表现，按我惯用的篇幅和顺序总结。",
+                "created_at": "2026-10-08T08:28:10.659603"
+              }
+            ],
+            "sources_next_before": null,
+            "changes": []
+          }
+        ],
+        "next_before": null,
+        "revision": 18,
+        "retrieval_status": "available"
+      },
+      "usage_before": {
+        "model_calls": 78,
+        "tokens": 154576,
+        "embedding_calls": 34,
+        "unresolved_usage_calls": [
+          56,
+          61,
+          67,
+          70
+        ],
+        "model_call_limit": 90,
+        "observed_text_token_limit": 200000
+      },
+      "usage_after": {
+        "model_calls": 81,
+        "tokens": 161943,
+        "embedding_calls": 35,
+        "unresolved_usage_calls": [
+          56,
+          61,
+          67,
+          70
+        ],
+        "model_call_limit": 90,
+        "observed_text_token_limit": 200000,
+        "unresolved_token_reservations": {},
+        "model_usage_observations": {
+          "79": {
+            "accounted_tokens": 1878,
+            "reservation": 15200,
+            "prompt_tokens": 1809,
+            "completion_tokens": 69,
+            "total_tokens": 1878
+          },
+          "80": {
+            "accounted_tokens": 3582,
+            "reservation": 23321,
+            "prompt_tokens": 3448,
+            "completion_tokens": 134,
+            "total_tokens": 3582
+          },
+          "81": {
+            "accounted_tokens": 1907,
+            "reservation": 17286,
+            "prompt_tokens": 1780,
+            "completion_tokens": 127,
+            "total_tokens": 1907
+          }
+        }
+      },
+      "manual_review": {
+        "foreground": "passed for this synthetic real-provider sample: current background, business plan, all current tool evidence, period, numbers, disabled-metric wording, two items and data before conclusion",
+        "memory_source": "evidence exactly equals current user input; no new explicit long-term detail was supplied",
+        "memory_target": {
+          "id": "ff69ee02308a4da798ef15d7a5bd3085",
+          "version": 1,
+          "status": "pending_confirmation"
+        },
+        "memory_quality": "failed: duplicate targeted pending_confirmation rather than active memory; application rejected it",
+        "full_flow_acceptance": "failed; request completion and safe rejection do not imply extraction quality passed"
+      }
+    },
+    {
+      "label": "retest90_20261008T103212805320Z_cleared",
+      "source_sha256": "3c5201fe3f0e2bf76112c99c9eb947f29f7b3cf9ad43571cfbda1676d52189f3",
+      "raw_provider_sha256": "9f7831ab3cbd6907c0456b8c3023effb890af124fa26f100fc8b967194a74e22",
+      "raw_sse_sha256": "fa4ff19502ad4527f358f983d847a04163ddc5cae8bce1b6f4b955497f3ba8a3",
+      "input": "请分析2026年10月1日至2日经营情况，目前能确定主营业务和平均每车收入吗？沿用我惯用的篇幅和顺序。",
+      "store": 1,
+      "generation": 6,
+      "description": {
+        "before": {
+          "id": 1,
+          "description": "花店，主营鲜切花和婚礼花艺。",
+          "description_revision": 16,
+          "name": "T10社区烘焙店",
+          "address": "Synthetic Roma",
+          "latitude": "45.000000",
+          "longitude": "9.000000",
+          "timezone": "Europe/Rome",
+          "is_active": true,
+          "company_settlement_enabled": false,
+          "wash_count_enabled": false
+        },
+        "patch": {
+          "id": 1,
+          "description": "",
+          "description_revision": 17,
+          "name": "T10社区烘焙店",
+          "address": "Synthetic Roma",
+          "latitude": "45.000000",
+          "longitude": "9.000000",
+          "timezone": "Europe/Rome",
+          "is_active": true,
+          "company_settlement_enabled": false,
+          "wash_count_enabled": false
+        },
+        "readback": {
+          "id": 1,
+          "description": "",
+          "description_revision": 17,
+          "name": "T10社区烘焙店",
+          "address": "Synthetic Roma",
+          "latitude": "45.000000",
+          "longitude": "9.000000",
+          "timezone": "Europe/Rome",
+          "is_active": true,
+          "company_settlement_enabled": false,
+          "wash_count_enabled": false
+        }
+      },
+      "run": {
+        "id": "db53c5e8c8394164af6a2376ef31106d",
+        "generation": 6,
+        "request_id": "dba47ab4eeb1476f9cfabfbcf96b8de8",
+        "status": "completed",
+        "output": "1. 2026年10月1日至2日期间，门店共经营2天，实现台账营业额225欧元，已确认公司结算收入为0欧元，总收入合计225欧元；经营日均台账营业额为113欧元。金额单位为整数欧元，平均值四舍五入，因记录洗车数量功能关闭，本期不包含洗车相关指标，平均每车收入不可用。\n2. 当前门店描述为空，无法确定主营业务；同时因工具明确提示记录洗车数量已关闭导致平均每车收入不可用，不能计算该指标；建议补充门店背景信息并关注现有营收构成。",
+        "error_code": null,
+        "model": "qwen3.6-plus",
+        "calls": 2,
+        "usage": {
+          "prompt_tokens": 5589,
+          "total_tokens": 5790,
+          "completion_tokens": 201
+        }
+      },
+      "job": {
+        "id": 23,
+        "run_id": "db53c5e8c8394164af6a2376ef31106d",
+        "message_id": 30,
+        "generation": 6,
+        "memory_revision": 18,
+        "memory_epoch": 7,
+        "description_revision": 17,
+        "status": "failed",
+        "attempts": 1,
+        "calls": 1,
+        "error_code": "memory_invalid_proposal",
+        "failures": [
+          {
+            "code": "memory_invalid_proposal",
+            "attempt": 1
+          }
+        ],
+        "result": null,
+        "updated_at": "2026-10-08T10:33:25.827432"
+      },
+      "index": {
+        "status": "available",
+        "error_code": null,
+        "failed": 0,
+        "pending": 0
+      },
+      "events": [
+        {
+          "id": "1247",
+          "kind": "running",
+          "data": {
+            "status": "running"
+          }
+        },
+        {
+          "id": "1248",
+          "kind": "context",
+          "data": {
+            "source": "stores.description",
+            "revision": 17
+          }
+        },
+        {
+          "id": "1249",
+          "kind": "retrieval",
+          "data": {
+            "status": "available",
+            "references": [
+              {
+                "id": "490478089dea483aafbe6f70be7410fd",
+                "version": 1
+              },
+              {
+                "id": "faea8e26fbd24a18a13f0da10428e07f",
+                "version": 2
+              }
+            ]
+          }
+        },
+        {
+          "id": "1250",
+          "kind": "attempt",
+          "data": {
+            "number": 1
+          }
+        },
+        {
+          "id": "1251",
+          "kind": "usage",
+          "data": {
+            "prompt_tokens": 1975,
+            "total_tokens": 2044,
+            "completion_tokens": 69
+          }
+        },
+        {
+          "id": "1252",
+          "kind": "plan",
+          "data": {
+            "kind": "business",
+            "queries": [
+              {
+                "start": "2026-10-01",
+                "end": "2026-10-02"
+              }
+            ]
+          }
+        },
+        {
+          "id": "1253",
+          "kind": "tool",
+          "data": {
+            "name": "read_skill",
+            "status": "completed"
+          }
+        },
+        {
+          "id": "1254",
+          "kind": "tool",
+          "data": {
+            "name": "store_overview",
+            "status": "completed",
+            "range": {
+              "start": "2026-10-01",
+              "end": "2026-10-02"
+            }
+          }
+        },
+        {
+          "id": "1255",
+          "kind": "grounding",
+          "data": {
+            "run_id": "db53c5e8c8394164af6a2376ef31106d",
+            "generation": 6,
+            "store_id": 1,
+            "tool_call_id": "8ef50b204ae64985b2e9985b42b66405",
+            "source": "AnalyticsService",
+            "requested_range": {
+              "start": "2026-10-01",
+              "end": "2026-10-02"
+            },
+            "range": {
+              "start": "2026-10-01",
+              "end": "2026-10-02"
+            }
+          }
+        },
+        {
+          "id": "1256",
+          "kind": "attempt",
+          "data": {
+            "number": 2
+          }
+        },
+        {
+          "id": "1292",
+          "kind": "usage",
+          "data": {
+            "prompt_tokens": 3614,
+            "total_tokens": 3746,
+            "completion_tokens": 132
+          }
+        },
+        {
+          "id": "1293",
+          "kind": "completed",
+          "data": {
+            "status": "completed"
+          }
+        }
+      ],
+      "event_order": [
+        "running",
+        "context",
+        "retrieval",
+        "attempt",
+        "usage",
+        "plan",
+        "tool",
+        "tool",
+        "grounding",
+        "attempt",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "delta",
+        "usage",
+        "completed"
+      ],
+      "calls": [
+        {
+          "call": 82,
+          "kind": "chat",
+          "model": "qwen3.6-plus",
+          "enable_thinking": false,
+          "token_reservation_estimate": 16195,
+          "input_record_sha256": "eb0add8413c467877ddfe542afe3eec00c7573c9369bec8a1adf53743ac1d38b",
+          "background": {
+            "source": "stores.description",
+            "store_id": 1,
+            "revision": 17,
+            "description": "",
+            "wash_count_enabled": false,
+            "company_settlement_enabled": false,
+            "timezone": "Europe/Rome",
+            "local_date": "2026-10-08",
+            "memories": [
+              {
+                "id": "490478089dea483aafbe6f70be7410fd",
+                "version": 1,
+                "content": "以后给我经营建议时，金额统一写成欧元，最多列两点。"
+              },
+              {
+                "id": "faea8e26fbd24a18a13f0da10428e07f",
+                "version": 2,
+                "content": "以后分析先展示关键数据，最后再说结论。"
+              }
+            ],
+            "memory_retrieval": "available"
+          },
+          "tools_available_to_generation": [],
+          "memory_snapshot": null,
+          "outputs": [
+            {
+              "event": "usage",
+              "call": 82,
+              "kind": "chat",
+              "usage": {
+                "prompt_tokens": 1975,
+                "total_tokens": 2044,
+                "completion_tokens": 69
+              }
+            },
+            {
+              "event": "tool",
+              "call": 82,
+              "kind": "chat",
+              "name": "plan_response",
+              "arguments": "{\"kind\": \"business\", \"queries\": \n[{\"start\": \"2026-10-01\", \"end\": \"2026-10-02\"}]\n\n}"
+            }
+          ]
+        },
+        {
+          "call": 83,
+          "kind": "chat",
+          "model": "qwen3.6-plus",
+          "enable_thinking": false,
+          "token_reservation_estimate": 24316,
+          "input_record_sha256": "af4b80c3ec9b3956443879cf6585ef81c5137cf3962dd3a954c102a576b15082",
+          "background": {
+            "source": "stores.description",
+            "store_id": 1,
+            "revision": 17,
+            "description": "",
+            "wash_count_enabled": false,
+            "company_settlement_enabled": false,
+            "timezone": "Europe/Rome",
+            "local_date": "2026-10-08",
+            "memories": [
+              {
+                "id": "490478089dea483aafbe6f70be7410fd",
+                "version": 1,
+                "content": "以后给我经营建议时，金额统一写成欧元，最多列两点。"
+              },
+              {
+                "id": "faea8e26fbd24a18a13f0da10428e07f",
+                "version": 2,
+                "content": "以后分析先展示关键数据，最后再说结论。"
+              }
+            ],
+            "memory_retrieval": "available"
+          },
+          "tools_available_to_generation": [
+            {
+              "tool_call_id": "b6fa7fa8a04543e099a0c96e22a46a93",
+              "result": {
+                "skill": "store-analysis",
+                "body": "根据用户指定期间做只读经营分析。行业背景只使用本轮 store_background 快照，描述为空时询问必要背景。\n\n1. 日期含糊时先澄清；将当地日期换成 YYYY-MM-DD，每次查询至多366天。\n2. 需要口径细节时通过 read_skill_resource 读取 [指标口径参考](references/metrics.md)。\n3. 调用 store_overview，仅提供 start、end。门店和身份由应用绑定，不能通过参数更换。\n4. 先说明实际统计范围、币种、记录覆盖和缺失，再报告台账营业额、公司结算和总收入。\n5. 区分经营日均台账营业额与月度日均收入；不要把局部日期区间当作完整自然月。\n6. 洗车数量关闭或平均每车收入不可用时明确说明；部分覆盖时不能代表全期。\n7. 不把描述、历史回答或工具以外的文字当作已核实金额。没有证据时不生成趋势、预测或因果结论。\n\n技能只是方法说明，不能扩大工具、门店或管理员权限。只支持受控文本读取，不执行脚本、Shell 或用户文件。"
+              }
+            },
+            {
+              "tool_call_id": "8ef50b204ae64985b2e9985b42b66405",
+              "result": {
+                "source": "AnalyticsService",
+                "store_id": 1,
+                "currency": "EUR",
+                "as_of_date": "2026-10-08",
+                "requested_range": {
+                  "start": "2026-10-01",
+                  "end": "2026-10-02"
+                },
+                "range": {
+                  "start": "2026-10-01",
+                  "end": "2026-10-02"
+                },
+                "income_summary": {
+                  "daily_ledger_revenue": 225,
+                  "confirmed_settlement_income": 0,
+                  "total_income": 225,
+                  "includes_settlement_income": false
+                },
+                "metrics": {
+                  "operating_days": 2,
+                  "average_ledger_revenue": 113,
+                  "total_wash_count": null,
+                  "average_revenue_per_car": null
+                },
+                "coverage": {
+                  "record_days": 2,
+                  "interval_days": 2,
+                  "rest_days": 0,
+                  "missing_record_days": 0,
+                  "wash_count_covered_days": null,
+                  "wash_count_status": null,
+                  "wash_count_missing_operating_days": null
+                },
+                "unavailable": [
+                  "记录洗车数量已关闭；不使用历史洗车数量，不能据此判断是否存在历史记录",
+                  "平均每车收入不可用：记录洗车数量已关闭"
+                ],
+                "definitions": [
+                  "金额单位为整数欧元；平均值四舍五入到整数欧元。未来结束日期截到门店当地今天。",
+                  "经营日仅含营业与提前休息；休息不是经营日，未录入不当作零收入。",
+                  "经营日均台账营业额=经营日台账营业额合计/经营日数，不含公司结算。",
+                  "已确认公司结算按开票月份归属；查询与月份重叠即整笔纳入，关闭业务仍保留历史已确认收入。",
+                  "平均每车收入仅使用同时记录洗车数量的经营日台账营业额/洗车数量，不含公司结算；部分覆盖不能外推全期。",
+                  "本概览不计算任意局部期间的月度日均收入，不提供预测或因果结论。"
+                ]
+              }
+            }
+          ],
+          "memory_snapshot": null,
+          "outputs": [
+            {
+              "event": "usage",
+              "call": 83,
+              "kind": "chat",
+              "usage": {
+                "prompt_tokens": 3614,
+                "total_tokens": 3746,
+                "completion_tokens": 132
+              }
+            }
+          ]
+        },
+        {
+          "call": 84,
+          "kind": "memory",
+          "model": "qwen-plus",
+          "enable_thinking": null,
+          "token_reservation_estimate": 17410,
+          "input_record_sha256": "f8fbfee0ca035c3651391c7ac0fecb9532740adb13f3421e9adc915d48f10fc5",
+          "background": null,
+          "tools_available_to_generation": [],
+          "memory_snapshot": {
+            "input": "请分析2026年10月1日至2日经营情况，目前能确定主营业务和平均每车收入吗？沿用我惯用的篇幅和顺序。",
+            "message_id": 30,
+            "conversation": [
+              {
+                "message_id": 16,
+                "content": "请查2026年10月1日至2日经营表现，按我惯用的篇幅和顺序总结。"
+              },
+              {
+                "message_id": 18,
+                "content": "请根据当前门店背景解释2026年10月1日至2日经营情况，说明能否计算平均每车收入。"
+              },
+              {
+                "message_id": 19,
+                "content": "请分析2026年10月1日至2日经营情况，目前能确定主营业务和平均每车收入吗？"
+              },
+              {
+                "message_id": 20,
+                "content": "请根据当前门店背景解释2026年10月1日至2日经营情况，说明能否计算平均每车收入，并沿用我惯用的篇幅和顺序。"
+              },
+              {
+                "message_id": 22,
+                "content": "请分析2026年10月1日至2日经营情况，目前能确定主营业务和平均每车收入吗？沿用我惯用的篇幅和顺序。"
+              },
+              {
+                "message_id": 24,
+                "content": "请分析2026年10月1日至2日经营情况，目前能确定主营业务和平均每车收入吗？沿用我惯用的篇幅和顺序。"
+              },
+              {
+                "message_id": 26,
+                "content": "请根据当前门店背景解释2026年10月1日至2日经营情况，说明能否计算平均每车收入，并沿用我惯用的篇幅和顺序。"
+              },
+              {
+                "message_id": 28,
+                "content": "请根据当前门店背景解释2026年10月1日至2日经营情况，说明能否计算平均每车收入，并沿用我惯用的篇幅和顺序。"
+              },
+              {
+                "message_id": 30,
+                "content": "请分析2026年10月1日至2日经营情况，目前能确定主营业务和平均每车收入吗？沿用我惯用的篇幅和顺序。"
+              }
+            ],
+            "description": "",
+            "description_revision": 17,
+            "mode": "background",
+            "memories": [
+              {
+                "id": "3f09c90198d145c988d6f7105c45bfa5",
+                "version": 1,
+                "content": "用户偏好经营数据总结的篇幅和顺序，但未明确说明具体篇幅和顺序细节",
+                "category": "preference",
+                "status": "pending_confirmation"
+              },
+              {
+                "id": "490478089dea483aafbe6f70be7410fd",
+                "version": 1,
+                "content": "以后给我经营建议时，金额统一写成欧元，最多列两点。",
+                "category": "preference",
+                "status": "active"
+              },
+              {
+                "id": "faea8e26fbd24a18a13f0da10428e07f",
+                "version": 2,
+                "content": "以后分析先展示关键数据，最后再说结论。",
+                "category": "preference",
+                "status": "active"
+              },
+              {
+                "id": "ff69ee02308a4da798ef15d7a5bd3085",
+                "version": 1,
+                "content": "用户偏好经营数据总结的篇幅和顺序",
+                "category": "preference",
+                "status": "pending_confirmation"
+              }
+            ]
+          },
+          "outputs": [
+            {
+              "event": "usage",
+              "call": 84,
+              "kind": "memory",
+              "usage": {
+                "prompt_tokens": 1817,
+                "total_tokens": 1943,
+                "completion_tokens": 126
+              }
+            },
+            {
+              "event": "tool",
+              "call": 84,
+              "kind": "memory",
+              "name": "propose_memory",
+              "arguments": "{\"action\": \"duplicate\", \"content\": \"用户偏好经营数据总结的篇幅和顺序\", \"category\": \"preference\", \"target_id\": \"ff69ee02308a4da798ef15d7a5bd3085\", \"target_version\": 1, \"evidence\": \"请分析2026年10月1日至2日经营情况，目前能确定主营业务和平均每车收入吗？沿用我惯用的篇幅和顺序。\"}"
+            }
+          ]
+        }
+      ],
+      "memory_before": {
+        "items": [
+          {
+            "id": "ff69ee02308a4da798ef15d7a5bd3085",
+            "content": "用户偏好经营数据总结的篇幅和顺序",
+            "category": "preference",
+            "status": "pending_confirmation",
+            "version": 1,
+            "updated_at": "2026-10-08T08:33:06.786134",
+            "index_status": "not_scheduled",
+            "index_attempts": 0,
+            "index_error_code": null,
+            "sources": [
+              {
+                "id": 11,
+                "run_id": "0b249eeb62084a5b90ecc06a084acc62",
+                "message_id": 16,
+                "evidence": "请查2026年10月1日至2日经营表现，按我惯用的篇幅和顺序总结。",
+                "created_at": "2026-10-08T08:33:06.786859"
+              }
+            ],
+            "sources_next_before": null,
+            "changes": []
+          },
+          {
+            "id": "faea8e26fbd24a18a13f0da10428e07f",
+            "content": "以后分析先展示关键数据，最后再说结论。",
+            "category": "preference",
+            "status": "active",
+            "version": 2,
+            "updated_at": "2026-10-08T08:08:59.191807",
+            "index_status": "ready",
+            "index_attempts": 1,
+            "index_error_code": null,
+            "sources": [
+              {
+                "id": 7,
+                "run_id": "0db18df6866440258c79224883b5e99c",
+                "message_id": 3,
+                "evidence": "以后分析先展示关键数据，最后再说结论。",
+                "created_at": "2026-10-08T08:08:17.959032"
+              }
+            ],
+            "sources_next_before": null,
+            "changes": []
+          },
+          {
+            "id": "490478089dea483aafbe6f70be7410fd",
+            "content": "以后给我经营建议时，金额统一写成欧元，最多列两点。",
+            "category": "preference",
+            "status": "active",
+            "version": 1,
+            "updated_at": "2026-10-08T08:24:03.022158",
+            "index_status": "ready",
+            "index_attempts": 1,
+            "index_error_code": null,
+            "sources": [
+              {
+                "id": 9,
+                "run_id": "095178e9f5264da9a5cead8e17ec0872",
+                "message_id": 16,
+                "evidence": "以后给我经营建议时，金额统一写成欧元，最多列两点。",
+                "created_at": "2026-10-08T08:24:03.023382"
+              }
+            ],
+            "sources_next_before": null,
+            "changes": []
+          },
+          {
+            "id": "3f09c90198d145c988d6f7105c45bfa5",
+            "content": "用户偏好经营数据总结的篇幅和顺序，但未明确说明具体篇幅和顺序细节",
+            "category": "preference",
+            "status": "pending_confirmation",
+            "version": 1,
+            "updated_at": "2026-10-08T08:28:10.658888",
+            "index_status": "not_scheduled",
+            "index_attempts": 0,
+            "index_error_code": null,
+            "sources": [
+              {
+                "id": 10,
+                "run_id": "fa56fa1efbfa4f1383dc0140d75ac3be",
+                "message_id": 16,
+                "evidence": "请查2026年10月1日至2日经营表现，按我惯用的篇幅和顺序总结。",
+                "created_at": "2026-10-08T08:28:10.659603"
+              }
+            ],
+            "sources_next_before": null,
+            "changes": []
+          }
+        ],
+        "next_before": null,
+        "revision": 18,
+        "retrieval_status": "available"
+      },
+      "memory_after": {
+        "items": [
+          {
+            "id": "ff69ee02308a4da798ef15d7a5bd3085",
+            "content": "用户偏好经营数据总结的篇幅和顺序",
+            "category": "preference",
+            "status": "pending_confirmation",
+            "version": 1,
+            "updated_at": "2026-10-08T08:33:06.786134",
+            "index_status": "not_scheduled",
+            "index_attempts": 0,
+            "index_error_code": null,
+            "sources": [
+              {
+                "id": 11,
+                "run_id": "0b249eeb62084a5b90ecc06a084acc62",
+                "message_id": 16,
+                "evidence": "请查2026年10月1日至2日经营表现，按我惯用的篇幅和顺序总结。",
+                "created_at": "2026-10-08T08:33:06.786859"
+              }
+            ],
+            "sources_next_before": null,
+            "changes": []
+          },
+          {
+            "id": "faea8e26fbd24a18a13f0da10428e07f",
+            "content": "以后分析先展示关键数据，最后再说结论。",
+            "category": "preference",
+            "status": "active",
+            "version": 2,
+            "updated_at": "2026-10-08T08:08:59.191807",
+            "index_status": "ready",
+            "index_attempts": 1,
+            "index_error_code": null,
+            "sources": [
+              {
+                "id": 7,
+                "run_id": "0db18df6866440258c79224883b5e99c",
+                "message_id": 3,
+                "evidence": "以后分析先展示关键数据，最后再说结论。",
+                "created_at": "2026-10-08T08:08:17.959032"
+              }
+            ],
+            "sources_next_before": null,
+            "changes": []
+          },
+          {
+            "id": "490478089dea483aafbe6f70be7410fd",
+            "content": "以后给我经营建议时，金额统一写成欧元，最多列两点。",
+            "category": "preference",
+            "status": "active",
+            "version": 1,
+            "updated_at": "2026-10-08T08:24:03.022158",
+            "index_status": "ready",
+            "index_attempts": 1,
+            "index_error_code": null,
+            "sources": [
+              {
+                "id": 9,
+                "run_id": "095178e9f5264da9a5cead8e17ec0872",
+                "message_id": 16,
+                "evidence": "以后给我经营建议时，金额统一写成欧元，最多列两点。",
+                "created_at": "2026-10-08T08:24:03.023382"
+              }
+            ],
+            "sources_next_before": null,
+            "changes": []
+          },
+          {
+            "id": "3f09c90198d145c988d6f7105c45bfa5",
+            "content": "用户偏好经营数据总结的篇幅和顺序，但未明确说明具体篇幅和顺序细节",
+            "category": "preference",
+            "status": "pending_confirmation",
+            "version": 1,
+            "updated_at": "2026-10-08T08:28:10.658888",
+            "index_status": "not_scheduled",
+            "index_attempts": 0,
+            "index_error_code": null,
+            "sources": [
+              {
+                "id": 10,
+                "run_id": "fa56fa1efbfa4f1383dc0140d75ac3be",
+                "message_id": 16,
+                "evidence": "请查2026年10月1日至2日经营表现，按我惯用的篇幅和顺序总结。",
+                "created_at": "2026-10-08T08:28:10.659603"
+              }
+            ],
+            "sources_next_before": null,
+            "changes": []
+          }
+        ],
+        "next_before": null,
+        "revision": 18,
+        "retrieval_status": "available"
+      },
+      "usage_before": {
+        "model_calls": 81,
+        "tokens": 161943,
+        "embedding_calls": 35,
+        "unresolved_usage_calls": [
+          56,
+          61,
+          67,
+          70
+        ],
+        "model_call_limit": 90,
+        "observed_text_token_limit": 200000,
+        "unresolved_token_reservations": {},
+        "model_usage_observations": {
+          "79": {
+            "accounted_tokens": 1878,
+            "reservation": 15200,
+            "prompt_tokens": 1809,
+            "completion_tokens": 69,
+            "total_tokens": 1878
+          },
+          "80": {
+            "accounted_tokens": 3582,
+            "reservation": 23321,
+            "prompt_tokens": 3448,
+            "completion_tokens": 134,
+            "total_tokens": 3582
+          },
+          "81": {
+            "accounted_tokens": 1907,
+            "reservation": 17286,
+            "prompt_tokens": 1780,
+            "completion_tokens": 127,
+            "total_tokens": 1907
+          }
+        }
+      },
+      "usage_after": {
+        "model_calls": 84,
+        "tokens": 169676,
+        "embedding_calls": 36,
+        "unresolved_usage_calls": [
+          56,
+          61,
+          67,
+          70
+        ],
+        "model_call_limit": 90,
+        "observed_text_token_limit": 200000,
+        "unresolved_token_reservations": {},
+        "model_usage_observations": {
+          "79": {
+            "accounted_tokens": 1878,
+            "reservation": 15200,
+            "prompt_tokens": 1809,
+            "completion_tokens": 69,
+            "total_tokens": 1878
+          },
+          "80": {
+            "accounted_tokens": 3582,
+            "reservation": 23321,
+            "prompt_tokens": 3448,
+            "completion_tokens": 134,
+            "total_tokens": 3582
+          },
+          "81": {
+            "accounted_tokens": 1907,
+            "reservation": 17286,
+            "prompt_tokens": 1780,
+            "completion_tokens": 127,
+            "total_tokens": 1907
+          },
+          "82": {
+            "accounted_tokens": 2044,
+            "reservation": 16195,
+            "prompt_tokens": 1975,
+            "completion_tokens": 69,
+            "total_tokens": 2044
+          },
+          "83": {
+            "accounted_tokens": 3746,
+            "reservation": 24316,
+            "prompt_tokens": 3614,
+            "completion_tokens": 132,
+            "total_tokens": 3746
+          },
+          "84": {
+            "accounted_tokens": 1943,
+            "reservation": 17410,
+            "prompt_tokens": 1817,
+            "completion_tokens": 126,
+            "total_tokens": 1943
+          }
+        }
+      },
+      "manual_review": {
+        "foreground": "passed for this synthetic real-provider sample: current background, business plan, all current tool evidence, period, numbers, disabled-metric wording, two items and data before conclusion",
+        "memory_source": "evidence exactly equals current user input; no new explicit long-term detail was supplied",
+        "memory_target": {
+          "id": "ff69ee02308a4da798ef15d7a5bd3085",
+          "version": 1,
+          "status": "pending_confirmation"
+        },
+        "memory_quality": "failed: duplicate targeted pending_confirmation rather than active memory; application rejected it",
+        "full_flow_acceptance": "failed; request completion and safe rejection do not imply extraction quality passed"
+      }
+    }
+  ],
+  "conclusion": "partial; foreground passed these two samples, background extraction failed both; no publication or Issue closure",
+  "not_executed": [
+    "Further retries without a corrective change",
+    "PR/CI/merge/Issue close",
+    "Docker",
+    "Production deployment"
+  ]
+}

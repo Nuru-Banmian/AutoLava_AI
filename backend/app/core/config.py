@@ -32,9 +32,11 @@ class Settings(BaseSettings):
     agent_chat_base_url: str = ""
     agent_chat_api_key: SecretStr = SecretStr("")
     agent_chat_model: str = ""
+    agent_chat_enable_thinking: bool | None = None
     agent_memory_base_url: str = ""
     agent_memory_api_key: SecretStr = SecretStr("")
     agent_memory_model: str = ""
+    agent_memory_enable_thinking: bool | None = None
     agent_memory_max_calls: int = Field(default=2, ge=1, le=3)
     agent_memory_timeout_seconds: float = Field(default=30, gt=0, le=120)
     agent_memory_context_chars: int = Field(default=18000, ge=8000, le=64000)

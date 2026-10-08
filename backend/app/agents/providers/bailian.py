@@ -41,6 +41,9 @@ class BailianChat:
     def stream(self, messages):
         return self.stream_tools(messages, [])
 
+    def stream_plan(self, messages, schemas):
+        return self.stream_tools(messages, schemas)
+
     async def stream_tools(self, messages: list[dict], tools: list[dict]) -> AsyncIterator[str | ModelUsage | ToolCall]:
         settings = self.settings
         if not (self.model_name and settings.agent_chat_base_url and
@@ -57,6 +60,8 @@ class BailianChat:
                     "model": self.model_name, "messages": messages, "stream": True,
                     "stream_options": {"include_usage": True},
                     "max_tokens": settings.agent_output_tokens,
+                    **({"enable_thinking": settings.agent_chat_enable_thinking}
+                       if settings.agent_chat_enable_thinking is not None else {}),
                     **({"tools": tools, "parallel_tool_calls": False} if tools else {}),
                 }) as response:
                     if response.status_code == 429:

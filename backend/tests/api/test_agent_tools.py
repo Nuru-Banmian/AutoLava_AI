@@ -10,11 +10,12 @@ import httpx
 import pytest
 import respx
 
-from tests.api.test_agent_chat import StreamingModel, chat_app, completed
+from tests.api.test_agent_chat import StreamingModel, chat_app, completed, general_plan_sse
 
 
 class ToolModel:
     model_name = "controlled-tool-model"
+    stream_plan = StreamingModel.stream_plan
 
     def __init__(self, actions):
         self.actions = iter(actions)
@@ -23,6 +24,10 @@ class ToolModel:
 
     async def stream_tools(self, messages, tools):
         from app.agents.providers.bailian import ToolCall
+        if tools and tools[0]["function"]["name"] == "plan_response":
+            async for chunk in self.stream_plan(messages, tools):
+                yield chunk
+            return
         self.calls.append((list(messages), tools))
         self.results = [json.loads(item["content"]) for item in messages if item["role"] == "tool"]
         action = next(self.actions)
@@ -194,19 +199,23 @@ async def test_bailian_fragmented_tool_call_and_result_messages(tmp_path):
                 {"choices": [], "usage": {"prompt_tokens": 50, "completion_tokens": 5}})
     with respx.mock() as mock:
         transport = mock.post("https://bailian.test/v1/chat/completions").mock(side_effect=[
+            httpx.Response(200, text=general_plan_sse()),
             httpx.Response(200, text=first), httpx.Response(200, text=final),
         ])
         async with chat_app(tmp_path, provider()) as (client, _, _):
             await save_day(client, "2026-07-10", 150, wash=3)
             run = await ask(client, "查询指定期间")
             assert run["status"] == "completed", run
-            assert run["calls"] == 2
+            assert run["calls"] == 3
             assert run["usage"] == {"prompt_tokens": 80, "completion_tokens": 15}
-            wire = json.loads(transport.calls[1].request.content)
-            result = json.loads(wire["messages"][-1]["content"])
+            wire = json.loads(transport.calls[2].request.content)
+            tool_message = next(item for item in wire["messages"]
+                                if item.get("tool_call_id") == "call-1")
+            result = json.loads(tool_message["content"])
             assert result["income_summary"]["daily_ledger_revenue"] == 150
-            assert wire["messages"][-1]["tool_call_id"] == "call-1"
-            assert wire["messages"][-2]["tool_calls"][0]["function"]["name"] == "store_overview"
+            assert tool_message["role"] == "tool"
+            call_message = next(item for item in wire["messages"] if item.get("tool_calls"))
+            assert call_message["tool_calls"][0]["function"]["name"] == "store_overview"
             assert {item["function"]["name"] for item in wire["tools"]} == {
                 "read_skill", "read_skill_resource", "store_overview",
             }
@@ -233,7 +242,8 @@ async def test_disabled_metrics_and_confirmed_settlement_keep_domain_meaning(tmp
         assert result["metrics"]["total_wash_count"] is None
         assert result["metrics"]["average_revenue_per_car"] is None
         assert result["coverage"]["wash_count_status"] is None
-        assert result["unavailable"]
+        assert "平均每车收入不可用：记录洗车数量已关闭" in result["unavailable"]
+        assert not any("未记录" in reason or "合计为零" in reason for reason in result["unavailable"])
         assert background(model.calls[0][0])["wash_count_enabled"] is False
         stores = (await client.get("/api/admin/stores")).json()
         assert next(store for store in stores if store["id"] == 1)["wash_count_enabled"] is False
@@ -245,12 +255,17 @@ async def test_late_tool_call_cannot_publish_after_control_or_revocation(tmp_pat
 
     class LateModel:
         model_name = "controlled-late-tool"
+        stream_plan = StreamingModel.stream_plan
 
         def __init__(self):
             self.entered, self.release, self.closed = asyncio.Event(), asyncio.Event(), asyncio.Event()
             self.calls = 0
 
         async def stream_tools(self, messages, tools):
+            if tools and tools[0]["function"]["name"] == "plan_response":
+                async for chunk in self.stream_plan(messages, tools):
+                    yield chunk
+                return
             self.calls += 1
             self.entered.set()
             try:

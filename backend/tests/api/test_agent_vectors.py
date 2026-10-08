@@ -13,7 +13,7 @@ from app.core.config import get_settings
 from app.core.database import get_session
 from app.main import create_app
 from tests.api.test_agent_chat import StreamingModel, chat_app
-from tests.api.test_agent_memory import Curator, save
+from tests.api.test_agent_memory import Curator, chat_background, save
 
 
 class Embedding:
@@ -54,7 +54,7 @@ async def wait_status(client, status):
 
 
 def background(chat):
-    return json.loads(chat.calls[-1][2]["content"])["store_background"]
+    return chat_background(chat.calls[-1])
 
 
 async def test_real_persistence_restart_rebuild_and_configuration_switch(tmp_path, configured, monkeypatch):

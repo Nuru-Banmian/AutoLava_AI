@@ -1,6 +1,7 @@
 """Public chat contract: real authentication and forward-migrated SQLite."""
 
 import asyncio
+import json
 from contextlib import asynccontextmanager, closing
 import os
 from pathlib import Path
@@ -20,6 +21,16 @@ from app.core.security import hash_password
 from app.main import create_app
 from app.core.config import Settings
 from app.agents.providers.bailian import BailianChat
+from app.agents.providers.bailian import ToolCall
+
+
+def general_plan_sse():
+    """Controlled planning response, separate from the streaming answer fixture."""
+    call = {"index": 0, "id": "plan-1", "type": "function", "function": {
+        "name": "plan_response", "arguments": '{"kind":"general","queries":[]}',
+    }}
+    return "data: " + json.dumps({"choices": [{"delta": {"tool_calls": [call]},
+                                               "finish_reason": "tool_calls"}]}) + "\n\ndata: [DONE]\n\n"
 
 
 class StreamingModel:
@@ -27,6 +38,11 @@ class StreamingModel:
 
     def __init__(self):
         self.calls = []
+
+    async def stream_plan(self, messages, schemas):
+        # Existing answer/control tests use a valid general plan; grounding tests
+        # independently exercise real planning, bypasses and business requirements.
+        yield ToolCall("plan-1", "plan_response", '{"kind":"general","queries":[]}')
 
     async def stream(self, messages):
         self.calls.append(messages)
@@ -148,6 +164,31 @@ def provider():
     ))
 
 
+@pytest.mark.parametrize("thinking", [None, False, True])
+async def test_bailian_optional_thinking_mode_on_wire(thinking):
+    settings = Settings(_env_file=None, agent_chat_base_url="https://bailian.test/v1",
+                        agent_chat_model="chosen-model", agent_chat_api_key="private-key",
+                        agent_chat_enable_thinking=thinking)
+    body = ('data: {"choices":[{"delta":{"content":"回答"},"finish_reason":"stop"}]}\n\n'
+            'data: [DONE]\n\n')
+    with respx.mock() as mock:
+        route = mock.post("https://bailian.test/v1/chat/completions").respond(200, text=body)
+        assert [chunk async for chunk in BailianChat(settings).stream([])] == ["回答"]
+        request = json.loads(route.calls[0].request.content)
+        if thinking is None:
+            assert "enable_thinking" not in request
+        else:
+            assert request["enable_thinking"] is thinking
+
+
+async def test_chat_thinking_setting_does_not_override_memory_workload(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOLAVA_AGENT_CHAT_ENABLE_THINKING", "false")
+    monkeypatch.setenv("AUTOLAVA_AGENT_MEMORY_ENABLE_THINKING", "true")
+    async with chat_app(tmp_path, StreamingModel()) as (_, app, _):
+        assert app.state.agent_runner.settings.agent_chat_enable_thinking is False
+        assert app.state.agent_runner.memory_model.settings.agent_chat_enable_thinking is True
+
+
 @pytest.mark.parametrize("status,body,code,calls", [
     (429, "private-provider-body", "model_rate_limited", 2),
     (503, "private-provider-body", "model_unavailable", 2),
@@ -184,20 +225,21 @@ async def test_bailian_stream_and_usage_through_public_api(tmp_path):
     ]) + '\n\n'
     with respx.mock() as mock:
         transport = mock.post("https://bailian.test/v1/chat/completions").mock(
-            side_effect=[httpx.Response(503), httpx.Response(200, text=body)],
+            side_effect=[httpx.Response(503), httpx.Response(200, text=general_plan_sse()),
+                         httpx.Response(200, text=body)],
         )
         async with chat_app(tmp_path, provider()) as (client, _, _):
             response = await client.post("/api/agent/1/messages", json={"request_id": uuid4().hex, "generation": 0, "content": "你好"})
             run = await completed(client, response.json()["id"])
             assert run["status"] == "completed" and run["output"].endswith("你好")
             assert run["usage"] == {"prompt_tokens": 20, "completion_tokens": 2, "total_tokens": 22}
-            assert run["calls"] == transport.call_count == 2
+            assert run["calls"] == transport.call_count == 3
             events = (await client.get(f'/api/agent/1/runs/{run["id"]}/events')).text
             ids = [line.removeprefix("id: ") for line in events.splitlines() if line.startswith("id: ")]
             tail = (await client.get(f'/api/agent/1/runs/{run["id"]}/events',
                                     headers={"Last-Event-ID": ids[-2]})).text
             assert "event: completed" in tail and "event: delta" not in tail
-            assert transport.call_count == 2
+            assert transport.call_count == 3
 
 
 class WaitingModel(StreamingModel):
