@@ -124,6 +124,17 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
                 })
                 messages.append({"role": "tool", "tool_call_id": call.id,
                                  "content": json.dumps(result, ensure_ascii=False)})
+            if any(call.name == "store_overview" for call in calls):
+                messages.append({"role": "system", "content":
+                                 "请依据本轮工具结果组织回答，并核对本轮召回的篇幅偏好。"
+                                 "条数上限适用于整个回答（含数据清单），将必要口径合并到限定条目内。"
+                                 "若偏好为最多N点，整答只使用一个不超过N项的编号列表，"
+                                 "每项用一个连续段落，不另加标题、子列表、引言或结语。"
+                                 "先数据后结论可将数据与口径放在第一项，结论与建议放在最后一项。"
+                                 "台账合计不能证明具体商品收入来源或经营稳定。"
+                                 "记录洗车数量关闭只说明本轮不使用指标，不说明没有历史记录、"
+                                 "没有发生洗车业务或行业本身不能计算该指标。"
+                                 "不可用原因只能采用工具明确给出的当前原因。"})
         raise ModelFailure("step_budget")
 
     builder = StateGraph(AssistantState)

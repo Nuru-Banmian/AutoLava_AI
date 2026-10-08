@@ -44,9 +44,10 @@ async def store_overview(session, scope, arguments: OverviewInput):
     kpis, coverage = data["kpis"], data["period_coverage"]
     unavailable = []
     if not store.wash_count_enabled:
-        unavailable.append("记录洗车数量已关闭；不使用历史洗车数量")
-    if kpis["average_ticket"] is None:
-        unavailable.append("平均每车收入不可用：洗车数量关闭、未记录或合计为零")
+        unavailable.append("记录洗车数量已关闭；不使用历史洗车数量，不能据此判断是否存在历史记录")
+        unavailable.append("平均每车收入不可用：记录洗车数量已关闭")
+    elif kpis["average_ticket"] is None:
+        unavailable.append("平均每车收入不可用：未记录洗车数量或合计为零")
     if not kpis["open_days"]:
         unavailable.append("经营日均台账营业额不可用：没有经营日")
     return {

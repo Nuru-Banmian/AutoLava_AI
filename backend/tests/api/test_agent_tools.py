@@ -233,7 +233,8 @@ async def test_disabled_metrics_and_confirmed_settlement_keep_domain_meaning(tmp
         assert result["metrics"]["total_wash_count"] is None
         assert result["metrics"]["average_revenue_per_car"] is None
         assert result["coverage"]["wash_count_status"] is None
-        assert result["unavailable"]
+        assert "平均每车收入不可用：记录洗车数量已关闭" in result["unavailable"]
+        assert not any("未记录" in reason or "合计为零" in reason for reason in result["unavailable"])
         assert background(model.calls[0][0])["wash_count_enabled"] is False
         stores = (await client.get("/api/admin/stores")).json()
         assert next(store for store in stores if store["id"] == 1)["wash_count_enabled"] is False
