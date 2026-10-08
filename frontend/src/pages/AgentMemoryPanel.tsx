@@ -36,6 +36,10 @@ export function AgentMemoryPanel({ storeId }: { storeId: number }) {
     try {
       const next = await api<MemoryList>(`/agent/${storeId}/memories${before ? `?before=${before}` : ""}`);
       if (valid()) {
+        if (before && value && next.revision !== value.revision) {
+          setError("记忆已变化，请刷新后继续读取。");
+          return;
+        }
         setValue((previous) => before && previous ? { ...next, items: [...previous.items, ...next.items] } : next);
         setError("");
       }

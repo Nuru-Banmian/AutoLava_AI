@@ -65,3 +65,33 @@ it("keeps a correction draft on conflict and requires explicit deletion and clea
   expect(clearedRevision).toBe(3);
   expect(screen.getByText(/旧聊天原文可能仍可见/)).toBeVisible();
 });
+
+it("keeps the old clear precondition when memories change between list pages", async () => {
+  let clearRevision = -1;
+  const item = { id: "m1", content: "第一页原偏好", category: "preference", status: "active", version: 1,
+    index_status: "pending", updated_at: "2026-10-08T01:00:00", sources: [], changes: [] };
+  server.use(
+    http.get("/api/agent/1/memories", ({ request }) => HttpResponse.json(
+      new URL(request.url).searchParams.has("before")
+        ? { items: [{ ...item, id: "m2", content: "版本变化后的第二页" }], next_before: null, revision: 2 }
+        : { items: [item], next_before: "cursor", revision: 1 },
+    )),
+    http.post("/api/agent/1/memories/clear", async ({ request }) => {
+      clearRevision = (await request.json() as { expected_revision: number }).expected_revision;
+      return clearRevision === 1
+        ? HttpResponse.json({ detail: "记忆已变化，请刷新并核对后再次清空。" }, { status: 409 })
+        : HttpResponse.json({ items: [], revision: 3 });
+    }),
+  );
+  const user = userEvent.setup();
+  render(<AgentMemoryPanel storeId={1} />);
+  await user.click(screen.getByRole("button", { name: "查看记忆" }));
+  await user.click(await screen.findByRole("button", { name: "读取更多记忆" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("记忆已变化，请刷新后继续读取。");
+  expect(screen.queryByText("版本变化后的第二页")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "全部清空" }));
+  await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "确认清空" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("刷新并核对后再次清空");
+  expect(clearRevision).toBe(1);
+  expect(screen.getByText("第一页原偏好")).toBeVisible();
+});
