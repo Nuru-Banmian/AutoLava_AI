@@ -40,7 +40,7 @@ class NoWeather:
 
 
 @asynccontextmanager
-async def chat_app(tmp_path, model, *, historical_messages=0):
+async def chat_app(tmp_path, model, *, historical_messages=0, memory_model=None):
     database = tmp_path / "chat.sqlite3"
     for revision in ("0022", "head"):
         subprocess.run(
@@ -71,7 +71,8 @@ async def chat_app(tmp_path, model, *, historical_messages=0):
                                "VALUES (1, 'user', ?)", (f"更多历史{number}",))
     engine = create_async_engine(sqlite_url(database))
     factory = async_sessionmaker(engine, expire_on_commit=False)
-    app = create_app(session_factory=factory, agent_model=model, weather_service=NoWeather())
+    app = create_app(session_factory=factory, agent_model=model, memory_model=memory_model,
+                     weather_service=NoWeather())
 
     async def session_dependency():
         async with factory() as session:

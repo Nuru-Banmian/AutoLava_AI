@@ -10,6 +10,7 @@ from app.api.deps import Session, StoreAccess, require_admin, require_store_acce
 from app.models.identity import User
 from app.core.database import end_read_transaction
 from app.schemas.agent import ChatConversation, ChatGeneration, ChatRun, ChatSubmit
+from app.schemas.memory import MemoryList, MemorySourceList
 from app.services.owner import is_administrator
 from app.services.sessions import current_credentials
 
@@ -31,6 +32,16 @@ async def chat_scope(
 
 
 Scope = Annotated[ChatScope, Depends(chat_scope)]
+
+
+@router.get("/memories", response_model=MemoryList)
+async def memories(request: Request, scope: Scope, before: str | None = Query(None, pattern=r"^[a-f0-9]{32}$")):
+    return await request.app.state.agent_runner.memory.listing(scope, before)
+
+
+@router.get("/memories/{memory_id}/sources", response_model=MemorySourceList)
+async def memory_sources(memory_id: str, request: Request, scope: Scope, before: int | None = Query(None, ge=1)):
+    return await request.app.state.agent_runner.memory.sources(scope, memory_id, before)
 
 
 @router.get("/conversation", response_model=ChatConversation)

@@ -40,6 +40,7 @@ class AgentRun(Base):
     generation: Mapped[int] = mapped_column(default=0, server_default="0")
     request_id: Mapped[str | None] = mapped_column(String(80))
     input: Mapped[str] = mapped_column(Text, default="", server_default="")
+    user_message_id: Mapped[int | None] = mapped_column()
     status: Mapped[str] = mapped_column(String(16), default="running")
     output: Mapped[str] = mapped_column(Text, default="")
     error_code: Mapped[str | None] = mapped_column(String(40))
@@ -63,3 +64,38 @@ class AgentEvent(Base):
     run_id: Mapped[str] = mapped_column(ForeignKey("agent_runs.id", ondelete="CASCADE"), index=True)
     kind: Mapped[str] = mapped_column(String(24))
     payload: Mapped[dict] = mapped_column(JSON)
+
+
+class AgentMemory(Base):
+    __tablename__ = "agent_memories"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id", ondelete="CASCADE"))
+    content: Mapped[str] = mapped_column(Text)
+    category: Mapped[str] = mapped_column(String(24))
+    status: Mapped[str] = mapped_column(String(24))
+    version: Mapped[int] = mapped_column(default=1)
+    updated_at: Mapped[datetime] = mapped_column(default=utc_now)
+    __table_args__ = (
+        CheckConstraint("status in ('active','pending_confirmation')", name="agent_memory_status"),
+        Index("ix_agent_memories_scope", "user_id", "store_id", "id"),
+    )
+
+
+class AgentMemorySource(Base):
+    __tablename__ = "agent_memory_sources"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    memory_id: Mapped[str] = mapped_column(ForeignKey("agent_memories.id", ondelete="CASCADE"), index=True)
+    # Independent evidence deliberately has no FK to resettable chat messages/events.
+    run_id: Mapped[str] = mapped_column(String(32), unique=True)
+    message_id: Mapped[int] = mapped_column()
+    evidence: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+
+class AgentMemoryIndex(Base):
+    __tablename__ = "agent_memory_index"
+    memory_id: Mapped[str] = mapped_column(ForeignKey("agent_memories.id", ondelete="CASCADE"), primary_key=True)
+    version: Mapped[int] = mapped_column()
+    status: Mapped[str] = mapped_column(String(24), default="pending")
+    __table_args__ = (CheckConstraint("status in ('pending','ready','failed')", name="agent_memory_index_status"),)

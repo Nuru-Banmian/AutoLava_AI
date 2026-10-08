@@ -10,8 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agents.context import ChatScope
 from app.core.database import sqlite_short_write
-from app.models.agent import AgentConversation, AgentEvent, AgentMessage, AgentRun
+from app.models.agent import AgentConversation, AgentEvent, AgentMemory, AgentMessage, AgentRun
 from app.models.identity import Store
+from app.agents.memory.repository import scoped_memories
 from app.schemas.agent import ChatConversation, ChatMessage, ChatRun
 
 
@@ -24,6 +25,10 @@ class ChatRepository:
         async with self.sessions() as session:
             await self.authorize_run(session, scope, run_id)
             store = await session.get(Store, scope.store_id)
+            memories = list(await session.scalars(scoped_memories(scope).where(
+                # Pending conflicts never enter the assistant's effective context.
+                AgentMemory.status == "active",
+            ).limit(30)))
             return {
                 "source": "stores.description", "store_id": store.id,
                 "revision": store.description_revision, "description": store.description,
@@ -31,6 +36,9 @@ class ChatRepository:
                 "company_settlement_enabled": store.company_settlement_enabled,
                 "timezone": store.timezone,
                 "local_date": datetime.now(ZoneInfo(store.timezone)).date().isoformat(),
+                "memories": [{"id": item.id, "version": item.version, "content": item.content}
+                             for item in memories],
+                "memory_retrieval": "bounded_sqlite_context; vector_search_not_available",
             }
 
     async def authorize_run(self, session, scope: ChatScope, run_id: str):
@@ -140,9 +148,12 @@ class ChatRepository:
             ))
             if active:
                 raise HTTPException(409, "当前对话正在处理中，请等待完成")
-            session.add(AgentMessage(conversation_id=conversation.id, role="user", content=content))
+            message = AgentMessage(conversation_id=conversation.id, role="user", content=content)
+            session.add(message)
+            await session.flush()
             run = AgentRun(id=uuid4().hex, conversation_id=conversation.id, model=model,
-                           request_id=request_id, generation=generation, input=content)
+                           request_id=request_id, generation=generation, input=content,
+                           user_message_id=message.id)
             session.add(run)
             await session.flush()
             session.add(AgentEvent(run_id=run.id, kind="running", payload={"status": "running"}))
@@ -197,9 +208,9 @@ class ChatRepository:
                 raise RuntimeError("Run already ended")
             if kind == "delta":
                 run.output += payload["text"]
-            elif kind == "attempt":
+            elif kind in {"attempt", "memory_attempt"}:
                 run.calls += 1
-            elif kind == "usage":
+            elif kind in {"usage", "memory_usage"}:
                 totals = dict(run.usage or {})
                 for key, value in payload.items():
                     totals[key] = totals.get(key, 0) + value

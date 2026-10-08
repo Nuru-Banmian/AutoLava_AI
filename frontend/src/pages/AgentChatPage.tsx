@@ -7,6 +7,7 @@ import { useAuth } from "@/auth/AuthProvider";
 import { currentSessionScope } from "@/auth/sessionScope";
 import { Button } from "@/components/ui/button";
 import { useStore } from "@/stores/StoreProvider";
+import { AgentMemoryPanel } from "./AgentMemoryPanel";
 
 type Conversation = components["schemas"]["ChatConversation"];
 type Run = components["schemas"]["ChatRun"];
@@ -26,6 +27,16 @@ const failures: Record<string, string> = {
   step_budget: "已达到本轮处理次数上限，请缩小问题范围。",
   tool_budget: "已达到本轮查询次数上限，请缩小问题范围。",
   context_budget: "本轮资料超过上下文上限，请缩小查询范围或重置对话。",
+  memory_invalid_proposal: "记忆提议未通过校验，未确认保存成功，请重新明确表达。",
+  memory_version_conflict: "门店背景或记忆已更新，本次未保存，请重新发送。",
+  memory_context_budget: "记忆资料超过处理上限，本次未保存。",
+  memory_output_budget: "记忆模型输出超过上限，本次未保存。",
+  memory_model_not_configured: "记忆模型尚未配置，本次未保存，请联系管理员。",
+  memory_model_configuration: "记忆模型配置或访问权限有误，本次未保存。",
+  memory_model_timeout: "记忆处理超时，请查看记忆确认保存状态后重试。",
+  memory_model_unavailable: "记忆模型暂时不可用，本次未保存。",
+  memory_model_rate_limited: "记忆模型请求过于频繁，本次未保存。",
+  memory_model_format: "记忆模型返回格式有误，本次未保存。",
 };
 
 function Chat({ storeId }: { storeId: number }) {
@@ -206,6 +217,7 @@ function Chat({ storeId }: { storeId: number }) {
   }
 
   return <div className="grid min-w-0 gap-4">
+    <AgentMemoryPanel storeId={storeId} />
     <div className="flex gap-2">
       {status === "running" && <Button variant="outline" disabled={controlling} onClick={() => void control("stop")}>停止生成</Button>}
       <Button variant="outline" disabled={!conversation || controlling} onClick={() => void control("reset")}>重置对话</Button>
