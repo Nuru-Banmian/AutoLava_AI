@@ -14,6 +14,16 @@ SQLite 变更与索引待办同事务提交，纠正产生新版本的 `upsert`�
 
 删除记忆不等于删除聊天：旧聊天原文可能仍可见或仍在当前上下文中。清空记忆保留聊天和门店描述，重置聊天保留有效记忆与独立依据。
 
+### T6 验证记录（2026-10-08）
+
+- 后端最终完整套件 564 passed，覆盖率 87%；6 条 SQLite ResourceWarning 保留在 `.autolava-test/backend-244-reviewed-full.log`。HTTP 回归覆盖纠正冲突、独立依据重置/重建回读、权限与范围、候选纠正、删除/清空竞争、空范围清空及未来重新记住。
+- 前端最终完整套件 379 passed（`--maxWorkers=2`，日志 `.autolava-test/frontend-244-reviewed-full.log`）；TypeScript、生产构建、Ruff、OpenAPI 快照与 `git diff --check` 通过。保留既有 jsdom `scrollTo` 提示。
+- 真实浏览器使用迁移到 0026 的临时 SQLite 和可控模型，完成纠正、删除、全部清空、重新明确记住及刷新回读；390px 无横向溢出，并验证冲突后当前记录与草稿并存。截图及服务日志在 `output/playwright/issue244/`；浏览器脚本初次包含过期 ref、等待文案不符、相同内容定位不唯一和相对 request URL 错误，修正后上述操作通过。
+- 既有 Playwright 全量 95 passed、20 skipped、1 failed：日历预期 `2营业`，实际 `2€999.900.000营业`。已在本次确认基线 `68c7a092c69f0e62dc99a0b76620ca54012c162e` 的独立前端副本复现，日志为 `.autolava-test/e2e-244-full.log` 与 `e2e-244-baseline.log`，未改动无关日历功能。
+- 首次后端全量的 3 个表清单断言失败及首次前端全量的 1 个既有登出草稿查找超时均保留；表清单已更新，登出测试单文件 17 passed。初次全量日志分别为 `.autolava-test/backend-244-full.log` 与 `frontend-244-full.log`。
+- Standards 审查发现列表读取与清空版本可能不一致，已用真实 HTTP 并发屏障复现并显式 `BEGIN` 修复；分页期间范围版本改变时停止追加并保留旧清空前置条件。失败摘要/回归日志为 `.autolava-test/agent244-listing-red.txt`、`agent244-listing-green.log` 和 `frontend-244-pagination-red.log`。基于 `68c7a09` 的 Standards / Spec 最终复审均为 0 项剩余发现。
+- 实际业务数据库仅只读核对为 0022，未升级或写入；本次只有本地提交，原有工作区改动保留。真实百炼、真实 Qdrant/Embedding、物理向量删除失败恢复、后台重扫/完整重建、模型内容质量、Docker 与生产部署均未验证。
+
 ## 明确记忆指令（T5）
 
 在 AI 对话中发送以“记住”“记下”“记得”开头的明确指令（可加“请”“帮我”），例如“记住：以后分析先给结论，再列数据”。单条记忆正文上限 2,000 字。普通聊天暂不自动整理记忆。
