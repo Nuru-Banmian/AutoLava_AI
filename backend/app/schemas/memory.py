@@ -14,6 +14,11 @@ class MemoryCorrection(MemoryVersion):
     content: str = Field(min_length=1, max_length=2000)
 
 
+class MemoryConfirmation(MemoryVersion):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    content: str | None = Field(default=None, min_length=1, max_length=2000)
+
+
 class MemoryClear(BaseModel):
     model_config = ConfigDict(extra="forbid")
     expected_revision: int = Field(ge=0)
@@ -70,3 +75,26 @@ class MemoryIndexStatus(BaseModel):
 
 class MemoryIndexScheduled(BaseModel):
     scheduled: int
+
+
+class MemoryJob(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    run_id: str
+    message_id: int
+    generation: int
+    memory_revision: int
+    memory_epoch: int
+    description_revision: int
+    status: Literal["pending", "running", "completed", "failed", "stale"]
+    attempts: int
+    calls: int
+    error_code: str | None
+    failures: list[dict]
+    result: dict | None
+    updated_at: datetime
+
+
+class MemoryJobList(BaseModel):
+    items: list[MemoryJob]
+    next_before: int | None = None

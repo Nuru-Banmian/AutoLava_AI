@@ -6,8 +6,49 @@ import { setupServer } from "msw/node";
 import { AgentMemoryPanel } from "./AgentMemoryPanel";
 
 const server = setupServer();
-beforeEach(() => server.listen({ onUnhandledRequest: "error" }));
+beforeEach(() => {
+  server.use(http.get("/api/agent/:storeId/memory-jobs", () => HttpResponse.json({ items: [] })));
+  server.listen({ onUnhandledRequest: "error" });
+});
 afterEach(() => { server.resetHandlers(); server.close(); });
+
+it("confirms, edits and rejects candidates and displays curation failures", async () => {
+  let items = ["直接确认", "修改确认", "拒绝候选"].map((content, index) => ({
+    id: `c${index}`, content, category: "preference", status: "pending_confirmation", version: 1,
+    index_status: "not_scheduled", updated_at: "2026-10-08T01:00:00", sources: [], changes: [],
+  }));
+  const decisions: unknown[] = [];
+  server.use(
+    http.get("/api/agent/1/memories", () => HttpResponse.json({ items, revision: 3 })),
+    http.get("/api/agent/1/memory-jobs", () => HttpResponse.json({ items: [{ id: 1, message_id: 4,
+      status: "failed", attempts: 1, calls: 2, error_code: "model_unavailable", failures: [{ code: "model_unavailable" }] }] })),
+    http.post("/api/agent/1/memories/:id/:decision", async ({ params, request }) => {
+      const payload = await request.json() as { expected_version: number; content?: string };
+      decisions.push({ id: params.id, decision: params.decision, ...payload });
+      items = items.filter((item) => item.id !== params.id);
+      return params.decision === "reject" ? new HttpResponse(null, { status: 204 }) : HttpResponse.json({});
+    }),
+  );
+  const user = userEvent.setup();
+  render(<AgentMemoryPanel storeId={1} />);
+  await user.click(screen.getByRole("button", { name: "查看记忆" }));
+  await screen.findByText(/整理失败/);
+  const candidate = (content: string) => screen.getByText(content).closest("article")!;
+  await user.click(within(candidate("直接确认")).getByRole("button", { name: "确认" }));
+  await screen.findByText("候选已确认。索引待处理。");
+  await user.click(within(candidate("修改确认")).getByRole("button", { name: "修改" }));
+  await user.clear(screen.getByLabelText("纠正内容"));
+  await user.type(screen.getByLabelText("纠正内容"), "以后回答简短");
+  await user.click(screen.getByRole("button", { name: "修改后确认" }));
+  await screen.findByText("候选已确认。索引待处理。");
+  await user.click(within(candidate("拒绝候选")).getByRole("button", { name: "拒绝" }));
+  await screen.findByText("候选已拒绝。");
+  expect(decisions).toEqual([
+    { id: "c0", decision: "confirm", expected_version: 1 },
+    { id: "c1", decision: "confirm", expected_version: 1, content: "以后回答简短" },
+    { id: "c2", decision: "reject", expected_version: 1 },
+  ]);
+});
 
 it("keeps a correction draft on conflict and requires explicit deletion and clearing", async () => {
   let item = { id: "m1", content: "原偏好", category: "preference", status: "active", version: 1,

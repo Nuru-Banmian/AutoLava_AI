@@ -9,6 +9,11 @@ async def scope_revision(session, scope):
     return state.revision if state else 0
 
 
+async def scope_epoch(session, scope):
+    state = await session.get(AgentMemoryScope, (scope.user_id, scope.store_id))
+    return state.epoch if state else 0
+
+
 def scoped_memories(scope):
     return select(AgentMemory).where(
         AgentMemory.user_id == scope.user_id, AgentMemory.store_id == scope.store_id,

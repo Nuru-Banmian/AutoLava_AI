@@ -10,6 +10,7 @@ from app.agents.memory.service import MemoryService, explicit_content
 from app.agents.memory.index import MemoryIndex
 from app.agents.memory_curator.graph import create_memory_graph
 from app.agents.runtime.repository import ChatRepository
+from app.agents.runtime.jobs import MemoryJobs
 from app.core.config import Settings
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,8 @@ class ChatRunner:
         })
         self.memory_model = memory_model if memory_model is not None else BailianChat(memory_settings)
         self.memory_graph = create_memory_graph(self.memory_model, self.memory, settings)
+        self.jobs = MemoryJobs(self.memory, settings)
+        self.jobs.graph = create_memory_graph(self.memory_model, self.memory, settings, jobs=self.jobs)
         self.tasks: set[asyncio.Task] = set()
         self.runs: dict[str, asyncio.Task] = {}
 
@@ -72,11 +75,11 @@ class ChatRunner:
                     text = {
                         "saved": "记忆已保存；索引待处理，向量检索尚未就绪。",
                         "already_saved": "这条记忆已保存，已补充本次来源；向量检索尚未就绪。",
-                        "pending_confirmation": "内容存在冲突，已记录为待确认，尚未成为有效记忆。候选处理将在后续开放。",
+                        "pending_confirmation": "内容存在冲突，已记录为待确认，尚未成为有效记忆。请在 AI 记忆中查看依据并确认或拒绝。",
                         "not_saved": "未保存：当前内容不适合作为长期偏好或门店背景，请明确表达需要长期保留的信息。",
                     }[result["status"]]
                     await self.storage.record(scope, run_id, "delta", {"text": text})
-                    await self.storage.record(scope, run_id, "completed", {"status": "completed"})
+                    await self.storage.record(scope, run_id, "completed", {"status": "completed"}, curate=False)
                 else:
                     await self.graph.ainvoke({"scope": scope, "run_id": run_id, "messages": []})
         except TimeoutError:
@@ -97,6 +100,7 @@ class ChatRunner:
                 logger.error("agent_run_failure_persistence run_id=%s", run_id)
 
     async def close(self):
+        await self.jobs.close()
         tasks = list(self.tasks)
         for task in tasks:
             task.cancel()

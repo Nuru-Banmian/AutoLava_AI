@@ -387,6 +387,40 @@ export interface paths {
         patch: operations["correct_memory_api_agent__store_id__memories__memory_id__patch"];
         trace?: never;
     };
+    "/api/agent/{store_id}/memories/{memory_id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm Memory */
+        post: operations["confirm_memory_api_agent__store_id__memories__memory_id__confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent/{store_id}/memories/{memory_id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reject Memory */
+        post: operations["reject_memory_api_agent__store_id__memories__memory_id__reject_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent/{store_id}/memories/{memory_id}/sources": {
         parameters: {
             query?: never;
@@ -449,6 +483,23 @@ export interface paths {
         put?: never;
         /** Retry Index */
         post: operations["retry_index_api_agent__store_id__memory_index_retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent/{store_id}/memory-jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Memory Jobs */
+        get: operations["memory_jobs_api_agent__store_id__memory_jobs_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1577,6 +1628,13 @@ export interface components {
             /** Expected Revision */
             expected_revision: number;
         };
+        /** MemoryConfirmation */
+        MemoryConfirmation: {
+            /** Content */
+            content?: string | null;
+            /** Expected Version */
+            expected_version: number;
+        };
         /** MemoryCorrection */
         MemoryCorrection: {
             /** Content */
@@ -1644,6 +1702,54 @@ export interface components {
             updated_at: string;
             /** Version */
             version: number;
+        };
+        /** MemoryJob */
+        MemoryJob: {
+            /** Attempts */
+            attempts: number;
+            /** Calls */
+            calls: number;
+            /** Description Revision */
+            description_revision: number;
+            /** Error Code */
+            error_code: string | null;
+            /** Failures */
+            failures: {
+                [key: string]: unknown;
+            }[];
+            /** Generation */
+            generation: number;
+            /** Id */
+            id: number;
+            /** Memory Epoch */
+            memory_epoch: number;
+            /** Memory Revision */
+            memory_revision: number;
+            /** Message Id */
+            message_id: number;
+            /** Result */
+            result: {
+                [key: string]: unknown;
+            } | null;
+            /** Run Id */
+            run_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "running" | "completed" | "failed" | "stale";
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** MemoryJobList */
+        MemoryJobList: {
+            /** Items */
+            items: components["schemas"]["MemoryJob"][];
+            /** Next Before */
+            next_before?: number | null;
         };
         /** MemoryList */
         MemoryList: {
@@ -3205,6 +3311,80 @@ export interface operations {
             };
         };
     };
+    confirm_memory_api_agent__store_id__memories__memory_id__confirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                memory_id: string;
+                store_id: number;
+            };
+            cookie?: {
+                access_token?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryConfirmation"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryItem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reject_memory_api_agent__store_id__memories__memory_id__reject_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                memory_id: string;
+                store_id: number;
+            };
+            cookie?: {
+                access_token?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryVersion"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     memory_sources_api_agent__store_id__memories__memory_id__sources_get: {
         parameters: {
             query?: {
@@ -3327,6 +3507,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MemoryIndexScheduled"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    memory_jobs_api_agent__store_id__memory_jobs_get: {
+        parameters: {
+            query?: {
+                before?: number | null;
+            };
+            header?: never;
+            path: {
+                store_id: number;
+            };
+            cookie?: {
+                access_token?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryJobList"];
                 };
             };
             /** @description Validation Error */

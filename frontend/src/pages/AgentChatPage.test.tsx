@@ -30,6 +30,7 @@ beforeEach(() => {
   vi.stubGlobal("EventSource", EventStream);
   server.listen({ onUnhandledRequest: "error" });
   server.use(http.get("/api/agent/:store/conversation", () => HttpResponse.json({ messages: [], run: null })));
+  server.use(http.get("/api/agent/:store/memory-jobs", () => HttpResponse.json({ items: [] })));
 });
 afterEach(() => { server.resetHandlers(); server.close(); vi.unstubAllGlobals(); });
 

@@ -12,7 +12,7 @@ from app.agents.tools.memory_tools import MemoryProposal
 from app.agents.registry import memory_capabilities
 
 
-def create_memory_graph(model, service, settings, *, agent_capabilities=None):
+def create_memory_graph(model, service, settings, *, agent_capabilities=None, jobs=None):
     prompt = files("app.agents.memory_curator").joinpath("prompts.md").read_text(encoding="utf-8")
     tools = memory_capabilities() if agent_capabilities is None else agent_capabilities
     enabled = {tool["function"]["name"] for tool in tools}
@@ -20,13 +20,20 @@ def create_memory_graph(model, service, settings, *, agent_capabilities=None):
         raise ValueError("Memory curator capabilities exceed its proposal authorization")
 
     async def propose(state):
-        snapshot = await service.snapshot(state["scope"], state["run_id"])
+        job_id = state.get("job_id")
+        snapshot = (await jobs.snapshot(state["scope"], job_id) if job_id is not None
+                    else await service.snapshot(state["scope"], state["run_id"]))
+        async def record(kind, payload):
+            if job_id is not None:
+                await jobs.record(state["scope"], job_id, kind, payload)
+            else:
+                await service.storage.record(state["scope"], state["run_id"], kind, payload)
         messages = [{"role": "system", "content": prompt},
                     {"role": "user", "content": json.dumps(snapshot, ensure_ascii=False)}]
         if len(json.dumps(messages, ensure_ascii=False)) + len(json.dumps(tools)) > settings.agent_memory_context_chars:
             raise ModelFailure("memory_context_budget")
         for attempt in range(settings.agent_memory_max_calls):
-            await service.storage.record(state["scope"], state["run_id"], "memory_attempt", {
+            await record("memory_attempt", {
                 "number": attempt + 1, "model": model.model_name,
             })
             calls, size = [], 0
@@ -41,7 +48,7 @@ def create_memory_graph(model, service, settings, *, agent_capabilities=None):
                         elif isinstance(chunk, str):
                             size += len(chunk)
                         elif isinstance(chunk, ModelUsage):
-                            await service.storage.record(state["scope"], state["run_id"], "memory_usage", chunk.tokens)
+                            await record("memory_usage", chunk.tokens)
                         else:
                             raise ModelFailure("memory_invalid_proposal")
                         if size > settings.agent_memory_output_chars:
@@ -52,9 +59,10 @@ def create_memory_graph(model, service, settings, *, agent_capabilities=None):
                     proposal = MemoryProposal.model_validate_json(calls[0].arguments)
                 except ValidationError as exc:
                     raise ModelFailure("memory_invalid_proposal") from exc
-                return {"snapshot": snapshot, "result": await service.commit(
-                    state["scope"], state["run_id"], snapshot, proposal,
-                )}
+                result = (await service.commit_job(state["scope"], job_id, snapshot, proposal)
+                          if job_id is not None else await service.commit(
+                              state["scope"], state["run_id"], snapshot, proposal))
+                return {"snapshot": snapshot, "result": result}
             except ModelFailure as exc:
                 if calls or not exc.retryable or attempt + 1 >= settings.agent_memory_max_calls:
                     raise
