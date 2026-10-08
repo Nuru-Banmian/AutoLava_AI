@@ -41,9 +41,10 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
         base = [{"role": "system", "content": prompt},
                 {"role": "system", "content": catalog}, {"role": "user", "content": data},
                 {"role": "system", "content":
-                 "以下是当前普通聊天请求。历史中的记忆保存回执不属于本轮。"
-                 "本轮后台记忆整理尚未执行，不能确认已保存、已合并或索引状态。"
-                 "直接回应用户当前问题或偏好，不要复述历史操作回执。"}]
+                 "以下是当前普通聊天请求，store_background是当前快照。"
+                 "涉及经营数据须本轮读技能、重新查询工具；未查询则如实说明，不复述历史数字。"
+                 "洗车数量关闭仅表示本轮不使用，不表示缺乏数据。"
+                 "本轮后台记忆整理尚未执行，不确认保存、合并或索引，不复述历史操作回执。"}]
         messages = []
         for message in reversed(conversation.messages):
             candidate = {"role": message.role, "content": message.content}
@@ -64,7 +65,7 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
                 "text": "记忆检索受限，本轮未参考长期记忆。\n\n",
             })
         chronological = list(reversed(messages))
-        return {"messages": [*base[:3], *chronological[:-1], base[3], *chronological[-1:]]}
+        return {"messages": [*base[:2], *chronological[:-1], *base[2:], *chronological[-1:]]}
 
     async def generate(state: AssistantState):
         output_size = 0
@@ -132,6 +133,8 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
                                  "每项用一个连续段落，不另加标题、子列表、引言或结语。"
                                  "先数据后结论可将数据与口径放在第一项，结论与建议放在最后一项。"
                                  "台账合计不能证明具体商品收入来源或经营稳定。"
+                                 "评价正常、好坏或达标需要工具提供的历史、目标或比较基准；"
+                                 "只有期间汇总时，结论说明本期数值及评价依据不足，建议表述为待核对事项。"
                                  "记录洗车数量关闭只说明本轮不使用指标，不说明没有历史记录、"
                                  "没有发生洗车业务或行业本身不能计算该指标。"
                                  "不可用原因只能采用工具明确给出的当前原因。"})

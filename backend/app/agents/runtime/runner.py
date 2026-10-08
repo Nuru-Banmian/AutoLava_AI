@@ -29,6 +29,7 @@ class ChatRunner:
             "agent_chat_base_url": settings.agent_memory_base_url,
             "agent_chat_api_key": settings.agent_memory_api_key,
             "agent_chat_model": settings.agent_memory_model,
+            "agent_chat_enable_thinking": settings.agent_memory_enable_thinking,
             "agent_timeout_seconds": settings.agent_memory_timeout_seconds,
             "agent_output_tokens": settings.agent_memory_output_tokens,
         })

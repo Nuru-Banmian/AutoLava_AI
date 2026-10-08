@@ -130,7 +130,9 @@ SQLite 向前迁移 0025 新增记忆、独立来源与索引状态表；提交�
 
 使用现有后端依赖及启动流程，先执行 `uv sync --locked --extra dev`、`uv run alembic upgrade head`。0023 只新增运行和事件表，保留 0017 的对话及消息。默认未配置时，应用和既有业务正常运行，聊天运行明确失败为 `model_not_configured`。
 
-根目录 `.env.example` 列出独立的 `AUTOLAVA_AGENT_CHAT_*`、`AUTOLAVA_AGENT_MEMORY_*`、`AUTOLAVA_AGENT_EMBEDDING_*`。当前 CHAT 用于主 Agent，MEMORY 用于记忆 Agent；不要将服务端密钥放入 Vite 配置或前端。填写用户选择的百炼 OpenAI 兼容 HTTPS 地址（以 `/v1` 结尾）、业务空间对应密钥和支持流式工具调用的聊天模型。没有预选地域、模型或向量维度。本版未设置模型特有参数，特殊模型需要先按其官方协议联调。
+根目录 `.env.example` 列出独立的 `AUTOLAVA_AGENT_CHAT_*`、`AUTOLAVA_AGENT_MEMORY_*`、`AUTOLAVA_AGENT_EMBEDDING_*`。当前 CHAT 用于主 Agent，MEMORY 用于记忆 Agent；不要将服务端密钥放入 Vite 配置或前端。填写用户选择的百炼 OpenAI 兼容 HTTPS 地址（以 `/v1` 结尾）、业务空间对应密钥和支持流式工具调用的聊天模型。没有预选地域、模型或向量维度。
+
+支持 `enable_thinking` 的模型可独立配置 `AUTOLAVA_AGENT_CHAT_ENABLE_THINKING` 与 `AUTOLAVA_AGENT_MEMORY_ENABLE_THINKING`（true/false）；省略时不发送该参数，沿用供应商默认，聊天设置不覆盖记忆设置。qwen3.6-plus默认开启思考，工具回合可设CHAT为false以减少思考等待；设置前核对[百炼模型支持](https://www.alibabacloud.com/help/zh/model-studio/deep-thinking)。整轮超时、步数、调用和输出预算保持原有上限；关闭思考不保证内容正确，仍需真实审阅。
 
 每轮默认最多 8 次模型调用尝试（含重试），每个模型步骤最多尝试 2 次，最多执行 8 次工具，总时长 60 秒。序列化消息（含背景、技能目录、工具结果）与工具 schema 合计最多 24,000 字符，回答最多 16,000 字符并向模型发送 `max_tokens=4096`。上下文按最新完整消息裁剪，聊天列表显示最近 100 条。仅在未收到回答片段且遇到超时、429、网络或 5xx 错误时有界重试；已经输出片段后失败不会重复生成或保存为完整助手消息。失败记录保留部分输出。错误代码不包含上游响应正文、密钥或完整输入，诊断以运行记录为准。
 

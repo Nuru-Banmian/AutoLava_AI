@@ -203,10 +203,13 @@ async def test_bailian_fragmented_tool_call_and_result_messages(tmp_path):
             assert run["calls"] == 2
             assert run["usage"] == {"prompt_tokens": 80, "completion_tokens": 15}
             wire = json.loads(transport.calls[1].request.content)
-            result = json.loads(wire["messages"][-1]["content"])
+            tool_message = next(item for item in wire["messages"]
+                                if item.get("tool_call_id") == "call-1")
+            result = json.loads(tool_message["content"])
             assert result["income_summary"]["daily_ledger_revenue"] == 150
-            assert wire["messages"][-1]["tool_call_id"] == "call-1"
-            assert wire["messages"][-2]["tool_calls"][0]["function"]["name"] == "store_overview"
+            assert tool_message["role"] == "tool"
+            call_message = next(item for item in wire["messages"] if item.get("tool_calls"))
+            assert call_message["tool_calls"][0]["function"]["name"] == "store_overview"
             assert {item["function"]["name"] for item in wire["tools"]} == {
                 "read_skill", "read_skill_resource", "store_overview",
             }

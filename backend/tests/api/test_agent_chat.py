@@ -1,6 +1,7 @@
 """Public chat contract: real authentication and forward-migrated SQLite."""
 
 import asyncio
+import json
 from contextlib import asynccontextmanager, closing
 import os
 from pathlib import Path
@@ -146,6 +147,31 @@ def provider():
         _env_file=None, agent_chat_base_url="https://bailian.test/v1",
         agent_chat_model="chosen-model", agent_chat_api_key="private-key",
     ))
+
+
+@pytest.mark.parametrize("thinking", [None, False, True])
+async def test_bailian_optional_thinking_mode_on_wire(thinking):
+    settings = Settings(_env_file=None, agent_chat_base_url="https://bailian.test/v1",
+                        agent_chat_model="chosen-model", agent_chat_api_key="private-key",
+                        agent_chat_enable_thinking=thinking)
+    body = ('data: {"choices":[{"delta":{"content":"回答"},"finish_reason":"stop"}]}\n\n'
+            'data: [DONE]\n\n')
+    with respx.mock() as mock:
+        route = mock.post("https://bailian.test/v1/chat/completions").respond(200, text=body)
+        assert [chunk async for chunk in BailianChat(settings).stream([])] == ["回答"]
+        request = json.loads(route.calls[0].request.content)
+        if thinking is None:
+            assert "enable_thinking" not in request
+        else:
+            assert request["enable_thinking"] is thinking
+
+
+async def test_chat_thinking_setting_does_not_override_memory_workload(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOLAVA_AGENT_CHAT_ENABLE_THINKING", "false")
+    monkeypatch.setenv("AUTOLAVA_AGENT_MEMORY_ENABLE_THINKING", "true")
+    async with chat_app(tmp_path, StreamingModel()) as (_, app, _):
+        assert app.state.agent_runner.settings.agent_chat_enable_thinking is False
+        assert app.state.agent_runner.memory_model.settings.agent_chat_enable_thinking is True
 
 
 @pytest.mark.parametrize("status,body,code,calls", [

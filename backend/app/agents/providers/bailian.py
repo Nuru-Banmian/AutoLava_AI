@@ -57,6 +57,8 @@ class BailianChat:
                     "model": self.model_name, "messages": messages, "stream": True,
                     "stream_options": {"include_usage": True},
                     "max_tokens": settings.agent_output_tokens,
+                    **({"enable_thinking": settings.agent_chat_enable_thinking}
+                       if settings.agent_chat_enable_thinking is not None else {}),
                     **({"tools": tools, "parallel_tool_calls": False} if tools else {}),
                 }) as response:
                     if response.status_code == 429:
