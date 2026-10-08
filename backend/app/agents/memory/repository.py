@@ -36,6 +36,8 @@ async def read_memories(session, scope, before=None, memory_id=None):
             "id": memory.id, "content": memory.content, "category": memory.category,
             "status": memory.status, "version": memory.version, "updated_at": memory.updated_at,
             "index_status": index.status if index else "not_scheduled",
+            "index_attempts": index.attempts if index else 0,
+            "index_error_code": index.error_code if index else None,
             "sources_next_before": sources[19].id if len(sources) > 20 else None,
             "sources": [{"id": source.id, "run_id": source.run_id, "message_id": source.message_id,
                          "evidence": source.evidence, "created_at": source.created_at}

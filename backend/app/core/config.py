@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     agent_embedding_api_key: SecretStr = SecretStr("")
     agent_embedding_model: str = ""
     agent_embedding_dimensions: int | None = Field(default=None, ge=1)
+    agent_embedding_timeout_seconds: float = Field(default=10, gt=0, le=30)
+    # Empty path disables vector retrieval. Local storage permits only one process.
+    agent_vector_path: Path | None = None
+    agent_vector_url: str = ""
+    agent_vector_api_key: SecretStr = SecretStr("")
+    agent_vector_index_version: int = Field(default=1, ge=1)
+    agent_index_max_attempts: int = Field(default=3, ge=1, le=5)
+    agent_index_poll_seconds: float = Field(default=2, ge=0.1, le=60)
     agent_max_calls: int = Field(default=2, ge=1, le=3)
     agent_max_steps: int = Field(default=8, ge=1, le=12)
     agent_max_tool_calls: int = Field(default=8, ge=1, le=16)

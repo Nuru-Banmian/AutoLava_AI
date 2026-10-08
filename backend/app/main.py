@@ -35,11 +35,14 @@ def create_app(
     weather_service: WeatherService | None = None,
     agent_model: ChatModel | None = None,
     memory_model: ChatModel | None = None,
+    embedding=None,
+    vectors=None,
 ) -> FastAPI:
     settings = get_settings()
     agent_runner = ChatRunner(
         agent_model if agent_model is not None else BailianChat(settings),
         ChatRepository(session_factory), settings, memory_model=memory_model,
+        embedding=embedding, vectors=vectors,
     )
     provider = OpenMeteoProvider(max_inflight=settings.weather_max_inflight)
     if weather_service is None:
@@ -86,6 +89,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         await agent_runner.storage.recover()
+        agent_runner.index.start()
         provider.client = httpx.AsyncClient(
             limits=httpx.Limits(max_connections=settings.weather_max_inflight),
             timeout=httpx.Timeout(8),

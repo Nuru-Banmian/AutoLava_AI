@@ -101,7 +101,17 @@ class AgentMemoryIndex(Base):
     version: Mapped[int] = mapped_column()
     operation: Mapped[str] = mapped_column(String(16), default="upsert", server_default="upsert")
     status: Mapped[str] = mapped_column(String(24), default="pending")
+    attempts: Mapped[int] = mapped_column(default=0, server_default="0")
+    error_code: Mapped[str | None] = mapped_column(String(40))
+    fingerprint: Mapped[str] = mapped_column(String(64), default="", server_default="")
     __table_args__ = (CheckConstraint("status in ('pending','ready','failed')", name="agent_memory_index_status"),)
+
+
+class AgentIndexConfiguration(Base):
+    __tablename__ = "agent_index_configuration"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    target: Mapped[str] = mapped_column(String(64))
+    active: Mapped[str] = mapped_column(String(64), default="")
 
 
 class AgentMemoryScope(Base):
@@ -109,6 +119,7 @@ class AgentMemoryScope(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id", ondelete="CASCADE"), primary_key=True)
     revision: Mapped[int] = mapped_column(default=0)
+    retrieval_error: Mapped[str | None] = mapped_column(String(40))
 
 
 class AgentMemoryChange(Base):

@@ -42,6 +42,8 @@ class MemoryItem(BaseModel):
     version: int
     updated_at: datetime
     index_status: Literal["pending", "ready", "failed", "not_scheduled"]
+    index_attempts: int = 0
+    index_error_code: str | None = None
     sources: list[MemorySource]
     sources_next_before: int | None = None
     changes: list[MemoryChange] = Field(default_factory=list)
@@ -51,8 +53,20 @@ class MemoryList(BaseModel):
     items: list[MemoryItem]
     next_before: str | None = None
     revision: int = 0
+    retrieval_status: Literal["unavailable", "processing", "failed", "available"] = "unavailable"
 
 
 class MemorySourceList(BaseModel):
     items: list[MemorySource]
     next_before: int | None = None
+
+
+class MemoryIndexStatus(BaseModel):
+    status: Literal["unavailable", "processing", "failed", "available"]
+    error_code: str | None = None
+    failed: int
+    pending: int
+
+
+class MemoryIndexScheduled(BaseModel):
+    scheduled: int

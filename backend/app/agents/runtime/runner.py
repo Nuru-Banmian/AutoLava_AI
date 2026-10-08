@@ -7,6 +7,7 @@ from app.agents.assistant.graph import ChatModel, create_graph
 from app.agents.context import ChatScope
 from app.agents.providers.bailian import BailianChat, ModelFailure
 from app.agents.memory.service import MemoryService, explicit_content
+from app.agents.memory.index import MemoryIndex
 from app.agents.memory_curator.graph import create_memory_graph
 from app.agents.runtime.repository import ChatRepository
 from app.core.config import Settings
@@ -15,12 +16,14 @@ logger = logging.getLogger(__name__)
 
 
 class ChatRunner:
-    def __init__(self, model: ChatModel, storage: ChatRepository, settings: Settings, *, memory_model=None):
+    def __init__(self, model: ChatModel, storage: ChatRepository, settings: Settings, *, memory_model=None,
+                 embedding=None, vectors=None):
         self.model = model
         self.storage = storage
         self.settings = settings
-        self.graph = create_graph(model, storage, settings)
-        self.memory = MemoryService(storage)
+        self.index = MemoryIndex(storage, settings, embedding=embedding, vectors=vectors)
+        self.graph = create_graph(model, storage, settings, memory_index=self.index)
+        self.memory = MemoryService(storage, self.index)
         memory_settings = settings.model_copy(update={
             "agent_chat_base_url": settings.agent_memory_base_url,
             "agent_chat_api_key": settings.agent_memory_api_key,
@@ -98,3 +101,4 @@ class ChatRunner:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        await self.index.close()

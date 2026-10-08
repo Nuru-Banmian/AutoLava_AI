@@ -30,7 +30,7 @@ def test_final_tables_are_registered() -> None:
         "agent_events",
         "agent_memories",
         "agent_memory_sources",
-        "agent_memory_index",
+        "agent_index_configuration", "agent_memory_index",
         "agent_memory_scopes",
         "agent_memory_changes",
     }
