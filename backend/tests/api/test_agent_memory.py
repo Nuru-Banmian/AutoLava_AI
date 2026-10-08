@@ -39,6 +39,14 @@ async def save(client, content="记住：以后分析先给结论，再列数据
     return await completed(client, response.json()["id"])
 
 
+def chat_background(messages):
+    snapshots = [json.loads(item["content"])["store_background"] for item in messages
+                 if item["role"] == "user"
+                 and item["content"].startswith('{"store_background":')]
+    assert len(snapshots) == 1
+    return snapshots[0]
+
+
 async def test_explicit_save_source_and_reset_retention(tmp_path):
     curator = Curator()
     async with chat_app(tmp_path, StreamingModel(), memory_model=curator) as (client, app, factory):
@@ -171,8 +179,8 @@ async def test_conflict_not_used_as_effective_memory(tmp_path):
         assert "尚未成为有效记忆" in run["output"]
         items = (await client.get("/api/agent/1/memories")).json()["items"]
         assert sorted(item["status"] for item in items) == ["active", "pending_confirmation"]
-        await save(client, "你好")
-        background = json.loads(chat.calls[-1][2]["content"])["store_background"]
+        assert (await save(client, "你好"))["status"] == "completed"
+        background = chat_background(chat.calls[-1])
         assert background["memories"] == []
         assert background["memory_retrieval"] == "unavailable"
 
@@ -336,8 +344,8 @@ async def test_manual_changes_reject_waiting_old_proposals_and_allow_new_instruc
             assert (await client.patch(f'/api/agent/1/memories/{old_id}', json={
                 "expected_version": 1, "content": "尝试恢复旧记录",
             })).status_code == 404
-        await save(client, "你好")
-        background = json.loads(chat.calls[-1][2]["content"])["store_background"]
+        assert (await save(client, "你好"))["status"] == "completed"
+        background = chat_background(chat.calls[-1])
         assert background["memories"] == []  # No configured vector service in this T6 regression.
         assert (await save(client))["status"] == "completed"
         assert any(m["content"] == "以后分析先给结论，再列数据"
@@ -378,8 +386,8 @@ async def test_clear_is_versioned_scoped_and_keeps_store_description_and_chat(tm
         result = await client.post("/api/agent/1/memories/clear", json={"expected_revision": listing["revision"]})
         assert result.status_code == 200 and result.json()["items"] == []
         assert (await client.get("/api/agent/1/conversation")).json() == before
-        await save(client, "你好")
-        store = json.loads(chat.calls[-1][2]["content"])["store_background"]
+        assert (await save(client, "你好"))["status"] == "completed"
+        store = chat_background(chat.calls[-1])
         assert store["description"] == "社区烘焙店" and store["memories"] == []
 
 

@@ -21,6 +21,16 @@ from app.core.security import hash_password
 from app.main import create_app
 from app.core.config import Settings
 from app.agents.providers.bailian import BailianChat
+from app.agents.providers.bailian import ToolCall
+
+
+def general_plan_sse():
+    """Controlled planning response, separate from the streaming answer fixture."""
+    call = {"index": 0, "id": "plan-1", "type": "function", "function": {
+        "name": "plan_response", "arguments": '{"kind":"general","queries":[]}',
+    }}
+    return "data: " + json.dumps({"choices": [{"delta": {"tool_calls": [call]},
+                                               "finish_reason": "tool_calls"}]}) + "\n\ndata: [DONE]\n\n"
 
 
 class StreamingModel:
@@ -28,6 +38,11 @@ class StreamingModel:
 
     def __init__(self):
         self.calls = []
+
+    async def stream_plan(self, messages, schemas):
+        # Existing answer/control tests use a valid general plan; grounding tests
+        # independently exercise real planning, bypasses and business requirements.
+        yield ToolCall("plan-1", "plan_response", '{"kind":"general","queries":[]}')
 
     async def stream(self, messages):
         self.calls.append(messages)
@@ -210,20 +225,21 @@ async def test_bailian_stream_and_usage_through_public_api(tmp_path):
     ]) + '\n\n'
     with respx.mock() as mock:
         transport = mock.post("https://bailian.test/v1/chat/completions").mock(
-            side_effect=[httpx.Response(503), httpx.Response(200, text=body)],
+            side_effect=[httpx.Response(503), httpx.Response(200, text=general_plan_sse()),
+                         httpx.Response(200, text=body)],
         )
         async with chat_app(tmp_path, provider()) as (client, _, _):
             response = await client.post("/api/agent/1/messages", json={"request_id": uuid4().hex, "generation": 0, "content": "你好"})
             run = await completed(client, response.json()["id"])
             assert run["status"] == "completed" and run["output"].endswith("你好")
             assert run["usage"] == {"prompt_tokens": 20, "completion_tokens": 2, "total_tokens": 22}
-            assert run["calls"] == transport.call_count == 2
+            assert run["calls"] == transport.call_count == 3
             events = (await client.get(f'/api/agent/1/runs/{run["id"]}/events')).text
             ids = [line.removeprefix("id: ") for line in events.splitlines() if line.startswith("id: ")]
             tail = (await client.get(f'/api/agent/1/runs/{run["id"]}/events',
                                     headers={"Last-Event-ID": ids[-2]})).text
             assert "event: completed" in tail and "event: delta" not in tail
-            assert transport.call_count == 2
+            assert transport.call_count == 3
 
 
 class WaitingModel(StreamingModel):

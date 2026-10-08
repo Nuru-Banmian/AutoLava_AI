@@ -11,7 +11,7 @@ from app.agents.providers.bailian import ModelFailure, ToolCall
 from app.main import create_app
 from app.core.config import get_settings
 from tests.api.test_agent_chat import StreamingModel, chat_app, completed
-from tests.api.test_agent_memory import save
+from tests.api.test_agent_memory import chat_background, save
 
 
 class BackgroundCurator:
@@ -99,7 +99,7 @@ async def test_automatic_save_merge_update_candidates_and_scopes(tmp_path):
             curator.action, curator.content = "reject", None
             probe = await turn(client, "你好")
             await settled(client, probe["id"])
-            background = json.loads(app.state.agent_runner.model.calls[-1][2]["content"])["store_background"]
+            background = chat_background(app.state.agent_runner.model.calls[-1])
             assert candidate["id"] not in [m["id"] for m in background["memories"]]
             path = f'/api/agent/1/memories/{candidate["id"]}'
             payload = {"expected_version": 1, **({"content": "以后回答简短"} if decision == "edit" else {})}

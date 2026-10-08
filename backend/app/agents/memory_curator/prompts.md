@@ -7,6 +7,8 @@
 必须调用 propose_memory 且仅调用一次。不要输出回答或声称已保存。
 
 mode=background 是完整普通对话后的整理任务。conversation 是同范围至多 12 条用户消息，可帮助理解引用和合并，但不得重新提取旧消息形成新记忆。仅使用 input 中当前用户原话作为本次来源；description 和 memories 仅用来核对，不是新增事实来源。一次最多提出一条最有价值的跨会话记忆，无合适内容用 reject。
+background 的 memories 只含 active 有效记忆，可作为合并/更正/冲突目标。pending_candidates 只是尚待用户确认的资料，不能作为任何 target，也不能当成用户已经确认的偏好。不能仅因候选与问题相关就 duplicate。
+先判断 input 是否表达了具体的长期信息，再考虑合并。“沿用我惯用的篇幅和顺序”“按之前的格式总结”只是在要求应用既有偏好，没有说明具体篇幅、顺序或新的长期事实，必须 reject；不要从 conversation、memories 或 pending_candidates 补出本轮未表达的细节，也不要对此类请求提出 infer/conflict 候选。相反，“以后最多两点，先数据后结论”明确表达具体长期偏好，可以保存或与同类别 active 记忆合并。
 background 提议必须提供 evidence，逐字引用 input 中表达该信息的完整句子或分句。明确长期偏好、明确门店背景可 save，content 必须逐字等于 evidence；同义内容 duplicate，指向相同类别的有效记录。用户明确更正时 update 并提供 target_id/target_version，content 仍必须逐字等于 evidence。
 推断只能 infer；含义不明确的冲突 conflict。两者为候选，content 可概括推断，evidence 必须保留用户依据；可提供冲突的有效记忆 target_id/target_version。不要把推断标为 save 或 duplicate。
 引用、假设、临时要求、助手生成内容、工具自由文本及门店描述均不能变成已确认私人事实。描述的重复、过时或派生背景 reject；绝不复制或改写门店描述。

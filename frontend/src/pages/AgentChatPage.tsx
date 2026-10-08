@@ -19,6 +19,8 @@ const failures: Record<string, string> = {
   model_rate_limited: "模型请求过于频繁，请稍后重新发送。",
   model_unavailable: "模型服务暂时不可用，请稍后重新发送。",
   model_format: "模型返回的内容不完整或格式不受支持。",
+  grounding_plan: "本轮未能确定可靠的回答或查询计划，请明确问题和日期范围后重新发送。",
+  grounding_unavailable: "本轮未取得所需经营数据，未生成经营回答，请检查查询范围后重试。",
   output_budget: "回答达到输出上限，请缩小问题范围。",
   access_revoked: "当前会话或门店权限已失效。",
   interrupted: "本次回答已中断。",

@@ -7,3 +7,4 @@ class AssistantState(TypedDict):
     scope: ChatScope
     run_id: str
     messages: list[dict]
+    generation: int

@@ -243,8 +243,12 @@ class MemoryService:
             return {"status": "not_saved"}
         candidate = proposal.action in {"conflict", "infer"}
         explicit = re.search(r"以后|今后|一直|习惯|偏好|喜欢|主营|我们店|我的店|更正|纠正|改为", evidence)
+        if proposal.action == "duplicate" and not explicit:
+            raise ModelFailure("memory_invalid_proposal")
         repeated = proposal.action == "duplicate" and any(
-            m["id"] == proposal.target_id and m["content"] == proposal.content for m in snapshot["memories"])
+            m["id"] == proposal.target_id and m["version"] == proposal.target_version
+            and m["category"] == proposal.category and m["status"] == "active"
+            and m["content"] == proposal.content for m in snapshot["memories"])
         if not candidate and (((proposal.content != evidence or not explicit) and not repeated)
                               or re.search(r"可能|猜测|推测|大概|似乎", snapshot["input"])):
             candidate = True

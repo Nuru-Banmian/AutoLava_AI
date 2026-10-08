@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from app.agents.memory_curator.state import CuratorState
 from app.agents.providers.bailian import ModelFailure, ModelUsage, ToolCall
-from app.agents.tools.memory_tools import MemoryProposal
+from app.agents.tools.memory_tools import MemoryProposal, background_tools
 from app.agents.registry import memory_capabilities
 
 
@@ -23,6 +23,14 @@ def create_memory_graph(model, service, settings, *, agent_capabilities=None, jo
         job_id = state.get("job_id")
         snapshot = (await jobs.snapshot(state["scope"], job_id) if job_id is not None
                     else await service.snapshot(state["scope"], state["run_id"]))
+        proposal_tools = background_tools(tools, snapshot["memories"]) if job_id is not None else tools
+        model_snapshot = snapshot
+        if job_id is not None:
+            # Keep the complete authority snapshot for commit-time equality checks.
+            model_snapshot = {**snapshot,
+                "memories": [m for m in snapshot["memories"] if m["status"] == "active"],
+                "pending_candidates": [m for m in snapshot["memories"] if m["status"] == "pending_confirmation"],
+            }
         async def record(kind, payload):
             if job_id is not None:
                 await jobs.record(state["scope"], job_id, kind, payload)
@@ -40,8 +48,8 @@ def create_memory_graph(model, service, settings, *, agent_capabilities=None, jo
         )
         messages = [{"role": "system", "content": prompt},
                     {"role": "system", "content": mode},
-                    {"role": "user", "content": json.dumps(snapshot, ensure_ascii=False)}]
-        if len(json.dumps(messages, ensure_ascii=False)) + len(json.dumps(tools)) > settings.agent_memory_context_chars:
+                    {"role": "user", "content": json.dumps(model_snapshot, ensure_ascii=False)}]
+        if len(json.dumps(messages, ensure_ascii=False)) + len(json.dumps(proposal_tools)) > settings.agent_memory_context_chars:
             raise ModelFailure("memory_context_budget")
         for attempt in range(settings.agent_memory_max_calls):
             await record("memory_attempt", {
@@ -49,7 +57,7 @@ def create_memory_graph(model, service, settings, *, agent_capabilities=None, jo
             })
             calls, size = [], 0
             try:
-                async with aclosing(model.stream_tools(messages, tools)) as chunks:
+                async with aclosing(model.stream_tools(messages, proposal_tools)) as chunks:
                     async for chunk in chunks:
                         if isinstance(chunk, ToolCall):
                             calls.append(chunk)

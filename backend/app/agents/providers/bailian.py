@@ -41,6 +41,9 @@ class BailianChat:
     def stream(self, messages):
         return self.stream_tools(messages, [])
 
+    def stream_plan(self, messages, schemas):
+        return self.stream_tools(messages, schemas)
+
     async def stream_tools(self, messages: list[dict], tools: list[dict]) -> AsyncIterator[str | ModelUsage | ToolCall]:
         settings = self.settings
         if not (self.model_name and settings.agent_chat_base_url and

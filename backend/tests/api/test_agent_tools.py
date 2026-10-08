@@ -10,11 +10,12 @@ import httpx
 import pytest
 import respx
 
-from tests.api.test_agent_chat import StreamingModel, chat_app, completed
+from tests.api.test_agent_chat import StreamingModel, chat_app, completed, general_plan_sse
 
 
 class ToolModel:
     model_name = "controlled-tool-model"
+    stream_plan = StreamingModel.stream_plan
 
     def __init__(self, actions):
         self.actions = iter(actions)
@@ -23,6 +24,10 @@ class ToolModel:
 
     async def stream_tools(self, messages, tools):
         from app.agents.providers.bailian import ToolCall
+        if tools and tools[0]["function"]["name"] == "plan_response":
+            async for chunk in self.stream_plan(messages, tools):
+                yield chunk
+            return
         self.calls.append((list(messages), tools))
         self.results = [json.loads(item["content"]) for item in messages if item["role"] == "tool"]
         action = next(self.actions)
@@ -194,15 +199,16 @@ async def test_bailian_fragmented_tool_call_and_result_messages(tmp_path):
                 {"choices": [], "usage": {"prompt_tokens": 50, "completion_tokens": 5}})
     with respx.mock() as mock:
         transport = mock.post("https://bailian.test/v1/chat/completions").mock(side_effect=[
+            httpx.Response(200, text=general_plan_sse()),
             httpx.Response(200, text=first), httpx.Response(200, text=final),
         ])
         async with chat_app(tmp_path, provider()) as (client, _, _):
             await save_day(client, "2026-07-10", 150, wash=3)
             run = await ask(client, "查询指定期间")
             assert run["status"] == "completed", run
-            assert run["calls"] == 2
+            assert run["calls"] == 3
             assert run["usage"] == {"prompt_tokens": 80, "completion_tokens": 15}
-            wire = json.loads(transport.calls[1].request.content)
+            wire = json.loads(transport.calls[2].request.content)
             tool_message = next(item for item in wire["messages"]
                                 if item.get("tool_call_id") == "call-1")
             result = json.loads(tool_message["content"])
@@ -249,12 +255,17 @@ async def test_late_tool_call_cannot_publish_after_control_or_revocation(tmp_pat
 
     class LateModel:
         model_name = "controlled-late-tool"
+        stream_plan = StreamingModel.stream_plan
 
         def __init__(self):
             self.entered, self.release, self.closed = asyncio.Event(), asyncio.Event(), asyncio.Event()
             self.calls = 0
 
         async def stream_tools(self, messages, tools):
+            if tools and tools[0]["function"]["name"] == "plan_response":
+                async for chunk in self.stream_plan(messages, tools):
+                    yield chunk
+                return
             self.calls += 1
             self.entered.set()
             try:
