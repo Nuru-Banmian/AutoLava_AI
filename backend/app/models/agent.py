@@ -41,6 +41,7 @@ class AgentRun(Base):
     request_id: Mapped[str | None] = mapped_column(String(80))
     input: Mapped[str] = mapped_column(Text, default="", server_default="")
     user_message_id: Mapped[int | None] = mapped_column()
+    memory_revision: Mapped[int] = mapped_column(default=0, server_default="0")
     status: Mapped[str] = mapped_column(String(16), default="running")
     output: Mapped[str] = mapped_column(Text, default="")
     error_code: Mapped[str | None] = mapped_column(String(40))
@@ -75,6 +76,7 @@ class AgentMemory(Base):
     category: Mapped[str] = mapped_column(String(24))
     status: Mapped[str] = mapped_column(String(24))
     version: Mapped[int] = mapped_column(default=1)
+    deleted: Mapped[bool] = mapped_column(default=False, server_default="0")
     updated_at: Mapped[datetime] = mapped_column(default=utc_now)
     __table_args__ = (
         CheckConstraint("status in ('active','pending_confirmation')", name="agent_memory_status"),
@@ -97,5 +99,23 @@ class AgentMemoryIndex(Base):
     __tablename__ = "agent_memory_index"
     memory_id: Mapped[str] = mapped_column(ForeignKey("agent_memories.id", ondelete="CASCADE"), primary_key=True)
     version: Mapped[int] = mapped_column()
+    operation: Mapped[str] = mapped_column(String(16), default="upsert", server_default="upsert")
     status: Mapped[str] = mapped_column(String(24), default="pending")
     __table_args__ = (CheckConstraint("status in ('pending','ready','failed')", name="agent_memory_index_status"),)
+
+
+class AgentMemoryScope(Base):
+    __tablename__ = "agent_memory_scopes"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id", ondelete="CASCADE"), primary_key=True)
+    revision: Mapped[int] = mapped_column(default=0)
+
+
+class AgentMemoryChange(Base):
+    __tablename__ = "agent_memory_changes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    memory_id: Mapped[str] = mapped_column(ForeignKey("agent_memories.id", ondelete="CASCADE"), index=True)
+    version: Mapped[int] = mapped_column()
+    previous_content: Mapped[str] = mapped_column(Text)
+    content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)

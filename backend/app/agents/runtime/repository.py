@@ -12,7 +12,7 @@ from app.agents.context import ChatScope
 from app.core.database import sqlite_short_write
 from app.models.agent import AgentConversation, AgentEvent, AgentMemory, AgentMessage, AgentRun
 from app.models.identity import Store
-from app.agents.memory.repository import scoped_memories
+from app.agents.memory.repository import scoped_memories, scope_revision
 from app.schemas.agent import ChatConversation, ChatMessage, ChatRun
 
 
@@ -153,7 +153,8 @@ class ChatRepository:
             await session.flush()
             run = AgentRun(id=uuid4().hex, conversation_id=conversation.id, model=model,
                            request_id=request_id, generation=generation, input=content,
-                           user_message_id=message.id)
+                           user_message_id=message.id,
+                           memory_revision=await scope_revision(session, scope))
             session.add(run)
             await session.flush()
             session.add(AgentEvent(run_id=run.id, kind="running", payload={"status": "running"}))

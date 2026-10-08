@@ -352,6 +352,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent/{store_id}/memories/clear": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Clear Memories */
+        post: operations["clear_memories_api_agent__store_id__memories_clear_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent/{store_id}/memories/{memory_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Memory */
+        delete: operations["delete_memory_api_agent__store_id__memories__memory_id__delete"];
+        options?: never;
+        head?: never;
+        /** Correct Memory */
+        patch: operations["correct_memory_api_agent__store_id__memories__memory_id__patch"];
+        trace?: never;
+    };
     "/api/agent/{store_id}/memories/{memory_id}/sources": {
         parameters: {
             query?: never;
@@ -1472,6 +1507,32 @@ export interface components {
             /** User Ids */
             user_ids: number[];
         };
+        /** MemoryChange */
+        MemoryChange: {
+            /** Content */
+            content: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Previous Content */
+            previous_content: string;
+            /** Version */
+            version: number;
+        };
+        /** MemoryClear */
+        MemoryClear: {
+            /** Expected Revision */
+            expected_revision: number;
+        };
+        /** MemoryCorrection */
+        MemoryCorrection: {
+            /** Content */
+            content: string;
+            /** Expected Version */
+            expected_version: number;
+        };
         /** MemoryItem */
         MemoryItem: {
             /**
@@ -1479,6 +1540,8 @@ export interface components {
              * @enum {string}
              */
             category: "preference" | "store_background";
+            /** Changes */
+            changes?: components["schemas"]["MemoryChange"][];
             /** Content */
             content: string;
             /** Id */
@@ -1511,6 +1574,11 @@ export interface components {
             items: components["schemas"]["MemoryItem"][];
             /** Next Before */
             next_before?: string | null;
+            /**
+             * Revision
+             * @default 0
+             */
+            revision: number;
         };
         /** MemorySource */
         MemorySource: {
@@ -1534,6 +1602,11 @@ export interface components {
             items: components["schemas"]["MemorySource"][];
             /** Next Before */
             next_before?: number | null;
+        };
+        /** MemoryVersion */
+        MemoryVersion: {
+            /** Expected Version */
+            expected_version: number;
         };
         /** MonthlyRevenue */
         MonthlyRevenue: {
@@ -2925,6 +2998,117 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MemoryList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clear_memories_api_agent__store_id__memories_clear_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                store_id: number;
+            };
+            cookie?: {
+                access_token?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryClear"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_memory_api_agent__store_id__memories__memory_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                memory_id: string;
+                store_id: number;
+            };
+            cookie?: {
+                access_token?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryVersion"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    correct_memory_api_agent__store_id__memories__memory_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                memory_id: string;
+                store_id: number;
+            };
+            cookie?: {
+                access_token?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryCorrection"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryItem"];
                 };
             };
             /** @description Validation Error */

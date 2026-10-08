@@ -6,10 +6,13 @@ from uuid import uuid4
 from sqlalchemy import select
 from fastapi import HTTPException
 
-from app.agents.memory.repository import read_memories, read_sources, scoped_memories
+from app.agents.memory.repository import read_memories, read_sources, scoped_memories, scope_revision
 from app.agents.providers.bailian import ModelFailure
 from app.core.database import sqlite_short_write
-from app.models.agent import AgentEvent, AgentMemory, AgentMemoryIndex, AgentMemorySource
+from app.models.agent import (
+    AgentEvent, AgentMemory, AgentMemoryIndex, AgentMemorySource, AgentMemoryScope, AgentMemoryChange,
+)
+from app.schemas.memory import MemoryItem
 from app.models.identity import Store
 from app.services.sessions import utc_now
 
@@ -33,9 +36,80 @@ class MemoryService:
             await scope.authorize(session)
             return await read_memories(session, scope, before)
 
+    async def _advance(self, session, scope):
+        state = await session.get(AgentMemoryScope, (scope.user_id, scope.store_id))
+        if state is None:
+            state = AgentMemoryScope(user_id=scope.user_id, store_id=scope.store_id, revision=0)
+            session.add(state)
+        state.revision += 1
+
+    async def _index(self, session, memory):
+        index = await session.get(AgentMemoryIndex, memory.id)
+        if index is None:
+            index = AgentMemoryIndex(memory_id=memory.id)
+            session.add(index)
+        index.version = memory.version
+        index.status = "pending"
+        index.operation = "delete" if memory.deleted else "upsert"
+
+    async def change(self, scope, memory_id, expected_version, content=None):
+        async with self.storage.sessions() as session, sqlite_short_write(session, begin_immediate=True):
+            await scope.authorize(session)
+            memory = await session.scalar(scoped_memories(scope).where(AgentMemory.id == memory_id))
+            if memory is None:
+                raise HTTPException(404, "Memory not found")
+            if memory.version != expected_version:
+                current = (await read_memories(session, scope, memory_id=memory_id))["items"][0]
+                raise HTTPException(409, {
+                    "message": "记忆已更新，请核对当前记录和你的输入后再保存。",
+                    "current": MemoryItem.model_validate(current).model_dump(mode="json"),
+                })
+            if content is not None:
+                session.add(AgentMemoryChange(memory_id=memory.id, version=memory.version + 1,
+                                             previous_content=memory.content, content=content))
+                memory.content = content
+            else:
+                memory.deleted = True
+            memory.version += 1
+            memory.updated_at = utc_now()
+            await self._advance(session, scope)
+            if memory.status == "active" or memory.deleted:
+                await self._index(session, memory)
+            await session.flush()
+            if content is not None:
+                return (await read_memories(session, scope, memory_id=memory_id))["items"][0]
+
+    async def clear(self, scope, expected_revision):
+        async with self.storage.sessions() as session, sqlite_short_write(session, begin_immediate=True):
+            await scope.authorize(session)
+            if await scope_revision(session, scope) != expected_revision:
+                raise HTTPException(409, "记忆已变化，请刷新并核对后再次清空。")
+            rows = list(await session.scalars(scoped_memories(scope)))
+            for memory in rows:
+                memory.deleted = True
+                memory.version += 1
+                memory.updated_at = utc_now()
+                await self._index(session, memory)
+            # Advance even an empty scope: old in-flight save proposals must expire.
+            await self._advance(session, scope)
+            await session.flush()
+            return await read_memories(session, scope)
+
+    async def indexed_memory(self, scope, memory_id, version):
+        """Index adapters must revalidate every hit against SQLite, including retries."""
+        async with self.storage.sessions() as session:
+            await scope.authorize(session)
+            memory = await session.scalar(scoped_memories(scope).where(
+                AgentMemory.id == memory_id, AgentMemory.version == version,
+                AgentMemory.status == "active",
+            ))
+            return {"id": memory.id, "version": memory.version, "content": memory.content} if memory else None
+
     async def snapshot(self, scope, run_id):
         async with self.storage.sessions() as session:
             run = await self.storage.authorize_run(session, scope, run_id)
+            if run.memory_revision != await scope_revision(session, scope):
+                raise ModelFailure("memory_version_conflict")
             store = await session.get(Store, scope.store_id)
             memories = list(await session.scalars(scoped_memories(scope).order_by(AgentMemory.id).limit(51)))
             if len(memories) > 50:
@@ -58,6 +132,8 @@ class MemoryService:
         # External model processing is finished before opening this write transaction.
         async with self.storage.sessions() as session, sqlite_short_write(session, begin_immediate=True):
             run = await self.storage.authorize_run(session, scope, run_id)
+            if run.memory_revision != await scope_revision(session, scope):
+                raise ModelFailure("memory_version_conflict")
             store = await session.get(Store, scope.store_id)
             if store.description_revision != snapshot["description_revision"]:
                 raise ModelFailure("memory_version_conflict")
@@ -66,6 +142,9 @@ class MemoryService:
                 AgentMemory.store_id == scope.store_id,
             ))
             if existing_source:
+                memory = await session.get(AgentMemory, existing_source.memory_id)
+                if memory.deleted:
+                    raise ModelFailure("memory_version_conflict")
                 return {"status": "already_saved", "memory_id": existing_source.memory_id}
             payload = explicit_content(run.input)
             # Do not let a model invent a source, extract somebody else's quote, or expand
@@ -108,6 +187,7 @@ class MemoryService:
                 session.add(AgentMemorySource(memory_id=memory.id, run_id=run_id,
                                               message_id=run.user_message_id, evidence=payload))
                 memory.updated_at = utc_now()
+                await self._advance(session, scope)
                 result = {"status": "pending_confirmation" if memory.status != "active" else
                           ("already_saved" if exact or target else "saved"),
                           "memory_id": memory.id,
