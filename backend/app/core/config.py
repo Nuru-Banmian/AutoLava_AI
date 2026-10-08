@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     agent_memory_timeout_seconds: float = Field(default=30, gt=0, le=120)
     agent_memory_context_chars: int = Field(default=18000, ge=8000, le=64000)
     agent_memory_output_chars: int = Field(default=4000, ge=500, le=8000)
+    agent_memory_output_tokens: int = Field(default=8192, ge=1, le=8192)
     agent_embedding_base_url: str = ""
     agent_embedding_api_key: SecretStr = SecretStr("")
     agent_embedding_model: str = ""

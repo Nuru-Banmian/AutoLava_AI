@@ -20,7 +20,8 @@ def explicit_content(text):
 
 
 def normalized(text):
-    return re.sub(r"[\W_]+", "", unicodedata.normalize("NFKC", text).casefold())
+    # Decimal points, signs and other punctuation can change a fact's meaning.
+    return unicodedata.normalize("NFKC", text).strip()
 
 
 class MemoryService:
@@ -69,8 +70,7 @@ class MemoryService:
             payload = explicit_content(run.input)
             # Do not let a model invent a source, extract somebody else's quote, or expand
             # a small user fragment into a new fact. T5 stores the user's own full payload.
-            if (not payload or not run.user_message_id or proposal.evidence != payload
-                    or proposal.content != payload):
+            if not payload or not run.user_message_id or proposal.content != payload:
                 raise ModelFailure("memory_invalid_proposal")
             unsafe = re.search(
                 r"假如|假设|如果|引用|据说|推测|猜测|可能|临时|今天|这次|本次|[“”\"「」]|"
@@ -93,8 +93,9 @@ class MemoryService:
                     raise ModelFailure("memory_invalid_proposal")
                 # Exact normalization is server-enforced even if the model misses it.
                 exact = next((m for m in rows if normalized(m.content) == normalized(payload)
-                              and m.category == proposal.category), None)
-                memory = exact or (target if proposal.action == "duplicate" else None)
+                              and m.category == proposal.category
+                              and (proposal.action != "conflict" or m.status == "pending_confirmation")), None)
+                memory = target if proposal.action == "duplicate" else exact
                 if memory is None:
                     memory = AgentMemory(id=uuid4().hex, user_id=scope.user_id,
                                          store_id=scope.store_id, content=payload,

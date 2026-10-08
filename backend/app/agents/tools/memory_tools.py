@@ -8,7 +8,6 @@ class MemoryProposal(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     action: Literal["save", "duplicate", "conflict", "reject"]
     content: str = Field(min_length=1, max_length=2000)
-    evidence: str = Field(min_length=1, max_length=2000)
     category: Literal["preference", "store_background"]
     target_id: str | None = None
     target_version: int | None = Field(default=None, ge=1)

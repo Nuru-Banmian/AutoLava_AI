@@ -12,9 +12,12 @@ from app.agents.tools.memory_tools import MemoryProposal
 from app.agents.registry import memory_capabilities
 
 
-def create_memory_graph(model, service, settings):
+def create_memory_graph(model, service, settings, *, agent_capabilities=None):
     prompt = files("app.agents.memory_curator").joinpath("prompts.md").read_text(encoding="utf-8")
-    tools = memory_capabilities()
+    tools = memory_capabilities() if agent_capabilities is None else agent_capabilities
+    enabled = {tool["function"]["name"] for tool in tools}
+    if enabled - {"propose_memory"}:
+        raise ValueError("Memory curator capabilities exceed its proposal authorization")
 
     async def propose(state):
         snapshot = await service.snapshot(state["scope"], state["run_id"])
@@ -33,7 +36,7 @@ def create_memory_graph(model, service, settings):
                         if isinstance(chunk, ToolCall):
                             calls.append(chunk)
                             size += len(chunk.arguments)
-                            if len(calls) > 1 or chunk.name != "propose_memory":
+                            if len(calls) > 1 or chunk.name not in enabled:
                                 raise ModelFailure("memory_invalid_proposal")
                         elif isinstance(chunk, str):
                             size += len(chunk)

@@ -26,7 +26,7 @@ class ChatRunner:
             "agent_chat_api_key": settings.agent_memory_api_key,
             "agent_chat_model": settings.agent_memory_model,
             "agent_timeout_seconds": settings.agent_memory_timeout_seconds,
-            "agent_output_tokens": 1024,
+            "agent_output_tokens": settings.agent_memory_output_tokens,
         })
         self.memory_model = memory_model if memory_model is not None else BailianChat(memory_settings)
         self.memory_graph = create_memory_graph(self.memory_model, self.memory, settings)
