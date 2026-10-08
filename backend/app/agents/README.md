@@ -16,6 +16,16 @@ SQLite 向前迁移 0025 新增记忆、独立来源与索引状态表；提交�
 
 主 Agent 每轮读取最新人工门店描述及最多 30 条生效记忆，标明为有界 SQLite 上下文；记忆 Agent 完整比对至多 50 条既有记忆，超过数量或序列化预算明确失败，不静默跳过冲突检查。待确认内容不注入。门店描述和真实业务数据优先，记忆资料不能改变工具权限。Qdrant/Embedding 消费在 T7 接入，当前保存反馈明确“索引待处理，向量检索尚未就绪”，不声称已完成语义检索。
 
+### 2026-10-08 T5 本地验收
+
+- 审查前启动的后端全量：555 passed，覆盖率 87%，10 条 SQLite 连接未关闭 ResourceWarning；日志 `.autolava-test/backend-243-full.log`。审查修正后的记忆专项：23 passed，含小数冲突和 2,000 字上限回归；日志 `.autolava-test/agent243-review-green.log`。两项回归先复现失败，保留 `.autolava-test/agent243-review-red.log`；首次扩展专项的测试生命周期错误也保留在 `agent243-http.log`，迁移及修正后的供应商接线专项 11 passed。
+- 前端全量 377 passed，TypeScript/生产构建通过；Ruff、OpenAPI 快照及 `git diff --check` 通过。保留前端既有 jsdom scrollTo 提示。
+- 真实浏览器、真实迁移临时 SQLite、可控模型完成明确保存、来源展示、重置保留、刷新回读、门店切换和 390px 布局。修正后重验保存及重置来源回读；截图 `output/playwright/issue243/final-saved-source-after-reset.png`。首次浏览器夹具缺少 json 导入导致失败，已修正，日志保留在该目录 `first-fixture-failure-*`。
+- 既有 Playwright 套件：95 passed、20 skipped、1 failed。日历断言预期 `2营业`、实际 `2€999.900.000营业`，在确认基线 `51fc114bf58ba897a571a8852cd1914260e14f6e` 的独立前端副本复现；保留 `.autolava-test/e2e-243-full.log` 和 `e2e-243-baseline.log`，未修改无关日历功能。
+- 实际构建 wheel，仓库外工作目录可读取记忆提示词和受限工具清单；禁止 SQLite/socket 连接及 asyncio 后台任务后导入通过。构建使用已有缓存中的 Hatchling，不改项目依赖或锁文件。
+- Standards / Spec 审查基线为 `51fc114`。已修正能力注入入口、小数点去重和重复原话导致的输出预算问题，复审均为 0 项剩余发现。
+- 实际业务数据库只读核对为 0022，未升级或写入。原有未提交改动保留，当前仅本地提交。真实百炼、真实向量存储/Embedding、模型记忆质量与回答遵循偏好的内容审阅、Docker、生产部署均未执行。
+
 管理员从当前门店进入 `/ai`，通过 `/api/agent/{store_id}` 访问：
 
 - `POST /messages`：提交 `{"content":"你好","request_id":"客户端生成的唯一标识","generation":0}`，202 返回运行。世代取自当前对话；同范围、同标识及内容的请求返回同一运行，不再次调用模型。标识内容冲突、旧世代或另一运行占用时返回 409。
