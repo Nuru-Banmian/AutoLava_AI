@@ -1,6 +1,8 @@
 """Short SQLite transactions; no session escapes into model or SSE waits."""
 
 from uuid import uuid4
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 from sqlalchemy import delete, func, select
@@ -9,12 +11,34 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.agents.context import ChatScope
 from app.core.database import sqlite_short_write
 from app.models.agent import AgentConversation, AgentEvent, AgentMessage, AgentRun
+from app.models.identity import Store
 from app.schemas.agent import ChatConversation, ChatMessage, ChatRun
 
 
 class ChatRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]):
         self.sessions = sessions
+
+    async def background(self, scope: ChatScope, run_id: str) -> dict:
+        """One authorized snapshot per turn; no DB transaction spans model waits."""
+        async with self.sessions() as session:
+            await self.authorize_run(session, scope, run_id)
+            store = await session.get(Store, scope.store_id)
+            return {
+                "source": "stores.description", "store_id": store.id,
+                "revision": store.description_revision, "description": store.description,
+                "wash_count_enabled": store.wash_count_enabled,
+                "company_settlement_enabled": store.company_settlement_enabled,
+                "timezone": store.timezone,
+                "local_date": datetime.now(ZoneInfo(store.timezone)).date().isoformat(),
+            }
+
+    async def authorize_run(self, session, scope: ChatScope, run_id: str):
+        run = await self._run(session, scope, run_id)
+        await self.authorize_generation(session, scope, run.generation)
+        if run.status != "running":
+            raise RuntimeError("Run already ended")
+        return run
 
     async def _conversation(self, session, scope):
         return await session.scalar(select(AgentConversation).where(
@@ -176,7 +200,10 @@ class ChatRepository:
             elif kind == "attempt":
                 run.calls += 1
             elif kind == "usage":
-                run.usage = payload
+                totals = dict(run.usage or {})
+                for key, value in payload.items():
+                    totals[key] = totals.get(key, 0) + value
+                run.usage = totals
             elif kind == "completed":
                 run.status = "completed"
                 session.add(AgentMessage(conversation_id=run.conversation_id,
