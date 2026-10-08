@@ -17,6 +17,7 @@ dependencies = [
   "openpyxl",
   "pydantic-settings",
   "pyjwt",
+  "pyyaml",
   "sqlalchemy>=2,<3",
   "tzdata; sys_platform == 'win32'",
   "uvicorn[standard]",
@@ -28,7 +29,6 @@ dev = [
   "pytest-asyncio",
   "pytest-cov",
   "pytest-xdist",
-  "pyyaml",
   "respx",
   "ruff==0.15.22",
 ]

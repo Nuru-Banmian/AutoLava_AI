@@ -34,6 +34,19 @@ beforeEach(() => {
 afterEach(() => { server.resetHandlers(); server.close(); vi.unstubAllGlobals(); });
 
 describe("AI conversation", () => {
+  it("shows scoped skill and query progress from persisted events", async () => {
+    server.use(http.get("/api/agent/1/conversation", () => HttpResponse.json({
+      generation: 0, messages: [], run,
+    })));
+    render(<AgentChatPage />);
+    await waitFor(() => expect(EventStream.streams).toHaveLength(1));
+    act(() => EventStream.streams[0].emit("tool", { name: "read_skill", status: "completed" }));
+    expect(screen.getByText("已读取经营分析技能")).toBeInTheDocument();
+    act(() => EventStream.streams[0].emit("tool", {
+      name: "store_overview", status: "completed", range: { start: "2026-07-10", end: "2026-07-14" },
+    }));
+    expect(screen.getByText("已查询经营概览：2026-07-10 至 2026-07-14")).toBeInTheDocument();
+  });
   it("starts a new run on the first retry after a lost response was reconciled as failed", async () => {
     const ids: string[] = [];
     server.use(
@@ -156,11 +169,15 @@ describe("AI conversation", () => {
     await screen.findByText("已保存片段");
     await waitFor(() => expect(EventStream.streams).toHaveLength(1));
     const old = EventStream.streams[0];
+    act(() => old.emit("tool", { name: "read_skill", status: "completed" }));
+    expect(screen.getByText("已读取经营分析技能")).toBeInTheDocument();
     storeId = 2;
     page.rerender(<AgentChatPage />);
     await waitFor(() => expect(screen.queryByText("正在读取对话…")).not.toBeInTheDocument());
     act(() => old.emit("delta", { text: "门店1的迟到内容" }));
+    act(() => old.emit("tool", { name: "store_overview", status: "completed" }));
     expect(old.closed).toBe(true);
+    expect(screen.queryByText(/已读取经营分析技能|已查询经营概览/)).not.toBeInTheDocument();
     expect(screen.queryByText(/门店1的问题|门店1的迟到内容|已保存片段/)).not.toBeInTheDocument();
     storeId = 1;
     page.rerender(<AgentChatPage />);

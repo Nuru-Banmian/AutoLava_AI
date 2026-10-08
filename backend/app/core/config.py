@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     agent_embedding_model: str = ""
     agent_embedding_dimensions: int | None = Field(default=None, ge=1)
     agent_max_calls: int = Field(default=2, ge=1, le=3)
+    agent_max_steps: int = Field(default=8, ge=1, le=12)
+    agent_max_tool_calls: int = Field(default=8, ge=1, le=16)
     agent_timeout_seconds: float = Field(default=60, gt=0, le=180)
     agent_context_chars: int = Field(default=24000, ge=8000, le=64000)
     agent_output_chars: int = Field(default=16000, ge=1, le=32000)

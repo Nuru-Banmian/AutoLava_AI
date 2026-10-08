@@ -23,6 +23,9 @@ const failures: Record<string, string> = {
   interrupted: "本次回答已中断。",
   cancelled: "本次回答已停止。",
   reset: "对话已重置。",
+  step_budget: "已达到本轮处理次数上限，请缩小问题范围。",
+  tool_budget: "已达到本轮查询次数上限，请缩小问题范围。",
+  context_budget: "本轮资料超过上下文上限，请缩小查询范围或重置对话。",
 };
 
 function Chat({ storeId }: { storeId: number }) {
@@ -31,6 +34,7 @@ function Chat({ storeId }: { storeId: number }) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [connection, setConnection] = useState("");
+  const [activity, setActivity] = useState<{ runId: string; text: string } | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [controlling, setControlling] = useState(false);
   const epoch = useRef(0);
@@ -74,6 +78,23 @@ function Chat({ storeId }: { storeId: number }) {
     let lastEventId = 0;
     const current = () => !disposed && valid(version);
     source.onopen = () => { if (current()) setConnection(""); };
+    source.addEventListener("tool", (event) => {
+      if (!current()) return;
+      const id = Number((event as MessageEvent).lastEventId);
+      if (id && id <= lastEventId) return;
+      if (id) lastEventId = id;
+      const data = JSON.parse((event as MessageEvent).data) as {
+        name: string; status: string; range?: { start: string; end: string };
+      };
+      const labels: Record<string, string> = {
+        read_skill: "已读取经营分析技能", read_skill_resource: "已读取指标口径参考",
+        store_overview: "已查询经营概览",
+      };
+      const text = data.status === "completed"
+        ? (labels[data.name] ?? "查询已完成") + (data.range ? `：${data.range.start} 至 ${data.range.end}` : "")
+        : "本次工具请求未获执行";
+      setActivity({ runId, text });
+    });
     source.addEventListener("delta", (event) => {
       if (!current()) return;
       const id = Number((event as MessageEvent).lastEventId);
@@ -207,10 +228,14 @@ function Chat({ storeId }: { storeId: number }) {
     </div>
     {status === "completed" && <p role="status" className="text-sm text-muted-foreground">回答已完成并保存</p>}
     {status === "running" && connection && <p role="status">{connection}</p>}
+    {activity && activity.runId === runId && <p role="status" className="text-sm text-muted-foreground">{activity.text}</p>}
     <form className="grid gap-2" onSubmit={(event) => { event.preventDefault(); void send(); }}>
       <label htmlFor="chat-message" className="font-semibold">发送消息</label>
       <textarea id="chat-message" className="min-h-28 w-full rounded-lg border bg-card p-3" maxLength={6000} value={draft} onChange={(event) => setDraft(event.target.value)} />
-      <div className="flex items-center justify-between gap-3"><p className="text-xs text-muted-foreground">最多 6,000 字；当前版本支持通用聊天。</p><Button type="submit" disabled={!conversation || sending || controlling || status === "running" || !draft.trim()}>发送</Button></div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="min-w-0 text-xs text-muted-foreground">最多 6,000 字；支持通用聊天与当前门店的只读经营查询。</p>
+        <Button className="w-full shrink-0 whitespace-nowrap sm:w-auto" type="submit" disabled={!conversation || sending || controlling || status === "running" || !draft.trim()}>发送</Button>
+      </div>
     </form>
   </div>;
 }
