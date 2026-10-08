@@ -28,8 +28,9 @@ def normalized(text):
 
 
 class MemoryService:
-    def __init__(self, storage):
+    def __init__(self, storage, index=None):
         self.storage = storage
+        self.index = index
 
     async def listing(self, scope, before=None):
         async with self.storage.sessions() as session:
@@ -37,7 +38,10 @@ class MemoryService:
             # displayed records and their clear precondition in one DB snapshot.
             await session.execute(text("BEGIN"))
             await scope.authorize(session)
-            return await read_memories(session, scope, before)
+            result = await read_memories(session, scope, before)
+        if self.index is not None:
+            result["retrieval_status"] = (await self.index.status(scope))["status"]
+        return result
 
     async def _advance(self, session, scope):
         state = await session.get(AgentMemoryScope, (scope.user_id, scope.store_id))
@@ -53,6 +57,7 @@ class MemoryService:
             session.add(index)
         index.version = memory.version
         index.status = "pending"
+        index.attempts = 0
         index.operation = "delete" if memory.deleted else "upsert"
 
     async def change(self, scope, memory_id, expected_version, content=None):

@@ -40,7 +40,7 @@ class NoWeather:
 
 
 @asynccontextmanager
-async def chat_app(tmp_path, model, *, historical_messages=0, memory_model=None):
+async def chat_app(tmp_path, model, *, historical_messages=0, memory_model=None, embedding=None, vectors=None):
     database = tmp_path / "chat.sqlite3"
     for revision in ("0022", "head"):
         subprocess.run(
@@ -72,6 +72,7 @@ async def chat_app(tmp_path, model, *, historical_messages=0, memory_model=None)
     engine = create_async_engine(sqlite_url(database))
     factory = async_sessionmaker(engine, expire_on_commit=False)
     app = create_app(session_factory=factory, agent_model=model, memory_model=memory_model,
+                     embedding=embedding, vectors=vectors,
                      weather_service=NoWeather())
 
     async def session_dependency():
@@ -117,7 +118,7 @@ async def test_stream_save_reload_and_scope_isolation(tmp_path):
         assert "event: completed" in events.text
         for _ in range(2):
             read = (await client.get("/api/agent/1/conversation")).json()
-            assert read["messages"][-1]["content"] == "你好，有什么问题？"
+            assert read["messages"][-1]["content"] == "记忆检索受限，本轮未参考长期记忆。\n\n你好，有什么问题？"
             await client.get(f"/api/agent/1/runs/{run_id}/events")
         assert len(model.calls) == 1
         restarted = create_app(session_factory=factory, agent_model=model)
@@ -188,7 +189,7 @@ async def test_bailian_stream_and_usage_through_public_api(tmp_path):
         async with chat_app(tmp_path, provider()) as (client, _, _):
             response = await client.post("/api/agent/1/messages", json={"request_id": uuid4().hex, "generation": 0, "content": "你好"})
             run = await completed(client, response.json()["id"])
-            assert run["status"] == "completed" and run["output"] == "你好"
+            assert run["status"] == "completed" and run["output"].endswith("你好")
             assert run["usage"] == {"prompt_tokens": 20, "completion_tokens": 2, "total_tokens": 22}
             assert run["calls"] == transport.call_count == 2
             events = (await client.get(f'/api/agent/1/runs/{run["id"]}/events')).text
@@ -296,7 +297,7 @@ async def test_startup_marks_orphan_interrupted_without_calling_model(tmp_path):
                                    cookies=client.cookies) as fresh:
                 restored = (await fresh.get("/api/agent/1/conversation")).json()["run"]
                 assert restored["status"] == "failed" and restored["error_code"] == "interrupted"
-                assert restored["output"] == "已有片段"
+                assert restored["output"].endswith("已有片段")
                 replay = await fresh.get(f'/api/agent/1/runs/{run["id"]}/events')
                 assert "interrupted" in replay.text and "event: completed" not in replay.text
                 assert (await fresh.post("/api/agent/1/messages", json=payload)).json() == restored
@@ -333,7 +334,7 @@ async def test_disconnect_active_sse_and_resume_from_consumed_cursor(tmp_path, r
         async def send(message):
             if message["type"] == "http.response.body":
                 bodies.append(message.get("body", b""))
-                if b"event: delta" in bodies[-1]:
+                if "已有片段".encode() in bodies[-1]:
                     disconnected.set()
 
         # ASGI's HTTP transport lets the client disconnect at an exact streamed event,
@@ -376,7 +377,7 @@ async def test_waiting_model_does_not_lock_business_and_revoked_session_cannot_f
         await client.post("/api/auth/login", json={"username": "user-1", "password": "Password123"})
         run = await completed(client, run_id)
         assert run["error_code"] == "access_revoked"
-        assert run["output"] == "已有片段"
+        assert run["output"].endswith("已有片段")
         events = (await client.get(f"/api/agent/1/runs/{run_id}/events")).text
         assert "不得泄漏" not in events
         assert len(model.calls) == 1

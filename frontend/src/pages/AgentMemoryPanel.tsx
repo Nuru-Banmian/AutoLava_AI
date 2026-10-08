@@ -68,6 +68,20 @@ export function AgentMemoryPanel({ storeId }: { storeId: number }) {
       if (valid()) setLoading(false);
     }
   }
+  async function retryIndex() {
+    const request = ++sequence.current;
+    const valid = () => active.current && sequence.current === request && session.current === currentSessionScope();
+    setLoading(true);
+    try {
+      const result = await api<{ scheduled: number }>(`/agent/${storeId}/memory-index/retry`, { method: "POST" });
+      if (valid()) {
+        setNotice(result.scheduled ? "已安排重试，请稍后刷新记忆查看索引状态。" : "没有需要重试的索引任务，请重新提问以重试检索。");
+        await load();
+      }
+    } catch (cause) {
+      if (valid()) setError(friendlyApiError(cause, "索引重试失败，请重试"));
+    } finally { if (valid()) setLoading(false); }
+  }
   async function mutate(action: "correct" | "delete" | "clear", item?: MemoryItem) {
     if (!value) return;
     const request = ++sequence.current;
@@ -118,6 +132,14 @@ export function AgentMemoryPanel({ storeId }: { storeId: number }) {
     {loading && <p role="status">正在读取记忆…</p>}
     {error && <p role="alert">{error}</p>}
     {notice && <p role="status">{notice}</p>}
+    {value && <p role="status" className="text-sm">{({
+      available: "记忆检索可用，回答仅参考本轮相关命中。",
+      processing: "索引处理中，记忆检索受限；已保存内容仍可查看。",
+      failed: "记忆检索或索引失败，检索受限；已保存内容仍保留，可重试索引或重新提问。",
+      unavailable: "记忆检索受限：向量服务未配置或暂时不可用，已保存内容仍保留。",
+    })[value.retrieval_status ?? "unavailable"]}</p>}
+    {value && (value.retrieval_status === "failed" || value.items.some((item) => item.index_status === "failed")) &&
+      <Button variant="outline" disabled={loading} onClick={() => void retryIndex()}>重试索引</Button>}
     {confirm && <div role="alertdialog" aria-label={confirm === "clear" ? "清空当前范围记忆" : "删除此条记忆"} className="grid gap-2 rounded-lg border p-3">
       <p>{confirm === "clear" ? "确认清空当前管理员在此门店的全部有效记忆和候选记忆？" : "确认删除此条记忆？"}</p>
       <div className="flex gap-2">
@@ -131,8 +153,9 @@ export function AgentMemoryPanel({ storeId }: { storeId: number }) {
       <p className="mt-2 text-sm text-muted-foreground">
         {item.status === "pending_confirmation" ? "待确认，未生效（候选处理将在后续开放）" : "已保存"}
         {item.index_status === "pending" ? " · 索引待处理，向量检索尚未就绪" : ""}
-        {item.index_status === "ready" ? " · 可向量检索" : ""}
-        {item.index_status === "failed" ? " · 索引失败" : ""}
+        {item.index_status === "ready" ? " · 索引已同步（检索可用性见上方状态）" : ""}
+        {item.index_status === "failed" ? ` · 索引失败，已尝试 ${item.index_attempts ?? 0} 次` : ""}
+        {item.index_error_code ? ` · 最近索引错误：${item.index_error_code}` : ""}
         {` · 版本 ${item.version} · 更新于 ${new Date(item.updated_at + (item.updated_at.endsWith("Z") ? "" : "Z")).toLocaleString()}`}
       </p>
       <div className="mt-2 flex gap-2">

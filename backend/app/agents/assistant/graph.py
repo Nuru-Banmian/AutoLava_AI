@@ -21,7 +21,7 @@ class ChatModel(Protocol):
 
 
 def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
-                 *, agent_capabilities=None):
+                 *, agent_capabilities=None, memory_index=None):
     prompt = files("app.agents.assistant").joinpath("prompts.md").read_text(encoding="utf-8")
     skills, tools = capabilities() if agent_capabilities is None else agent_capabilities
     catalog = json.dumps({"enabled_skills": list(skills.metadata.values())}, ensure_ascii=False)
@@ -31,7 +31,11 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
         return len(json.dumps(messages, ensure_ascii=False)) + schema_size
 
     async def context(state: AssistantState):
+        retrieval = (await memory_index.retrieve(state["scope"], state["run_id"])
+                     if memory_index else {"status": "unavailable", "items": []})
         background = await storage.background(state["scope"], state["run_id"])
+        background["memories"] = retrieval["items"]
+        background["memory_retrieval"] = retrieval["status"]
         conversation = await storage.conversation(state["scope"])
         data = json.dumps({"store_background": background}, ensure_ascii=False)
         base = [{"role": "system", "content": prompt},
@@ -47,6 +51,14 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
         await storage.record(state["scope"], state["run_id"], "context", {
             "source": background["source"], "revision": background["revision"],
         })
+        await storage.record(state["scope"], state["run_id"], "retrieval", {
+            "status": retrieval["status"],
+            "references": [{"id": m["id"], "version": m["version"]} for m in retrieval["items"]],
+        })
+        if retrieval["status"] != "available":
+            await storage.record(state["scope"], state["run_id"], "delta", {
+                "text": "记忆检索受限，本轮未参考长期记忆。\n\n",
+            })
         return {"messages": [*base, *reversed(messages)]}
 
     async def generate(state: AssistantState):

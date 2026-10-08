@@ -11,6 +11,7 @@ from app.models.identity import User
 from app.core.database import end_read_transaction
 from app.schemas.agent import ChatConversation, ChatGeneration, ChatRun, ChatSubmit
 from app.schemas.memory import MemoryList, MemorySourceList, MemoryItem, MemoryCorrection, MemoryVersion, MemoryClear
+from app.schemas.memory import MemoryIndexStatus, MemoryIndexScheduled
 from app.services.owner import is_administrator
 from app.services.sessions import current_credentials
 
@@ -32,6 +33,21 @@ async def chat_scope(
 
 
 Scope = Annotated[ChatScope, Depends(chat_scope)]
+
+
+@router.get("/memory-index", response_model=MemoryIndexStatus)
+async def index_status(request: Request, scope: Scope):
+    return await request.app.state.agent_runner.index.status(scope)
+
+
+@router.post("/memory-index/retry", response_model=MemoryIndexScheduled)
+async def retry_index(request: Request, scope: Scope):
+    return await request.app.state.agent_runner.index.retry(scope)
+
+
+@router.post("/memory-index/rebuild", response_model=MemoryIndexScheduled)
+async def rebuild_index(request: Request, scope: Scope):
+    return await request.app.state.agent_runner.index.retry(scope, rebuild=True)
 
 
 @router.get("/memories", response_model=MemoryList)

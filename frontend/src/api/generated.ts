@@ -404,6 +404,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent/{store_id}/memory-index": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Index Status */
+        get: operations["index_status_api_agent__store_id__memory_index_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent/{store_id}/memory-index/rebuild": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rebuild Index */
+        post: operations["rebuild_index_api_agent__store_id__memory_index_rebuild_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent/{store_id}/memory-index/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry Index */
+        post: operations["retry_index_api_agent__store_id__memory_index_retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent/{store_id}/messages": {
         parameters: {
             query?: never;
@@ -1533,6 +1584,25 @@ export interface components {
             /** Expected Version */
             expected_version: number;
         };
+        /** MemoryIndexScheduled */
+        MemoryIndexScheduled: {
+            /** Scheduled */
+            scheduled: number;
+        };
+        /** MemoryIndexStatus */
+        MemoryIndexStatus: {
+            /** Error Code */
+            error_code?: string | null;
+            /** Failed */
+            failed: number;
+            /** Pending */
+            pending: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "unavailable" | "processing" | "failed" | "available";
+        };
         /** MemoryItem */
         MemoryItem: {
             /**
@@ -1546,6 +1616,13 @@ export interface components {
             content: string;
             /** Id */
             id: string;
+            /**
+             * Index Attempts
+             * @default 0
+             */
+            index_attempts: number;
+            /** Index Error Code */
+            index_error_code?: string | null;
             /**
              * Index Status
              * @enum {string}
@@ -1574,6 +1651,12 @@ export interface components {
             items: components["schemas"]["MemoryItem"][];
             /** Next Before */
             next_before?: string | null;
+            /**
+             * Retrieval Status
+             * @default unavailable
+             * @enum {string}
+             */
+            retrieval_status: "unavailable" | "processing" | "failed" | "available";
             /**
              * Revision
              * @default 0
@@ -3145,6 +3228,105 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MemorySourceList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    index_status_api_agent__store_id__memory_index_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                store_id: number;
+            };
+            cookie?: {
+                access_token?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryIndexStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rebuild_index_api_agent__store_id__memory_index_rebuild_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                store_id: number;
+            };
+            cookie?: {
+                access_token?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryIndexScheduled"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retry_index_api_agent__store_id__memory_index_retry_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                store_id: number;
+            };
+            cookie?: {
+                access_token?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryIndexScheduled"];
                 };
             };
             /** @description Validation Error */

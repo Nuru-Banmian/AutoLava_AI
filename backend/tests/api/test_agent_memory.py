@@ -173,8 +173,8 @@ async def test_conflict_not_used_as_effective_memory(tmp_path):
         assert sorted(item["status"] for item in items) == ["active", "pending_confirmation"]
         await save(client, "你好")
         background = json.loads(chat.calls[-1][2]["content"])["store_background"]
-        assert len(background["memories"]) == 1
-        assert background["memories"][0]["content"] == "以后分析先给结论，再列数据"
+        assert background["memories"] == []
+        assert background["memory_retrieval"] == "unavailable"
 
 
 async def test_decimal_conflict_is_not_merged_into_an_old_fact(tmp_path):
@@ -296,9 +296,7 @@ async def test_manual_changes_reject_waiting_old_proposals_and_allow_new_instruc
             })).status_code == 404
         await save(client, "你好")
         background = json.loads(chat.calls[-1][2]["content"])["store_background"]
-        assert [m["content"] for m in background["memories"]] == (
-            ["以后先列数据，再给结论"] if action == "correct" else []
-        )
+        assert background["memories"] == []  # No configured vector service in this T6 regression.
         assert (await save(client))["status"] == "completed"
         assert any(m["content"] == "以后分析先给结论，再列数据"
                    for m in (await client.get("/api/agent/1/memories")).json()["items"])

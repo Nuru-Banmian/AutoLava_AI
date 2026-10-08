@@ -46,6 +46,7 @@ function Chat({ storeId }: { storeId: number }) {
   const [error, setError] = useState("");
   const [connection, setConnection] = useState("");
   const [activity, setActivity] = useState<{ runId: string; text: string } | null>(null);
+  const [retrieval, setRetrieval] = useState<{ runId: string; text: string } | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [controlling, setControlling] = useState(false);
   const epoch = useRef(0);
@@ -89,6 +90,15 @@ function Chat({ storeId }: { storeId: number }) {
     let lastEventId = 0;
     const current = () => !disposed && valid(version);
     source.onopen = () => { if (current()) setConnection(""); };
+    source.addEventListener("retrieval", (event) => {
+      if (!current()) return;
+      const data = JSON.parse((event as MessageEvent).data) as {
+        status: string; references: { id: string; version: number }[];
+      };
+      setRetrieval({ runId, text: data.status === "available"
+        ? (data.references.length ? `本轮参考记忆：${data.references.map((m) => `${m.id}（版本 ${m.version}）`).join("、")}` : "本轮未检索到相关记忆")
+        : "记忆检索受限，本轮未参考长期记忆" });
+    });
     source.addEventListener("tool", (event) => {
       if (!current()) return;
       const id = Number((event as MessageEvent).lastEventId);
@@ -241,6 +251,7 @@ function Chat({ storeId }: { storeId: number }) {
     {status === "completed" && <p role="status" className="text-sm text-muted-foreground">回答已完成并保存</p>}
     {status === "running" && connection && <p role="status">{connection}</p>}
     {activity && activity.runId === runId && <p role="status" className="text-sm text-muted-foreground">{activity.text}</p>}
+    {retrieval && retrieval.runId === runId && <p role="status" className="break-all text-sm text-muted-foreground">{retrieval.text}</p>}
     <form className="grid gap-2" onSubmit={(event) => { event.preventDefault(); void send(); }}>
       <label htmlFor="chat-message" className="font-semibold">发送消息</label>
       <textarea id="chat-message" className="min-h-28 w-full rounded-lg border bg-card p-3" maxLength={6000} value={draft} onChange={(event) => setDraft(event.target.value)} />

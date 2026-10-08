@@ -1,4 +1,29 @@
-# AI 对话（T2 / #240、T3 / #241、T4 / #242、T5 / #243、T6 / #244）
+# AI 对话（T2–T7 / #240–#245）
+
+## 长期记忆索引与检索（T7）
+
+SQLite 始终是权威记录，Qdrant 只存向量及 ID、管理员、门店和版本。普通对话按当前问题向量查询，服务端强制管理员/门店过滤，每条命中再回查 SQLite 的归属、active 状态、版本及删除标记；候选、旧版本和已删除记录不能注入。最多读取 12 条命中、注入 6 条去重记录，未命中不回退为全量记忆列表。记忆是低信任资料，不能改变系统指令、最新人工门店描述或经营工具结果。
+
+先运行向前迁移 `0027`，分别配置百炼 Embedding 的 `AUTOLAVA_AGENT_EMBEDDING_BASE_URL`（HTTPS compatible-mode/v1）、`API_KEY`、`MODEL` 和 `DIMENSIONS`。向量存储选择持久 `AUTOLAVA_AGENT_VECTOR_PATH` 或独立服务 `AUTOLAVA_AGENT_VECTOR_URL`（可配 `API_KEY`）；不配置时不调用 Embedding，普通业务和聊天仍可用，长期记忆只保存、不注入。实际数据路径应在源码之外。当前后台消费者按单进程运行，本地 Qdrant 用路径锁拒绝第二个进程；使用 `uvicorn ... --workers 1`，独立服务模式也不代表已支持多消费者部署。
+
+集合身份固定 Embedding endpoint/model、维度、索引版本和存储位置，更换配置产生独立集合。重建从 SQLite 的有效原文重新生成向量，每次写入后回读验证 ID、归属和版本；全部有效记录同步成功后才激活。重建期间明确显示检索受限，不用旧模型向量查询新集合。集合缺失时先提交重建待办，再创建物理集合，避免两者之间退出留下空的“就绪”索引；旧集合不再读取，物理回收属于维护操作。
+
+记忆变更与索引待办在同一短事务提交。消费者读取持久待办后关闭 SQL 会话，再执行 Embedding/Qdrant 调用；确认任务时核对版本和操作。任务重复执行采用同一 UUID upsert/delete，进程退出留下待办。默认每项最多尝试 3 次，每次间隔至少 2 秒；耗尽后保持 failed，重启不会清零。手动重试或新的权威版本才重新安排。最近错误码保留供回看，不保存供应商错误原文。查询阶段失败另存当前管理员/门店的 `retrieval_error`，页面如实显示受限；后续查询仍可尝试，成功后清除该错误。
+
+- `GET /api/agent/{store_id}/memory-index`：当前范围的 available/processing/failed/unavailable、错误码及待办/失败数。
+- `POST /api/agent/{store_id}/memory-index/retry`：只重新安排当前范围的失败索引任务；没有索引待办时重新提问可重试检索。
+- `POST /api/agent/{store_id}/memory-index/rebuild`：重新安排当前范围的已有索引任务，包括删除操作，不从旧向量恢复原文。
+- 记忆列表返回索引尝试次数、最近错误及检索状态；页面支持刷新、重试。对话 SSE 的 `retrieval` 事件给出状态及实际命中 ID/版本，页面独立显示引用。检索受限时由运行代码写入提示，不依赖模型自述。
+
+### T7 验证记录（2026-10-08）
+
+固定审查基线为远端 main `660b3b8`；在独立工作树实现，原工作区已有文档、界面、启动脚本及输出未修改。Standards 审查发现存储切换/集合丢失和创建前后的恢复窗口，Spec 审查发现查询故障后状态仍显示可用，均已修正并复审。补充创建失败的有限重试检查，防止自动重建反复清零尝试次数。
+
+- 模型替身与真实向量存储：`tests/api/test_agent_vectors.py` 使用迁移的临时 SQLite、真实本地持久 Qdrant、可控向量，从公开 HTTP/SSE 验证索引读写、管理员/门店隔离、候选与恶意 payload 拒绝、纠正/删除/清空后的陈旧命中、重建、关闭重开、更换模型、物理集合丢失、失败预算、手动恢复以及向量调用等待期间纠正和遗留任务恢复。百炼 HTTP 适配使用 respx 验证独立 endpoint/请求格式和维度拒绝。
+- 首轮相关 API 回归为 51 passed、4 failed；4 项为新增检索受限提示影响旧输出/第一个 delta 假设，已修正断言。全量后端为 567 passed、5 failed（315.63 秒）；5 项是 schema 清单未加入 `agent_index_configuration`，修正后仅重跑相关 schema/迁移/向量测试，最终 20 passed（66 秒，含 10 条向量行为测试）。保留这些失败记录，不将全量报告为全绿；没有再次全量运行。
+- 前端全量 379 passed；末次页面文案/独立引用状态调整后，相关两文件 11 passed，TypeScript 与生产构建通过。保留既有 jsdom `scrollTo` 提示。
+- 真实 Chromium + 临时 SQLite + 真实 Qdrant + 可控模型：明确记住、失败 3 次仍保留原文、重试处理中、恢复可用、重置聊天后改写问题召回、显示实际记忆 ID/版本均通过；390px 无横向溢出。截图在本地 `output/playwright/issue245/`，临时服务脚本在 `.autolava-test/vector_demo.py`。保留初次 Vite Windows URL 路径错误、HMR 后过期 ref、未登录 401、缺 favicon 404 和临时 JWT 长度提示；修正路径/刷新 snapshot 后完成演示。演示不使用实际业务数据库。
+- 真实百炼 Embedding/中文语义召回质量、模型回答忠实度、独立 Qdrant 服务、Docker、生产部署未验证，真实服务与内容审阅留在 T10。没有重复运行无关页面的全量 Playwright。
 
 ## 记忆管理（T6）
 

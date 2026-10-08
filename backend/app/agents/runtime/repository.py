@@ -10,9 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agents.context import ChatScope
 from app.core.database import sqlite_short_write
-from app.models.agent import AgentConversation, AgentEvent, AgentMemory, AgentMessage, AgentRun
+from app.models.agent import AgentConversation, AgentEvent, AgentMessage, AgentRun
 from app.models.identity import Store
-from app.agents.memory.repository import scoped_memories, scope_revision
+from app.agents.memory.repository import scope_revision
 from app.schemas.agent import ChatConversation, ChatMessage, ChatRun
 
 
@@ -25,10 +25,6 @@ class ChatRepository:
         async with self.sessions() as session:
             await self.authorize_run(session, scope, run_id)
             store = await session.get(Store, scope.store_id)
-            memories = list(await session.scalars(scoped_memories(scope).where(
-                # Pending conflicts never enter the assistant's effective context.
-                AgentMemory.status == "active",
-            ).limit(30)))
             return {
                 "source": "stores.description", "store_id": store.id,
                 "revision": store.description_revision, "description": store.description,
@@ -36,9 +32,8 @@ class ChatRepository:
                 "company_settlement_enabled": store.company_settlement_enabled,
                 "timezone": store.timezone,
                 "local_date": datetime.now(ZoneInfo(store.timezone)).date().isoformat(),
-                "memories": [{"id": item.id, "version": item.version, "content": item.content}
-                             for item in memories],
-                "memory_retrieval": "bounded_sqlite_context; vector_search_not_available",
+                "memories": [],
+                "memory_retrieval": "unavailable",
             }
 
     async def authorize_run(self, session, scope: ChatScope, run_id: str):
