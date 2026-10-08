@@ -12,6 +12,7 @@ from app.core.database import end_read_transaction
 from app.schemas.agent import ChatConversation, ChatGeneration, ChatRun, ChatSubmit
 from app.schemas.memory import MemoryList, MemorySourceList, MemoryItem, MemoryCorrection, MemoryVersion, MemoryClear
 from app.schemas.memory import MemoryIndexStatus, MemoryIndexScheduled
+from app.schemas.memory import MemoryConfirmation, MemoryJobList
 from app.services.owner import is_administrator
 from app.services.sessions import current_credentials
 
@@ -48,6 +49,23 @@ async def retry_index(request: Request, scope: Scope):
 @router.post("/memory-index/rebuild", response_model=MemoryIndexScheduled)
 async def rebuild_index(request: Request, scope: Scope):
     return await request.app.state.agent_runner.index.retry(scope, rebuild=True)
+
+
+@router.get("/memory-jobs", response_model=MemoryJobList)
+async def memory_jobs(request: Request, scope: Scope, before: int | None = Query(None, ge=1)):
+    return await request.app.state.agent_runner.jobs.listing(scope, before)
+
+
+@router.post("/memories/{memory_id}/confirm", response_model=MemoryItem)
+async def confirm_memory(memory_id: str, payload: MemoryConfirmation, request: Request, scope: Scope):
+    return await request.app.state.agent_runner.memory.decide(
+        scope, memory_id, payload.expected_version, confirm=True, content=payload.content,
+    )
+
+
+@router.post("/memories/{memory_id}/reject", status_code=204)
+async def reject_memory(memory_id: str, payload: MemoryVersion, request: Request, scope: Scope):
+    await request.app.state.agent_runner.memory.decide(scope, memory_id, payload.expected_version, confirm=False)
 
 
 @router.get("/memories", response_model=MemoryList)

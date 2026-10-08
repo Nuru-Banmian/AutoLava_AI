@@ -90,6 +90,7 @@ def create_app(
     async def lifespan(_: FastAPI):
         await agent_runner.storage.recover()
         agent_runner.index.start()
+        await agent_runner.jobs.start()
         provider.client = httpx.AsyncClient(
             limits=httpx.Limits(max_connections=settings.weather_max_inflight),
             timeout=httpx.Timeout(8),

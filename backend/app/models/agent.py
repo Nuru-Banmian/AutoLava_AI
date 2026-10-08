@@ -42,6 +42,7 @@ class AgentRun(Base):
     input: Mapped[str] = mapped_column(Text, default="", server_default="")
     user_message_id: Mapped[int | None] = mapped_column()
     memory_revision: Mapped[int] = mapped_column(default=0, server_default="0")
+    memory_epoch: Mapped[int] = mapped_column(default=0, server_default="0")
     status: Mapped[str] = mapped_column(String(16), default="running")
     output: Mapped[str] = mapped_column(Text, default="")
     error_code: Mapped[str | None] = mapped_column(String(40))
@@ -77,6 +78,9 @@ class AgentMemory(Base):
     status: Mapped[str] = mapped_column(String(24))
     version: Mapped[int] = mapped_column(default=1)
     deleted: Mapped[bool] = mapped_column(default=False, server_default="0")
+    target_id: Mapped[str | None] = mapped_column(String(32))
+    target_version: Mapped[int | None] = mapped_column()
+    decision: Mapped[str | None] = mapped_column(String(16))
     updated_at: Mapped[datetime] = mapped_column(default=utc_now)
     __table_args__ = (
         CheckConstraint("status in ('active','pending_confirmation')", name="agent_memory_status"),
@@ -120,6 +124,7 @@ class AgentMemoryScope(Base):
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id", ondelete="CASCADE"), primary_key=True)
     revision: Mapped[int] = mapped_column(default=0)
     retrieval_error: Mapped[str | None] = mapped_column(String(40))
+    epoch: Mapped[int] = mapped_column(default=0, server_default="0")
 
 
 class AgentMemoryChange(Base):
@@ -130,3 +135,30 @@ class AgentMemoryChange(Base):
     previous_content: Mapped[str] = mapped_column(Text)
     content: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+
+class AgentMemoryJob(Base):
+    __tablename__ = "agent_memory_jobs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("agent_runs.id", ondelete="CASCADE"), unique=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id", ondelete="CASCADE"))
+    auth_identity: Mapped[str] = mapped_column(String(64))
+    session_id: Mapped[str] = mapped_column(String(64))
+    generation: Mapped[int] = mapped_column()
+    message_id: Mapped[int] = mapped_column()
+    memory_revision: Mapped[int] = mapped_column()
+    memory_epoch: Mapped[int] = mapped_column()
+    description_revision: Mapped[int] = mapped_column()
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    attempts: Mapped[int] = mapped_column(default=0)
+    calls: Mapped[int] = mapped_column(default=0)
+    error_code: Mapped[str | None] = mapped_column(String(40))
+    result: Mapped[dict | None] = mapped_column(JSON)
+    failures: Mapped[list] = mapped_column(JSON, default=list)
+    updated_at: Mapped[datetime] = mapped_column(default=utc_now)
+    __table_args__ = (
+        CheckConstraint("status in ('pending','running','completed','failed','stale')", name="agent_memory_job_status"),
+        Index("ix_agent_memory_jobs_status_id", "status", "id"),
+        Index("ix_agent_memory_jobs_scope", "user_id", "store_id", "id"),
+    )

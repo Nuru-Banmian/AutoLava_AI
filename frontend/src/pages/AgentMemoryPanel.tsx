@@ -15,6 +15,12 @@ export function AgentMemoryPanel({ storeId }: { storeId: number }) {
   const [editing, setEditing] = useState<{ id: string; version: number; content: string } | null>(null);
   const [confirm, setConfirm] = useState<MemoryItem | "clear" | null>(null);
   const [notice, setNotice] = useState("");
+  const [jobs, setJobs] = useState<components["schemas"]["MemoryJobList"] | null>(null);
+  const [jobError, setJobError] = useState("");
+  const jobSequence = useRef(0);
+  const jobStates = useRef(new Map<number, string>());
+  const mutationId = useRef<number | null>(null);
+  const refreshPending = useRef(false);
   const active = useRef(false);
   const sequence = useRef(0);
   const session = useRef(currentSessionScope());
@@ -27,9 +33,39 @@ export function AgentMemoryPanel({ storeId }: { storeId: number }) {
     setError("");
     setNotice("");
     setLoading(false);
-    return () => { active.current = false; sequence.current++; };
+    setJobs(null);
+    setJobError("");
+    jobStates.current.clear();
+    mutationId.current = null;
+    refreshPending.current = false;
+    return () => { active.current = false; sequence.current++; jobSequence.current++; };
   }, [storeId]);
-  async function load(before?: string) {
+  async function loadJobs(before?: number) {
+    const request = ++jobSequence.current;
+    const valid = () => active.current && jobSequence.current === request && session.current === currentSessionScope();
+    try {
+      const next = await api<components["schemas"]["MemoryJobList"]>(`/agent/${storeId}/memory-jobs${before ? `?before=${before}` : ""}`);
+      if (valid()) {
+        const completed = next.items.some((job) => job.status === "completed"
+          && ["pending", "running"].includes(jobStates.current.get(job.id) ?? ""));
+        for (const job of next.items) jobStates.current.set(job.id, job.status);
+        setJobs((previous) => before && previous ? { ...next, items: [...previous.items, ...next.items] } : next);
+        setJobError("");
+        if (completed) {
+          if (mutationId.current !== null) refreshPending.current = true;
+          else void load(undefined, false);
+        }
+      }
+    } catch (cause) { if (valid()) setJobError(friendlyApiError(cause, "整理状态读取失败，请重试")); }
+  }
+  const processing = jobs?.items.some((job) => job.status === "pending" || job.status === "running");
+  useEffect(() => {
+    if (!processing) return;
+    const timer = window.setInterval(() => void loadJobs(), 2000);
+    return () => window.clearInterval(timer);
+  }, [processing, storeId]);
+  async function load(before?: string, refreshJobs = true) {
+    if (!before && refreshJobs) void loadJobs();
     const request = ++sequence.current;
     const valid = () => active.current && sequence.current === request && session.current === currentSessionScope();
     setLoading(true);
@@ -82,15 +118,22 @@ export function AgentMemoryPanel({ storeId }: { storeId: number }) {
       if (valid()) setError(friendlyApiError(cause, "索引重试失败，请重试"));
     } finally { if (valid()) setLoading(false); }
   }
-  async function mutate(action: "correct" | "delete" | "clear", item?: MemoryItem) {
+  async function mutate(action: "correct" | "delete" | "clear" | "accept" | "reject" | "editAccept", item?: MemoryItem) {
     if (!value) return;
     const request = ++sequence.current;
+    mutationId.current = request;
     const valid = () => active.current && sequence.current === request && session.current === currentSessionScope();
     setLoading(true);
     setError("");
     setNotice("");
     try {
-      if (action === "clear") {
+      if ((action === "accept" || action === "reject" || action === "editAccept") && item) {
+        await api(`/agent/${storeId}/memories/${item.id}/${action === "reject" ? "reject" : "confirm"}`, {
+          method: "POST", body: JSON.stringify({ expected_version: editing?.id === item.id ? editing.version : item.version,
+            ...(action === "editAccept" && editing ? { content: editing.content } : {}) }),
+        });
+        if (valid()) { setEditing(null); setNotice(action === "reject" ? "候选已拒绝。" : "候选已确认。索引待处理。"); await load(); }
+      } else if (action === "clear") {
         const next = await api<MemoryList>(`/agent/${storeId}/memories/clear`, {
           method: "POST", body: JSON.stringify({ expected_revision: value.revision }),
         });
@@ -119,7 +162,16 @@ export function AgentMemoryPanel({ storeId }: { storeId: number }) {
           }
         }
       }
-    } finally { if (valid()) setLoading(false); }
+    } finally {
+      if (valid()) setLoading(false);
+      if (mutationId.current === request) {
+        mutationId.current = null;
+        if (refreshPending.current) {
+          refreshPending.current = false;
+          void load(undefined, false);
+        }
+      }
+    }
   }
   return <section aria-label="AI 记忆" className="grid min-w-0 gap-3 rounded-xl border bg-card p-4">
     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -151,7 +203,7 @@ export function AgentMemoryPanel({ storeId }: { storeId: number }) {
     {value?.items.map((item) => <article key={item.id} className="min-w-0 rounded-lg border p-3">
       <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{item.content}</p>
       <p className="mt-2 text-sm text-muted-foreground">
-        {item.status === "pending_confirmation" ? "待确认，未生效（候选处理将在后续开放）" : "已保存"}
+        {item.status === "pending_confirmation" ? "待确认，未生效" : "已保存"}
         {item.index_status === "pending" ? " · 索引待处理，向量检索尚未就绪" : ""}
         {item.index_status === "ready" ? " · 索引已同步（检索可用性见上方状态）" : ""}
         {item.index_status === "failed" ? ` · 索引失败，已尝试 ${item.index_attempts ?? 0} 次` : ""}
@@ -159,16 +211,18 @@ export function AgentMemoryPanel({ storeId }: { storeId: number }) {
         {` · 版本 ${item.version} · 更新于 ${new Date(item.updated_at + (item.updated_at.endsWith("Z") ? "" : "Z")).toLocaleString()}`}
       </p>
       <div className="mt-2 flex gap-2">
-        <Button variant="outline" disabled={loading} onClick={() => { setEditing({ id: item.id, version: item.version, content: item.content }); setError(""); }}>纠正</Button>
-        <Button variant="outline" disabled={loading} onClick={() => setConfirm(item)}>删除</Button>
+        {item.status === "pending_confirmation" && <Button disabled={loading} onClick={() => void mutate("accept", item)}>确认</Button>}
+        <Button variant="outline" disabled={loading} onClick={() => { setEditing({ id: item.id, version: item.version, content: item.content }); setError(""); }}>{item.status === "pending_confirmation" ? "修改" : "纠正"}</Button>
+        {item.status === "pending_confirmation"
+          ? <Button variant="outline" disabled={loading} onClick={() => void mutate("reject", item)}>拒绝</Button>
+          : <Button variant="outline" disabled={loading} onClick={() => setConfirm(item)}>删除</Button>}
       </div>
-      {editing?.id === item.id && <form className="mt-2 grid gap-2" onSubmit={(event) => { event.preventDefault(); void mutate("correct"); }}>
+      {editing?.id === item.id && <form className="mt-2 grid gap-2" onSubmit={(event) => { event.preventDefault(); void mutate(item.status === "pending_confirmation" ? "editAccept" : "correct", item); }}>
         <label htmlFor={`memory-${item.id}`}>纠正内容</label>
         <textarea id={`memory-${item.id}`} className="min-h-24 w-full rounded border p-2" maxLength={2000} value={editing.content} disabled={loading}
           onChange={(event) => setEditing({ ...editing, content: event.target.value })} />
-        {item.status === "pending_confirmation" && <p className="text-sm text-muted-foreground">纠正候选内容后仍需后续确认才能生效。</p>}
         <div className="flex gap-2">
-          <Button type="submit" disabled={loading || !editing.content.trim()}>保存纠正</Button>
+          <Button type="submit" disabled={loading || !editing.content.trim()}>{item.status === "pending_confirmation" ? "修改后确认" : "保存纠正"}</Button>
           <Button type="button" variant="outline" disabled={loading} onClick={() => setEditing(null)}>取消纠正</Button>
         </div>
       </form>}
@@ -187,5 +241,17 @@ export function AgentMemoryPanel({ storeId }: { storeId: number }) {
       </details>
     </article>)}
     {value?.next_before && <Button variant="outline" disabled={loading} onClick={() => void load(value.next_before!)}>读取更多记忆</Button>}
+    {jobError && <p role="alert">{jobError}</p>}
+    {jobs && <details open={processing || jobs.items.some((job) => job.status === "failed")} className="min-w-0 text-sm">
+      <summary>记忆整理状态</summary>
+      {!jobs.items.length && <p>暂无整理任务。</p>}
+      {jobs.items.map((job) => <p key={job.id} className="mt-2 break-words">
+        来源消息 #{job.message_id} · {{ pending: "等待整理", running: "整理中", completed: "整理完成", failed: "整理失败", stale: "来源或版本已失效" }[job.status]}
+        {` · 尝试 ${job.attempts} · 模型调用 ${job.calls}`}
+        {job.error_code && ` · ${job.error_code}`}
+        {!!job.failures.length && ` · 失败记录：${job.failures.map((failure) => String(failure.code)).join("、")}`}
+      </p>)}
+      {jobs.next_before && <Button variant="outline" onClick={() => void loadJobs(jobs.next_before!)}>读取更早整理任务</Button>}
+    </details>}
   </section>;
 }

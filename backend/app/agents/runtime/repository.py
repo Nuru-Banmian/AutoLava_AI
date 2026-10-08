@@ -10,9 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agents.context import ChatScope
 from app.core.database import sqlite_short_write
-from app.models.agent import AgentConversation, AgentEvent, AgentMessage, AgentRun
+from app.models.agent import AgentConversation, AgentEvent, AgentMemoryJob, AgentMessage, AgentRun
 from app.models.identity import Store
-from app.agents.memory.repository import scope_revision
+from app.agents.memory.repository import scope_revision, scope_epoch
 from app.schemas.agent import ChatConversation, ChatMessage, ChatRun
 
 
@@ -149,7 +149,8 @@ class ChatRepository:
             run = AgentRun(id=uuid4().hex, conversation_id=conversation.id, model=model,
                            request_id=request_id, generation=generation, input=content,
                            user_message_id=message.id,
-                           memory_revision=await scope_revision(session, scope))
+                           memory_revision=await scope_revision(session, scope),
+                           memory_epoch=await scope_epoch(session, scope))
             session.add(run)
             await session.flush()
             session.add(AgentEvent(run_id=run.id, kind="running", payload={"status": "running"}))
@@ -195,7 +196,7 @@ class ChatRepository:
             events = list(await session.scalars(query.order_by(AgentEvent.id).limit(1)))
             return [(item.id, item.kind, item.payload) for item in events], run.status
 
-    async def record(self, scope: ChatScope, run_id: str, kind: str, payload: dict):
+    async def record(self, scope: ChatScope, run_id: str, kind: str, payload: dict, *, curate=True):
         async with self.sessions() as session, sqlite_short_write(session, begin_immediate=True):
             await scope.authorize(session)
             run = await self._run(session, scope, run_id)
@@ -215,6 +216,16 @@ class ChatRepository:
                 run.status = "completed"
                 session.add(AgentMessage(conversation_id=run.conversation_id,
                                          role="assistant", content=run.output))
+                if curate:
+                    store = await session.get(Store, scope.store_id)
+                    session.add(AgentMemoryJob(
+                        run_id=run.id, user_id=scope.user_id, store_id=scope.store_id,
+                        auth_identity=scope.auth_identity, session_id=scope.session_id,
+                        generation=run.generation, message_id=run.user_message_id,
+                        memory_revision=run.memory_revision,
+                        memory_epoch=run.memory_epoch,
+                        description_revision=store.description_revision,
+                    ))
             session.add(AgentEvent(run_id=run_id, kind=kind, payload=payload))
 
     async def fail(self, scope: ChatScope, run_id: str, code: str):
