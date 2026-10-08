@@ -22,7 +22,8 @@ SQLite 变更与索引待办同事务提交，纠正产生新版本的 `upsert`�
 - 既有 Playwright 全量 95 passed、20 skipped、1 failed：日历预期 `2营业`，实际 `2€999.900.000营业`。已在本次确认基线 `68c7a092c69f0e62dc99a0b76620ca54012c162e` 的独立前端副本复现，日志为 `.autolava-test/e2e-244-full.log` 与 `e2e-244-baseline.log`，未改动无关日历功能。
 - 首次后端全量的 3 个表清单断言失败及首次前端全量的 1 个既有登出草稿查找超时均保留；表清单已更新，登出测试单文件 17 passed。初次全量日志分别为 `.autolava-test/backend-244-full.log` 与 `frontend-244-full.log`。
 - Standards 审查发现列表读取与清空版本可能不一致，已用真实 HTTP 并发屏障复现并显式 `BEGIN` 修复；分页期间范围版本改变时停止追加并保留旧清空前置条件。失败摘要/回归日志为 `.autolava-test/agent244-listing-red.txt`、`agent244-listing-green.log` 和 `frontend-244-pagination-red.log`。基于 `68c7a09` 的 Standards / Spec 最终复审均为 0 项剩余发现。
-- 实际业务数据库仅只读核对为 0022，未升级或写入；本次只有本地提交，原有工作区改动保留。真实百炼、真实 Qdrant/Embedding、物理向量删除失败恢复、后台重扫/完整重建、模型内容质量、Docker 与生产部署均未验证。
+- 实际业务数据库仅只读核对为 0022，未升级或写入；本地实施阶段只提交代码，原有工作区改动保留。真实百炼、真实 Qdrant/Embedding、物理向量删除失败恢复、后台重扫/完整重建、模型内容质量、Docker 与生产部署均未验证。
+- 后续发布分支从远端 main `dc792f5` 创建，仅带入 #244 的四个实施提交，重新生成契约并保留远端产品名称。发布工作区 40 项记忆 HTTP/迁移/表结构测试、379 项前端测试、TypeScript/生产构建、Ruff、OpenAPI 与类型生成无漂移检查全部通过；既有浏览器套件 96 passed、20 skipped，远端已有的日历修正消除了原工作区的基线失败。日志为 `.autolava-test/issue244-release-{api,frontend,e2e}.log`。
 
 ## 明确记忆指令（T5）
 
