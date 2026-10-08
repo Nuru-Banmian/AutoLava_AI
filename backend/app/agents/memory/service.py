@@ -3,7 +3,7 @@ import re
 import unicodedata
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from fastapi import HTTPException
 
 from app.agents.memory.repository import read_memories, read_sources, scoped_memories, scope_revision
@@ -33,6 +33,9 @@ class MemoryService:
 
     async def listing(self, scope, before=None):
         async with self.storage.sessions() as session:
+            # SQLite's legacy driver mode does not BEGIN for SELECT. Keep the
+            # displayed records and their clear precondition in one DB snapshot.
+            await session.execute(text("BEGIN"))
             await scope.authorize(session)
             return await read_memories(session, scope, before)
 

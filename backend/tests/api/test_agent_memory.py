@@ -7,6 +7,8 @@ import pytest
 import httpx
 import respx
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.providers.bailian import ToolCall, ModelFailure
 from app.core.database import get_session
@@ -339,6 +341,46 @@ async def test_clear_is_versioned_scoped_and_keeps_store_description_and_chat(tm
         await save(client, "你好")
         store = json.loads(chat.calls[-1][2]["content"])["store_background"]
         assert store["description"] == "社区烘焙店" and store["memories"] == []
+
+
+async def test_clear_from_paused_listing_cannot_remove_an_unseen_new_memory(tmp_path, monkeypatch):
+    # Pause at the real database adapter after its memory SELECT, not at a memory
+    # service method. All behavior and assertions go through authenticated HTTP.
+    entered, release = asyncio.Event(), asyncio.Event()
+    armed = False
+    original = AsyncSession.scalars
+
+    async def paused_scalars(session, statement, *args, **kwargs):
+        nonlocal armed
+        result = await original(session, statement, *args, **kwargs)
+        if armed and str(statement).startswith("SELECT agent_memories."):
+            armed = False
+            entered.set()
+            await release.wait()
+        return result
+
+    curator = Curator()
+    async with chat_app(tmp_path, StreamingModel(), memory_model=curator) as (client, _, factory):
+        # Match the deployed connection's WAL setting so a consistent reader and
+        # a concurrent writer can progress independently.
+        async with factory() as session:
+            await session.execute(text("PRAGMA journal_mode=WAL"))
+            await session.commit()
+        await save(client)
+        monkeypatch.setattr(AsyncSession, "scalars", paused_scalars)
+        armed = True
+        listing_task = asyncio.create_task(client.get("/api/agent/1/memories"))
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            curator.proposal = {"action": "save", "category": "preference", "content": "回答尽量简洁"}
+            assert (await save(client, "记住：回答尽量简洁"))["status"] == "completed"
+        finally:
+            release.set()
+        listing = (await listing_task).json()
+        assert [m["content"] for m in listing["items"]] == ["以后分析先给结论，再列数据"]
+        result = await client.post("/api/agent/1/memories/clear", json={"expected_revision": listing["revision"]})
+        assert result.status_code == 409, result.text
+        assert len((await client.get("/api/agent/1/memories")).json()["items"]) == 2
 
 
 @pytest.mark.parametrize("action", ["description", "reset", "stop", "revoke"])
