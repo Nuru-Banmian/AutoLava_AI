@@ -34,11 +34,12 @@ def create_app(
     session_factory: async_sessionmaker[AsyncSession] = async_session_factory,
     weather_service: WeatherService | None = None,
     agent_model: ChatModel | None = None,
+    memory_model: ChatModel | None = None,
 ) -> FastAPI:
     settings = get_settings()
     agent_runner = ChatRunner(
         agent_model if agent_model is not None else BailianChat(settings),
-        ChatRepository(session_factory), settings,
+        ChatRepository(session_factory), settings, memory_model=memory_model,
     )
     provider = OpenMeteoProvider(max_inflight=settings.weather_max_inflight)
     if weather_service is None:

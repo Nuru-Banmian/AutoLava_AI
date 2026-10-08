@@ -335,6 +335,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent/{store_id}/memories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Memories */
+        get: operations["memories_api_agent__store_id__memories_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent/{store_id}/memories/{memory_id}/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Memory Sources */
+        get: operations["memory_sources_api_agent__store_id__memories__memory_id__sources_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent/{store_id}/messages": {
         parameters: {
             query?: never;
@@ -1437,6 +1471,69 @@ export interface components {
         MemberReplace: {
             /** User Ids */
             user_ids: number[];
+        };
+        /** MemoryItem */
+        MemoryItem: {
+            /**
+             * Category
+             * @enum {string}
+             */
+            category: "preference" | "store_background";
+            /** Content */
+            content: string;
+            /** Id */
+            id: string;
+            /**
+             * Index Status
+             * @enum {string}
+             */
+            index_status: "pending" | "ready" | "failed" | "not_scheduled";
+            /** Sources */
+            sources: components["schemas"]["MemorySource"][];
+            /** Sources Next Before */
+            sources_next_before?: number | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "active" | "pending_confirmation";
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Version */
+            version: number;
+        };
+        /** MemoryList */
+        MemoryList: {
+            /** Items */
+            items: components["schemas"]["MemoryItem"][];
+            /** Next Before */
+            next_before?: string | null;
+        };
+        /** MemorySource */
+        MemorySource: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Evidence */
+            evidence: string;
+            /** Id */
+            id: number;
+            /** Message Id */
+            message_id: number;
+            /** Run Id */
+            run_id: string;
+        };
+        /** MemorySourceList */
+        MemorySourceList: {
+            /** Items */
+            items: components["schemas"]["MemorySource"][];
+            /** Next Before */
+            next_before?: number | null;
         };
         /** MonthlyRevenue */
         MonthlyRevenue: {
@@ -2793,6 +2890,77 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ChatConversation"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    memories_api_agent__store_id__memories_get: {
+        parameters: {
+            query?: {
+                before?: string | null;
+            };
+            header?: never;
+            path: {
+                store_id: number;
+            };
+            cookie?: {
+                access_token?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    memory_sources_api_agent__store_id__memories__memory_id__sources_get: {
+        parameters: {
+            query?: {
+                before?: number | null;
+            };
+            header?: never;
+            path: {
+                memory_id: string;
+                store_id: number;
+            };
+            cookie?: {
+                access_token?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemorySourceList"];
                 };
             };
             /** @description Validation Error */

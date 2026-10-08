@@ -34,6 +34,39 @@ beforeEach(() => {
 afterEach(() => { server.resetHandlers(); server.close(); vi.unstubAllGlobals(); });
 
 describe("AI conversation", () => {
+  it("reads saved memory evidence after reset and discards a late old-store list", async () => {
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => { release = resolve; });
+    const memory = { id: "memory-1", content: "先给结论，再列数据", category: "preference",
+      status: "active", version: 1, index_status: "pending", updated_at: "2026-10-08T01:00:00",
+      sources: [{ run_id: "source-run", message_id: 3, evidence: "先给结论，再列数据", created_at: "2026-10-08T01:00:00" }] };
+    let delay = false;
+    server.use(
+      http.get("/api/agent/1/memories", async () => {
+        if (delay) await barrier;
+        return HttpResponse.json({ items: [memory], next_before: null });
+      }),
+      http.get("/api/agent/2/memories", () => HttpResponse.json({ items: [], next_before: null })),
+      http.post("/api/agent/1/conversation/reset", () => HttpResponse.json({ generation: 1, messages: [], run: null })),
+    );
+    const user = userEvent.setup();
+    const view = render(<AgentChatPage />);
+    await user.click(screen.getByRole("button", { name: "查看记忆" }));
+    await screen.findByText("先给结论，再列数据", { selector: "p" });
+    await user.click(screen.getByText("查看来源"));
+    expect(screen.getByText(/来源消息 #3/)).toBeVisible();
+    expect(screen.getByText(/索引待处理，向量检索尚未就绪/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "重置对话" }));
+    expect(screen.getByText(/来源消息 #3/)).toBeVisible();
+    delay = true;
+    await user.click(screen.getByRole("button", { name: "刷新记忆" }));
+    storeId = 2;
+    view.rerender(<AgentChatPage />);
+    await user.click(screen.getByRole("button", { name: "查看记忆" }));
+    await screen.findByText("当前管理员在此门店暂无记忆。");
+    await act(async () => { release(); await barrier; });
+    expect(screen.queryByText(/来源消息 #3/)).not.toBeInTheDocument();
+  });
   it("shows scoped skill and query progress from persisted events", async () => {
     server.use(http.get("/api/agent/1/conversation", () => HttpResponse.json({
       generation: 0, messages: [], run,
