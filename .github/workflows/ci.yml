@@ -114,7 +114,7 @@ jobs:
         run: >-
           uv run --frozen pytest
           -n 4
-          --dist worksteal
+          --dist loadscope
           --cov=app
           --cov-report=
           --durations=20
