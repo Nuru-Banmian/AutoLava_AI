@@ -15,6 +15,7 @@ from app.agents.assistant.grounding import (
 from app.agents.providers.bailian import ModelFailure, ModelUsage, ToolCall
 from app.agents.registry import capabilities
 from app.agents.runtime.repository import ChatRepository
+from app.agents.tools.context import ToolContext
 from app.core.config import Settings
 
 
@@ -84,6 +85,13 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
                 "generation": conversation.generation}
 
     async def generate(state: AssistantState):
+        results = storage.temporary_results.for_run(state["scope"], state["run_id"], state["generation"])
+        try:
+            return await generate_with_results(state, results)
+        finally:
+            storage.temporary_results.release(state["run_id"])
+
+    async def generate_with_results(state: AssistantState, results):
         output_size = 0
         attempts = tool_count = 0
         messages = list(state["messages"])
@@ -141,12 +149,23 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
             tool_count += 1
             if tool_count > settings.agent_max_tool_calls:
                 raise ModelFailure("tool_budget")
-            result = await tools.execute(call, storage, state["scope"], state["run_id"])
+            empty_result = {"role": "tool", "tool_call_id": call.id, "content": ""}
+            context = ToolContext(
+                scope=state["scope"], run_id=state["run_id"], generation=state["generation"],
+                remaining_result_chars=max(0, min(12000, settings.agent_context_chars
+                    - context_size([*messages, empty_result]) - 3000)),
+                results=results,
+            )
+            result = await tools.execute(call, storage, context)
             # Reauthorizes after execution; reset/stopped/revoked runs cannot publish.
             await storage.record(state["scope"], state["run_id"], "tool", {
                 "name": call.name if call.name in tools.tools else "unauthorized",
                 "status": "denied" if "error" in result else "completed",
                 **({"range": result["range"]} if "range" in result else {}),
+                **({"error_code": result["error"], "message": (
+                    "计算请求参数无效，请使用表达式参数。" if result["error"] == "invalid_tool_arguments"
+                    else result.get("message", "计算请求未获执行。")
+                )} if call.name == "calculate" and "error" in result else {}),
             })
             messages.append({"role": "tool", "tool_call_id": call.id,
                              "content": json.dumps(result, ensure_ascii=False)})

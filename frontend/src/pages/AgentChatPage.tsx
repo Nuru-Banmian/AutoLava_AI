@@ -27,7 +27,7 @@ const failures: Record<string, string> = {
   cancelled: "本次回答已停止。",
   reset: "对话已重置。",
   step_budget: "已达到本轮处理次数上限，请缩小问题范围。",
-  tool_budget: "已达到本轮查询次数上限，请缩小问题范围。",
+  tool_budget: "已达到本轮工具次数上限，请缩小问题范围。",
   context_budget: "本轮资料超过上下文上限，请缩小查询范围或重置对话。",
   memory_invalid_proposal: "记忆提议未通过校验，未确认保存成功，请重新明确表达。",
   memory_version_conflict: "门店背景或记忆已更新，本次未保存，请重新发送。",
@@ -107,15 +107,16 @@ function Chat({ storeId }: { storeId: number }) {
       if (id && id <= lastEventId) return;
       if (id) lastEventId = id;
       const data = JSON.parse((event as MessageEvent).data) as {
-        name: string; status: string; range?: { start: string; end: string };
+        name: string; status: string; range?: { start: string; end: string }; message?: string;
       };
       const labels: Record<string, string> = {
         read_skill: "已读取经营分析技能", read_skill_resource: "已读取指标口径参考",
         store_overview: "已查询经营概览",
+        calculate: "已完成计算",
       };
       const text = data.status === "completed"
         ? (labels[data.name] ?? "查询已完成") + (data.range ? `：${data.range.start} 至 ${data.range.end}` : "")
-        : "本次工具请求未获执行";
+        : (data.name === "calculate" ? `计算未完成：${data.message ?? "请求未获执行。"}` : "本次工具请求未获执行");
       setActivity({ runId, text });
     });
     source.addEventListener("delta", (event) => {

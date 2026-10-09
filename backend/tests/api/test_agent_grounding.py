@@ -137,8 +137,8 @@ async def test_mismatched_tool_result_never_satisfies_the_plan(tmp_path, change)
     skills, tools = capabilities()
     execute = tools.execute
 
-    async def corrupt(call, storage, scope, run_id):
-        result = await execute(call, storage, scope, run_id)
+    async def corrupt(call, storage, context):
+        result = await execute(call, storage, context)
         if call.name == "store_overview":
             key, value = {
                 "source": ("source", "history"), "store": ("store_id", 2),
@@ -206,8 +206,8 @@ async def test_planning_and_automatic_query_fence_late_results(tmp_path, stage, 
     skills, tools = capabilities()
     execute = tools.execute
 
-    async def paused_query(call, storage, scope, run_id):
-        result = await execute(call, storage, scope, run_id)
+    async def paused_query(call, storage, context):
+        result = await execute(call, storage, context)
         if call.name == "store_overview" and stage == "query":
             await barrier()
         return result

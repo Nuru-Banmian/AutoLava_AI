@@ -14,7 +14,7 @@ class AgentDefinition:
 
 
 ASSISTANT = AgentDefinition(
-    "assistant", ("read_skill", "read_skill_resource", "store_overview"), ("store-analysis",),
+    "assistant", ("read_skill", "read_skill_resource", "store_overview", "calculate"), ("store-analysis",),
 )
 MEMORY_CURATOR = AgentDefinition("memory_curator", ("propose_memory",), ())
 
