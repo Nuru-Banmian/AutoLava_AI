@@ -126,6 +126,10 @@ def serialized_size(value):
     return len(json.dumps(value, ensure_ascii=False, allow_nan=False))
 
 
+def failure_receipt_capacity(targets):
+    return sum(250 + serialized_size(target["id"]) for target in targets)
+
+
 async def execute_target(session, context, store, target, hard_capacity):
     metadata = fields_for(store, target.domain)
     requested = set(target.fields) | {f.field for f in target.filters} | {o.field for o in target.order_by}
@@ -193,13 +197,13 @@ async def store_query(session, context, arguments):
     response = {"status": "complete", "catalog_version": current_version, "targets": []}
     # Reserve complete failure receipts for every id before any target reads.
     # At low remaining budgets even six small error messages may not fit.
-    minimum_receipts = 300 + sum(250 + serialized_size(target["id"]) for target in arguments.targets)
+    minimum_receipts = 300 + failure_receipt_capacity(arguments.targets)
     if context.remaining_result_chars < max(1000, minimum_receipts):
         return {"error": "context_capacity", "message": "结果元数据及完整行空间不足，整批未执行。"}
     for index, raw in enumerate(arguments.targets):
         try:
             target = QueryTarget.model_validate(raw)
-            overhead = serialized_size(response) + 250 * (len(arguments.targets) - index)
+            overhead = serialized_size(response) + failure_receipt_capacity(arguments.targets[index:])
             hard_capacity = 12000 - overhead
             available = min(12000, context.remaining_result_chars) - overhead
             if available < 700:

@@ -447,3 +447,28 @@ async def test_small_context_refuses_six_targets_before_business_reads(tmp_path,
         assert "targets" not in model.results[-1]
         assert not queries
         assert "999" not in run["output"]
+
+
+async def test_large_first_target_reserves_escaped_neighbor_receipts(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOLAVA_AGENT_CONTEXT_CHARS", "64000")
+    targets = [{"id": "large", "domain": "daily_ledger", "fields": ["date", "activity"],
+                "range": {"all_history": True}, "top_n": 5}]
+    targets += [{"id": str(i) + "\u0001" * 63, "domain": "daily_ledger", "fields": ["password"]}
+                for i in range(1, 5)]
+    targets += [{"id": "5" + "\u0001" * 63, "domain": "daily_ledger", "fields": ["date"],
+                 "range": {"all_history": True}, "top_n": 1}]
+    model = QueryModel([("store_data_catalog", {}), query(targets), "大目标无法完整返回；小目标成功。"])
+    async with chat_app(tmp_path, model) as (client, _, _):
+        for day in range(1, 6):
+            saved = await client.put(f"/api/ledger/1/2026-07-{day:02}", json={
+                "expected_identity": None, "expected_revision": None, "expected_config_revision": 1,
+                "is_open": "营业", "daily_revenue": day, "activity": "完整事件" * 475})
+            assert saved.status_code == 201
+        run = await ask(client)
+        assert run["status"] == "completed", run
+        batch = model.results[-1]
+        assert batch["status"] == "partial"
+        assert batch["targets"][0]["error"] == "result_capacity_exceeded"
+        assert "rows" not in batch["targets"][0]
+        assert batch["targets"][-1]["rows"] == [{"date": "2026-07-01"}]
+        assert len(json.dumps(batch, ensure_ascii=False)) <= 12000
