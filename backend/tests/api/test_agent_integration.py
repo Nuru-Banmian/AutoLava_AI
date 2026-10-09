@@ -114,7 +114,7 @@ async def test_automatic_memory_reset_restart_correction_backup_restore_and_dele
         # Schema/state inspection supplements the public restored behavior below.
         with closing(sqlite3.connect(backup)) as db:
             assert db.execute("PRAGMA integrity_check").fetchone() == ("ok",)
-            assert db.execute("SELECT version_num FROM alembic_version").fetchone() == ("0029",)
+            assert db.execute("SELECT version_num FROM alembic_version").fetchone() == ("0030",)
             assert db.execute("SELECT deleted FROM agent_memories WHERE id=?", (deleted["id"],)).fetchone() == (1,)
         cookies = client.cookies
 

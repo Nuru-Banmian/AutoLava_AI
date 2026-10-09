@@ -47,10 +47,12 @@
 
 ## 两轴审查与整改
 
-固定命令 `git diff d37f07c36f34e19bafa24bc6afd8d8cc9f624659...HEAD`。首检查点 `00090bb`，覆盖全部26文件：Standards 0硬性违规/0实质smell；Spec 1项P2，图表遗漏查询unfinished标记。已补payload/HTTP schema/生成类型/前端文案与公开接口、组件回归。最终图表文件及复审仍进行中。契约导出与类型生成曾误并行，首tsc发现旧类型缺unfinished；串行重新生成后tsc通过，没有放宽类型校验。
+固定命令 `git diff d37f07c36f34e19bafa24bc6afd8d8cc9f624659...HEAD`。首检查点 `00090bb`，覆盖全部26文件：Standards 0硬性违规/0实质smell；Spec 1项P2，图表遗漏查询unfinished标记。已补payload/HTTP schema/生成类型/前端文案与公开接口、组件回归。最终复审已完成。契约导出与类型生成曾误并行，首tsc发现旧类型缺unfinished；串行重新生成后tsc通过，没有放宽类型校验。
 
 最终图表专项 `issue266-reviewed-charts-final.log` **21通过（79.76秒）**，包括未结束周期公开读取、重置后新图/旧引用拒绝与完整快照绘图。随后补充降级拒绝及错误消息关联，`issue266-downgrade-association-final.log` **2通过/20未选择（10.21秒）**，其中回放/关联用例是重复复验；图表文件当前22项均有通过证据。其他工具/权限/上下文预算36项结果沿用53项运行，不相加重复用例。
 
-最终前端14项、tsc、Ruff（全部本票受影响Python文件）、OpenAPI与diff检查通过。两轴沿永久基线复核全部26文件至 `4b347ae`：Standards 0违规/0实质smell；Spec 0未闭合发现，原未结束周期P2已闭合。其后只新增验收测试与记录，待审查者补核。
+最终前端14项、tsc、Ruff（全部本票受影响Python文件）、OpenAPI与diff检查通过。两轴沿永久基线复核全部26文件至 `4b347ae`：Standards 0违规/0实质smell；Spec 0未闭合发现，原未结束周期P2已闭合。其后新增降级/消息关联验收已由两轴补核通过。
 
 PR/必要CI/合并/关闭/远端main回读仍进行中。真实付费供应商、Docker、生产、负载未验证。
+
+新增迁移 0030 后，三个既有迁移/备份测试文件的 head 版本和表清单同步更新；相关5项定向测试通过（4项24.82秒，旧Agent数据退役1项3.20秒），Ruff通过。未运行本地全量。最终范围29文件，待两轴补核新增合同断言。

@@ -46,7 +46,7 @@ async def test_unreported_upgrade_preserves_history_and_survives_restart(tmp_pat
     upgraded = migrate("head")
     assert upgraded.returncode == 0, upgraded.stderr
     with closing(sqlite3.connect(database)) as connection:
-        assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == ("0029",)
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == ("0030",)
         assert connection.execute("SELECT * FROM store_daily_records ORDER BY id").fetchall() == before
         assert connection.execute("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='store_daily_records'").fetchall() == indexes
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
