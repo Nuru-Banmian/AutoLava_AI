@@ -1,0 +1,50 @@
+# Issue #264 本地验收记录
+
+日期：2026-10-09（Asia/Shanghai）。权威需求为 GitHub #264 与父规格 #260。
+
+- 永久审查基线：`c05ba948f32cf1cc2a4cb1b5c76f7d2f611f6b28`，已包含 #263；用户在本聊天确认。
+- 工作区：`C:/Users/1/.codex/worktrees/issue-264-grouped-query/AutoLava-AI`，分支 `codex/issue-264-grouped-query`。
+- 验收边界：已认证 HTTP/SSE、向前迁移到 0029 的临时 SQLite、受控模型驱动真实工具、适用桌面/窄屏浏览器。
+- 原 D 盘目录中的既有改动、业务数据库及 `.env` 保持原样。仅本票文件精确暂存。
+- 本票授权实现、审查及本地提交；没有据此推送、发布 PR、关闭 Issue、生产部署或付费供应商调用。
+
+## 实现范围
+
+四域受控目录与投影查询：每日台账、历史收入分类明细、月度收入、收入构成。按所选指标读取计算依赖，使用共用营业状态/覆盖及整数欧元四舍五入规则；百分比保留两位小数。
+
+分组、排名与比较都保留全匹配统计；显式 top_n 只改变选中行。日期/天气/星期及历史分类组合由服务端校验，明细字段与汇总指标互斥。当前周/月与上期同进度，完整周期比较完整范围，显式比较日期优先；真实零、零基期、无可统计台账、数量零与开关关闭分别给出状态。
+
+月度收入按重叠开票月计入整笔已确认结算，年度按月汇总，不摊到日/周。关闭功能仍可计算历史结算；局部月份标明实际台账区间与涉及月份。台账/数量查询不访问结算或收入分类明细；仅结算指标不投影台账经营金额、数量、天气或事件。构成保留历史分类名称、未分类营业额及结算，其他数据使用独立分母。
+
+现有主模型默认目录/针对性查询及经营分析技能同步扩展；旧概览继续用于内部兼容，未进入默认模型工具 schema。分页/图表由后续工单实现，不在本票冒称上线。
+
+## 失败演进与聚焦证据
+
+原始日志均保存在 `C:/Users/1/AppData/Local/Temp/`，下面的名称为实际日志文件；未删除或改写红测试结果。
+
+1. `issue264-first-red.log`：首个公开汇总查询因未支持 metrics 导致聊天失败；实施后 `issue264-first-green.log` 为 1 passed。
+2. `issue264-groups-red.log`：分组排名/日数据未支持；`issue264-groups-green.log` 为 2 passed。
+3. `issue264-compare-red.log`：缺少 comparison；`issue264-compare-green.log` 为 3 passed。
+4. 收入垂直用例分别复现未统计被解释为零、仅月分组仍细分分类、筛选后的月度日均错误，以及历史其他分类选择错误；修复后 `issue264-query-income-final.log` 为 7 passed（32.10s）。曾错放一条跨轮目录断言，记录为测试夹具失败，已纠正。
+5. 分类公开用例先红后绿，最终 3 passed（14.65s）：历史改名/归档、筛选与分母、关闭分类记账、金额投影依赖、零分母/未知值。
+6. `issue264-calendar-probe.log` 与 `issue264-calendar-capacity-green.log` 曾失败：一次合成 6 个比较目标的元数据超默认剩余容量；已补聚合目标的完整容量检查及失败回执预留，日期边界验收分成两个合法容量内批量，不提高运行预算。
+7. `issue264-final-focused.log` 为新增三文件 20 passed（46.27s），覆盖金额/数量分母、完整日状态、全匹配排名、一次比较查询、真实零/未知、合法双维分组、非法组合、同进度/完整周期/闰月/显式日期、收入构成及按需 SQL 依赖。
+8. 既有经营分析公开迁移 API 19 passed（50.08s）。旧 Agent 聚焦回归 `issue264-existing-agent.log` 为 90 passed / 2 failed（364.21s），不能把该运行记为通过。正文硬容量分类已修复，`issue264-detail-capacity-green.log` 为 3 passed；转义 id 的低上下文失败回执通过精简主提示与技能正文修复，业务细则保留在按需读取的参考中。固定 12,000 字符公开探针的最大上下文从 13,370 降为 11,847，模型收到容量失败回执；最终 `issue264-context-legacy-final.log` 为 4 passed（15.64s），覆盖旧技能读取、8,000 字符历史分页和两种低预算 id。
+9. 独立 Spec 审查在提交 `935c85b` 发现其他数据的金额/占比仍访问结算日期、金额和台账营业额；`issue264-spec-composition-dependencies-public-red.log` 保留六条无关 SELECT 的公开探针失败。探针的首次解释器缺 pytest 是环境失败，另存 `issue264-spec-composition-dependencies-red.log`。
+10. 新增一个公开聊天 SQL 故障回归，包含 False eq/in 的金额、金额/占比和指定分类金额，共五个目标；`issue264-composition-dependencies-red.log` 为 1 failed（6.43s）。依赖规划修复后 `issue264-composition-dependencies-green.log` 为收入文件 8 passed（32.90s），上述查询在禁止结算、台账金额/数量/事件/天气的条件下仍正确返回 900 欧元及 100%。仅全部历史及以全部历史为基础的比较重新读取历史边界，其他日期范围无需该查询。
+11. 最终直接相关回归 `issue264-final-direct-query-regression.log` 为 15 passed（57.43s）：指标/分组/比较、分类和旧目录跨轮历史及日期解析。移除旧分析的均值转发包装后，`issue264-rounding-direct-regression.log` 为 2 passed（4.02s），验证共用整数欧元精度及公开分组接口。
+
+## 契约和最终收据
+
+- OpenAPI `scripts/export_openapi.py --check` 退出码 0；生成前端类型无差异。本票扩展模型工具输入/输出，未改变公开 HTTP 模型。
+- 提交 `935c85b` 的完整后端 `issue264-full-backend.log` 为 759 passed / 8 warnings（388.72s），退出码 0；`issue264-baseline-coverage.log` 为 89%，85% 门槛通过。警告为未关闭 SQLite 连接 ResourceWarning，原文保留。该全量结果属于修复前快照，最终依赖修复通过上面的 25 项直接相关回归验证。
+- 用户随后明确要求本地按影响范围选择小测试，全量交给 GitHub CI，避免每个小改动重复运行全集。本次没有在依赖修复后重复跑全量；尚未推送，没有本票远端 CI 收据。
+- 前端 `npm run build`（含 TypeScript）退出码 0；`issue264-frontend-build.log`。`npm ci` 不改变 lockfile。
+- 前端完整测试 `issue264-frontend-unit.log` 为 385 passed / 37 files（33.01s）；jsdom 的 scrollTo 警告仍保留，实际浏览器另行验收。
+- 实际浏览器使用临时 SQLite 和受控模型，三问分别为近三月月度收入/构成、本月前五名完整事件、本周比较及逐日趋势。每问 store_query 1 次、自动技能读取 1 次，目录读取为 1/0/0。桌面 1440 与移动 390 宽度均无横向溢出，事件 5 个起止标记及 50 个重复句完整展示；缺失日显示未录入。周比较为 520 对 400，差额 120、增长 30%。
+- 刷新及三次 SSE GET 回放均不新增模型/工具调用，保存六条消息；plan/answer/query 计数保持 3/7/3。结果、SSE 回执与截图保存在未暂存的 `frontend/output/playwright/final-*`。初始夹具的重复技能读取已纠正并完整重跑三问，原收据和数据库备份保留。
+- 浏览器服务已关闭：18264/19264 端口监听 0、归属进程 0，CLI 浏览器已关闭。
+- 最终 Ruff 与 git diff --check 通过。独立 Standards/Spec 在固定代码提交 `0f2e880` 相对已确认基线复审：Standards 0 文档违反、0 可操作异味；Spec 原 1 项 P2 已修复、0 未解决问题。旧均值转发包装已移除；SQL 谓词和内存合成分量筛选职责不同，重复分支建议复审撤回。
+- 独立复跑原两个依赖探针，`issue264-spec-composition-dependencies-public-green.log` 退出码 0（8.29s），金额 900、占比 100%，禁止域 SELECT 为 []。仅提供分类 id 且请求占比时，历史计入总额标记可能变化，保留可能需要的收入分母；显式 False 及仅分类金额均已消除收入依赖。
+- 最终本地代码提交为 `935c85b` 和 `0f2e880`，随后仅补充本文验收记录。归属测试进程及浏览器服务已退出；工作树仅保留未暂存浏览器证据，原 D 盘工作区未编辑。
+- 未验证：真实供应商内容质量、Docker、生产、负载及后续分页/图表。

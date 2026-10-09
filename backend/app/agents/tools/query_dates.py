@@ -107,3 +107,32 @@ def resolve_range(selection, today, history):
     end = min(end, today)
     return {"requested_range": requested, "range": {"start": start.isoformat(), "end": end.isoformat()} if start <= end else None,
             "local_date": today.isoformat(), "unfinished": end == today, "notes": notes}
+
+
+def comparison_range(selection, comparison, today, current, history):
+    """Explicit comparison dates win; calendar presets preserve cycle progress."""
+    if comparison.range is not None:
+        return resolve_range(comparison.range, today, history)
+    first, last = (date.fromisoformat(current[key]) for key in ("start", "end"))
+    if comparison.preset == "same_period_last_year":
+        return resolve_range(DateRange(preset="same_period_last_year", base=current), today, history)
+    preset = selection.preset if selection else "this_month"
+    if preset and ("month" in preset or preset in ("this_year", "last_year")):
+        months = 12 if preset in ("this_year", "last_year") else selection.n if "last_n" in preset else 1
+        start_month, end_month = month_start(first, -months), month_start(last, -months)
+        start = start_month.replace(day=min(first.day, monthrange(start_month.year, start_month.month)[1]))
+        final_day = monthrange(end_month.year, end_month.month)[1] if last.day == monthrange(last.year, last.month)[1] else min(last.day, monthrange(end_month.year, end_month.month)[1])
+        end = end_month.replace(day=final_day)
+    elif preset and "week" in preset:
+        offset = timedelta(weeks=selection.n if "last_n" in preset else 1)
+        start, end = first - offset, last - offset
+    elif first.day == 1 and last.day == monthrange(last.year, last.month)[1]:
+        months = (last.year - first.year) * 12 + last.month - first.month + 1
+        start = month_start(first, -months)
+        end = first - timedelta(days=1)
+    else:
+        offset = timedelta(days=(last - first).days + 1)
+        start, end = first - offset, last - offset
+    value = resolve_range(DateRange(start=start.isoformat(), end=end.isoformat()), today, history)
+    value["notes"].append("上期使用相同指标及筛选；当前周期按同进度，完整周期按完整边界；短月截到月末")
+    return value

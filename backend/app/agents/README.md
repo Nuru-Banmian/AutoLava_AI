@@ -240,26 +240,40 @@ remaining_result_chars 每次执行按当前完整 messages、工具 schemas 及
 - 真实百炼调用、向量存储/Embedding、模型内容质量、Docker 和生产部署：未执行。本地实际业务数据库只读核对迁移为 0022，未为本次测试升级或写入。
 
 
-## 针对性查询（#263）
+## 针对性查询与分组比较（#263、#264）
 
 主模型发现工具为 `store_data_catalog` 与 `store_query`，另保留 `calculate`、受限技能读取。
 旧 `store_overview` 只在已发布旧计划/旧调用兼容时执行，不进入主模型默认工具 schema。
 新经营路由为 `query`：先读技能，再按有效目录一次批量查询，仅使用本轮工具证据回答。
 
-目录只发布已上线的 `daily_ledger`（每日台账）与 `income_items`（历史分类明细）。
+目录发布 `daily_ledger`（每日台账）、`income_items`（历史分类明细）、`monthly_income`（月度收入）与 `income_composition`（收入构成），说明字段、指标单位及合法分组。
 历史分类读取保存时名称及是否计入营业额，即使归档或分类记账关闭仍可查询；不把其他数据解释成成本/利润。
 目录按管理员/门店/聊天代际缓存，版本包含模式、时区、业务开关、分类配置revision。
 后续轮次复用有效描述，正式查询重新授权并读日期及数值；版本失效整批返回 `catalog_stale`。
 
-新查询包含 `catalog_version`、1–6个唯一id的 `targets`。每目标包含 domain、1–16个fields、可选range、filters、order_by、top_n。
+新查询包含 `catalog_version`、1–6个唯一id的 `targets`。每目标选择 `domain`，以及互斥的1–16个 `fields`（完整明细）或 `metrics`（完整匹配统计），可附 `range`、`group_by`、`filters`、`order_by`、`top_n`、`compare`。汇总可省略fields；不混合明细字段与汇总指标。
 range选择 `{start,end}`、`{preset,n?}` 或 `{all_history:true}`；省略默认本月至今，全部历史无366天上限。
 预设名为today/yesterday/this_week/last_week/this_month/last_month/this_year/last_year、last_n_days/weeks/months及last_n_complete_days/weeks/months。
 `same_period_last_year`需提供base范围；自然月/年完整周期同比保持完整，其他按对应月日映射，短月/闰日截末不补点。
 最多8个AND筛选、2个排序、集合50项、关键词200字；top_n为1–100，添加日期/标识稳定顺序，未知值末尾。
-只投影所选字段及过滤排序依赖；金额/数量不加载公司结算。模型不能提供门店、身份、SQL、脚本或额外参数。
+只投影所选字段及计算、过滤排序依赖；台账/数量汇总不加载公司结算，也不加载无关事件或天气。模型不能提供门店、身份、SQL、脚本或额外参数。
 
-结果包含requested_range/range/local_date/queried_at、字段类型单位口径、matched_count/selected_count、完整rows及独立目标状态。
+每目标至多2个分组维度，至多1个时间维度。daily_ledger支持day/week/month/weather/weekday；income_items还支持category，例如month+category。monthly_income支持month/year，income_composition支持month/year/category。日、周没有公司结算粒度，不能请求月度总收入。服务端拒绝目录以外的字段、指标、分组或不合法组合。
+
+- 台账指标：`total_revenue`、`operating_days`、`average_ledger_revenue`、`total_wash_count`、`average_revenue_per_car`、`min_revenue`、`max_revenue`。
+- 分类/构成指标：`amount`、`share_percent`，比例包含实际分母；其他数据不成为总收入、成本或利润。
+- 月度收入指标：`daily_ledger_revenue`、`confirmed_settlement_income`、`total_income`，以及经营日、台账均值、洗车数量、平均每车收入和`monthly_average_income`。月度日均收入仅适用于完整自然月或本月至今；多个自然月的区间汇总不定义此均值。
+
+合计、极值及各分组指标按完整匹配集合计算，排序与top_n不会把汇总变成只统计前几行。金额/均值遵循既有整数欧元四舍五入，比例和变化率保留两位小数；洗车指标关闭、数量零、无覆盖分别给出不可用原因。覆盖区分经营、休息、未统计和未录入；有筛选时标明匹配范围及被筛除记录，不把被筛除日期称为未录入。
+
+`compare`选择`{preset:"previous_period"}`、`{preset:"same_period_last_year"}`或`{range:{...}}`，preset与range互斥，空对象默认previous_period。当前周/月比较上期同进度，上周/上月等完整周期比较完整范围；明确的range优先。两期同源、同筛选、同指标，返回`comparison`的实际range、metrics、coverage、metric_status和changes（差额/变化率）。零基期、无可统计台账、数量零及关闭指标独立处理；当前无可统计台账不产生虚假-100%，当前真实已知零可合法为-100%。
+
+月度总收入按所选台账日期加重叠开票月份的整笔已确认公司结算，年度从各月汇总。部分月份注明台账实际范围及涉及月份，不能把同月日期片段的收入再次相加而重复计结算。关闭公司结算仍保留历史已确认金额；待到账应收款只表示当前状态。收入构成保留历史计入营业额的分类、未分类营业额及公司结算，分母按真实收入定义；平均每车收入始终仅使用有数量的经营日台账额，不含结算。
+
+例如最近三个月每月收入及构成可一次查询两个目标：monthly_income按month选择total_income等指标，income_composition按month/category选择amount/share_percent。本月最高五天及完整事件使用daily_ledger明细、daily_revenue降序和top_n=5。本周/上周同进度统计与本周日数据可一次查询台账汇总compare目标及day分组目标。目录发现、技能读取照常单独计数，已计算业务指标无需calculate重算。
+
+结果包含requested_range/range/local_date/queried_at、字段或指标类型单位口径、matched_count/selected_count、完整rows及独立目标状态；汇总还提供完整匹配统计、覆盖、分母和不可用状态。
 批量状态complete/partial/failed；参数失败保留其他成功目标，权限/代际失败终止整轮。
 分页尚未上线，完整结果最多200行，整个工具正文最多12,000字符并受剩余上下文容量限制；超量明确拒绝，不截断文本或暗改粒度。
-当前has_more=false，next_cursor/result_ref为空，不承诺续页；汇总指标、分组、比较与月度收入域由#264接入，不可变分页由#265接入。
+当前has_more=false，next_cursor/result_ref为空，不承诺续页；不可变分页由#265接入，图表由后续工单接入。
 新工具只经过聊天调用，不新增公开执行工具API。OpenAPI及生成前端类型仍需核对，但本票没有新增HTTP请求/响应模型。

@@ -61,7 +61,7 @@ async def test_catalog_and_top_five_preserve_complete_events(tmp_path):
         assert run["status"] == "completed", run
         description = catalog(model)
         assert len(json.dumps(description, ensure_ascii=False)) <= 3000
-        assert set(description["domains"]) == {"daily_ledger", "income_items"}
+        assert set(description["domains"]) == {"daily_ledger", "income_items", "monthly_income", "income_composition"}
         result = model.results[-1]
         assert result["status"] == "complete", result
         target = result["targets"][0]
