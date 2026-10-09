@@ -301,3 +301,78 @@ async def test_composition_historical_category_filters_keep_other_data_separate(
             assert result["denominator_scope"] == "categorical_other"
             assert result["denominators"]["share_percent"] == 900
             assert len(result["rows"]) == 1 and result["rows"][0]["source"] == "other_data"
+
+
+async def test_other_composition_reads_only_its_requested_amount_basis(tmp_path):
+    from sqlalchemy import event
+
+    model = QueryModel([
+        ("store_data_catalog", {}), query([{"id": "first", "domain": "daily_ledger", "fields": ["date"]}]),
+        "目录已取得。",
+    ])
+    async with chat_app(tmp_path, model) as (client, _, factory):
+        await save_day(client, "2026-07-01", 150)
+        configured = await client.put("/api/admin/stores/1/income-config", json={
+            "expected_revision": 1, "enabled": True,
+            "items": [{"name": "现金", "include_in_total": True},
+                      {"name": "其他数据", "include_in_total": False}],
+        })
+        assert configured.status_code == 200, configured.text
+        config = configured.json()
+        cash, other = config["items"]
+        saved = await client.put("/api/ledger/1/2026-07-02", json={
+            "expected_identity": None, "expected_revision": None,
+            "expected_config_revision": config["revision"], "is_open": "营业",
+            "items": [{"category_id": cash["id"], "amount": 25},
+                      {"category_id": other["id"], "amount": 900}],
+        })
+        assert saved.status_code == 201, saved.text
+        assert (await client.patch("/api/admin/stores/1", json={
+            "company_settlement_enabled": True})).status_code == 200
+        await confirm_settlement(client, 1, "2026-07", 400)
+        assert (await ask(client))["status"] == "completed"
+        targets = [
+            {"id": f"other_{op}_{len(metrics)}", "domain": "income_composition",
+             "range": {"all_history": True}, "metrics": metrics, "group_by": ["month", "category"],
+             "filters": [{"field": "include_in_total", "op": op, "value": value}]}
+            for op, value in [("eq", False), ("in", [False])]
+            for metrics in [["amount"], ["amount", "share_percent"]]
+        ]
+        targets.append({"id": "category_amount", "domain": "income_composition",
+                        "range": {"start": "2026-07-01", "end": "2026-07-31"},
+                        "metrics": ["amount"], "group_by": ["year", "category"],
+                        "filters": [{"field": "category_id", "op": "eq", "value": other["id"]}]})
+        model.actions = iter([
+            lambda m: ("store_query", {"catalog_version": cached_catalog(m)["catalog_version"],
+                                      "targets": targets}), "只读取所选其他数据及其自身占比分母。",
+        ])
+        engine, projections = factory.kw["bind"].sync_engine, []
+
+        def observe(connection, cursor, statement, parameters, context, many):
+            sql = statement.lower()
+            if sql.startswith("select"):
+                assert "settlement_records" not in sql, "Other data queried the settlement domain"
+                if "from store_daily_records" in sql:
+                    projections.append(sql)
+                    assert "store_daily_records.daily_revenue" not in sql, "Other data projected ledger revenue"
+                    assert "store_daily_records.wash_count" not in sql
+                    assert "store_daily_records.activity" not in sql
+                    assert "store_daily_records.weather" not in sql
+
+        event.listen(engine, "before_cursor_execute", observe)
+        try:
+            run = await ask(client, "只查其他数据金额和占比，以及该分类金额")
+        finally:
+            event.remove(engine, "before_cursor_execute", observe)
+        assert run["status"] == "completed", (run, model.results)
+        results = model.results[-1]["targets"]
+        assert len(results) == 5 and projections
+        for result in results:
+            expected = {"amount": 900}
+            if "share_percent" in result["metrics"]:
+                expected["share_percent"] = 100.0
+                assert result["denominators"]["share_percent"] == 900
+            assert result["metrics"] == expected
+            assert result["rows"][0]["metrics"] == expected
+            assert result["rows"][0]["source"] == "other_data"
+            assert "settlement_scope" not in result

@@ -30,14 +30,19 @@
 6. `issue264-calendar-probe.log` 与 `issue264-calendar-capacity-green.log` 曾失败：一次合成 6 个比较目标的元数据超默认剩余容量；已补聚合目标的完整容量检查及失败回执预留，日期边界验收分成两个合法容量内批量，不提高运行预算。
 7. `issue264-final-focused.log` 为新增三文件 20 passed（46.27s），覆盖金额/数量分母、完整日状态、全匹配排名、一次比较查询、真实零/未知、合法双维分组、非法组合、同进度/完整周期/闰月/显式日期、收入构成及按需 SQL 依赖。
 8. 既有经营分析公开迁移 API 19 passed（50.08s）。旧 Agent 聚焦回归 `issue264-existing-agent.log` 为 90 passed / 2 failed（364.21s），不能把该运行记为通过。正文硬容量分类已修复，`issue264-detail-capacity-green.log` 为 3 passed；转义 id 的低上下文失败回执通过精简主提示与技能正文修复，业务细则保留在按需读取的参考中。固定 12,000 字符公开探针的最大上下文从 13,370 降为 11,847，模型收到容量失败回执；最终 `issue264-context-legacy-final.log` 为 4 passed（15.64s），覆盖旧技能读取、8,000 字符历史分页和两种低预算 id。
+9. 独立 Spec 审查在提交 `935c85b` 发现其他数据的金额/占比仍访问结算日期、金额和台账营业额；`issue264-spec-composition-dependencies-public-red.log` 保留六条无关 SELECT 的公开探针失败。探针的首次解释器缺 pytest 是环境失败，另存 `issue264-spec-composition-dependencies-red.log`。
+10. 新增一个公开聊天 SQL 故障回归，包含 False eq/in 的金额、金额/占比和指定分类金额，共五个目标；`issue264-composition-dependencies-red.log` 为 1 failed（6.43s）。依赖规划修复后 `issue264-composition-dependencies-green.log` 为收入文件 8 passed（32.90s），上述查询在禁止结算、台账金额/数量/事件/天气的条件下仍正确返回 900 欧元及 100%。仅全部历史及以全部历史为基础的比较重新读取历史边界，其他日期范围无需该查询。
+11. 最终直接相关回归 `issue264-final-direct-query-regression.log` 为 15 passed（57.43s）：指标/分组/比较、分类和旧目录跨轮历史及日期解析。移除旧分析的均值转发包装后，`issue264-rounding-direct-regression.log` 为 2 passed（4.02s），验证共用整数欧元精度及公开分组接口。
 
 ## 契约和最终收据
 
 - OpenAPI `scripts/export_openapi.py --check` 退出码 0；生成前端类型无差异。本票扩展模型工具输入/输出，未改变公开 HTTP 模型。
+- 提交 `935c85b` 的完整后端 `issue264-full-backend.log` 为 759 passed / 8 warnings（388.72s），退出码 0；`issue264-baseline-coverage.log` 为 89%，85% 门槛通过。警告为未关闭 SQLite 连接 ResourceWarning，原文保留。该全量结果属于修复前快照，最终依赖修复通过上面的 25 项直接相关回归验证。
+- 用户随后明确要求本地按影响范围选择小测试，全量交给 GitHub CI，避免每个小改动重复运行全集。本次没有在依赖修复后重复跑全量；尚未推送，没有本票远端 CI 收据。
 - 前端 `npm run build`（含 TypeScript）退出码 0；`issue264-frontend-build.log`。`npm ci` 不改变 lockfile。
 - 前端完整测试 `issue264-frontend-unit.log` 为 385 passed / 37 files（33.01s）；jsdom 的 scrollTo 警告仍保留，实际浏览器另行验收。
 - 实际浏览器使用临时 SQLite 和受控模型，三问分别为近三月月度收入/构成、本月前五名完整事件、本周比较及逐日趋势。每问 store_query 1 次、自动技能读取 1 次，目录读取为 1/0/0。桌面 1440 与移动 390 宽度均无横向溢出，事件 5 个起止标记及 50 个重复句完整展示；缺失日显示未录入。周比较为 520 对 400，差额 120、增长 30%。
 - 刷新及三次 SSE GET 回放均不新增模型/工具调用，保存六条消息；plan/answer/query 计数保持 3/7/3。结果、SSE 回执与截图保存在未暂存的 `frontend/output/playwright/final-*`。初始夹具的重复技能读取已纠正并完整重跑三问，原收据和数据库备份保留。
 - 浏览器服务已关闭：18264/19264 端口监听 0、归属进程 0，CLI 浏览器已关闭。
-- 完整后端与最终两轴审查收据待补充；本文的阶段结果不代表这些项目已完成。
+- 最终 Ruff 与 git diff --check 通过；最终两轴审查结论将在收尾补充。
 - 未验证：真实供应商内容质量、Docker、生产、负载及后续分页/图表。

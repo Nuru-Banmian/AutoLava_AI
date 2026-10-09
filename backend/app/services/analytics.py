@@ -27,11 +27,6 @@ def _weather_group_order(weather: str) -> tuple[int, str]:
     return WEATHER_GROUP_ORDER.get(weather, len(WEATHER_GROUP_ORDER)), weather
 
 
-def _rounded_average(total: int, count: int) -> int:
-    """Round fractional euro averages to a whole euro using ROUND_HALF_UP."""
-    return rounded_average(total, count)
-
-
 @dataclass(frozen=True)
 class CompositionKey:
     category_id: int
@@ -69,7 +64,7 @@ def _revenue_kpis(records: list[StoreDailyRecord]) -> dict:
         "total_revenue": total,
         "record_days": len(records),
         "open_days": operating_day_count,
-        "average_revenue": _rounded_average(
+        "average_revenue": rounded_average(
             operating_revenue, operating_day_count
         ),
     }
@@ -305,7 +300,7 @@ class AnalyticsService:
                 "wash_count_covered_days": len(covered_records) if wash_count_enabled else None,
                 "wash_count_coverage_status": coverage_status,
                 "average_ticket": (
-                    _rounded_average(covered_revenue, total_wash)
+                    rounded_average(covered_revenue, total_wash)
                     if total_wash is not None and total_wash > 0
                     else None
                 ),
@@ -381,7 +376,7 @@ class AnalyticsService:
             "weather": [
                 {
                     "weather": weather,
-                    "average_revenue": _rounded_average(sum(values), len(values)),
+                    "average_revenue": rounded_average(sum(values), len(values)),
                     "operating_day_count": len(values),
                 }
                 for weather, values in sorted(
@@ -391,7 +386,7 @@ class AnalyticsService:
             "weekday": [
                 {
                     "weekday": weekday,
-                    "average_revenue": _rounded_average(sum(values), len(values)),
+                    "average_revenue": rounded_average(sum(values), len(values)),
                     "operating_day_count": len(values),
                 }
                 for weekday, values in sorted(weekday_totals.items())

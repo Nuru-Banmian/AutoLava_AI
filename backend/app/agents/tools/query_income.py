@@ -122,6 +122,22 @@ def component_matches(component, filters):
     return True
 
 
+def composition_dependencies(target):
+    """Use historical flags and synthetic identities to plan income dependencies."""
+    flag_filters = [item for item in target.filters if item.field == "include_in_total"]
+    income_possible = component_matches({"include_in_total": True}, flag_filters)
+    category_selected = any(item.field in COMPONENT_FILTERS for item in target.filters)
+    other_possible = category_selected and component_matches({"include_in_total": False}, flag_filters)
+    share = "share_percent" in target.metrics
+    income_base, other_base = share and income_possible, share and other_possible
+    synthetic = {"category_id": None, "include_in_total": True}
+    remainder = component_matches({**synthetic, "category_name": "未分类营业额"}, target.filters)
+    settlement = component_matches({**synthetic, "category_name": "公司结算"}, target.filters)
+    return {"remainder": remainder, "settlements": settlement or income_base,
+            "ledger_revenue": remainder or income_base,
+            "income_base": income_base, "other_base": other_base}
+
+
 def component_result(component, amount, metrics, denominator, scope):
     values, statuses, denominators = {}, {}, {}
     for metric in metrics:
@@ -134,7 +150,7 @@ def component_result(component, amount, metrics, denominator, scope):
             "denominators": denominators, "denominator_scope": scope}
 
 
-async def income_components(session, conditions, records, settlements):
+async def income_components(session, conditions, records, settlements, *, remainder=True):
     statement = select(StoreDailyRecord.date, DailyIncomeItem.category_id,
                        DailyIncomeItem.category_name, DailyIncomeItem.include_in_total,
                        DailyIncomeItem.amount).select_from(StoreDailyRecord).join(
@@ -146,7 +162,7 @@ async def income_components(session, conditions, records, settlements):
         components.append(item)
         if item["include_in_total"]:
             classified[item["date"]] += item["amount"]
-    for record in statistical_records(records):
+    for record in statistical_records(records) if remainder else []:
         remainder = record.daily_revenue - classified[record.date]
         if remainder:
             components.append({"date": record.date, "category_id": None,
@@ -161,15 +177,17 @@ async def income_components(session, conditions, records, settlements):
 
 async def aggregate_income(session, store, target, start: date, end: date, conditions: list) -> dict:
     composition = target.domain == "income_composition"
-    ledger_metrics = ["daily_ledger_revenue"] if composition else income_ledger_metrics(target.metrics)
+    dependencies = composition_dependencies(target) if composition else None
+    ledger_metrics = (["daily_ledger_revenue"] if dependencies["ledger_revenue"] else []) if composition else income_ledger_metrics(target.metrics)
     records = await load_ledger(session, conditions, ledger_metrics,
                                 wash_count_enabled=store.wash_count_enabled)
+    uses_settlements = dependencies["settlements"] if composition else bool(set(target.metrics) & SETTLEMENT_METRICS)
     settlements = (await settlements_by_month(session, store.id, start, end)
-                   if composition or set(target.metrics) & SETTLEMENT_METRICS else {})
+                   if uses_settlements else {})
     dimension = next((d for d in target.group_by if d in ("month", "year")), None)
     spans = list(periods(start, end, dimension)) if dimension else [(None, start, end)]
     common_notes = []
-    if composition or set(target.metrics) & SETTLEMENT_METRICS:
+    if uses_settlements:
         common_notes.append("已确认公司结算按重叠开票月份整笔纳入，关闭功能仍保留历史；不分摊到日或周。")
         if target.filters:
             common_notes.append("台账筛选仅约束台账；公司结算没有相同日粒度筛选，仍按重叠开票月整笔纳入。")
@@ -185,7 +203,8 @@ async def aggregate_income(session, store, target, start: date, end: date, condi
                     filtered=bool(target.filters))})
         result["matched_count"] = len(result["rows"]) if dimension else len(records)
     else:
-        components = await income_components(session, conditions, records, settlements)
+        components = await income_components(session, conditions, records, settlements,
+                                             remainder=dependencies["remainder"])
         category_selected = any(item.field in COMPONENT_FILTERS for item in target.filters)
         selected = [c for c in components if (c["include_in_total"] or category_selected)
                     and component_matches(c, target.filters)]
@@ -196,11 +215,13 @@ async def aggregate_income(session, store, target, start: date, end: date, condi
         mixed = any(c["include_in_total"] for c in selected) and any(not c["include_in_total"] for c in selected)
         if mixed and dimension and "category" not in target.group_by:
             raise ValueError("Income and other data require separate category groups")
-        income_total = income_summary(records, settlements, ["total_income"], store, start, end)["metrics"]["total_income"]
+        income_total = (income_summary(records, settlements, ["total_income"], store, start, end)["metrics"]["total_income"]
+                        if dependencies["income_base"] else None)
         other_total = (sum(c["amount"] for c in components if not c["include_in_total"])
                        if statistical_records(records) else None)
         denominator = other_total if select_other else income_total
-        amount = sum(c["amount"] for c in selected) if selected or denominator is not None else None
+        known = bool(statistical_records(records)) or (not select_other and bool(settlement_total(settlements, start, end)))
+        amount = sum(c["amount"] for c in selected) if selected or known else None
         result = component_result({}, amount, target.metrics, denominator or 0,
                                   "categorical_other" if select_other else "total_income")
         if mixed:
@@ -226,11 +247,13 @@ async def aggregate_income(session, store, target, start: date, end: date, condi
                                      ("category_id", "category_name", "include_in_total", "source"))
                     totals[identity] += component["amount"]
             selected_records = [r for r in records if first <= r.date <= last]
-            span_total = income_summary(selected_records, settlements, ["total_income"], store, first, last)["metrics"]["total_income"]
+            span_total = (income_summary(selected_records, settlements, ["total_income"], store, first, last)["metrics"]["total_income"]
+                          if dependencies["income_base"] else None)
             other_denominator = sum(c["amount"] for c in components if not c["include_in_total"] and first <= c["date"] <= last)
             if dimension and "category" not in target.group_by:
                 denominator = (other_denominator if statistical_records(selected_records) else None) if select_other else span_total
-                amount = sum(totals.values()) if totals or denominator is not None else None
+                known = bool(statistical_records(selected_records)) or (not select_other and bool(settlement_total(settlements, first, last)))
+                amount = sum(totals.values()) if totals or known else None
                 row = component_result({dimension: key}, amount, target.metrics, denominator or 0,
                                        "categorical_other" if select_other else "total_income")
                 if amount is None:
@@ -251,7 +274,7 @@ async def aggregate_income(session, store, target, start: date, end: date, condi
     result["selected_count"] = result["matched_count"]
     if common_notes:
         result["notes"] = common_notes
-    if composition or set(target.metrics) & SETTLEMENT_METRICS:
+    if uses_settlements:
         result["settlement_months"] = sorted(settlements)
         result["settlement_scope"] = {"start_month": month_key(start), "end_month": month_key(end)}
         result["partial_months"] = [key for key, first, last in periods(start, end, "month")

@@ -200,7 +200,15 @@ async def execute_target(session, context, store, target, hard_capacity):
     history_domain = ("daily_ledger" if target.domain == "monthly_income" and
                       not set(target.metrics) & {"confirmed_settlement_income", "total_income", "monthly_average_income"}
                       else target.domain)
-    history = await date_snapshot(session, store.id, history_domain)
+    if target.domain == "income_composition":
+        from app.agents.tools.query_income import composition_dependencies
+        if not composition_dependencies(target)["settlements"]:
+            history_domain = "daily_ledger"
+    selections = [target.range, target.compare.range if target.compare else None]
+    needs_history = any(selection and (selection.all_history or (selection.base or {}).get("all_history"))
+                        for selection in selections)
+    history = (await date_snapshot(session, store.id, history_domain) if needs_history
+               else {"start": None, "end": None})
     dates = resolve_range(target.range, local_today(store), history)
     result = {"id": target.id, "status": "complete", "domain": target.domain, **dates,
               "queried_at": datetime.now(ZoneInfo(store.timezone)).isoformat(),
