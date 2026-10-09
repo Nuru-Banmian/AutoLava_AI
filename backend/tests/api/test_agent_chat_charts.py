@@ -233,12 +233,8 @@ async def test_chart_count_rejects_new_draft_and_keeps_first_eight(tmp_path, mon
         assert len(charts) == len({c["chart_id"] for c in charts}) == 8
 
 
-@pytest.mark.parametrize("series,error", [
-    (["total_revenue", "total_wash_count"], "chart_mixed_units"),
-    (["total_revenue", "average_ledger_revenue", "average_revenue_per_car", "min_revenue", "max_revenue"],
-     "chart_capacity_exceeded"),
-])
-async def test_mixed_units_and_single_snapshot_byte_limit_are_explicit(tmp_path, series, error):
+async def test_single_snapshot_byte_limit_is_explicit(tmp_path):
+    series = ["total_revenue", "average_ledger_revenue", "average_revenue_per_car", "min_revenue", "max_revenue"]
     def chart(model):
         name, args = trend(model)
         return name, {**args, "series": series}
@@ -250,7 +246,7 @@ async def test_mixed_units_and_single_snapshot_byte_limit_are_explicit(tmp_path,
         await save_day(client, "2025-01-01", 1)
         run = await ask(client, "按原始粒度画图")
         assert run["status"] == "completed", run
-        assert model.results[-1]["error"] == error
+        assert model.results[-1]["error"] == "chart_capacity_exceeded"
         assert (await client.get("/api/agent/1/conversation")).json()["messages"][-1]["charts"] == []
 
 

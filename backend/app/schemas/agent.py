@@ -20,14 +20,21 @@ class ChatSubmit(ChatGeneration):
         return value.strip()
 
 
+class ChartSegment(BaseModel):
+    index: int
+    count: int
+    total_range: dict[str, str]
+
+
 class ChartDescriptor(BaseModel):
     chart_id: str
     schema_version: Literal[1] = 1
-    type: Literal["line"]
+    type: Literal["line", "grouped_bar", "stacked_bar", "horizontal_bar"]
     title: str
     unit: str
     range: dict[str, str] | None
     point_count: int
+    segment: ChartSegment | None = None
 
 
 class ChartValue(BaseModel):
@@ -43,7 +50,7 @@ class ChartPoint(BaseModel):
 
 
 class ChartPayload(BaseModel):
-    type: Literal["line"]
+    type: Literal["line", "grouped_bar", "stacked_bar", "horizontal_bar"]
     title: str
     dimension: str
     granularity: str
@@ -55,6 +62,8 @@ class ChartPayload(BaseModel):
     notes: list[str]
     series: list[dict[str, str]]
     points: list[ChartPoint]
+    segment: ChartSegment | None = None
+    y_domain: list[float] | None = None
 
 
 class ChatChart(BaseModel):

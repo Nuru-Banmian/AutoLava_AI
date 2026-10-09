@@ -92,7 +92,7 @@ def default_registry(skills):
                 "body": skills.resource(args.skill, args.path)}
 
     return ToolRegistry([
-        Tool("store_chart", "从本轮完整result_ref快照生成折线图草稿（不是当前页）；只选block、时间维度及同单位系列，不传数值。随最终回复保存，失败不能宣称生成。", ChartInput, store_chart),
+        Tool("store_chart", "完整result_ref生成line/grouped_bar/stacked_bar/horizontal_bar草稿，不传数值。series选字段/指标；series_by:category透视构成。不同单位自动分图；时间366点连续分段、6系列，分类/排名50项，排名须查询显式top_n。整组与已有草稿原子检查8图/单96KiB/总512KiB。堆叠仅可相加构成；随回复保存，失败须说明。", ChartInput, store_chart),
         Tool("store_data_catalog", "发现当前授权门店已上线受控数据，参数为空；有效目录可跨轮复用。", CatalogInput, store_data_catalog),
         Tool("store_query", "批量只读查询或continuations续页至多6目标；完整行默认50/最多200，未读须说明部分完成；目录失效新查询整批不执行。", QueryInput, store_query),
         Tool("calculate", "临时十进制四则运算（正负号、小数、括号）；只传expression。"

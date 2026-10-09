@@ -59,3 +59,15 @@ it("drops late responses after store or session scope changes", async () => {
   await act(async () => { release(); await barrier; });
   expect(screen.queryByLabelText("日趋势查看日期")).not.toBeInTheDocument();
 });
+
+it.each(["grouped_bar", "stacked_bar", "horizontal_bar"] as const)("renders %s with exact selection and segment context", async (type) => {
+  const changed = { ...snapshot, payload: { ...snapshot.payload, type, y_domain: [0, 100],
+    segment: { index: 1, count: 2, total_range: { start: "2026-01-01", end: "2026-12-31" } } } };
+  server.use(http.get("/api/agent/1/messages/4/charts/chart-1", () => HttpResponse.json(changed)));
+  const view = render(<AgentChart storeId={1} messageId={4} description={{ ...description, type }} />);
+  const select = await screen.findByLabelText("日趋势查看日期");
+  expect(screen.getByText(/总范围：2026-01-01 至 2026-12-31 · 第 1\/2 段/)).toBeVisible();
+  expect(view.container.querySelector(".recharts-bar")).not.toBeNull();
+  await userEvent.selectOptions(select, "1");
+  expect(within(screen.getByRole("status", { name: "图表数据" })).getByText(/营业额：0 EUR/)).toBeVisible();
+});

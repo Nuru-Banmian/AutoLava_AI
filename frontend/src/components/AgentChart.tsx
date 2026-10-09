@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, friendlyApiError } from "@/api/client";
 import type { components } from "@/api/generated";
 import { currentSessionScope } from "@/auth/sessionScope";
@@ -41,34 +41,42 @@ export function AgentChart({ storeId, messageId, description }: { storeId: numbe
   if (!snapshot) return <div role="status" className="min-h-64">正在读取图表：{description.title}</div>;
   const chart = snapshot.payload;
   const point = selected === null ? null : chart.points[selected];
+  const horizontal = chart.type === "horizontal_bar";
+  const Chart = chart.type === "line" ? LineChart : BarChart;
+  const dimensionLabel = ["category", "weather", "weekday"].includes(chart.dimension) ? "分类" : "日期";
+  const selectPoint = (event: { activeTooltipIndex?: string | number | null }) => {
+    if (event.activeTooltipIndex !== null && event.activeTooltipIndex !== undefined) setSelected(Number(event.activeTooltipIndex));
+  };
   return <figure className="mt-4 min-w-0 rounded-lg border p-3" aria-label={chart.title}>
     <figcaption className="font-semibold">{chart.title}</figcaption>
     <p className="text-xs text-muted-foreground">{chart.range.start} 至 {chart.range.end} · {granularities[chart.granularity] ?? chart.granularity} · {chart.unit}</p>
+    {chart.segment && <p className="text-xs text-muted-foreground">总范围：{chart.segment.total_range.start} 至 {chart.segment.total_range.end} · 第 {chart.segment.index}/{chart.segment.count} 段 · 各段纵轴一致</p>}
     {chart.unfinished && <p className="text-xs text-muted-foreground">当前周期尚未结束，仅统计至查询日。</p>}
-    <div className="h-72 w-full" aria-label={`${chart.title}趋势图`}>
+    <div className="w-full" style={{ height: horizontal ? Math.max(288, chart.points.length * 32) : 288 }} aria-label={`${chart.title}趋势图`}>
       <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 600, height: 288 }}>
-        <LineChart data={chart.points} margin={{ top: 10, right: 15, bottom: 10, left: 0 }}
-          onMouseMove={(event) => {
-            if (event.activeTooltipIndex !== null && event.activeTooltipIndex !== undefined) setSelected(Number(event.activeTooltipIndex));
-          }} onClick={(event) => {
-            if (event.activeTooltipIndex !== null && event.activeTooltipIndex !== undefined) setSelected(Number(event.activeTooltipIndex));
-          }}>
+        <Chart data={chart.points} layout={horizontal ? "vertical" : "horizontal"} margin={{ top: 10, right: 15, bottom: 10, left: 0 }}
+          onMouseMove={selectPoint} onClick={selectPoint}>
           <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="dimension" minTickGap={35} />
-          <YAxis width={60} />
+          <XAxis dataKey={horizontal ? undefined : "dimension"} type={horizontal ? "number" : "category"}
+            domain={horizontal ? chart.y_domain ?? ["auto", "auto"] : undefined} minTickGap={35} />
+          <YAxis dataKey={horizontal ? "dimension" : undefined} type={horizontal ? "category" : "number"}
+            domain={horizontal ? undefined : chart.y_domain ?? ["auto", "auto"]} width={horizontal ? 100 : 60} />
           <Tooltip content={() => point ? <div className="rounded border bg-card p-2 text-sm">
             <p>{point.dimension} · {point.state}</p>
-            {chart.series.map((series) => <p key={series.key}>{series.label}：{point.values[series.key]?.exact ?? "未知"} {chart.unit}</p>)}
+            {chart.series.map((series) => <p key={series.key}>{series.label}：{point.values[series.key]?.exact ?? "未知"} {chart.unit} · {statuses[point.values[series.key]?.status ?? "unknown"] ?? "不可用"}</p>)}
           </div> : null} />
           <Legend />
-          {chart.series.map((series, index) => <Line key={series.key} name={series.label}
+          {chart.series.map((series, index) => chart.type === "line" ? <Line key={series.key} name={series.label}
             dataKey={(item) => item.values[series.key]?.plot ?? null} stroke={colors[index]}
-            connectNulls={false} dot={{ r: 3 }} isAnimationActive={false} />)}
-        </LineChart>
+            connectNulls={false} dot={{ r: 3 }} isAnimationActive={false} /> : <Bar key={series.key} name={series.label}
+            dataKey={(item) => item.values[series.key]?.plot ?? null} fill={colors[index]}
+            stackId={chart.type === "stacked_bar" ? "income" : undefined} isAnimationActive={false}
+            onClick={(_, pointIndex) => setSelected(pointIndex)} />)}
+        </Chart>
       </ResponsiveContainer>
     </div>
-    <label className="flex items-center gap-2 text-sm">查看日期
-      <select aria-label={`${chart.title}查看日期`} value={selected ?? ""}
+    <label className="flex items-center gap-2 text-sm">查看{dimensionLabel}
+      <select aria-label={`${chart.title}查看${dimensionLabel}`} value={selected ?? ""}
         onChange={(event) => setSelected(event.target.value === "" ? null : Number(event.target.value))}
         className="min-w-0 rounded border bg-card p-1">
         <option value="">请选择或点选图表</option>
@@ -79,7 +87,7 @@ export function AgentChart({ storeId, messageId, description }: { storeId: numbe
       {point ? <><p>{point.dimension} · {point.state}</p>{chart.series.map((series) => {
         const value = point.values[series.key];
         return <p key={series.key}>{series.label}：{value?.exact ?? "未知"} {value?.exact != null ? chart.unit : ""} · {statuses[value?.status ?? "unknown"] ?? "不可用"}</p>;
-      })}</> : <p>悬浮或点选日期查看准确值与状态。</p>}
+      })}</> : <p>悬浮或点选{dimensionLabel}查看准确值与状态。</p>}
     </div>
     <p className="text-xs text-muted-foreground">查询时间：{chart.queried_at} · 历史快照</p>
     {chart.notes.map((note, index) => <p key={index} className="text-xs text-muted-foreground">{note}</p>)}

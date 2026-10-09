@@ -1258,13 +1258,14 @@ export interface components {
              * @constant
              */
             schema_version: 1;
+            segment?: components["schemas"]["ChartSegment"] | null;
             /** Title */
             title: string;
             /**
              * Type
-             * @constant
+             * @enum {string}
              */
-            type: "line";
+            type: "line" | "grouped_bar" | "stacked_bar" | "horizontal_bar";
             /** Unit */
             unit: string;
         };
@@ -1309,6 +1310,7 @@ export interface components {
             range: {
                 [key: string]: string;
             };
+            segment?: components["schemas"]["ChartSegment"] | null;
             /** Series */
             series: {
                 [key: string]: string;
@@ -1317,13 +1319,15 @@ export interface components {
             title: string;
             /**
              * Type
-             * @constant
+             * @enum {string}
              */
-            type: "line";
+            type: "line" | "grouped_bar" | "stacked_bar" | "horizontal_bar";
             /** Unfinished */
             unfinished: boolean;
             /** Unit */
             unit: string;
+            /** Y Domain */
+            y_domain?: number[] | null;
         };
         /** ChartPoint */
         ChartPoint: {
@@ -1347,6 +1351,17 @@ export interface components {
             end: string;
             /** Start */
             start: string;
+        };
+        /** ChartSegment */
+        ChartSegment: {
+            /** Count */
+            count: number;
+            /** Index */
+            index: number;
+            /** Total Range */
+            total_range: {
+                [key: string]: string;
+            };
         };
         /** ChartValue */
         ChartValue: {
