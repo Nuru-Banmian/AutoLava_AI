@@ -18,6 +18,8 @@ _WEEKDAYS = ("星期一", "星期二", "星期三", "星期四", "星期五", "�
 def _record_summary(record: StoreDailyRecord | None) -> tuple[str, int | None]:
     if record is None:
         return "missing", None
+    if record.is_open == "未统计":
+        return "unreported", None
     if record.is_open == "休息":
         return "rest", None
     if record.is_open == "提前休息":
@@ -92,6 +94,8 @@ class BriefingService:
     @staticmethod
     def _content(card: DashboardCardResponse) -> str:
         if card.card_type == "yesterday":
+            if card.state == "unreported":
+                return "昨天未统计，营业额未知。集中清点收入记在清点当天。"
             if card.state == "missing":
                 return "昨天还没有经营记录，可以在记账页补录。"
             if card.state == "rest":
@@ -107,6 +111,8 @@ class BriefingService:
                 status = f"已记账，营业额 €{card.revenue}"
             elif card.state == "rest":
                 status = "休息"
+            elif card.state == "unreported":
+                status = "未统计，营业额未知"
             else:
                 status = f"提前休息，营业额 €{card.revenue}"
             return f"今天：{weather}；{status}。"

@@ -12,8 +12,8 @@ from app.models.identity import Store
 from app.models.ledger import StoreDailyRecord
 from app.models.settlement import SettlementRecord
 from app.services.weather import LEGACY_WEATHER_LABEL, RECORD_WEATHER_OPTIONS, is_legacy_weather
+from app.services.ledger_statistics import OPERATING_STATES, period_coverage, statistical_records
 
-OPERATING_STATES = frozenset({"营业", "提前休息"})
 WEATHER_GROUP_ORDER = {
     weather: index for index, weather in enumerate(RECORD_WEATHER_OPTIONS)
 }
@@ -63,7 +63,7 @@ def _composition_rows(totals: dict[CompositionKey, int]) -> list[dict]:
 
 
 def _revenue_kpis(records: list[StoreDailyRecord]) -> dict:
-    total = sum(record.daily_revenue for record in records)
+    total = sum(record.daily_revenue for record in statistical_records(records))
     operating_records = [
         record for record in records if record.is_open in OPERATING_STATES
     ]
@@ -97,10 +97,11 @@ def _daily_revenue_rows(records: list[StoreDailyRecord]) -> list[dict[str, objec
 def _monthly_revenue_rows(
     daily_by_month: dict[str, int],
     settlement_by_month: dict[str, int],
+    recorded_months: set[str],
 ) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
-    for month in sorted(daily_by_month.keys() | settlement_by_month.keys()):
-        daily_revenue = daily_by_month.get(month, 0)
+    for month in sorted(daily_by_month.keys() | settlement_by_month.keys() | recorded_months):
+        daily_revenue = daily_by_month.get(month)
         settlement_income = settlement_by_month.get(month, 0)
         rows.append(
             {
@@ -108,7 +109,7 @@ def _monthly_revenue_rows(
                 "revenue": daily_revenue,
                 "daily_ledger_revenue": daily_revenue,
                 "confirmed_settlement_income": settlement_income,
-                "monthly_total_income": daily_revenue + settlement_income,
+                "monthly_total_income": (daily_revenue or 0) + settlement_income if daily_revenue is not None or month in settlement_by_month else None,
             }
         )
     return rows
@@ -218,7 +219,7 @@ class AnalyticsService:
         monthly_totals: dict[str, int] = defaultdict(int)
         weather_totals: dict[str, list[int]] = defaultdict(list)
         weekday_totals: dict[int, list[int]] = defaultdict(list)
-        for record in records:
+        for record in statistical_records(records):
             for item in record.items:
                 key = CompositionKey(
                     category_id=item.category_id,
@@ -333,18 +334,13 @@ class AnalyticsService:
         comparison_coverage = None
         comparison_status = "no_comparison"
         if daily_compare_start is not None and daily_compare_end is not None:
-            previous_revenue = sum(record.daily_revenue for record in comparison_records)
-            comparison_coverage = {
-                "start": daily_compare_start.isoformat(),
-                "end": daily_compare_end.isoformat(),
-                "record_days": len(comparison_records),
-                "interval_days": (daily_compare_end - daily_compare_start).days + 1,
-            }
-            if not comparison_records:
+            previous_revenue = sum(record.daily_revenue for record in statistical_records(comparison_records))
+            comparison_coverage = period_coverage(comparison_records, daily_compare_start, daily_compare_end)
+            if not statistical_records(comparison_records):
                 comparison_status = "no_previous_records"
             elif previous_revenue == 0:
                 comparison_status = "zero_previous"
-            elif not records:
+            elif not statistical_records(records):
                 comparison_status = "no_current_records"
             else:
                 comparison_status = "comparable"
@@ -377,12 +373,7 @@ class AnalyticsService:
                 "includes_settlement_income": includes_settlement_income,
             },
             "classified_included_total": classified_included_total,
-            "period_coverage": {
-                "start": start.isoformat(),
-                "end": end.isoformat(),
-                "record_days": len(records),
-                "interval_days": max(0, (end - start).days + 1),
-            },
+            "period_coverage": period_coverage(records, start, end),
             "daily": _daily_revenue_rows(records),
             "categories": compositions,
             "income_composition": income_composition,
@@ -390,6 +381,7 @@ class AnalyticsService:
             "monthly": _monthly_revenue_rows(
                 monthly_totals,
                 settlement_by_month,
+                {record.date.strftime("%Y-%m") for record in records},
             ),
             "weather": [
                 {

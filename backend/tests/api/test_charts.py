@@ -104,6 +104,38 @@ async def test_charts_requires_authentication(client) -> None:
     assert response.status_code == 401
 
 
+async def test_all_unreported_keeps_independent_settlement_and_real_zero_comparison(
+    auth_client, db_session, store_factory,
+) -> None:
+    store = await _assigned_store(auth_client, db_session, store_factory)
+    await _confirmed_settlement(db_session, store, opening_month=date(2026, 7, 1), amount=300)
+    await db_session.commit()
+    async def save(day, state, amount):
+        path = f"/api/ledger/{store.id}/{day}"
+        current_response = await auth_client.get(path)
+        current = current_response.json() if current_response.status_code == 200 else None
+        return await auth_client.put(path, json={
+            "expected_identity": current["identity"] if current else None,
+            "expected_revision": current["revision"] if current else None,
+            "expected_config_revision": 1, "is_open": state, "daily_revenue": amount,
+        })
+    assert (await save("2026-07-01", "未统计", None)).status_code == 201
+    assert (await save("2026-06-01", "营业", 100)).status_code == 201
+    query = f"/api/charts/{store.id}?start=2026-07-01&end=2026-07-06&compare_start=2026-06-01&compare_end=2026-06-06"
+    data = (await auth_client.get(query)).json()
+    assert data["income_summary"]["total_income"] == 300
+    assert data["income_summary"]["confirmed_settlement_income"] == 300
+    assert data["monthly"] == [{"month": "2026-07", "revenue": None, "daily_ledger_revenue": None, "confirmed_settlement_income": 300, "monthly_total_income": 300}]
+    assert data["ledger_comparison"]["status"] == "no_current_records"
+    assert data["ledger_comparison"]["change_percent"] is None
+    assert (await save("2026-07-02", "营业", 0)).status_code == 201
+    zero = (await auth_client.get(query)).json()
+    assert zero["ledger_comparison"]["status"] == "comparable"
+    assert zero["ledger_comparison"]["change_percent"] == -100
+    assert (await save("2026-06-01", "营业", 0)).status_code == 200
+    assert (await auth_client.get(query)).json()["ledger_comparison"]["status"] == "zero_previous"
+
+
 async def test_charts_rejects_reversed_date_range(auth_client, db_session, store_factory) -> None:
     store = await _assigned_store(auth_client, db_session, store_factory)
     response = await auth_client.get(f"/api/charts/{store.id}?start=2026-07-31&end=2026-07-01")
@@ -200,10 +232,12 @@ async def test_charts_returns_stable_empty_result(auth_client, db_session, store
         "period_coverage": {
             "start": "2026-07-01", "end": "2026-07-31", "record_days": 0,
             "interval_days": 31,
+            "statistical_days": 0, "unreported_days": 0, "operating_days": 0, "rest_days": 0, "missing_record_days": 31,
         },
         "comparison_coverage": {
             "start": "2026-06-01", "end": "2026-06-30", "record_days": 0,
             "interval_days": 30,
+            "statistical_days": 0, "unreported_days": 0, "operating_days": 0, "rest_days": 0, "missing_record_days": 30,
         },
         "comparison_daily": [],
         "ledger_comparison": {

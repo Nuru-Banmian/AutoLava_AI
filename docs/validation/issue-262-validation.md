@@ -1,0 +1,57 @@
+# Issue #262 验证记录
+
+- 阶段：迁移/记账/基础分析导出纵向切片已通过，正在运行相关回归；下一步前端表单确认、空值和各页面展示、更多统计/结算/Agent公开验收。
+- 永久审查基线：`31c6e00fb53132f149f99c5b9af8c24c3c5542f3`；分支 `codex/issue-262-unreported`。初始 worktree 为旧 ef0deba，已 fetch 并切到包含 #261 的 origin/main 后固定此基线。
+- 权威：GitHub [#260](https://github.com/Nuru-Banmian/AutoLava_AI/issues/260)、[#262](https://github.com/Nuru-Banmian/AutoLava_AI/issues/262) 全文与评论（均无评论）。原目录设计/Spec/进度只读，不改总控文件。
+- 已读 implement、tdd（及 tests/mock 指南）、code-review、handoff、AutoLava release gates。没有 Skill 调用入口，按文件流程执行；不声称已调用。
+- 已确认测试边界：认证 HTTP/SSE、迁移临时 SQLite 与重启、受控模型真实工具、现有导出、桌面/窄屏真实浏览器。授权提交、PR、必要 CI、准确 head 合并、关闭 #262、远端回读；不关闭 #260、不生产部署、不付费供应商验证。
+- 迁移当前 head 为 0028，新迁移从此追加。原工作区、数据库、.env 及 unrelated dirty 保持原位；#261 复用，不重做。
+- 验收待办：迁移保真/安全降级；null 与非空拒绝；revision/config 先于清值确认；保留身份/方式/天气事件；切回重填；统计覆盖/真实零/无数据/独立结算；首页缓存/日期选择/记录/日历/分析/Agent；XLSX 空白；集中清点文案；OpenAPI/生成类型；完整回归；两轴审查；PR/CI/merge/readback。
+- 红绿1：仅选未统计保存初始422（状态枚举拒绝），实现后1 passed；清值未确认初始200（不安全），加入revision/config之后的确认守卫后通过。
+- 记账API单文件阶段：25 passed/13.47s，包含新状态null、清值确认、过期revision、不恢复旧数值、天气事件保留、非空包括零拒绝及原有记账回归。
+- 环境失败：python -m uv不存在；当前使用 #261 独立worktree已经安装的Python测试运行时，不修改其依赖，所有测试代码/临时DB来自本票。isolated单文件首次1 passed/24 errors，因agent表在schema fixture后才注册；在test_ledger.py collection显式导入模型后上述25项通过。
+- 迁移红绿：初始head仍0028；新增0029后约束名称被naming convention重复添加前缀，使用op.f后修正。seed最初缺auth_identity，后非64位hex导致登录后401，修正测试seed后1 passed/6.28s。
+- 迁移公开验收通过：从0028带三旧态/零值/分类历史/记账事件/identity/revision7升级，旧值逐项保留、外键和索引保留；认证HTTP清值后重建app/engine读取仍为null、保留天气事件/方式、revision8；已有未统计时降级拒绝且迁移版本保留0029。旧休息数量NULL为原来合法历史，迁移保留；新人工休息写入仍归零。
+- 分析/导出红绿：混合三旧态/真实零/未统计/未录入初始TypeError（monthly金额相加None），抽出可统计状态规则后1 passed/1.94s。覆盖5=4+1、4=3+1、6=4+1+1；日趋势null带独立状态，全未统计月null，未统计比较期no_previous_records；筛选记录总量含未统计、缺数量仅经营日；XLSX未知金额数量空白/事件保留/无分类占位。
+- 相关后端首轮：16 failed/48 passed/49.56s，日志OS临时目录issue-262-backend-slice.log。1项覆盖新增字段旧预期；13项既有service fixtures包含休息金额200/数量2，原约束合法。额外休息DB约束会阻止升级这类历史值，与保留旧值要求冲突，已撤回；休息归零仍由原人工服务维护。2项旧迁移测试head预期0028，已同步0029。未修改既有analytics数值预期。
+- 修复后相关后端：64 passed/46.89s（ledger/charts/analytics/旧迁移/新迁移），日志OS临时目录issue-262-backend-slice2.log。
+- 前端红绿：初始未统计选项不存在，保存错误发送空状态；null显示为字符串；两项失败。加入第四状态、清值弹窗与取消、null留空、从未统计切回必须重填后2 passed/22 deselected。随后表单及经营分析现有组件38 passed（2 files）/6.19s。
+- 类型检查过程：首次OpenAPI导出因复用运行时editable路径读到#261代码导致旧类型；已明确PYTHONPATH本票backend重新导出/生成。随后发现null排序及新字段类型问题，修正后npx --no-install tsc -b通过（31811会话）。一次在root误执行npx tsc并非项目检查，输出提示未找到TypeScript，不计为验证；没有项目文件增加。
+- 当前实现新增：共用statistical/operating状态规则与覆盖；monthly全未统计null、daily独立状态；overview覆盖与集中清点定义；简报unreported状态；XLSX空值；前端formatWholeEuro(null)=—、确认弹窗、切回重填、日历不分档/独立图例、日期选择紫点、覆盖文案和无统计数据展示。尚需更多公开验收与代码审查，不视为本票完成。
+- 最新前端类型检查：通过；表单/日期选择/领域分析/详情组件60 passed（4 files）/6.77s。MonthCalendar/BusinessCalendar没有独立同名test文件，此次未冒称测试了不存在的文件。浏览器验收尚未执行。
+- 受控模型真实工具：认证聊天+迁移临时SQLite+store_overview+SSE新用例1 passed/5.59s，150收入/1经营/1休息/1未统计/2未录入独立计数，洗车缺失仅经营日。此为controlled model，不是供应商语义/内容质量验收。
+- 独立结算/比较：公开charts新用例1 passed/1.97s。仅未统计台账时仍计入开票月份300已确认结算（关闭功能的历史也保留）；台账monthly为null；无当前已统计台账不生成-100%，真实已知零合法-100%，已知零基期返回zero_previous。此用例建于已经通过的统计切片，没有新增生产实现。
+- 简报缓存/recent/真实零确认：公开HTTP新用例2 passed/2.44s。今日/昨日未统计，POST refresh再GET缓存仍unreported/null；recent两条null；真实零缺确认409，过期config确认仍409配置冲突。未验证运行中后台队列刷新全路径。
+- Ruff本票改动通过；git diff --check初次检测一行混合CRLF尾空白，规范换行后通过。OpenAPI与生成类型已更新，最终export --check尚待本票结束。
+- 领域词汇及store-analysis技能/指标参考同步。已读writing-for-agents/domain-modeling及CONTEXT-FORMAT；没有独立技能调用入口。没有提前切换#263查询工具。
+- 下一阶段：审视所有剩余语义（尤其未统计切回quantity/旧天气保留、比较覆盖、cache后台刷新和全部未知展示），增加需要的公开安全失败验收；Playwright CLI真实桌面/390px记账选状态/取消/确认/切回/刷新/首页记录日历分析联动；最终完整后端/前端/e2e/OpenAPI一致性；相对永久基线并行两个只读审查轴、修复；精确提交；PR/全部必要CI/match-head merge/#262 close/readback。
+- 尚未验证：真实浏览器、最终全部后端/前端套件、最终契约检查、两轴审查、远端PR/CI/交付。真实供应商、Docker、生产、负载未运行。既有 #261 Windows锁失败保留，不宣称修复。
+
+## 继续阶段（2026-10-09）
+- 核对指定79c3 worktree/分支/31c6e00永久基线一致，未重做既有成果，原目录与总控进度只读。远端Spec/Ticket已读取（GraphQL两次EOF后REST读取；Ticket无评论）。
+- 剩余安全验收新增2个公开HTTP用例，初始2 failed：未统计切回营业接受null数量（200而非422）；历史旧天气省略导致未统计确认422。服务补齐启用数量必须显式重填，以及未统计省略旧天气保留；修复2 passed/2.38s。显式天气/事件null可清空；既有旧态保存仍要求规范天气。
+- 前端相关39 passed与tsc通过；补充已知零重填数量、保留未编辑旧天气确认。审计修复全未知收入构成/月度总收入显示€0为—/合计未知，并展示两期覆盖，调整无已统计台账比较文案。聚合整数0仅表示已知部分和覆盖，不把未知月份输出为0。
+- 真实浏览器：本票独立临时迁移SQLite/受控天气，backend8012/frontend4182；桌面及390×844实际记账未统计保存/刷新，切回金额数量均空、仅填金额不能保存、明确填写240/12后成功；改未统计弹窗取消后HTTP读回240，确认后HTTP读回null/null/[]且刷新不恢复。窄屏昨日仅选状态保存成功。日期弹窗独立未统计标签/紫点，首页今日/昨日—，列表/详情独立未统计。后台真实pending_weather queue已运行，未经手动refresh的GET /api/dashboard/1读回today/yesterday均unreported/null。临时脚本错误（run-code内联解析、误用/cards路径）和HMR失效refs均保留，不计通过，修正后验收。
+- 浏览器证据：frontend/output/playwright/issue262（本地，不提交截图/CLI缓存），OS临时目录autolava-issue262-live；受控天气不是真实供应商。首页截图已检查390px按钮可用、独立状态清楚、无横向溢出。
+- Ruff全库与OpenAPI export --check通过；production build通过。Focused展示/表单46 passed/3 files（DailyLedgerTrend无同名test文件）；前端首次全套383 passed/37files/33.25s。
+- E2E首次95 passed/20 skipped/1 failed/2.2m：daily-flow旧用例只预期三态，实际正确四态，已同步预期；第二次完整运行中。20跳过为既有需要专用live manifest的用例，不声称执行；本票真实浏览器单独验收。
+- 后台首次串行全套停留72项/10%长时间无进度，保留issue-262-full-backend.log，核对本票PID后中止（不是通过）。已按CI -n4 --dist loadscope --cov=app重跑，带-vv与faulthandler60，日志issue-262-full-backend-parallel.log；运行中不得称最终通过，#261 Windows锁风险仍保留。
+- 前端修复后全套1 failed/383 passed：AuthProvider旧门店描述页面等待失败（Unable to find label门店描述），并发后台/浏览器/E2E压力下出现；保留issue-262-full-frontend-final.log，降低maxWorkers4重验中，不改无关功能、不计为通过。
+- 当前阶段：本地检查点后相对原SHA两只读轴审查；完整检查仍须收集最终结果并修复，随后精确PR/CI/merge/close/readback。尚未远端写入/未完成本票。
+- 两轴首审（31c6e00...ba9e2ab）Standards：硬标准0，1项P1省略旧天气提交签名归一化导致canonical未吸收、清值后旧金额复活风险。新增savedSubmission/canonical再切回用例初始失败（240仍显示），修复后通过。Spec：2项P2，保存/删除revision冲突最新记录插值null欧元、两期null趋势Tooltip默认过滤丢独立状态。已修复空值冲突显示—、filterNull=false；delete冲突新用例通过。相关表单/删除/台账页面73 passed与tsc通过。待最终复审确认全部改动。
+- 后台完整并行首轮11 failed/683 passed/6warnings/455.28s；8项charts_daily_migrated仅新覆盖字段完整字典预期未同步，1项agent_integration迁移head预期0028。已同步覆盖字段/0029，既有金额与平均断言保留。另2项agent_vectors/pending_weather为SQLite database is locked，保留Windows风险；隔离文件重验中，不通过隐藏/skip方式处理。
+- 修复后frontend最终全套385 passed/37files/58.31s（maxWorkers4），production build通过；E2E最终复验运行中。此前最终384 passed及E2E96 passed/20条件跳过已有有效结果，本次因审查后实现变化再次验证。
+- 趋势未知提示真实桌面hover已通过“本期2026-10-09：未统计，—”，上期同位置无数据；390px首次tap因原session不支持touch失败，保留，已建立iPhone13（390px）touch专用session进行真实点选。页面HMR重置视图导致第一次定位趋势超时，重选经营分析后桌面验证通过；不是业务失败。
+- 最终两轴复审（固定31c6e00...8c94533，45文件）Standards与Spec均通过，无未解决实现发现；首审P1/P2对应修复与新增回归已覆盖。审查只读、并行，没有改动工作区。全部实现提交ba9e2ab与8c94533。
+- 修复后相关后台隔离33 passed/200.39s（charts_daily_migrated/agent_integration/pending_weather/agent_vectors），包含此前Windows锁失败用例本次单独通过，不代表锁风险已解决。首轮全套coverage88%>=85通过；最终完整后台按CI相同-n4/loadscope/cov重跑中。
+- 审查修复后的最终前端385 passed/37files/58.31s、production build通过；最终E2E96 passed/20条件跳过/2.1m。OpenAPI export --check、全库Ruff及重新generate:api-types零差异通过。保留jsdom scrollTo未实现提示；不是浏览器验收。
+- 真实触屏（iPhone13，390×844）在双方数值未知时tap读到“本期2026-10-09：未统计，—”，截图mobile-unknown-tooltip.png；桌面同位置hover也通过。此前不支持tap的session失败保留，不将resize冒称touch。桌面/窄屏analysis截图及首页截图已形成，独立紫色状态、未知合计、无金额色带，支持记录/详情/日期弹窗/分析联动。
+- 实施/审查完成，最终完整后台与PR/CI/合并/关闭/远端回读仍未完成；不启动#263。总控进度始终只读。
+
+## 最终后台全套及交付边界
+
+最终 Windows 后台全套：693 passed、1 failed、9 warnings，391.82s；覆盖率88%，达到85%阈值。失败为 `tests/api/test_agent_integration.py::test_automatic_memory_reset_restart_correction_backup_restore_and_deletion` 的 SQLite `database is locked` / `BEGIN IMMEDIATE`，日志保留于 `C:\Users\1\AppData\Local\Temp\issue-262-full-backend-final.log`。相关隔离33项此前通过，但锁失败在全套仍可复现，不能声称Windows后台完整通过或锁风险已解决；本票未修改锁机制。
+
+最终前端385通过、37文件；生产构建通过；E2E96通过、20既有manifest条件跳过。最终Ruff、OpenAPI检查和生成类型零差异通过。真实浏览器及390px触屏验收完成；本次自有8012/4182服务及两个浏览器会话已关闭，无这两个端口监听。
+
+远端交付仅在必要Linux CI全部通过后执行精确HEAD合并。PR/CI/merge SHA/Issue及远端main读回收据保存于 `C:\Users\1\AppData\Local\Temp\autolava-issue262-handoff\issue-262-delivery-20261009.md`。本票完成后停止，不启动263，父260保持打开。

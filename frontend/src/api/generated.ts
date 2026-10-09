@@ -1375,9 +1375,9 @@ export interface components {
             /** Date */
             date: string;
             /** Is Open */
-            is_open?: ("营业" | "休息" | "提前休息") | null;
+            is_open?: ("营业" | "休息" | "提前休息" | "未统计") | null;
             /** Revenue */
-            revenue: number;
+            revenue: number | null;
         };
         /** DashboardCardResponse */
         DashboardCardResponse: {
@@ -1398,7 +1398,7 @@ export interface components {
              * State
              * @enum {string}
              */
-            state: "missing" | "recorded" | "rest" | "early_closed" | "forecast" | "unavailable";
+            state: "missing" | "recorded" | "rest" | "early_closed" | "unreported" | "forecast" | "unavailable";
             /** Temperature Max */
             temperature_max?: string | null;
             /** Temperature Min */
@@ -1532,6 +1532,11 @@ export interface components {
         LedgerBody: {
             /** Activity */
             activity?: string | null;
+            /**
+             * Confirm Clear Values
+             * @default false
+             */
+            confirm_clear_values: boolean;
             /** Daily Revenue */
             daily_revenue?: number | null;
             /** Expected Config Revision */
@@ -1544,7 +1549,7 @@ export interface components {
              * Is Open
              * @enum {string}
              */
-            is_open: "营业" | "休息" | "提前休息";
+            is_open: "营业" | "休息" | "提前休息" | "未统计";
             /**
              * Items
              * @default []
@@ -1587,7 +1592,7 @@ export interface components {
             /** Config Revision */
             config_revision: number;
             /** Daily Revenue */
-            daily_revenue: number;
+            daily_revenue: number | null;
             /** Date */
             date: string;
             /** Id */
@@ -1802,13 +1807,13 @@ export interface components {
             /** Confirmed Settlement Income */
             confirmed_settlement_income: number;
             /** Daily Ledger Revenue */
-            daily_ledger_revenue: number;
+            daily_ledger_revenue: number | null;
             /** Month */
             month: string;
             /** Monthly Total Income */
-            monthly_total_income: number;
+            monthly_total_income: number | null;
             /** Revenue */
-            revenue: number;
+            revenue: number | null;
         };
         /** PasswordChange */
         PasswordChange: {
@@ -1823,10 +1828,35 @@ export interface components {
             end: string;
             /** Interval Days */
             interval_days: number;
+            /**
+             * Missing Record Days
+             * @default 0
+             */
+            missing_record_days: number;
+            /**
+             * Operating Days
+             * @default 0
+             */
+            operating_days: number;
             /** Record Days */
             record_days: number;
+            /**
+             * Rest Days
+             * @default 0
+             */
+            rest_days: number;
             /** Start */
             start: string;
+            /**
+             * Statistical Days
+             * @default 0
+             */
+            statistical_days: number;
+            /**
+             * Unreported Days
+             * @default 0
+             */
+            unreported_days: number;
         };
         /** PrimaryCategory */
         PrimaryCategory: {
@@ -1889,7 +1919,7 @@ export interface components {
             /** Created By Name */
             created_by_name?: string | null;
             /** Daily Revenue */
-            daily_revenue: number;
+            daily_revenue: number | null;
             /** Date */
             date: string;
             /** Id */
@@ -1905,7 +1935,7 @@ export interface components {
              * Is Open
              * @enum {string}
              */
-            is_open: "营业" | "休息" | "提前休息";
+            is_open: "营业" | "休息" | "提前休息" | "未统计";
             /** Items */
             items: components["schemas"]["RecordItem"][];
             /** Precipitation */
@@ -3933,7 +3963,7 @@ export interface operations {
             query?: {
                 start?: string | null;
                 end?: string | null;
-                status?: ("营业" | "休息" | "提前休息") | null;
+                status?: ("营业" | "休息" | "提前休息" | "未统计") | null;
                 weather?: string | null;
                 activity_query?: string | null;
                 missing_wash_count?: boolean;
@@ -3973,7 +4003,7 @@ export interface operations {
             query?: {
                 start?: string | null;
                 end?: string | null;
-                status?: ("营业" | "休息" | "提前休息") | null;
+                status?: ("营业" | "休息" | "提前休息" | "未统计") | null;
                 weather?: string | null;
                 activity_query?: string | null;
                 missing_wash_count?: boolean;

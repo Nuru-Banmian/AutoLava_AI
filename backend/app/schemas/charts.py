@@ -23,8 +23,8 @@ class ChartKpis(BaseModel):
 
 class DailyRevenue(BaseModel):
     date: str
-    revenue: int
-    is_open: Literal["营业", "休息", "提前休息"] | None = None
+    revenue: int | None
+    is_open: Literal["营业", "休息", "提前休息", "未统计"] | None = None
 
 
 class PeriodCoverage(BaseModel):
@@ -32,6 +32,11 @@ class PeriodCoverage(BaseModel):
     end: str
     record_days: int
     interval_days: int
+    statistical_days: int = 0
+    unreported_days: int = 0
+    operating_days: int = 0
+    rest_days: int = 0
+    missing_record_days: int = 0
 
 
 class LedgerComparison(BaseModel):
@@ -62,10 +67,10 @@ IncomeComposition = CategoryComposition | UnclassifiedComposition
 
 class MonthlyRevenue(BaseModel):
     month: str
-    revenue: int
-    daily_ledger_revenue: int
+    revenue: int | None
+    daily_ledger_revenue: int | None
     confirmed_settlement_income: int
-    monthly_total_income: int
+    monthly_total_income: int | None
 
 
 class IncomeSummary(BaseModel):

@@ -139,6 +139,7 @@ async def test_daily_analysis_distinguishes_recorded_zero_states_and_missing_day
     ]
     assert payload["period_coverage"] == {
         "start": "2026-07-10", "end": "2026-07-15", "record_days": 4, "interval_days": 6,
+        "statistical_days": 4, "unreported_days": 0, "operating_days": 3, "rest_days": 1, "missing_record_days": 2,
     }
 
 
@@ -165,6 +166,7 @@ async def test_single_month_daily_comparison_uses_same_progress_and_excludes_set
     ]
     assert payload["comparison_coverage"] == {
         "start": "2026-06-10", "end": "2026-06-15", "record_days": 3, "interval_days": 6,
+        "statistical_days": 3, "unreported_days": 0, "operating_days": 2, "rest_days": 1, "missing_record_days": 3,
     }
     assert payload["ledger_comparison"] == {
         "current_revenue": 225,
@@ -206,9 +208,11 @@ async def test_current_month_ends_on_store_local_today_and_historical_month_stay
     assert rome["range"] == {"start": "2026-07-01", "end": "2026-07-15", "bucket": "day"}
     assert rome["period_coverage"] == {
         "start": "2026-07-01", "end": "2026-07-15", "record_days": 2, "interval_days": 15,
+        "statistical_days": 2, "unreported_days": 0, "operating_days": 2, "rest_days": 0, "missing_record_days": 13,
     }
     assert rome["comparison_coverage"] == {
         "start": "2026-06-01", "end": "2026-06-15", "record_days": 2, "interval_days": 15,
+        "statistical_days": 2, "unreported_days": 0, "operating_days": 2, "rest_days": 0, "missing_record_days": 13,
     }
     assert rome["ledger_comparison"]["current_revenue"] == 225
     assert rome["ledger_comparison"]["previous_revenue"] == 150
@@ -262,6 +266,7 @@ async def test_same_month_progress_respects_short_month_leap_day_and_year_bounda
         assert payload["comparison_coverage"] == {
             "start": expected_start, "end": expected_end, "record_days": 1,
             "interval_days": interval,
+            "statistical_days": 1, "unreported_days": 0, "operating_days": 1, "rest_days": 0, "missing_record_days": interval - 1,
         }
         assert payload["comparison_daily"] == [
             {"date": prior_day, "revenue": 60, "is_open": "提前休息"},
@@ -329,9 +334,11 @@ async def test_cross_month_keeps_explicit_comparison_and_monthly_settlement_grai
     )
     assert payload["period_coverage"] == {
         "start": "2026-07-10", "end": "2026-08-15", "record_days": 2, "interval_days": 37,
+        "statistical_days": 2, "unreported_days": 0, "operating_days": 2, "rest_days": 0, "missing_record_days": 35,
     }
     assert payload["comparison_coverage"] == {
         "start": "2026-05-10", "end": "2026-06-15", "record_days": 2, "interval_days": 37,
+        "statistical_days": 2, "unreported_days": 0, "operating_days": 2, "rest_days": 0, "missing_record_days": 35,
     }
     assert payload["ledger_comparison"] == {
         "current_revenue": 150, "previous_revenue": 50, "change_percent": 200.0,

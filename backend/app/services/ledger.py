@@ -201,13 +201,31 @@ class LedgerService:
                 "current_record": jsonable_encoder(record_payload(record)) if record is not None else None,
             })
         self._check_expected(record, payload["expected_identity"], payload["expected_revision"])
+        if (
+            payload["is_open"] == "未统计"
+            and record is not None
+            and record.is_open != "未统计"
+            and not payload.get("confirm_clear_values", False)
+        ):
+            raise HTTPException(409, {
+                "code": "clear_values_confirmation_required",
+                "message": "改为未统计将清除金额、洗车数量和分类明细，请核对后确认",
+                "current": jsonable_encoder(record_payload(record)),
+            })
         created = record is None
-        if record is not None and is_legacy_weather(record.weather) and "weather" not in payload:
+        if record is not None and is_legacy_weather(record.weather) and "weather" not in payload and payload["is_open"] != "未统计":
             raise HTTPException(422, "Historical weather must be corrected or cleared")
         income_mode = (
             "composed" if store.income_items_enabled else "legacy_total"
         ) if record is None else record.income_mode
         rest_day = payload["is_open"] == "休息"
+        unreported = payload["is_open"] == "未统计"
+        if (
+            record is not None and record.is_open == "未统计"
+            and payload["is_open"] in {"营业", "提前休息"}
+            and store.wash_count_enabled and payload.get("wash_count") is None
+        ):
+            raise HTTPException(422, "切回经营状态需要重新填写洗车数量；已知零请明确填写 0")
         items = payload.get("items", [])
         category_ids = [item["category_id"] for item in items]
         if len(category_ids) != len(set(category_ids)):
@@ -215,7 +233,11 @@ class LedgerService:
 
         snapshots: dict[int, _IncomeItemSnapshot] = {}
         item_values: list[tuple[int, int]] = []
-        if income_mode == "legacy_total":
+        if unreported:
+            if payload.get("daily_revenue") is not None or payload.get("wash_count") is not None or items:
+                raise HTTPException(422, "未统计不能提交金额、洗车数量或收入分类明细")
+            daily_revenue = None
+        elif income_mode == "legacy_total":
             if items:
                 raise HTTPException(422, "Total revenue mode does not accept income items")
             if payload.get("daily_revenue") is None:
@@ -292,7 +314,9 @@ class LedgerService:
 
         record.is_open = payload["is_open"]
         record.daily_revenue = daily_revenue
-        if rest_day:
+        if unreported:
+            record.wash_count = None
+        elif rest_day:
             record.wash_count = 0
         elif store.wash_count_enabled:
             submitted_wash_count = payload.get("wash_count")
@@ -329,7 +353,8 @@ class LedgerService:
                 setattr(record, field, payload[field])
         if not record.weather_edited and not record.weather and record.weather_auto in RECORD_WEATHER_VALUES:
             record.weather = record.weather_auto
-        record.activity = payload.get("activity")
+        if created or "activity" in payload:
+            record.activity = payload.get("activity")
         if "scanned" in payload:
             record.scanned = bool(payload["scanned"])
         record.items = [

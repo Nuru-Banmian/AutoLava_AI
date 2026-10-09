@@ -79,7 +79,7 @@ export function DeleteRecordDialog({ storeId, record, open, returnFocusTo, onOpe
           <AlertDialogDescription>删除后无法恢复。</AlertDialogDescription>
         </AlertDialogHeader>
         {message && message !== "删除成功" && <p role="alert">{message}</p>}
-        {latest !== undefined && <div role="status">{latest ? <><p>{`最新记录：${latest.is_open}，营业额 ${latest.daily_revenue} 欧元，修订号 ${latest.revision}`}</p><p>洗车数量：{latest.wash_count ?? "未记录"}；天气：{latest.weather ?? "未记录"}</p><p>事件：{latest.activity ?? "无"}</p></> : "最新记录：该日期暂无记录。"}</div>}
+        {latest !== undefined && <div role="status">{latest ? <><p>{`最新记录：${latest.is_open}，营业额 ${latest.daily_revenue === null ? "—" : `${latest.daily_revenue} 欧元`}，修订号 ${latest.revision}`}</p><p>洗车数量：{latest.wash_count ?? "未记录"}；天气：{latest.weather ?? "未记录"}</p><p>事件：{latest.activity ?? "无"}</p></> : "最新记录：该日期暂无记录。"}</div>}
         <AlertDialogFooter>
           <AlertDialogCancel disabled={remove.isPending}>取消</AlertDialogCancel>
           <Button type="button" variant="destructive" disabled={remove.isPending || latest !== undefined || !record.identity || !record.revision} onClick={() => remove.mutate({ storeId, date: record.date, identity: record.identity!, revision: record.revision! })}>

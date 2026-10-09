@@ -45,7 +45,7 @@ class StoreDailyRecord(Base):
     revision: Mapped[int] = mapped_column(Integer, default=1)
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"))
     date: Mapped[date] = mapped_column(Date)
-    daily_revenue: Mapped[int] = mapped_column(Integer, default=0)
+    daily_revenue: Mapped[int | None] = mapped_column(Integer)
     income_mode: Mapped[str] = mapped_column(String(20), default="legacy_total")
     wash_count: Mapped[int | None]
     is_open: Mapped[str] = mapped_column(String(20))
@@ -70,8 +70,13 @@ class StoreDailyRecord(Base):
     )
     __table_args__ = (
         UniqueConstraint("store_id", "date", name="uq_store_daily_records_store_date"),
-        CheckConstraint("is_open in ('营业','休息','提前休息')", name="open_status"),
+        CheckConstraint("is_open in ('营业','休息','提前休息','未统计')", name="open_status"),
         CheckConstraint("daily_revenue >= 0", name="daily_revenue_nonnegative"),
+        CheckConstraint(
+            "(is_open = '未统计' AND daily_revenue IS NULL AND wash_count IS NULL) OR "
+            "(is_open != '未统计' AND daily_revenue IS NOT NULL AND daily_revenue >= 0)",
+            name="statistical_values",
+        ),
     )
 
 

@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 class DatabaseFilters(BaseModel):
     start: date | None = None
     end: date | None = None
-    status: Literal["营业", "休息", "提前休息"] | None = None
+    status: Literal["营业", "休息", "提前休息", "未统计"] | None = None
     weather: str | None = Field(default=None, max_length=50)
     activity_query: str | None = Field(default=None, max_length=2000)
     missing_wash_count: bool = False
@@ -49,9 +49,9 @@ class RecordSnapshot(BaseModel):
     config_revision: int | None = None
     store_id: int
     date: str
-    daily_revenue: int
+    daily_revenue: int | None
     wash_count: int | None = None
-    is_open: Literal["营业", "休息", "提前休息"]
+    is_open: Literal["营业", "休息", "提前休息", "未统计"]
     income_mode: Literal["legacy_total", "composed"]
     weather: str | None
     weather_legacy: bool

@@ -14,7 +14,7 @@ export function compositionPercentage(amount: number, total: number): string {
 interface IncomeCompositionProps {
   included: IncomeCompositionItem[];
   excluded: IncomeCompositionItem[];
-  totalIncome: number;
+  totalIncome: number | null;
 }
 
 interface CompositionGroupProps {
@@ -56,7 +56,7 @@ function CompositionGroup({ title, rows, expanded, onExpandedChange, showProport
 export function IncomeComposition({ included, excluded, totalIncome }: IncomeCompositionProps) {
   const [includedExpanded, setIncludedExpanded] = useState(false);
   const [excludedExpanded, setExcludedExpanded] = useState(false);
-  const showProportions = totalIncome > 0;
+  const showProportions = totalIncome !== null && totalIncome > 0;
 
   return <section className="flex min-w-0 flex-col gap-3 rounded-lg border bg-white p-2.5 sm:p-3 lg:row-span-3 lg:grid lg:grid-rows-subgrid" aria-label="收入构成">
     <header className="grid gap-0.5">
@@ -65,13 +65,14 @@ export function IncomeComposition({ included, excluded, totalIncome }: IncomeCom
     </header>
     <div className="grid content-start gap-3">
     {totalIncome === 0 && <p className="text-sm text-muted-foreground">暂无收入构成，合计为 €0</p>}
+    {totalIncome === null && <p className="text-sm text-muted-foreground">暂无已统计收入构成，合计未知</p>}
     <CompositionGroup
       title="收入分类"
       rows={included}
       expanded={includedExpanded}
       onExpandedChange={() => setIncludedExpanded((value) => !value)}
       showProportions={showProportions}
-      total={totalIncome}
+      total={totalIncome ?? 0}
       toggleLabel="展开收入分类"
     />
     {excluded.length > 0 && <hr className="border-border" />}

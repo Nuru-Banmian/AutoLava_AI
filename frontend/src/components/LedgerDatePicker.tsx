@@ -10,6 +10,7 @@ export interface LedgerDatePickerProps {
   value: string;
   today: string;
   recordedDates: ReadonlySet<string>;
+  unreportedDates?: ReadonlySet<string>;
   onChange(date: string): void;
   onMonthChange?(month: string): void;
   onOpenChange?(open: boolean): void;
@@ -46,7 +47,7 @@ const DateTrigger = forwardRef<HTMLButtonElement, ComponentPropsWithoutRef<"butt
   );
 });
 
-function PickerPanel({ value, today, recordedDates, month, setMonth, select }: LedgerDatePickerProps & { month: string; setMonth(month: string): void; select(date: string): void }) {
+function PickerPanel({ value, today, recordedDates, unreportedDates, month, setMonth, select }: LedgerDatePickerProps & { month: string; setMonth(month: string): void; select(date: string): void }) {
   const moveMonth = (amount: number) => setMonth(format(addMonths(parseISO(`${month}-01`), amount), "yyyy-MM"));
   const yesterday = format(subDays(parseISO(today), 1), "yyyy-MM-dd");
 
@@ -65,15 +66,16 @@ function PickerPanel({ value, today, recordedDates, month, setMonth, select }: L
         <button type="button" onClick={() => select(today)} className="rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary-hover">今天</button>
         <button type="button" onClick={() => select(yesterday)} className="rounded-lg bg-secondary px-3 py-2 text-sm font-medium text-secondary-foreground hover:bg-accent">昨天</button>
       </div>
-      <MonthCalendar month={month} selected={value} today={today} recordedDates={recordedDates} onSelect={select} />
+      <MonthCalendar month={month} selected={value} today={today} recordedDates={recordedDates} unreportedDates={unreportedDates} onSelect={select} />
       <p className="rounded-lg bg-accent px-3 py-2 text-center text-sm font-medium text-accent-foreground">
         {recordedDates.has(value) ? "编辑已有记录" : "补记历史记录"}
       </p>
+      {unreportedDates && unreportedDates.size > 0 && <p className="text-center text-sm text-violet-800">紫色圆点：未统计（金额未知）</p>}
     </div>
   );
 }
 
-export function LedgerDatePicker({ value, today, recordedDates, onChange, onMonthChange, onOpenChange }: LedgerDatePickerProps) {
+export function LedgerDatePicker({ value, today, recordedDates, unreportedDates, onChange, onMonthChange, onOpenChange }: LedgerDatePickerProps) {
   const [open, setOpen] = useState(false);
   const [month, setMonth] = useState(value.slice(0, 7));
   const reportedMonth = useRef<string | null>(null);
@@ -103,7 +105,7 @@ export function LedgerDatePicker({ value, today, recordedDates, onChange, onMont
     onChange(date);
     setPickerOpen(false);
   };
-  const panel = <PickerPanel value={value} today={today} recordedDates={recordedDates} onChange={onChange} month={month} setMonth={setMonth} select={select} />;
+  const panel = <PickerPanel value={value} today={today} recordedDates={recordedDates} unreportedDates={unreportedDates} onChange={onChange} month={month} setMonth={setMonth} select={select} />;
 
   if (desktop) {
     return (

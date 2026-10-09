@@ -12,6 +12,7 @@ function CardShell({ title, children }: { title: string; children: React.ReactNo
 function YesterdayCard({ card, backfillHref }: { card?: CardFor<"yesterday">; backfillHref?: string }) {
   if (!card || card.state === "unavailable") return <CardShell title="昨日"><p>昨日简报暂不可用</p></CardShell>;
   if (card.state === "missing") return <CardShell title="昨日"><p>昨日尚未记录</p>{backfillHref && <a className={buttonVariants({ variant: "outline", size: "sm" })} href={backfillHref}>补记昨日</a>}</CardShell>;
+  if (card.state === "unreported") return <CardShell title="昨日"><p>昨日未统计</p><p className="text-2xl font-semibold">—</p></CardShell>;
   const status = card.state === "rest" ? "昨日休息" : card.state === "early_closed" ? "昨日提前休息" : "昨日已记录";
   return <CardShell title="昨日"><p>{status}</p>{card.revenue !== null && <p className="text-2xl font-semibold">{formatWholeEuro(card.revenue)}</p>}</CardShell>;
 }

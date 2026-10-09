@@ -31,8 +31,8 @@ export function DailyLedgerTrend({ data }: { data: ChartsResponse }) {
   const comparisonMessage = comparison?.status === "comparable"
     ? `每日台账营业额较上期 ${comparison.change_percent! > 0 ? "+" : ""}${comparison.change_percent!.toFixed(1)}%`
     : comparison?.status === "zero_previous" ? "上期每日台账营业额为 0，不可比较增幅。"
-      : comparison?.status === "no_current_records" ? "本期没有已记录每日台账，不可比较。"
-        : comparison?.status === "no_previous_records" ? "上期没有已记录每日台账，不可比较。"
+      : comparison?.status === "no_current_records" ? "本期没有已统计每日台账，不可比较。"
+        : comparison?.status === "no_previous_records" ? "上期没有已统计每日台账，不可比较。"
           : "暂无每日台账同期数据，不可比较。";
 
   return <section aria-label="每日台账营业额趋势" className="grid min-w-0 gap-2">
@@ -48,7 +48,7 @@ export function DailyLedgerTrend({ data }: { data: ChartsResponse }) {
           <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
           <XAxis dataKey="date" tickFormatter={(date: string) => date.slice(8)} minTickGap={26} tick={{ fontSize: 12 }} />
           <YAxis width={52} tick={{ fontSize: 12 }} tickFormatter={formatCompactEuro} />
-          <Tooltip content={({ active, payload }) => {
+          <Tooltip filterNull={false} content={({ active, payload }) => {
             const row = payload?.[0]?.payload as typeof rows[number] | undefined;
             return active && row ? <div className="max-w-60 rounded-md border bg-white p-3 text-sm shadow-sm"><p>本期 {readable(row.date)}</p><p>上期 {readable(row.previousDate, true)}</p></div> : null;
           }} />
