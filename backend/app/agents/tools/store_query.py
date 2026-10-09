@@ -126,7 +126,7 @@ def serialized_size(value):
     return len(json.dumps(value, ensure_ascii=False, allow_nan=False))
 
 
-async def execute_target(session, context, store, target):
+async def execute_target(session, context, store, target, hard_capacity):
     metadata = fields_for(store, target.domain)
     requested = set(target.fields) | {f.field for f in target.filters} | {o.field for o in target.order_by}
     if not requested.issubset(metadata):
@@ -177,7 +177,7 @@ async def execute_target(session, context, store, target):
             raise QueryError("row_too_large", "单完整行超过工具硬容量，未截断字段或事件。", required_chars=row_size)
         result["rows"].append(values)
         if serialized_size(result) > context.remaining_result_chars:
-            code = "context_capacity" if context.remaining_result_chars < 12000 else "result_capacity_exceeded"
+            code = "context_capacity" if context.remaining_result_chars < hard_capacity else "result_capacity_exceeded"
             raise QueryError(code, "完整结果无法装入本轮容量；未返回截断明细。",
                              matched_count=result["matched_count"], selected_count=result["selected_count"], range=dates["range"])
     result["page_range"] = {"start": 1 if result["rows"] else 0, "end": len(result["rows"])}
@@ -196,8 +196,13 @@ async def store_query(session, context, arguments):
     for index, raw in enumerate(arguments.targets):
         try:
             target = QueryTarget.model_validate(raw)
-            available = min(12000, context.remaining_result_chars) - serialized_size(response) - 250 * (len(arguments.targets) - index)
-            result = await execute_target(session, replace(context, remaining_result_chars=max(0, available)), store, target)
+            overhead = serialized_size(response) + 250 * (len(arguments.targets) - index)
+            hard_capacity = 12000 - overhead
+            available = min(12000, context.remaining_result_chars) - overhead
+            if available < 700:
+                raise QueryError("context_capacity" if context.remaining_result_chars < 12000 else "result_capacity_exceeded",
+                                 "完整目标元数据及单行空间不足，当前目标未查询。")
+            result = await execute_target(session, replace(context, remaining_result_chars=available), store, target, hard_capacity)
         except (ValidationError, ValueError, OverflowError) as exc:
             if isinstance(exc, QueryError):
                 result = {"id": raw["id"], "status": "failed", "error": exc.code,
@@ -207,7 +212,8 @@ async def store_query(session, context, arguments):
                           "message": "字段、筛选、范围或参数组合不符合已上线目录。"}
         candidate = {**response, "targets": [*response["targets"], result]}
         if serialized_size(candidate) > min(12000, context.remaining_result_chars):
-            result = {"id": raw["id"], "status": "failed", "error": "context_capacity",
+            result = {"id": raw["id"], "status": "failed", "error": (
+                "context_capacity" if context.remaining_result_chars < 12000 else "result_capacity_exceeded"),
                       "message": "整个批量剩余容量不足，未截断当前目标。"}
         response["targets"].append(result)
     succeeded = sum(r["status"] in ("complete", "unavailable") for r in response["targets"])

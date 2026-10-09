@@ -157,8 +157,11 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
                 results=results, catalogs=storage.catalogs,
             )
             result = await tools.execute(call, storage, context)
-            if call.name == "store_query" and plan.kind == "query":
-                # Failure receipts also support an honest failure explanation, never a numeric claim.
+            if (call.name == "store_query" and plan.kind == "query"
+                    and result.get("status") in ("complete", "partial")
+                    and any(target.get("status") in ("complete", "unavailable")
+                            for target in result.get("targets", []))):
+                # Only successful server results can ground business prose; errors remain receipts.
                 evidence.append(TurnEvidence(state["scope"], state["run_id"], state["generation"],
                                              ("query", "query"), ("query", "query"), call.id))
             # Reauthorizes after execution; reset/stopped/revoked runs cannot publish.

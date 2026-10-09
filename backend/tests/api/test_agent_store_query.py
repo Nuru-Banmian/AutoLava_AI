@@ -77,7 +77,7 @@ async def test_catalog_and_top_five_preserve_complete_events(tmp_path):
 
 def cached_catalog(model):
     from tests.api.test_agent_tools import background
-    return background(model.messages[-1])["data_catalog"]
+    return background(model.messages[-1]).get("data_catalog")
 
 
 async def test_second_turn_reuses_catalog_but_reads_new_history_boundary(tmp_path):
@@ -119,7 +119,9 @@ async def test_changed_config_rejects_entire_batch_and_invalidates_cached_descri
         assert (await ask(client))["status"] == "completed"
         updated = await client.patch("/api/admin/stores/1", json={"wash_count_enabled": False})
         assert updated.status_code == 200, updated.text
-        assert (await ask(client))["status"] == "completed"
+        failed_run = await ask(client)
+        assert failed_run["status"] == "failed" and failed_run["error_code"] == "grounding_unavailable"
+        assert "目录失效，整批未执行" not in failed_run["output"]
         assert cached_catalog(model) is None
         assert model.results[-1]["error"] == "catalog_stale"
         assert "targets" not in model.results[-1]
@@ -201,7 +203,7 @@ async def test_many_full_events_fail_without_truncation_and_keep_small_target(tm
         result = model.results[-1]
         assert result["status"] == "partial", result
         failed, success = result["targets"]
-        assert failed["error"] in ("context_capacity", "result_capacity_exceeded")
+        assert failed["error"] == "result_capacity_exceeded"
         assert "rows" not in failed
         assert success["rows"] == [{"date": "2026-07-01"}]
         assert success["matched_count"] == 10 and success["selected_count"] == 1
@@ -323,3 +325,97 @@ async def test_catalog_cache_isolated_by_user_store_and_reset_generation(tmp_pat
                                       "generation": 0, "content": "查门店乙"})
         assert submitted.status_code == 202
         assert (await completed(client, submitted.json()["id"], store=2))["error_code"] == "grounding_unavailable"
+
+
+async def test_failed_query_cannot_publish_fabricated_business_value(tmp_path):
+    model = QueryModel([("store_data_catalog", {}), query([
+        {"id": "bad", "domain": "daily_ledger", "fields": ["password"]},
+    ]), "本轮营业额999欧元。"])
+    async with chat_app(tmp_path, model) as (client, _, _):
+        run = await ask(client)
+        assert run["status"] == "failed" and run["error_code"] == "grounding_unavailable"
+        assert "999" not in run["output"]
+        history = (await client.get("/api/agent/1/conversation")).json()
+        assert history["messages"][-1]["role"] == "user"
+
+
+async def test_default_planning_does_not_advertise_legacy_business_route(tmp_path):
+    class InspectPlan(QueryModel):
+        async def stream_plan(self, messages, tools):
+            enum = tools[0]["function"]["parameters"]["properties"]["kind"]["enum"]
+            assert enum == ["general", "clarify", "query"]
+            async for call in super().stream_plan(messages, tools):
+                yield call
+    model = InspectPlan([("store_data_catalog", {}), query([
+        {"id": "ok", "domain": "daily_ledger", "fields": ["date"]},
+    ]), "默认查询完成。"])
+    async with chat_app(tmp_path, model) as (client, _, _):
+        assert (await ask(client))["status"] == "completed"
+
+
+async def test_stale_catalog_refresh_retry_obtains_real_new_query_evidence(tmp_path):
+    remembered = {}
+    def first(m):
+        remembered.update(catalog(m))
+        return ("store_query", {"catalog_version": remembered["catalog_version"], "targets": [
+            {"id": "first", "domain": "daily_ledger", "fields": ["date"]}]})
+    model = QueryModel([("store_data_catalog", {}), first, "首次完成。"])
+    async with chat_app(tmp_path, model) as (client, _, _):
+        assert (await ask(client))["status"] == "completed"
+        assert (await client.patch("/api/admin/stores/1", json={"wash_count_enabled": False})).status_code == 200
+        model.actions = iter([
+            lambda m: ("store_query", {"catalog_version": remembered["catalog_version"], "targets": [
+                {"id": "stale", "domain": "daily_ledger", "fields": ["date"]}]}),
+            ("store_data_catalog", {}), query([{"id": "retry", "domain": "daily_ledger", "fields": ["date"]}]),
+            "已刷新目录并重新查询。",
+        ])
+        run = await ask(client)
+        assert run["status"] == "completed", run
+        assert model.results[1]["error"] == "catalog_stale"
+        assert model.results[-1]["status"] == "complete"
+        assert "wash_count" not in catalog(model)["domains"]["daily_ledger"]["fields"]
+
+
+@pytest.mark.parametrize("bad_batch", [
+    {"targets": [{"id": "same", "domain": "daily_ledger", "fields": ["date"]}] * 2},
+    {"targets": [{"id": str(i), "domain": "daily_ledger", "fields": ["date"]} for i in range(7)]},
+    {"targets": [{"id": "one", "domain": "daily_ledger", "fields": ["date"]}], "store_id": 2},
+])
+async def test_invalid_batch_is_rejected_without_business_answer(tmp_path, bad_batch):
+    model = QueryModel([("store_data_catalog", {}),
+        lambda m: ("store_query", {"catalog_version": catalog(m)["catalog_version"], **bad_batch}),
+        "伪造业务合计999欧元。"])
+    async with chat_app(tmp_path, model) as (client, _, _):
+        run = await ask(client)
+        assert run["error_code"] == "grounding_unavailable"
+        assert model.results[-1]["error"] == "invalid_tool_arguments"
+        assert "999" not in run["output"]
+
+
+@pytest.mark.parametrize("today,selection,expected", [
+    ("2026-10-05", {"preset": "this_week"}, ("2026-10-05", "2026-10-05")),
+    ("2026-10-05", {"preset": "last_week"}, ("2026-09-28", "2026-10-04")),
+    ("2026-03-01", {"preset": "last_month"}, ("2026-02-01", "2026-02-28")),
+    ("2024-03-01", {"preset": "last_month"}, ("2024-02-01", "2024-02-29")),
+    ("2026-01-01", {"preset": "last_year"}, ("2025-01-01", "2025-12-31")),
+    ("2026-10-09", {"preset": "last_n_complete_days", "n": 3}, ("2026-10-06", "2026-10-08")),
+    ("2026-10-09", {"preset": "last_n_days", "n": 3}, ("2026-10-07", "2026-10-09")),
+    ("2026-10-09", {"preset": "last_n_complete_weeks", "n": 2}, ("2026-09-21", "2026-10-04")),
+    ("2026-10-09", {"preset": "last_n_weeks", "n": 2}, ("2026-09-28", "2026-10-09")),
+    ("2026-10-09", {"preset": "same_period_last_year", "base": {"start": "2025-02-01", "end": "2025-02-28"}}, ("2024-02-01", "2024-02-29")),
+])
+async def test_local_calendar_edges_through_chat(tmp_path, monkeypatch, today, selection, expected):
+    from datetime import datetime
+    import app.agents.tools.store_catalog as module
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls.fromisoformat(today + "T12:00:00").replace(tzinfo=tz)
+    monkeypatch.setattr(module, "datetime", Clock)
+    model = QueryModel([("store_data_catalog", {}), query([
+        {"id": "calendar", "domain": "daily_ledger", "fields": ["date"], "range": selection},
+    ]), "已解析当地日期范围。"])
+    async with chat_app(tmp_path, model) as (client, _, _):
+        run = await ask(client)
+        assert run["status"] == "completed", run
+        assert model.results[-1]["targets"][0]["range"] == {"start": expected[0], "end": expected[1]}

@@ -29,13 +29,14 @@ class ChatRepository:
         async with self.sessions() as session:
             await self.authorize_run(session, scope, run_id)
             store = await session.get(Store, scope.store_id)
+            cached = self.catalogs.get(scope, (await self._run(session, scope, run_id)).generation, version(store))
             return {
                 "source": "stores.description", "store_id": store.id,
                 "revision": store.description_revision, "description": store.description,
                 "wash_count_enabled": store.wash_count_enabled,
                 "company_settlement_enabled": store.company_settlement_enabled,
                 "timezone": store.timezone,
-                "data_catalog": self.catalogs.get(scope, (await self._run(session, scope, run_id)).generation, version(store)),
+                **({"data_catalog": cached} if cached is not None else {}),
                 "local_date": datetime.now(ZoneInfo(store.timezone)).date().isoformat(),
                 "memories": [],
                 "memory_retrieval": "unavailable",
