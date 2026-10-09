@@ -15,8 +15,12 @@
 ## 当前验证
 
 - 已通过：最新发布源码前端限定七文件 106 项；TypeScript 与 Vite 构建；Ruff。覆盖 Agent 聊天、记忆面板、图表及 #279 受影响管理和门店范围界面。
-- 后端：受影响 Agent/Memory 两个限定切片正在验收，最终结果在提交前补齐。执行 Python 始终设置 `PYTHONPATH` 为发布隔离工作区的 backend；隔离虚拟环境补装远端所需 Qdrant，未改变原目录虚拟环境。
+- 后端限定切片：图表、query contract、记忆隔离/任务、持久 Qdrant 与供应商参数为 116 passed / 1 failed（227.05 秒）；聊天、查询、工具、容量、历史图表、分组与记忆拒绝为 122 passed / 1 failed（276.78 秒）。两个失败分别是降级移除权限字段、显式 None thinking 参数不兼容。修复后定点复测：保存图表拒绝降级并保留 HTTP 访问 1 passed（8.56 秒）；thinking 参数及独立 Agent HTTP/SSE 验收 9 passed（22.19 秒）。这是切片及失败点复测，不相加，也不宣称修复后重跑整个 Agent/Memory 范围。
+- 执行 Python 始终设置 `PYTHONPATH` 为发布隔离工作区的 backend；隔离虚拟环境补装远端所需 Qdrant，未改变原目录虚拟环境。
 - 首轮红项：供应商 thinking 参数兼容、缺失公共测试辅助函数和未安装 Qdrant；保存于证据目录 `release-focused-backend-red.txt`，不计为通过。整合时的 UI 冲突残留已修复，构建随后通过。
+- GitHub CI 首轮 `37996796402`：契约通过；HTTP 3 失败/14 通过，浏览器 4 失败/2 通过。旧员工创建夹具未指定新合同要求的 manager_id；Agent 验收解析 JSON 未处理新增的明确数据来源尾注。修正夹具为通过登录后的 auth/me 选择主管理员，保留全部权限拒绝断言；解析器验证精确来源尾注后读取 JSON，不吞掉任意文本。红日志分别为 `release-ci-backend-red.txt`、`release-ci-browser-red.txt`。合并要求最终 HEAD 的完整 CI 成功，结果以 PR #280 的检查记录为准。
+- 迁移新增提前降级拒绝检查：存在保存图表时，在移除管理员授权结构前拒绝，避免 SQLite 后续图表拒绝降级却已留下部分 DDL 变更。回归同时验证拒绝后原图仍可通过已认证 HTTP 读取。
+- 原目录最终保全：30 个 Agent 文件加两个六入口 UI 文件共 32 个归一化哈希均匹配交接清单，见 `release-original-preservation.json`。未回写发布整合结果到原目录。
 - 仍存在：历史真实模型回答中未知值解释、内部图表 ID 和重复/混杂提示等文本问题，不能宣称完整自然语言语义全部通过。
 - 未验证：整合后全部真实模型场景、真实记忆生命周期、重启后业务页面省略式追问、Docker/HTTPS 发布及生产数据库。既有真实模型和只读页面结果来自交接记录，不冒充本轮新验收。
 
