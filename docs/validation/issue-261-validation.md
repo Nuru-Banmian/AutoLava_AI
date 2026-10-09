@@ -1,6 +1,6 @@
 # Issue #261 验证记录
 
-- 当前阶段：核心实现完成，完整回归运行中；下一步：桌面/窄屏浏览器、两轴审查与交付。
+- 当前阶段：本地实现、修复、验证和两轴审查完成；下一步：PR的Linux完整CI、按准确head合并、关闭#261及远端回读。
 - 永久审查基线：`3ecb5ee26105b17e7e8417e03c4251bf114114d4`。
 - 分支：`codex/issue-261-tool-context-calculate`。
 - 权威：[父规格 #260](https://github.com/Nuru-Banmian/AutoLava_AI/issues/260)、[当前票 #261](https://github.com/Nuru-Banmian/AutoLava_AI/issues/261)，正文及评论已读取（两票无评论）。
@@ -8,15 +8,20 @@
 - 授权：本地提交、PR、必要 CI 后准确 head 合并、关闭 #261；不关闭 #260，不部署，不调用付费真实供应商。
 - 原工作区及其数据库、.env、无关未提交文档保持原位。本 worktree 初始 HEAD 为旧 `ef0deba`，实施前已更新到上述基线。
 - 受控模型：迁移临时 SQLite + 真实登录/聊天/真实工具，四则39项通过（58.53s），覆盖精确小数、1/3及中间Inexact、优先级/括号、全部语法与规模拒绝、注入和额外参数。该记录为接入统一上下文前阶段结果；最终回归以完整套件为准。
-- 红绿：最初 calculate 返回 tool_not_authorized（1 failed）；注册实现后首例通过。513字符原先返回成功（规模红测试）；加入边界后上述39项通过。上下文探针原入口 internal_error（1 failed）；统一上下文后该例通过。SSE除零进度缺少error_code/message（1 failed）；已同步事件与前端显示，最终回归待核对。
+- 红绿：最初 calculate 返回 tool_not_authorized（1 failed）；注册实现后首例通过。513字符原先返回成功（规模红测试）；加入边界后上述39项通过。上下文探针原入口 internal_error（1 failed）；统一上下文后该例通过。SSE除零进度缺少error_code/message（1 failed）；同步事件与前端显示后公开工具回归及本票浏览器通过。
 - 环境失败：原工作区Python缺少pytest；在本worktree用锁定依赖创建独立.venv修正，原目录未更改。
-- 中间回归：上下文/旧工具共24 passed、3 failed。失败为旧工具清单未加入calculate，以及新增测试错把logout的204当200、错误尝试通过PATCH恢复停用门店（404）；已修正预期。stop/reset迟到结果、上下文绑定已通过。撤权/注销修正后待最终套件确认。
-- 未验证：最终完整回归、类型检查、两轴审查、真实浏览器、真实供应商、生产、远端交付。没有付费真实服务调用或生产验证。
+- 中间回归：上下文/旧工具共24 passed、3 failed。失败为旧工具清单未加入calculate，以及新增测试错把logout的204当200、错误尝试通过PATCH恢复停用门店（404）；修正预期后以下66项通过。
+- 未验证：真实供应商自然语言路由/内容质量、Docker、生产/负载。没有付费真实服务调用或生产验证。远端交付将在PR/CI后回读并报告。
 - 接入上下文后的公开工具回归：66 passed，122.04s（包含stop/reset、门店停用和登录注销期间工具执行迟到结果不发布）。
 - 完整后端首轮：9 failed、672 passed、10 warnings，420.81s。7项为既有grounding测试的注入适配器使用旧execute签名；已改为ToolContext，原断言保持，单文件24 passed/39.45s。1项为新增全局计算文案使原8000字符预算的6000字消息失败；已将计算文案放入实际工具schema，不增加预算或削减当前消息。1项test_real_persistence_restart_rebuild_and_configuration_switch为SQLite database is locked，保留原失败，等待聚焦及完整复验，不冒称已证明是基线问题。
 - 前端完整测试：37文件、380 passed；npm run build（含tsc -b）通过。Ruff全仓通过。OpenAPI导出check通过；重新生成前端API类型后无diff，本票不改变HTTP模型/数据库schema；模型工具schema和SSE扩展已在README及公开测试同步。
 - 前端浏览器完整回归：96 passed、20 skipped/2.2m。跳过为环境变量控制的其他live场景，不能算通过。
 - 本票真实浏览器：Playwright CLI、Chrome、临时迁移SQLite/真实登录/真实聊天服务/受控模型，1440x900精确0.1+0.2及“已完成计算”；390x844除零原因、1/3有限表示、刷新后原结果保持。documentWidth=390，发送按钮366x44且可滚动实际点击。截图与快照位于OS临时目录`C:\Users\1\AppData\Local\Temp\autolava-issue261-live\.playwright-cli\`。不将此作为真实供应商内容质量证明。
 - 浏览器环境失败：临时seed最初缺income_items_enabled导致NOT NULL，补齐后启动。控制台favicon404、登录前me401和首页无记录404保留；后台取消清理出现SQLite连接关闭警告，不影响已核对聊天输出，但不能宣称无警告。
-- Standards/Spec只读并行审查：对345a79b各0项发现；后续回归修正及最终证据将再覆盖审查。永久基线不变。
+- 修复后聚焦复验：8000字符预算/6000字消息及SQLite锁失败项2 passed/15.76s；原失败保留，不宣称消除了所有SQLite负载风险。
+- Windows完整后端最终重跑：680 passed、1 failed、11 warnings/382.57s；唯一失败为未改动的test_historical_weather_resumes_after_process_restart中的database is locked。本票新增计算/上下文和全部grounding/原聊天预算测试均通过。天气失败单独复验1 passed/17.43s；不能以单测复验冒称Windows并行完整套件通过。覆盖率88%，超过既有85%门槛。合并仍须PR的Linux完整CI所有检查通过。
+- 最终Ruff、OpenAPI export --check和git diff --check通过。无新迁移/HTTP类型变化；前端生成类型已验证无漂移。警告主要为SQLite连接ResourceWarning；本地Windows并发锁问题保留为限制，没有修改天气、向量库等无关运行逻辑。
+- 预期实现提交：345a79b（上下文/计算/SSE/前端文案/公开测试）、ea144d6（保留小上下文及旧grounding适配器），验证证据提交另见本分支git log。
+- 本地诊断保留于`C:\Users\1\AppData\Local\Temp\autolava-issue261-live\`；浏览器服务/CLI已关闭，8011/4179监听已消失。临时SQLite/截图保留，未声称全部临时文件删除。
+- Standards/Spec只读并行审查：相对永久基线，完整覆盖345a79b+ea144d6，各0项发现；最终证据追加后再核对文档。永久基线不变。
 - handoff：尚未生成；无法读取准确上下文百分比，不虚构百分比。
