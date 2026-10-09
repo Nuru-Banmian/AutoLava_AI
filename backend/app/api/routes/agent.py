@@ -9,7 +9,7 @@ from app.agents.context import ChatScope
 from app.api.deps import Session, StoreAccess, require_admin, require_store_access
 from app.models.identity import User
 from app.core.database import end_read_transaction
-from app.schemas.agent import ChatConversation, ChatGeneration, ChatRun, ChatSubmit
+from app.schemas.agent import ChatChart, ChatConversation, ChatGeneration, ChatRun, ChatSubmit
 from app.schemas.memory import MemoryList, MemorySourceList, MemoryItem, MemoryCorrection, MemoryVersion, MemoryClear
 from app.schemas.memory import MemoryIndexStatus, MemoryIndexScheduled
 from app.schemas.memory import MemoryConfirmation, MemoryJobList
@@ -96,6 +96,11 @@ async def clear_memories(payload: MemoryClear, request: Request, scope: Scope):
 @router.get("/conversation", response_model=ChatConversation)
 async def conversation(request: Request, scope: Scope, before: int | None = Query(None, ge=1)):
     return await request.app.state.agent_runner.storage.conversation(scope, before)
+
+
+@router.get("/messages/{message_id}/charts/{chart_id}", response_model=ChatChart)
+async def chart_snapshot(message_id: int, chart_id: str, request: Request, scope: Scope):
+    return await request.app.state.agent_runner.storage.chart(scope, message_id, chart_id)
 
 
 @router.post("/messages", response_model=ChatRun, status_code=202)

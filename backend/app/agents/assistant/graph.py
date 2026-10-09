@@ -103,6 +103,7 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
         query_failures = {}
         capacity_requests = set()
         query_started = False
+        chart_failures = []
 
         def partial_completion():
             selected = read = 0
@@ -123,6 +124,9 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
             if capacity_requests:
                 parts.append(f"有{len(capacity_requests)}个查询请求未完成，原因：context_capacity。"
                              "此前已成功读取的结果保留。")
+            if chart_failures:
+                parts.append("有图表请求未生成，原因：" + "、".join(sorted(set(chart_failures)))
+                             + "。仅随已完成回答保存成功准备的图表。")
             return "本轮查询仅部分完成：" + "".join(parts) if parts else ""
 
         async def response(input_messages, schemas, *, planning=False):
@@ -194,6 +198,8 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
                 remaining_context_chars=remaining_context,
             )
             result = await tools.execute(call, storage, context)
+            if call.name == "store_chart" and result.get("error"):
+                chart_failures.append(result["error"])
             context_capacity = result.get("error") == "context_capacity" or any(
                 target.get("error") == "context_capacity" for target in result.get("targets", []))
             if call.name in ("store_query", "store_chart"):
@@ -238,6 +244,8 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
                     "计算请求参数无效，请使用表达式参数。" if result["error"] == "invalid_tool_arguments"
                     else result.get("message", "计算请求未获执行。")
                 )} if call.name == "calculate" and "error" in result else {}),
+                **({"error_code": result["error"], "message": result.get("message", "图表请求未获执行。")}
+                   if call.name == "store_chart" and "error" in result else {}),
             })
             messages.append({"role": "tool", "tool_call_id": call.id,
                              "content": json.dumps(result, ensure_ascii=False)})

@@ -276,5 +276,7 @@ range选择 `{start,end}`、`{preset,n?}` 或 `{all_history:true}`；省略默�
 批量状态complete/partial/failed；参数失败保留其他成功目标，权限/代际失败终止整轮。
 新查询可指定page_size（默认50、1–200）。每个成功目标返回result_ref、page_range、has_more、next_cursor，以及累计read_range/read_ranges/unread_range/unread_ranges；rows仅包含本页完整选中字段。统计和matched_count来自全部匹配，selected_count为显式top_n后总量。比较分组两侧按相同位置完整成对装页，row_count/page_range/读进度以逻辑行对计，comparison保留各自统计及页范围。
 续页输入为`{"continuations":[{"result_ref":"...","cursor":"...","page_size":50}]}`，至多6个唯一引用；不附catalog_version/targets/字段/范围。随机引用及HMAC游标绑定管理员、门店、登录身份、run、generation、查询/数据摘要及稳定顺序；续页只读原快照，并重新验证当前授权。并发编辑、删除、插入以及目录版本变化不改变该快照；跨范围、已结束或篡改引用拒绝。
-整个批量单次正文最多12,000字符，并受累计剩余模型容量限制，按完整行分配；单行硬超量返回row_too_large及required_chars。context_capacity保留同ref、计数、已读/未读与可续页状态，已读内容不删改；最终回答及SSE明确部分完成。全部临时快照每run合计4 MiB，完整物化失败返回result_capacity_exceeded，保留同批成功目标及全匹配统计，不以首批代替汇总。每次续页计入既有工具次数。结束/停止/重置/撤权清理；重启沿既有中断策略，不重查、不自动调用模型。图表由后续工单接入。
+整个批量单次正文最多12,000字符，并受累计剩余模型容量限制，按完整行分配；单行硬超量返回row_too_large及required_chars。context_capacity保留同ref、计数、已读/未读与可续页状态，已读内容不删改；最终回答及SSE明确部分完成。全部临时快照每run合计4 MiB，完整物化失败返回result_capacity_exceeded，保留同批成功目标及全匹配统计，不以首批代替汇总。每次续页计入既有工具次数。结束/停止/重置/撤权清理；重启沿既有中断策略，不重查、不自动调用模型。聊天折线图引用同轮完整查询快照；未知处断线、真实零保留，随最终消息原子保存。悬浮或点选查看准确值，刷新恢复历史快照。
 新工具只经过聊天调用，不新增公开执行工具API。OpenAPI及生成前端类型仍需核对，但本票没有新增HTTP请求/响应模型。
+
+图表读取：`GET /api/agent/{store_id}/messages/{message_id}/charts/{chart_id}`，按当前管理员、门店和消息关联授权；history/SSE只含图描述。每回复最多8图、每图96 KiB、累计512 KiB，草稿仅在成功完成时发布，停止/重置/失败不发布。不同单位分图，长趋势分段与其他图型由#267实现，历史追问与滚动懒加载由#268实现。

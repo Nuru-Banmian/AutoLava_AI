@@ -16,8 +16,9 @@ import httpx
 import respx
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy import event
 
-from app.core.database import get_session, sqlite_url
+from app.core.database import configure_sqlite, get_session, sqlite_url
 from app.main import create_app
 from app.core.config import Settings
 from app.agents.providers.bailian import BailianChat
@@ -88,6 +89,7 @@ async def chat_app(tmp_path, model, *, historical_messages=0, memory_model=None,
                     db.execute("INSERT INTO agent_messages (conversation_id, role, content) "
                                "VALUES (1, 'user', ?)", (f"更多历史{number}",))
     engine = create_async_engine(sqlite_url(database))
+    event.listen(engine.sync_engine, "connect", configure_sqlite)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     app = create_app(session_factory=factory, agent_model=model, memory_model=memory_model,
                      embedding=embedding, vectors=vectors,

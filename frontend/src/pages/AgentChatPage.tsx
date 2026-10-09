@@ -6,6 +6,7 @@ import type { components } from "@/api/generated";
 import { useAuth } from "@/auth/AuthProvider";
 import { currentSessionScope } from "@/auth/sessionScope";
 import { Button } from "@/components/ui/button";
+import { AgentChart } from "@/components/AgentChart";
 import { useStore } from "@/stores/StoreProvider";
 import { AgentMemoryPanel } from "./AgentMemoryPanel";
 
@@ -115,11 +116,13 @@ function Chat({ storeId }: { storeId: number }) {
         store_data_catalog: "已发现可查询数据",
         store_query: "已执行针对性查询",
         calculate: "已完成计算",
+        store_chart: "已准备图表，完成后保存",
       };
       const text = data.status === "completed"
         ? (labels[data.name] ?? "查询已完成") + (data.range ? `：${data.range.start} 至 ${data.range.end}` : "")
         : (data.name === "store_query" ? `${data.status === "partial" ? "查询部分完成" : "查询未完成"}：${data.message ?? "请查看逐项结果。"}`
-          : data.name === "calculate" ? `计算未完成：${data.message ?? "请求未获执行。"}` : "本次工具请求未获执行");
+          : data.name === "calculate" ? `计算未完成：${data.message ?? "请求未获执行。"}`
+          : data.name === "store_chart" ? `图表未生成：${data.message ?? "请求未获执行。"}` : "本次工具请求未获执行");
       setActivity({ runId, text });
     });
     source.addEventListener("delta", (event) => {
@@ -191,7 +194,8 @@ function Chat({ storeId }: { storeId: number }) {
     try {
       const history = await api<Conversation>(`${base}/conversation?before=${conversation.next_before}`);
       if (valid(version)) setConversation((previous) => previous && {
-        ...previous, messages: [...history.messages, ...previous.messages], next_before: history.next_before,
+        ...previous, messages: [...history.messages.filter((message) => !previous.messages.some((old) => old.id === message.id)),
+          ...previous.messages], next_before: history.next_before,
       });
     } catch (cause) {
       if (valid(version)) setError(friendlyApiError(cause, "历史对话加载失败，请重试"));
@@ -246,6 +250,8 @@ function Chat({ storeId }: { storeId: number }) {
       {conversation?.messages.map((message) => <article key={message.id} className="min-w-0 rounded-xl border bg-card p-4">
         <p className="mb-2 text-sm font-semibold text-muted-foreground">{message.role === "user" ? "你" : "AI 助手"}</p>
         <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{message.content}</p>
+        {[...new Map((message.charts ?? []).map((chart) => [chart.chart_id, chart])).values()].map((chart) =>
+          <AgentChart key={chart.chart_id} storeId={storeId} messageId={message.id} description={chart} />)}
       </article>)}
       {conversation?.run && status !== "completed" && <article className="min-w-0 rounded-xl border bg-card p-4">
         <p className="mb-2 text-sm font-semibold">AI 助手</p>

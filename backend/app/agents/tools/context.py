@@ -22,6 +22,8 @@ class ResultRepository(Protocol):
     def lookup_cursor(self, reference: str, cursor: str) -> tuple[dict, int] | None: ...
     def record_read(self, reference: str, start: int, end: int) -> None: ...
     def read_ranges(self, reference: str) -> list[dict[str, int]]: ...
+    def prepare_charts(self, drafts: list[dict]) -> None: ...
+    def prepared_charts(self) -> list[dict]: ...
     def clear(self) -> None: ...
 
 
@@ -36,6 +38,8 @@ class RunResults:
         self._read: dict[str, list[tuple[int, int]]] = {}
         self._size = 0
         self._closed = False
+        self._charts: list[dict] = []
+
         self._secret = secrets.token_bytes(32)
         owner = {"scope": asdict(scope) if scope is not None else None,
                  "run_id": run_id, "generation": generation}
@@ -123,6 +127,16 @@ class RunResults:
         self._read.clear()
         self._size = 0
         self._secret = b""
+        self._charts.clear()
+
+    def prepare_charts(self, drafts: list[dict]) -> None:
+        if (self._closed or len(drafts) > 8 or len(self._charts) + len(drafts) > 8
+                or sum(item["byte_size"] for item in [*self._charts, *drafts]) > 512 * 1024):
+            raise ValueError("chart_capacity_exceeded")
+        self._charts.extend(json.loads(json.dumps(drafts, ensure_ascii=False, allow_nan=False)))
+
+    def prepared_charts(self) -> list[dict]:
+        return json.loads(json.dumps(self._charts, ensure_ascii=False, allow_nan=False))
 
 
 class TemporaryResults:
