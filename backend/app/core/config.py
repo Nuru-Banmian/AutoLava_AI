@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     agent_chat_base_url: str = ""
     agent_chat_api_key: SecretStr = SecretStr("")
     agent_chat_model: str = ""
-    agent_chat_enable_thinking: bool = False
+    agent_chat_enable_thinking: bool | None = False
     agent_memory_base_url: str = ""
     agent_memory_api_key: SecretStr = SecretStr("")
     agent_memory_model: str = ""

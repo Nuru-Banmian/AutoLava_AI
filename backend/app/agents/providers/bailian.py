@@ -67,8 +67,9 @@ class BailianChat:
                     "max_tokens": settings.agent_output_tokens,
                     **({"tools": tools, "parallel_tool_calls": False} if tools else {}),
                     **({"enable_thinking": settings.agent_chat_enable_thinking}
-                       if self.model_name.lower().startswith("qwen3")
-                       or "agent_chat_enable_thinking" in settings.model_fields_set else {}),
+                       if settings.agent_chat_enable_thinking is not None
+                       and (self.model_name.lower().startswith("qwen3")
+                            or "agent_chat_enable_thinking" in settings.model_fields_set) else {}),
                     **({"tool_choice": {"type": "function", "function": {"name": self.required_tool}},
                         "enable_thinking": False} if self.required_tool else {}),
                 }) as response:

@@ -68,6 +68,10 @@ def upgrade():
 
 
 def downgrade():
+    # SQLite DDL may persist before a later chart downgrade refuses. Fence
+    # here so saved snapshots keep their authorization schema and HTTP access.
+    if op.get_bind().scalar(sa.text("SELECT count(*) FROM agent_charts")):
+        raise RuntimeError("Cannot downgrade while saved chart snapshots exist")
     op.drop_table("employee_editors")
     op.drop_table("demo_imports")
     op.drop_table("permission_initializations")
