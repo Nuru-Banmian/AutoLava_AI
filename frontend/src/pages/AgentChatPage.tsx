@@ -112,11 +112,14 @@ function Chat({ storeId }: { storeId: number }) {
       const labels: Record<string, string> = {
         read_skill: "已读取经营分析技能", read_skill_resource: "已读取指标口径参考",
         store_overview: "已查询经营概览",
+        store_data_catalog: "已发现可查询数据",
+        store_query: "已执行针对性查询",
         calculate: "已完成计算",
       };
       const text = data.status === "completed"
         ? (labels[data.name] ?? "查询已完成") + (data.range ? `：${data.range.start} 至 ${data.range.end}` : "")
-        : (data.name === "calculate" ? `计算未完成：${data.message ?? "请求未获执行。"}` : "本次工具请求未获执行");
+        : (data.name === "store_query" ? `${data.status === "partial" ? "查询部分完成" : "查询未完成"}：${data.message ?? "请查看逐项结果。"}`
+          : data.name === "calculate" ? `计算未完成：${data.message ?? "请求未获执行。"}` : "本次工具请求未获执行");
       setActivity({ runId, text });
     });
     source.addEventListener("delta", (event) => {

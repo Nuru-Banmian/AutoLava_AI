@@ -150,17 +150,30 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
             if tool_count > settings.agent_max_tool_calls:
                 raise ModelFailure("tool_budget")
             empty_result = {"role": "tool", "tool_call_id": call.id, "content": ""}
+            remaining_context = max(0, settings.agent_context_chars
+                                    - context_size([*messages, empty_result]) - 3000)
             context = ToolContext(
                 scope=state["scope"], run_id=state["run_id"], generation=state["generation"],
-                remaining_result_chars=max(0, min(12000, settings.agent_context_chars
-                    - context_size([*messages, empty_result]) - 3000)),
-                results=results,
+                remaining_result_chars=min(12000, remaining_context),
+                results=results, catalogs=storage.catalogs,
+                remaining_context_chars=remaining_context,
             )
             result = await tools.execute(call, storage, context)
+            if (call.name == "store_query" and plan.kind == "query"
+                    and result.get("status") in ("complete", "partial")
+                    and any(target.get("status") in ("complete", "unavailable")
+                            for target in result.get("targets", []))):
+                # Only successful server results can ground business prose; errors remain receipts.
+                evidence.append(TurnEvidence(state["scope"], state["run_id"], state["generation"],
+                                             ("query", "query"), ("query", "query"), call.id))
             # Reauthorizes after execution; reset/stopped/revoked runs cannot publish.
             await storage.record(state["scope"], state["run_id"], "tool", {
                 "name": call.name if call.name in tools.tools else "unauthorized",
-                "status": "denied" if "error" in result else "completed",
+                "status": ("denied" if "error" in result or result.get("status") == "failed" else
+                           "partial" if result.get("status") == "partial" else "completed"),
+                **({"message": result.get("message", "查询目标未全部完成，请查看回复中的逐项说明。"),
+                    "error_code": result.get("error", "query_targets_failed")}
+                   if call.name == "store_query" and ("error" in result or result.get("status") in ("partial", "failed")) else {}),
                 **({"range": result["range"]} if "range" in result else {}),
                 **({"error_code": result["error"], "message": (
                     "计算请求参数无效，请使用表达式参数。" if result["error"] == "invalid_tool_arguments"
@@ -192,7 +205,7 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
         })
         if attempts >= settings.agent_max_steps:
             raise ModelFailure("step_budget")
-        if plan.kind == "business":
+        if plan.kind in ("business", "query"):
             if 1 + len(plan.queries) > settings.agent_max_tool_calls:
                 raise ModelFailure("tool_budget")
             skill = ToolCall(uuid4().hex, "read_skill", '{"skill":"store-analysis"}')
@@ -214,8 +227,9 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
                     "source": "AnalyticsService", "requested_range": query.model_dump(mode="json"),
                     "range": result["range"],
                 })
-            require_evidence(plan, evidence, state["scope"], state["run_id"], state["generation"])
-            remind_grounding()
+            if plan.kind == "business":
+                require_evidence(plan, evidence, state["scope"], state["run_id"], state["generation"])
+                remind_grounding()
         else:
             # Make the accepted route explicit without replaying a control-tool conversation.
             messages.insert(-1, {"role": "system", "content": (
@@ -235,7 +249,7 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
                              "tool_calls": [call.wire() for call in calls]})
             for call in calls:
                 await execute(call)
-            if any(call.name == "store_overview" for call in calls):
+            if any(call.name in ("store_overview", "store_query") for call in calls):
                 remind_grounding()
         raise ModelFailure("step_budget")
 

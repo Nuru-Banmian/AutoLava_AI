@@ -238,3 +238,28 @@ remaining_result_chars 每次执行按当前完整 messages、工具 schemas 及
 - 后端首次全量失败来自新增表/迁移版本的旧断言，随后更新预期；新增门店撤销测试曾错误假定归档门店可直接重新启用，已改为验收拒绝访问和迟到回答隔离。最终后端全量日志为 `.autolava-test/backend-240-verified.log`，先前失败保留在 `backend-240-final.log`。
 - 验证针对当前工作区，原有界面命名等未提交改动得到保留，未混入本任务提交。Standards / Spec 两个独立审查均为 0 项发现，基线为 `13228ea4`。
 - 真实百炼调用、向量存储/Embedding、模型内容质量、Docker 和生产部署：未执行。本地实际业务数据库只读核对迁移为 0022，未为本次测试升级或写入。
+
+
+## 针对性查询（#263）
+
+主模型发现工具为 `store_data_catalog` 与 `store_query`，另保留 `calculate`、受限技能读取。
+旧 `store_overview` 只在已发布旧计划/旧调用兼容时执行，不进入主模型默认工具 schema。
+新经营路由为 `query`：先读技能，再按有效目录一次批量查询，仅使用本轮工具证据回答。
+
+目录只发布已上线的 `daily_ledger`（每日台账）与 `income_items`（历史分类明细）。
+历史分类读取保存时名称及是否计入营业额，即使归档或分类记账关闭仍可查询；不把其他数据解释成成本/利润。
+目录按管理员/门店/聊天代际缓存，版本包含模式、时区、业务开关、分类配置revision。
+后续轮次复用有效描述，正式查询重新授权并读日期及数值；版本失效整批返回 `catalog_stale`。
+
+新查询包含 `catalog_version`、1–6个唯一id的 `targets`。每目标包含 domain、1–16个fields、可选range、filters、order_by、top_n。
+range选择 `{start,end}`、`{preset,n?}` 或 `{all_history:true}`；省略默认本月至今，全部历史无366天上限。
+预设名为today/yesterday/this_week/last_week/this_month/last_month/this_year/last_year、last_n_days/weeks/months及last_n_complete_days/weeks/months。
+`same_period_last_year`需提供base范围；自然月/年完整周期同比保持完整，其他按对应月日映射，短月/闰日截末不补点。
+最多8个AND筛选、2个排序、集合50项、关键词200字；top_n为1–100，添加日期/标识稳定顺序，未知值末尾。
+只投影所选字段及过滤排序依赖；金额/数量不加载公司结算。模型不能提供门店、身份、SQL、脚本或额外参数。
+
+结果包含requested_range/range/local_date/queried_at、字段类型单位口径、matched_count/selected_count、完整rows及独立目标状态。
+批量状态complete/partial/failed；参数失败保留其他成功目标，权限/代际失败终止整轮。
+分页尚未上线，完整结果最多200行，整个工具正文最多12,000字符并受剩余上下文容量限制；超量明确拒绝，不截断文本或暗改粒度。
+当前has_more=false，next_cursor/result_ref为空，不承诺续页；汇总指标、分组、比较与月度收入域由#264接入，不可变分页由#265接入。
+新工具只经过聊天调用，不新增公开执行工具API。OpenAPI及生成前端类型仍需核对，但本票没有新增HTTP请求/响应模型。
