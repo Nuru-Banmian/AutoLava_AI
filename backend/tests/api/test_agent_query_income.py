@@ -303,7 +303,10 @@ async def test_composition_historical_category_filters_keep_other_data_separate(
             assert len(result["rows"]) == 1 and result["rows"][0]["source"] == "other_data"
 
 
-async def test_other_composition_reads_only_its_requested_amount_basis(tmp_path):
+async def test_other_composition_reads_only_its_requested_amount_basis(tmp_path, monkeypatch):
+    # Isolate requested-data projections from cumulative pagination capacity,
+    # which has separate default-budget HTTP/SSE acceptance.
+    monkeypatch.setenv("AUTOLAVA_AGENT_CONTEXT_CHARS", "64000")
     from sqlalchemy import event
 
     model = QueryModel([
@@ -368,6 +371,7 @@ async def test_other_composition_reads_only_its_requested_amount_basis(tmp_path)
         results = model.results[-1]["targets"]
         assert len(results) == 5 and projections
         for result in results:
+            assert result["status"] == "complete", str(result)
             expected = {"amount": 900}
             if "share_percent" in result["metrics"]:
                 expected["share_percent"] = 100.0

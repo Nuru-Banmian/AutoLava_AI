@@ -92,7 +92,7 @@ def default_registry(skills):
 
     return ToolRegistry([
         Tool("store_data_catalog", "发现当前授权门店已上线受控数据，参数为空；有效目录可跨轮复用。", CatalogInput, store_data_catalog),
-        Tool("store_query", "一次只读查询至多6个目标；只选所需字段，完整明细超容量明确失败；目录失效整批不执行。", QueryInput, store_query),
+        Tool("store_query", "批量只读查询或continuations续页至多6目标；完整行默认50/最多200，未读须说明部分完成；目录失效新查询整批不执行。", QueryInput, store_query),
         Tool("calculate", "临时十进制四则运算（正负号、小数、括号）；只传expression。"
              "结果为字符串，exact=false须说明有限表示，error不能当成功。"
              "经营工具已计算的指标不重算，计算照常计入工具预算。",
