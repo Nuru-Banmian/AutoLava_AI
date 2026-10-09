@@ -10,6 +10,7 @@ import subprocess
 import sys
 from uuid import uuid4
 
+import bcrypt
 import pytest
 import httpx
 import respx
@@ -17,7 +18,6 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.database import get_session, sqlite_url
-from app.core.security import hash_password
 from app.main import create_app
 from app.core.config import Settings
 from app.agents.providers.bailian import BailianChat
@@ -67,11 +67,13 @@ async def chat_app(tmp_path, model, *, historical_messages=0, memory_model=None,
         )
         if revision == "0022":
             with closing(sqlite3.connect(database)) as db, db:
+                # Seed cheap real hashes; application-created passwords retain their cost.
+                password_hash = bcrypt.hashpw(b"Password123", bcrypt.gensalt(rounds=4)).decode()
                 for index, role in enumerate(("admin", "admin", "user"), 1):
                     db.execute(
                         "INSERT INTO users (auth_identity, username, password_hash, role, is_active) "
                         "VALUES (?, ?, ?, ?, 1)",
-                        (f"{index:064x}", f"user-{index}", hash_password("Password123"), role),
+                        (f"{index:064x}", f"user-{index}", password_hash, role),
                     )
                 for name in ("门店甲", "门店乙"):
                     db.execute(

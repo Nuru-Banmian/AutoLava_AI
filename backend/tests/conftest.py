@@ -127,7 +127,8 @@ def user_factory(db_session: AsyncSession) -> UserFactory:
         role: str = "user",
         is_active: bool = True,
     ) -> User:
-        password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+        # Fixture users need real bcrypt verification, not production hashing cost.
+        password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=4)).decode()
         user = User(
             username=username,
             password_hash=password_hash,
