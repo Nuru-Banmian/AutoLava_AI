@@ -60,6 +60,7 @@ async def test_chart_is_saved_with_message_and_replayed_as_descriptor(tmp_path, 
         done = await client.get(f"/api/agent/1/runs/{run['id']}/events", headers={"Last-Event-ID": str(event_ids[-1])})
         assert done.text == ""
         assert (await client.get(f"/api/agent/2/messages/4/charts/{descriptor['chart_id']}")).status_code == 404
+        assert (await client.get(f"/api/agent/1/messages/3/charts/{descriptor['chart_id']}")).status_code == 404
         assert (await client.get("/api/agent/1/messages/4/charts/unknown")).status_code == 404
         reset = await client.post("/api/agent/1/conversation/reset", json={"generation": history["generation"]})
         assert reset.status_code == 200
@@ -364,3 +365,20 @@ async def test_unfinished_period_is_preserved_in_saved_snapshot(tmp_path, monkey
         saved = (await client.get(f"/api/agent/1/messages/4/charts/{chart_id}")).json()
         assert saved["payload"]["unfinished"] is True
         assert saved["payload"]["range"] == {"start": "2026-07-01", "end": "2026-07-04"}
+
+
+async def test_saved_charts_block_lossy_downgrade(tmp_path):
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    model = QueryModel([("store_data_catalog", {}), trend_query(), trend, "已保存图表。"])
+    async with chat_app(tmp_path, model) as (client, _, _):
+        await save_day(client, "2026-07-01", 9)
+        assert (await ask(client, "画图"))["status"] == "completed"
+        chart_id = (await client.get("/api/agent/1/conversation")).json()["messages"][-1]["charts"][0]["chart_id"]
+        result = subprocess.run([sys.executable, "-m", "alembic", "downgrade", "0029"],
+                                cwd=Path(__file__).parents[2], capture_output=True,
+                                env=os.environ | {"AUTOLAVA_DATABASE_PATH": str(tmp_path / "chat.sqlite3")})
+        assert result.returncode != 0 and b"Cannot downgrade while saved chart snapshots exist" in result.stderr
+        assert (await client.get(f"/api/agent/1/messages/4/charts/{chart_id}")).status_code == 200

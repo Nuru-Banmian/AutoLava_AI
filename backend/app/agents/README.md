@@ -242,7 +242,7 @@ remaining_result_chars 每次执行按当前完整 messages、工具 schemas、�
 
 ## 针对性查询、分组比较与分页（#263–#265）
 
-主模型发现工具为 `store_data_catalog` 与 `store_query`，另保留 `calculate`、受限技能读取。
+主模型发现与查询使用 `store_data_catalog`、`store_query`；临时计算与图表分别为 `calculate`、`store_chart`，另保留受限技能读取。
 旧 `store_overview` 只在已发布旧计划/旧调用兼容时执行，不进入主模型默认工具 schema。
 新经营路由为 `query`：先读技能，再按有效目录一次批量查询，仅使用本轮工具证据回答。
 
