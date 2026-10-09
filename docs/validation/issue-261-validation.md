@@ -12,4 +12,11 @@
 - 环境失败：原工作区Python缺少pytest；在本worktree用锁定依赖创建独立.venv修正，原目录未更改。
 - 中间回归：上下文/旧工具共24 passed、3 failed。失败为旧工具清单未加入calculate，以及新增测试错把logout的204当200、错误尝试通过PATCH恢复停用门店（404）；已修正预期。stop/reset迟到结果、上下文绑定已通过。撤权/注销修正后待最终套件确认。
 - 未验证：最终完整回归、类型检查、两轴审查、真实浏览器、真实供应商、生产、远端交付。没有付费真实服务调用或生产验证。
+- 接入上下文后的公开工具回归：66 passed，122.04s（包含stop/reset、门店停用和登录注销期间工具执行迟到结果不发布）。
+- 完整后端首轮：9 failed、672 passed、10 warnings，420.81s。7项为既有grounding测试的注入适配器使用旧execute签名；已改为ToolContext，原断言保持，单文件24 passed/39.45s。1项为新增全局计算文案使原8000字符预算的6000字消息失败；已将计算文案放入实际工具schema，不增加预算或削减当前消息。1项test_real_persistence_restart_rebuild_and_configuration_switch为SQLite database is locked，保留原失败，等待聚焦及完整复验，不冒称已证明是基线问题。
+- 前端完整测试：37文件、380 passed；npm run build（含tsc -b）通过。Ruff全仓通过。OpenAPI导出check通过；重新生成前端API类型后无diff，本票不改变HTTP模型/数据库schema；模型工具schema和SSE扩展已在README及公开测试同步。
+- 前端浏览器完整回归：96 passed、20 skipped/2.2m。跳过为环境变量控制的其他live场景，不能算通过。
+- 本票真实浏览器：Playwright CLI、Chrome、临时迁移SQLite/真实登录/真实聊天服务/受控模型，1440x900精确0.1+0.2及“已完成计算”；390x844除零原因、1/3有限表示、刷新后原结果保持。documentWidth=390，发送按钮366x44且可滚动实际点击。截图与快照位于OS临时目录`C:\Users\1\AppData\Local\Temp\autolava-issue261-live\.playwright-cli\`。不将此作为真实供应商内容质量证明。
+- 浏览器环境失败：临时seed最初缺income_items_enabled导致NOT NULL，补齐后启动。控制台favicon404、登录前me401和首页无记录404保留；后台取消清理出现SQLite连接关闭警告，不影响已核对聊天输出，但不能宣称无警告。
+- Standards/Spec只读并行审查：对345a79b各0项发现；后续回归修正及最终证据将再覆盖审查。永久基线不变。
 - handoff：尚未生成；无法读取准确上下文百分比，不虚构百分比。

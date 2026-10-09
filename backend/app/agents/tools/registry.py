@@ -88,7 +88,9 @@ def default_registry(skills):
                 "body": skills.resource(args.skill, args.path)}
 
     return ToolRegistry([
-        Tool("calculate", "计算十进制四则表达式；非精确有限表示标明exact=false，不用于重算经营指标。",
+        Tool("calculate", "临时十进制四则运算（正负号、小数、括号）；只传expression。"
+             "结果为字符串，exact=false须说明有限表示，error不能当成功。"
+             "经营工具已计算的指标不重算，计算照常计入工具预算。",
              CalculateInput, calculate),
         Tool("store_overview", "只读查询当前授权门店1至366天经营概览，返回范围、覆盖及指标口径。",
              OverviewInput, store_overview),
