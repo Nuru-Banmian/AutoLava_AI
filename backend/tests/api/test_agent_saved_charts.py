@@ -196,7 +196,7 @@ async def test_saved_pages_respect_cumulative_context_capacity_and_explain_unrea
                 "cursor": target["next_cursor"], "page_size": 200}
         model.actions = iter([("store_chart", {"operation": "read_saved", "message_id": message,
             "chart_id": chart, "page_size": 50}), *[next_page] * 5, "仅依据已读历史点。"])
-        run = await ask(client, "旧图读取全部点")
+        run = await ask(client, f"旧图读取全部点 {chart}")
         assert run["status"] == "completed", run
         pages = [r["targets"][0] for r in model.results if r.get("targets")]
         events = (await client.get(f"/api/agent/1/runs/{run['id']}/events")).text
