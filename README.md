@@ -209,3 +209,5 @@ Compose 默认将 Web 绑定到 `127.0.0.1:80`。配置同机 HTTPS 反向代理
 - [领域文档](CONTEXT.md)：业务术语及指标口径。
 - [GitHub Issues](https://github.com/Nuru-Banmian/AutoLava_AI/issues)：问题与需求跟踪。
 - [验证记录](docs/validation/)：各项验收的范围、结果与限制。
+
+AI 对话新增受控数据目录与针对性台账/历史收入分类明细查询：可复用有效目录，按问题筛选、稳定排序或选择前N项，完整事件不截断；无范围默认本月至今，全部历史不限366天。分页、汇总比较与图表待后续工单。能力与限制见 `backend/app/agents/README.md`。

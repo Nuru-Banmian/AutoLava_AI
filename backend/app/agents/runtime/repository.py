@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agents.context import ChatScope
 from app.agents.tools.context import TemporaryResults
+from app.agents.tools.store_catalog import CatalogCache, version
 from app.core.database import sqlite_short_write
 from app.models.agent import AgentConversation, AgentEvent, AgentMemoryJob, AgentMessage, AgentRun
 from app.models.identity import Store
@@ -21,6 +22,7 @@ class ChatRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]):
         self.sessions = sessions
         self.temporary_results = TemporaryResults()
+        self.catalogs = CatalogCache()
 
     async def background(self, scope: ChatScope, run_id: str) -> dict:
         """One authorized snapshot per turn; no DB transaction spans model waits."""
@@ -33,6 +35,7 @@ class ChatRepository:
                 "wash_count_enabled": store.wash_count_enabled,
                 "company_settlement_enabled": store.company_settlement_enabled,
                 "timezone": store.timezone,
+                "data_catalog": self.catalogs.get(scope, (await self._run(session, scope, run_id)).generation, version(store)),
                 "local_date": datetime.now(ZoneInfo(store.timezone)).date().isoformat(),
                 "memories": [],
                 "memory_retrieval": "unavailable",
@@ -83,6 +86,7 @@ class ChatRepository:
             return ChatRun.model_validate(run)
 
     async def reset(self, scope: ChatScope, generation: int) -> list[str]:
+        self.catalogs.clear(scope)
         async with self.sessions() as session, sqlite_short_write(session, begin_immediate=True):
             await scope.authorize(session)
             conversation = await self._conversation(session, scope)

@@ -242,7 +242,7 @@ async def test_bailian_fragmented_tool_call_and_result_messages(tmp_path):
             call_message = next(item for item in wire["messages"] if item.get("tool_calls"))
             assert call_message["tool_calls"][0]["function"]["name"] == "store_overview"
             assert {item["function"]["name"] for item in wire["tools"]} == {
-                "read_skill", "read_skill_resource", "store_overview", "calculate",
+                "read_skill", "read_skill_resource", "store_data_catalog", "store_query", "calculate",
             }
 
 

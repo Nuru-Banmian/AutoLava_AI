@@ -71,3 +71,4 @@ class ToolContext:
     generation: int
     remaining_result_chars: int
     results: ResultRepository
+    catalogs: object | None = None
