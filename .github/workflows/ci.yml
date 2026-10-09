@@ -2,8 +2,7 @@ name: CI
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -15,7 +14,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  AUTOLAVA_DATABASE_PATH: /tmp/autolava-ci.sqlite3
+  AUTOLAVA_DATABASE_PATH: /tmp/autolava-ci-migrations.sqlite3
   AUTOLAVA_JWT_SECRET: ci-only-jwt-secret-with-at-least-32-bytes
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
@@ -25,195 +24,125 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v7
         with:
           version: "0.11.26"
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Install locked dependencies
-        run: |
-          cd backend && uv sync --locked && cd ../frontend && npm ci
-      - name: Reject API contract drift
-        run: |
-          cd backend && uv run --frozen python scripts/export_openapi.py --check
-          cd ../frontend && npm run generate:api-types
-          cd .. && git diff --exit-code -- frontend/src/api/openapi.json frontend/src/api/generated.ts frontend/src/api/weather-values.ts
+      - name: Install locked API dependencies
+        working-directory: backend
+        run: uv sync --locked
+      - name: Install locked web dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Reject OpenAPI drift
+        working-directory: backend
+        run: uv run --frozen python -m scripts.export_openapi --check
+      - name: Generate frontend types
+        working-directory: frontend
+        run: npm run generate:api-types
+      - name: Reject generated type drift
+        run: git diff --exit-code -- frontend/src/api/openapi.json frontend/src/api/generated.ts frontend/src/api/weather-values.ts
 
-  backend-quality:
-    name: Backend quality
+  backend-acceptance:
+    name: HTTP business acceptance and backend quality
     runs-on: ubuntu-latest
     timeout-minutes: 5
     defaults:
       run:
         working-directory: backend
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v7
         with:
           version: "0.11.26"
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
-
       - name: Install locked dependencies
         run: uv sync --locked --extra dev
-
+      - name: Lint backend and CI gate
+        run: uv run --frozen ruff check . ../scripts/ci_gate.py
       - name: Validate database migrations
         run: uv run --frozen alembic upgrade head
-
-      - name: Lint
-        run: uv run --frozen ruff check .
-
-  backend-core:
-    name: Backend core tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: backend
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          version: "0.11.26"
-          enable-cache: true
-          cache-dependency-glob: backend/uv.lock
-
-      - name: Install locked dependencies
-        run: uv sync --locked --extra dev
-
-      - name: Run backend tests
-        run: >-
-          uv run --frozen pytest
-          -n 4
-          --dist loadscope
-          --cov=app
-          --cov-report=
-          --durations=20
-
-      - name: Enforce backend coverage
-        run: uv run --frozen coverage report --fail-under=85
-
-  frontend-unit-build:
-    name: Frontend unit and build
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install locked dependencies
-        run: npm ci
-
-      - name: Run unit tests
-        run: npm test
-
-      - name: Build production bundle
-        run: npm run build
-
-  frontend-e2e:
-    name: Frontend end-to-end (${{ matrix.shard }}/2)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2]
-    container:
-      image: mcr.microsoft.com/playwright:v1.61.1-noble
-      options: --ipc=host
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install locked dependencies
-        run: npm ci
-
-      - name: Run end-to-end tests
-        run: npm run test:e2e -- --shard=${{ matrix.shard }}/2 --workers=2
-
-      - name: Upload Playwright diagnostics
+      - name: Run independent HTTP and SSE acceptance
+        run: uv run --frozen pytest acceptance -q --durations=10 --junitxml=acceptance-results.xml
+      - name: Upload acceptance diagnostics
         if: ${{ failure() && !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-diagnostics-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: frontend/test-results
+          name: http-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            backend/acceptance-results.xml
+            /tmp/pytest-of-runner/pytest-current/acceptance*/server.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  browser-acceptance:
+    name: Production build and desktop/narrow acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.26"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install locked API dependencies
+        working-directory: backend
+        run: uv sync --locked
+      - name: Install locked web dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Build production bundle and typecheck
+        working-directory: frontend
+        run: npm run build
+      - name: Install locked Chromium
+        working-directory: frontend
+        run: npm exec playwright install -- --with-deps chromium
+      - name: Run new business browser acceptance against real API
+        working-directory: frontend
+        run: npm run test:acceptance
+      - name: Upload browser diagnostics
+        if: ${{ failure() && !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            frontend/acceptance-results
+            frontend/acceptance-report
           if-no-files-found: ignore
           retention-days: 7
 
   ci-gate:
     name: CI gate
     if: ${{ always() }}
-    needs:
-      - api-contract
-      - backend-quality
-      - backend-core
-      - frontend-unit-build
-      - frontend-e2e
+    needs: [api-contract, backend-acceptance, browser-acceptance]
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 2
     steps:
-      - name: Require every CI lane
+      - uses: actions/checkout@v7
+      - name: Require successful completion of every lane
         env:
-          API_CONTRACT: ${{ needs.api-contract.result }}
-          BACKEND_QUALITY: ${{ needs.backend-quality.result }}
-          BACKEND_CORE: ${{ needs.backend-core.result }}
-          FRONTEND_UNIT_BUILD: ${{ needs.frontend-unit-build.result }}
-          FRONTEND_E2E: ${{ needs.frontend-e2e.result }}
-        shell: bash
-        run: |
-          printf 'OpenAPI contract: %s\nBackend quality: %s\nBackend core tests: %s\nFrontend unit and build: %s\nFrontend end-to-end: %s\n' \
-            "$API_CONTRACT" "$BACKEND_QUALITY" "$BACKEND_CORE" "$FRONTEND_UNIT_BUILD" "$FRONTEND_E2E"
-          test "$API_CONTRACT" = success
-          test "$BACKEND_QUALITY" = success
-          test "$BACKEND_CORE" = success
-          test "$FRONTEND_UNIT_BUILD" = success
-          test "$FRONTEND_E2E" = success
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/ci_gate.py
