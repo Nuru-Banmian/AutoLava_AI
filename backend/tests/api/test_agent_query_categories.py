@@ -74,6 +74,8 @@ async def test_category_shares_use_month_and_income_status_with_historical_names
 
 
 async def test_filtered_category_shares_and_amounts_read_only_projected_dependencies(tmp_path, monkeypatch):
+    # This checks projected dependencies, not context-capacity truncation.
+    monkeypatch.setenv("AUTOLAVA_AGENT_CONTEXT_CHARS", "32000")
     from sqlalchemy import event
 
     freeze_today(monkeypatch)

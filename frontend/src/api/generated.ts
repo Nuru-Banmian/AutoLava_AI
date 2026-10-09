@@ -523,6 +523,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent/{store_id}/messages/{message_id}/charts/{chart_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Chart Snapshot */
+        get: operations["chart_snapshot_api_agent__store_id__messages__message_id__charts__chart_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent/{store_id}/runs/{run_id}": {
         parameters: {
             query?: never;
@@ -1225,6 +1242,32 @@ export interface components {
             /** Total Revenue */
             total_revenue: number;
         };
+        /** ChartDescriptor */
+        ChartDescriptor: {
+            /** Chart Id */
+            chart_id: string;
+            /** Point Count */
+            point_count: number;
+            /** Range */
+            range: {
+                [key: string]: string;
+            } | null;
+            /**
+             * Schema Version
+             * @default 1
+             * @constant
+             */
+            schema_version: 1;
+            /** Title */
+            title: string;
+            /**
+             * Type
+             * @constant
+             */
+            type: "line";
+            /** Unit */
+            unit: string;
+        };
         /** ChartKpis */
         ChartKpis: {
             /** Average Revenue */
@@ -1246,6 +1289,53 @@ export interface components {
             /** Wash Count Covered Days */
             wash_count_covered_days: number | null;
         };
+        /** ChartPayload */
+        ChartPayload: {
+            /** Coverage */
+            coverage: {
+                [key: string]: unknown;
+            };
+            /** Dimension */
+            dimension: string;
+            /** Granularity */
+            granularity: string;
+            /** Notes */
+            notes: string[];
+            /** Points */
+            points: components["schemas"]["ChartPoint"][];
+            /** Queried At */
+            queried_at: string;
+            /** Range */
+            range: {
+                [key: string]: string;
+            };
+            /** Series */
+            series: {
+                [key: string]: string;
+            }[];
+            /** Title */
+            title: string;
+            /**
+             * Type
+             * @constant
+             */
+            type: "line";
+            /** Unfinished */
+            unfinished: boolean;
+            /** Unit */
+            unit: string;
+        };
+        /** ChartPoint */
+        ChartPoint: {
+            /** Dimension */
+            dimension: string | number;
+            /** State */
+            state: string;
+            /** Values */
+            values: {
+                [key: string]: components["schemas"]["ChartValue"];
+            };
+        };
         /** ChartRange */
         ChartRange: {
             /**
@@ -1257,6 +1347,15 @@ export interface components {
             end: string;
             /** Start */
             start: string;
+        };
+        /** ChartValue */
+        ChartValue: {
+            /** Exact */
+            exact: string | null;
+            /** Plot */
+            plot: number | null;
+            /** Status */
+            status: string;
         };
         /** ChartsResponse */
         ChartsResponse: {
@@ -1286,6 +1385,26 @@ export interface components {
             /** Weekday */
             weekday: components["schemas"]["WeekdayRevenue"][];
         };
+        /** ChatChart */
+        ChatChart: {
+            /** Chart Id */
+            chart_id: string;
+            /** Created At */
+            created_at: string;
+            /** Message Id */
+            message_id: number;
+            payload: components["schemas"]["ChartPayload"];
+            /**
+             * Schema Version
+             * @default 1
+             * @constant
+             */
+            schema_version: 1;
+            /** Source */
+            source: {
+                [key: string]: unknown;
+            };
+        };
         /** ChatConversation */
         ChatConversation: {
             /**
@@ -1306,6 +1425,8 @@ export interface components {
         };
         /** ChatMessage */
         ChatMessage: {
+            /** Charts */
+            charts?: components["schemas"]["ChartDescriptor"][];
             /** Content */
             content: string;
             /** Id */
@@ -3609,6 +3730,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ChatRun"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    chart_snapshot_api_agent__store_id__messages__message_id__charts__chart_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                message_id: number;
+                chart_id: string;
+                store_id: number;
+            };
+            cookie?: {
+                access_token?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatChart"];
                 };
             };
             /** @description Validation Error */

@@ -60,6 +60,25 @@ class AgentRun(Base):
     )
 
 
+class AgentChart(Base):
+    __tablename__ = "agent_charts"
+    chart_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    message_id: Mapped[int] = mapped_column(ForeignKey("agent_messages.id", ondelete="CASCADE"), index=True)
+    position: Mapped[int] = mapped_column()
+    schema_version: Mapped[int] = mapped_column(default=1)
+    payload: Mapped[dict] = mapped_column(JSON)
+    source: Mapped[dict] = mapped_column(JSON)
+    summary: Mapped[dict] = mapped_column(JSON)
+    byte_size: Mapped[int] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    __table_args__ = (
+        UniqueConstraint("message_id", "position", name="uq_agent_chart_position"),
+        CheckConstraint("position >= 0 AND position < 8", name="agent_chart_position"),
+        CheckConstraint("byte_size > 0 AND byte_size <= 98304", name="agent_chart_size"),
+        CheckConstraint("schema_version = 1", name="agent_chart_schema"),
+    )
+
+
 class AgentEvent(Base):
     __tablename__ = "agent_events"
     id: Mapped[int] = mapped_column(primary_key=True)

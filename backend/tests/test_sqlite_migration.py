@@ -143,6 +143,7 @@ EXPECTED_TABLES = {
     "agent_memory_scopes",
     "agent_memory_changes",
     "agent_memory_jobs",
+    "agent_charts",
     # The replacement runtime does not map or use these archival tables. They
     # remain in the physical schema so upgrading does not destroy old chats.
     "retired_agent_system_settings",
@@ -408,7 +409,7 @@ def test_applied_revision_0004_upgrades_without_losing_existing_data(tmp_path: P
 
     with closing(sqlite3.connect(database_path)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0029",
+            "0030",
         )
         assert connection.execute("SELECT username FROM users").fetchall() == [
             ("existing-admin",)
@@ -430,6 +431,7 @@ def test_applied_revision_0004_upgrades_without_losing_existing_data(tmp_path: P
             "agent_memory_scopes",
             "agent_memory_changes",
             "agent_memory_jobs",
+            "agent_charts",
         }
 
 
@@ -522,6 +524,7 @@ def test_previous_agent_data_is_retired_without_touching_business_data(tmp_path:
             "agent_memory_scopes",
             "agent_memory_changes",
             "agent_memory_jobs",
+            "agent_charts",
         }
         assert connection.execute("SELECT COUNT(*) FROM agent_messages").fetchone() == (0,)
         assert {
@@ -602,7 +605,7 @@ def test_reused_legacy_revision_0010_upgrades_to_new_agent_schema(
 
     with closing(sqlite3.connect(database_path)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0029",
+            "0030",
         )
         tables = {
             name
@@ -621,6 +624,7 @@ def test_reused_legacy_revision_0010_upgrades_to_new_agent_schema(
             "agent_memory_scopes",
             "agent_memory_changes",
             "agent_memory_jobs",
+            "agent_charts",
         }
         assert connection.execute("SELECT username FROM users").fetchall() == [
             ("existing-admin",)

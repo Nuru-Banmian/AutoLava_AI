@@ -20,11 +20,58 @@ class ChatSubmit(ChatGeneration):
         return value.strip()
 
 
+class ChartDescriptor(BaseModel):
+    chart_id: str
+    schema_version: Literal[1] = 1
+    type: Literal["line"]
+    title: str
+    unit: str
+    range: dict[str, str] | None
+    point_count: int
+
+
+class ChartValue(BaseModel):
+    exact: str | None
+    plot: float | None
+    status: str
+
+
+class ChartPoint(BaseModel):
+    dimension: str | int
+    state: str
+    values: dict[str, ChartValue]
+
+
+class ChartPayload(BaseModel):
+    type: Literal["line"]
+    title: str
+    dimension: str
+    granularity: str
+    unit: str
+    range: dict[str, str]
+    queried_at: str
+    unfinished: bool
+    coverage: dict
+    notes: list[str]
+    series: list[dict[str, str]]
+    points: list[ChartPoint]
+
+
+class ChatChart(BaseModel):
+    chart_id: str
+    message_id: int
+    schema_version: Literal[1] = 1
+    payload: ChartPayload
+    source: dict
+    created_at: str
+
+
 class ChatMessage(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
     role: Literal["user", "assistant"]
     content: str
+    charts: list[ChartDescriptor] = Field(default_factory=list)
 
 
 class ChatRun(BaseModel):

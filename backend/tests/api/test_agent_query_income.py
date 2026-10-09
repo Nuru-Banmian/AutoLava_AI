@@ -105,7 +105,9 @@ async def test_unreported_month_is_unknown_and_known_zero_remains_zero(tmp_path)
         assert set(zero["metric_status"].values()) == {"available"}
 
 
-async def test_partial_month_whole_settlement_and_year_totals_keep_selected_grain(tmp_path):
+async def test_partial_month_whole_settlement_and_year_totals_keep_selected_grain(tmp_path, monkeypatch):
+    # Four complete grain receipts plus all tools need an explicit test budget.
+    monkeypatch.setenv("AUTOLAVA_AGENT_CONTEXT_CHARS", "32000")
     model = QueryModel([("store_data_catalog", {}), query([
         {"id": "partial", "domain": "monthly_income", "range": {"start": "2026-07-02", "end": "2026-07-02"},
          "metrics": ["total_income", "monthly_average_income"]},

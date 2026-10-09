@@ -12,10 +12,11 @@ from app.agents.context import ChatScope
 from app.agents.tools.context import TemporaryResults
 from app.agents.tools.store_catalog import CatalogCache, version
 from app.core.database import sqlite_short_write
-from app.models.agent import AgentConversation, AgentEvent, AgentMemoryJob, AgentMessage, AgentRun
+from app.models.agent import AgentChart, AgentConversation, AgentEvent, AgentMemoryJob, AgentMessage, AgentRun
+from app.agents.tools.store_chart import descriptor
 from app.models.identity import Store
 from app.agents.memory.repository import scope_revision, scope_epoch
-from app.schemas.agent import ChatConversation, ChatMessage, ChatRun
+from app.schemas.agent import ChartDescriptor, ChatConversation, ChatMessage, ChatRun
 
 
 class ChatRepository:
@@ -177,13 +178,21 @@ class ChatRepository:
             messages = list(await session.scalars(query.order_by(AgentMessage.id.desc()).limit(101)))
             has_more = len(messages) > 100
             messages = messages[:100]
+            chart_rows = list((await session.execute(select(AgentChart.message_id, AgentChart.summary).where(
+                AgentChart.message_id.in_([message.id for message in messages]),
+            ).order_by(AgentChart.position))).all())
+            charts = {}
+            for chart in chart_rows:
+                charts.setdefault(chart.message_id, []).append(ChartDescriptor.model_validate(chart.summary))
             run = await session.scalar(select(AgentRun).where(
                 AgentRun.conversation_id == conversation.id,
                 AgentRun.generation == conversation.generation,
             ).order_by(AgentRun.created_at.desc(), AgentRun.id.desc()).limit(1))
             return ChatConversation(
                 generation=conversation.generation,
-                messages=[ChatMessage.model_validate(item) for item in reversed(messages)],
+                messages=[ChatMessage.model_validate(item).model_copy(update={
+                    "charts": charts.get(item.id, []),
+                }) for item in reversed(messages)],
                 run=ChatRun.model_validate(run) if run else None,
                 next_before=messages[-1].id if has_more else None,
             )
@@ -192,6 +201,18 @@ class ChatRepository:
         async with self.sessions() as session:
             await scope.authorize(session)
             return ChatRun.model_validate(await self._run(session, scope, run_id))
+
+    async def chart(self, scope: ChatScope, message_id: int, chart_id: str):
+        async with self.sessions() as session:
+            await scope.authorize(session)
+            chart = await session.scalar(select(AgentChart).join(AgentMessage).join(AgentConversation).where(
+                AgentChart.chart_id == chart_id, AgentChart.message_id == message_id, AgentMessage.role == "assistant",
+                AgentConversation.user_id == scope.user_id, AgentConversation.store_id == scope.store_id,
+            ))
+            if chart is None:
+                raise HTTPException(404, "Chart not found")
+            return {"chart_id": chart.chart_id, "message_id": chart.message_id, "schema_version": chart.schema_version,
+                    "payload": chart.payload, "source": chart.source, "created_at": chart.created_at.isoformat()}
 
     async def events(self, scope: ChatScope, run_id: str, after: int):
         async with self.sessions() as session:
@@ -223,9 +244,15 @@ class ChatRepository:
                 run.usage = totals
             elif kind == "completed":
                 run.status = "completed"
+                drafts = self.temporary_results.for_run(scope, run_id, run.generation).prepared_charts()
+                message = AgentMessage(conversation_id=run.conversation_id, role="assistant", content=run.output)
+                session.add(message)
+                await session.flush()
+                for position, draft in enumerate(drafts):
+                    session.add(AgentChart(message_id=message.id, position=position, schema_version=1,
+                                           summary=descriptor(draft), **draft))
+                payload = {**payload, "message_id": message.id, "charts": [descriptor(draft) for draft in drafts]}
                 self.temporary_results.release(run_id)
-                session.add(AgentMessage(conversation_id=run.conversation_id,
-                                         role="assistant", content=run.output))
                 if curate:
                     store = await session.get(Store, scope.store_id)
                     session.add(AgentMemoryJob(

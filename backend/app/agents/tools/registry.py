@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.agents.skills.loader import SkillError
 from app.agents.tools.calculate import CalculateInput, calculate
+from app.agents.tools.store_chart import ChartInput, store_chart
 from app.agents.tools.store_catalog import CatalogInput, store_data_catalog
 from app.agents.tools.store_query import QueryInput, store_query
 from app.agents.tools.store_overview import OverviewInput, store_overview
@@ -91,6 +92,7 @@ def default_registry(skills):
                 "body": skills.resource(args.skill, args.path)}
 
     return ToolRegistry([
+        Tool("store_chart", "从本轮完整result_ref快照生成折线图草稿（不是当前页）；只选block、时间维度及同单位系列，不传数值。随最终回复保存，失败不能宣称生成。", ChartInput, store_chart),
         Tool("store_data_catalog", "发现当前授权门店已上线受控数据，参数为空；有效目录可跨轮复用。", CatalogInput, store_data_catalog),
         Tool("store_query", "批量只读查询或continuations续页至多6目标；完整行默认50/最多200，未读须说明部分完成；目录失效新查询整批不执行。", QueryInput, store_query),
         Tool("calculate", "临时十进制四则运算（正负号、小数、括号）；只传expression。"
