@@ -9,6 +9,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agents.context import ChatScope
+from app.agents.tools.context import TemporaryResults
 from app.core.database import sqlite_short_write
 from app.models.agent import AgentConversation, AgentEvent, AgentMemoryJob, AgentMessage, AgentRun
 from app.models.identity import Store
@@ -19,6 +20,7 @@ from app.schemas.agent import ChatConversation, ChatMessage, ChatRun
 class ChatRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]):
         self.sessions = sessions
+        self.temporary_results = TemporaryResults()
 
     async def background(self, scope: ChatScope, run_id: str) -> dict:
         """One authorized snapshot per turn; no DB transaction spans model waits."""
@@ -77,6 +79,7 @@ class ChatRepository:
                 run.status = "failed"
                 run.error_code = "cancelled"
                 session.add(AgentEvent(run_id=run.id, kind="failed", payload={"error_code": "cancelled"}))
+            self.temporary_results.release(run_id)
             return ChatRun.model_validate(run)
 
     async def reset(self, scope: ChatScope, generation: int) -> list[str]:
@@ -95,6 +98,7 @@ class ChatRepository:
             cutoff = await session.scalar(select(func.max(AgentEvent.id))) or 0
             active = []
             for run in runs:
+                self.temporary_results.release(run.id)
                 if run.status == "running":
                     active.append(run.id)
                     run.status = "failed"
@@ -214,6 +218,7 @@ class ChatRepository:
                 run.usage = totals
             elif kind == "completed":
                 run.status = "completed"
+                self.temporary_results.release(run_id)
                 session.add(AgentMessage(conversation_id=run.conversation_id,
                                          role="assistant", content=run.output))
                 if curate:
@@ -229,6 +234,7 @@ class ChatRepository:
             session.add(AgentEvent(run_id=run_id, kind=kind, payload=payload))
 
     async def fail(self, scope: ChatScope, run_id: str, code: str):
+        self.temporary_results.release(run_id)
         # A revoked caller cannot write more content, but its worker must mark failure.
         async with self.sessions() as session, sqlite_short_write(session, begin_immediate=True):
             try:

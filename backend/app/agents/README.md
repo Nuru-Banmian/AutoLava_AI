@@ -173,7 +173,15 @@ T4 已接入 `registry.py`、`tools/`、`skills/`。后续记忆 Agent 与记忆
 
 ### 扩展步骤
 
-新增只读工具：在 tools/ 实现受约束的 Pydantic 参数（拒绝额外字段）和 async handler(session, scope, arguments)，在 handler 的业务边界显式鉴权，用 scope 绑定门店；复用领域服务并返回范围、覆盖与口径。在 tools/registry.py 的 default_registry 注册 Tool，再在 registry.py 的对应 AgentDefinition.tools 显式启用。通过业务 HTTP 建数据，从公开 AI 消息/SSE 验证参数拒绝、权限、指标和范围隔离；通常无需修改运行循环或路由。
+新增只读工具：在 tools/ 实现受约束的 Pydantic 参数（拒绝额外字段）和 async handler(session, context, arguments)。context 为服务端构造的 ToolContext，含 ChatScope（身份/会话/门店）、run_id、generation、remaining_result_chars 和临时结果仓库接口；这些不属于模型参数。入口每次执行前及返回后使用新授权快照，发布事件/完成仍在短事务内复验。权限失效、stop/reset 不捕获成普通工具错误。工具用 context.scope 绑定门店；复用领域服务并返回范围、覆盖与口径。在 tools/registry.py 注册，再在 AgentDefinition.tools 显式启用。通过业务 HTTP 建数据，从公开 AI 消息/SSE 验证；不新增执行 API。
+
+### #261 工具上下文与十进制计算
+
+`calculate` 仅接受 `expression: string`，拒绝额外参数及非字符串。原始十进制字面量直接构造 Decimal，封闭语法支持空白、正负号、加减乘除和括号/通常优先级，拒绝指数记法、幂、模、整除、函数、标识符、属性和容器；不使用 eval/exec。最大512字符、每字面量50有效数字（忽略前导零）、64次运算（含一元正负号）、16层括号、50位有效数字上下文。非零结果数量级指数须在±1000内，文本最多2048字符；不 quantize，不提供精度或舍入选项。成功为 `{result: string, exact: boolean}`；任何中间运算出现 Inexact 即 exact=false，并附 notice 说明有限表示。例：0.1+0.2 → 0.3 / true；1/3 → 50位小数 / false。
+
+失败返回 `{error: string, message: string}`，没有 result/exact。错误码包括 invalid_expression、division_by_zero、expression_capacity、literal_capacity、operation_capacity、nesting_capacity、calculation_overflow、result_capacity；参数 schema 拒绝仍沿用 invalid_tool_arguments。SSE tool 事件保留 name/status，计算失败增加 error_code/message；页面显示具体失败原因。结果字符串经模型读取，最终回复仍沿用现有 delta/history 契约，不新增公开工具端点，OpenAPI HTTP 模型不变。
+
+remaining_result_chars 每次执行按当前完整 messages、工具 schemas 及返回消息封装重新计算，上限12000字符，并保留2000字符回答和1000字符控制/错误空间；不丢弃本轮工具证据。临时仓库接口提供 put/get/clear，不可变 JSON 副本、随机引用、每run总计4 MiB；按完整 ChatScope/run/generation 隔离，完成、失败、停止或重置清理。当前计算及概览不使用它保存业务数据；查询快照和游标协议由后续子票实施。原概览、技能行为与全部调用/步骤/时长配置上限保持原值。
 
 新增技能：在 skills/<name>/SKILL.md 写 name、description 与必要能力/工具/参考元数据，正文放步骤和完成条件，按需资料放 references/ 或 assets/。在对应 AgentDefinition.skills 启用；测试启动诊断、按需读取、禁用与越界拒绝，重新构建 wheel 并从仓库外工作目录读取资源。
 

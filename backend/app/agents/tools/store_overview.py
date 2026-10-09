@@ -29,7 +29,8 @@ class OverviewInput(BaseModel):
         return self
 
 
-async def store_overview(session, scope, arguments: OverviewInput):
+async def store_overview(session, context, arguments: OverviewInput):
+    scope = context.scope
     # Recheck at the tool boundary, independently of HTTP and model input.
     await scope.authorize(session)
     store = await session.get(Store, scope.store_id)
