@@ -99,7 +99,8 @@ export function parseWholeAmount(value: string): { value: number } | { error: st
   return { value: parsed };
 }
 
-export function formatWholeEuro(value: number): string {
+export function formatWholeEuro(value: number | null): string {
+  if (value === null) return "—";
   const digits = new Intl.NumberFormat("de-DE", {
     maximumFractionDigits: 0,
     minimumFractionDigits: 0,

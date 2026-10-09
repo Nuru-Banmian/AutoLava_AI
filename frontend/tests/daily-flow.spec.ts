@@ -360,6 +360,7 @@ test("rest normalizes operating values and legacy status cannot be generated", a
     "营业",
     "休息",
     "提前休息",
+    "未统计",
   ]);
   await expect(status.locator("option", { hasText: "天气停业" })).toHaveCount(0);
   await fillNewRecordAmounts(page, "200");

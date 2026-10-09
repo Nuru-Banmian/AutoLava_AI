@@ -26,6 +26,7 @@ const statusClasses = {
   "营业": "bg-emerald-100 text-emerald-800",
   "休息": "bg-slate-200 text-slate-700",
   "提前休息": "bg-amber-100 text-amber-800",
+  "未统计": "bg-violet-100 text-violet-800",
 } as const;
 
 function formatBookkeepingEventTime(value: string | null, timeZone: string) {

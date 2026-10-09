@@ -39,6 +39,21 @@ afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
 describe("BusinessAnalysisCard", () => {
+  it("全未统计区间显示未知合计和两期覆盖，不冒充完整零收入", async () => {
+    const coverage = { start: "2026-07-01", end: "2026-07-17", interval_days: 17, record_days: 2, statistical_days: 0, unreported_days: 2, operating_days: 0, rest_days: 0, missing_record_days: 15 };
+    server.use(http.get("/api/charts/1", () => HttpResponse.json(payload({
+      kpis: { ...payload().kpis, total_revenue: 0, open_days: 0, average_revenue: 0 },
+      period_coverage: coverage, comparison_coverage: { ...coverage, start: "2026-06-01", end: "2026-06-17" },
+      income_summary: { daily_ledger_revenue: 0, total_income: 0, confirmed_settlement_income: 0, includes_settlement_income: true },
+      income_composition: [], excluded_categories: [],
+      daily: [{ date: "2026-07-01", revenue: null, is_open: "未统计" }],
+    }))));
+    renderCard();
+    expect(await screen.findByText("暂无已统计收入构成，合计未知")).toBeVisible();
+    expect(screen.getByText("比较期：已统计 0 天；未统计 2 天；未录入 15 天。")).toBeVisible();
+    expect(screen.queryByText("暂无收入构成，合计为 €0")).not.toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "收入构成" })).getByText("—")).toBeVisible();
+  });
   it("compares operating-day samples in fixed weekday and weather order with missing weekdays distinct from zero", async () => {
     server.use(http.get("/api/charts/1", () => HttpResponse.json({ ...payload(),
       weekday: [

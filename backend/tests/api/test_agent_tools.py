@@ -137,6 +137,31 @@ async def test_skill_and_reference_load_on_demand_then_read_business_data(tmp_pa
         assert "event: tool" in events.text and "store_overview" in events.text
 
 
+async def test_overview_separates_unreported_from_rest_and_missing_through_chat(tmp_path):
+    model = ToolModel([
+        ("store_overview", {"start": "2026-07-10", "end": "2026-07-14"}),
+        "已统计部分为150欧元；集中清点需事件证据。",
+    ])
+    async with chat_app(tmp_path, model) as (client, _, _):
+        await save_day(client, "2026-07-10", 150, wash=3)
+        await save_day(client, "2026-07-11", None, "未统计")
+        await save_day(client, "2026-07-12", 0, "休息")
+        run = await ask(client, "分析2026-07-10至2026-07-14经营概览")
+        assert run["status"] == "completed", run
+        result = model.results[0]
+        assert result["income_summary"]["daily_ledger_revenue"] == 150
+        assert result["coverage"]["record_days"] == 3
+        assert result["coverage"]["statistical_days"] == 2
+        assert result["coverage"]["unreported_days"] == 1
+        assert result["coverage"]["rest_days"] == 1
+        assert result["coverage"]["missing_record_days"] == 2
+        assert result["metrics"]["operating_days"] == 1
+        assert result["coverage"]["wash_count_missing_operating_days"] == 0
+        assert any("事件或上下文证据" in definition for definition in result["definitions"])
+        events = await client.get(f'/api/agent/1/runs/{run["id"]}/events')
+        assert "event: tool" in events.text and "store_overview" in events.text
+
+
 async def test_graph_uses_injected_capabilities_through_public_chat(tmp_path):
     from app.agents.assistant.graph import create_graph
     from app.agents.registry import AgentDefinition, capabilities

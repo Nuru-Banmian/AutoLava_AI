@@ -31,8 +31,8 @@ def build_ledger_workbook(
     detail = workbook.create_sheet(title="收入明细")
     detail.append(["日期", "星期", "收入项目", "计入总额", "排序", "金额"])
 
-    def money_cell(sheet, value: int) -> WriteOnlyCell:
-        cell = WriteOnlyCell(sheet, value=int(value))
+    def money_cell(sheet, value: int | None) -> WriteOnlyCell:
+        cell = WriteOnlyCell(sheet, value=int(value) if value is not None else None)
         cell.number_format = "€#,##0"
         return cell
 

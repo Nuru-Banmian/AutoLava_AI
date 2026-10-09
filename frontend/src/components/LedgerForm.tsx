@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { isRecordWeather, type CategoryDescriptor, type IncomeConfigResponse, type LedgerBody, type LedgerStatus, type RecordSnapshot, type WeatherResponse } from "@/api/types";
 import { Button } from "@/components/ui/button";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatWholeEuro, parseWholeAmount } from "@/lib/user-api";
 
@@ -40,6 +41,7 @@ function parseWashCount(value: string): { value: number } | { error: string } {
 }
 
 function normalizedWashCount(washCountEnabled: boolean, status: LedgerStatus, wash: string): number | null {
+  if (status === "未统计") return null;
   if (!washCountEnabled) return null;
   if (status === "休息") return 0;
   const result = parseWashCount(wash);
@@ -90,7 +92,8 @@ export function LedgerForm({ categories, config, record, weather, weatherOptions
   const [weatherEdited, setWeatherEdited] = useState(record?.weather_edited ?? false);
   const submittedWeather = useRef<string | null>(record?.weather ?? weather?.weather ?? null);
   const [activity, setActivity] = useState(record?.activity ?? "");
-  const loadedDirectTotal = record ? String(record.daily_revenue) : "";
+  const loadedDirectTotal = record?.daily_revenue == null ? "" : String(record.daily_revenue);
+  const [pendingClearBody, setPendingClearBody] = useState<LedgerBody | null>(null);
   const [directTotal, setDirectTotal] = useState(loadedDirectTotal);
   const loadedAmounts = useMemo(() => Object.fromEntries(effectiveCategories.map((category) => {
     const recordedItem = record?.items.find((item) => item.category_id === category.id);
@@ -113,12 +116,12 @@ export function LedgerForm({ categories, config, record, weather, weatherOptions
   };
   const semanticSignature = (values: { status: LedgerStatus; wash: string; weatherValue: string; weatherEdited: boolean; activity: string; directTotal: string; amounts: Record<number, string> }) => JSON.stringify({
     is_open: values.status,
-    daily_revenue: composed ? null : values.status === "休息" ? 0 : semanticAmount(values.directTotal),
+    daily_revenue: composed || values.status === "未统计" ? null : values.status === "休息" ? 0 : semanticAmount(values.directTotal),
     wash_count: normalizedFormWashCount(values.status, values.wash),
     weather: values.weatherValue || null,
     weather_edited: values.weatherEdited,
     activity: normalizedActivity(values.activity),
-    items: composed ? effectiveCategories.map((category) => [category.id, values.status === "休息" ? 0 : semanticAmount(values.amounts[category.id] ?? "0")]) : [],
+    items: composed && values.status !== "未统计" ? effectiveCategories.map((category) => [category.id, values.status === "休息" ? 0 : semanticAmount(values.amounts[category.id] ?? "0")]) : [],
   });
   const submittedSignature = (body: LedgerBody) => JSON.stringify({
     is_open: body.is_open,
@@ -186,7 +189,11 @@ export function LedgerForm({ categories, config, record, weather, weatherOptions
     ? washResult.error
     : "";
   const legacyWeather = Boolean(weatherValue && weatherOptions.length && !weatherOptions.includes(weatherValue));
-  const validationError = amountError || totalError || washError || (legacyWeather ? "历史旧值需改选有效天气或清空" : "");
+  const refilling = record?.is_open === "未统计" && (status === "营业" || status === "提前休息");
+  const refillError = refilling && ((composed ? effectiveCategories.some((category) => !amounts[category.id]?.trim()) : !directTotal.trim()) || (washCountEnabled && !wash.trim()))
+    ? "切回经营状态需要重新填写金额和启用的洗车数量；已知零请明确填写 0" : "";
+  const preserveLegacyWeather = status === "未统计" && legacyWeather && weatherValue === record?.weather;
+  const validationError = (status === "未统计" ? "" : amountError || totalError || washError || refillError) || (legacyWeather && !preserveLegacyWeather ? "历史旧值需改选有效天气或清空" : "");
   function changeStatus(next: LedgerStatus) {
     setStatus(next);
     if (next === "休息" && wash !== "") setWash("0");
@@ -194,10 +201,20 @@ export function LedgerForm({ categories, config, record, weather, weatherOptions
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (validationError) return;
-    const requestedWeather = record && !weatherEdited && record.weather === null
+    const requestedWeather = preserveLegacyWeather || (record && !weatherEdited && record.weather === null)
       ? undefined
       : weatherValue || null;
     if (typeof requestedWeather === "string" && !isRecordWeather(requestedWeather)) return;
+    if (status === "未统计") {
+      submittedWeather.current = requestedWeather ?? null;
+      const body: LedgerBody = {
+        is_open: status, daily_revenue: null, wash_count: null, items: [],
+        weather: requestedWeather, weather_edited: weatherEdited, activity: normalizedActivity(activity),
+      };
+      if (record && record.is_open !== "未统计") setPendingClearBody(body);
+      else onSave(body);
+      return;
+    }
     const items = amountResults.map(({ category, result }) => ({
       category_id: category.id,
       amount: status === "休息" ? 0 : (result as { value: number }).value,
@@ -219,20 +236,23 @@ export function LedgerForm({ categories, config, record, weather, weatherOptions
       items: composed ? items : [],
     });
   }
-  return <form className="grid min-w-0 gap-4" onSubmit={submit}>
+  return <><form className="grid min-w-0 gap-4" onSubmit={submit}>
     <section role="group" aria-label="状态与天气" className={`grid min-w-0 grid-cols-2 gap-3 ${washCountEnabled ? "md:grid-cols-3" : ""}`}>
-      <label className="grid min-w-0 gap-1.5 font-medium">状态<select aria-label="状态" value={status} onChange={(event) => changeStatus(event.target.value as LedgerStatus)} className={LEDGER_FIELD_CLASS}><option>营业</option><option>休息</option><option>提前休息</option></select></label>
+      <label className="grid min-w-0 gap-1.5 font-medium">状态<select aria-label="状态" value={status} onChange={(event) => changeStatus(event.target.value as LedgerStatus)} className={LEDGER_FIELD_CLASS}><option>营业</option><option>休息</option><option>提前休息</option><option>未统计</option></select></label>
       <div className="grid min-w-0 gap-1.5"><span className="font-medium">天气</span><Select value={weatherValue} onValueChange={(value) => { setWeatherValue(value === "__clear_weather__" ? "" : value); setWeatherEdited(true); }}><SelectTrigger aria-label="天气" className="h-11 text-base"><SelectValue placeholder="请选择天气">{legacyWeather ? `历史旧值：${weatherValue}` : weatherValue || undefined}</SelectValue></SelectTrigger><SelectContent><SelectItem value="__clear_weather__">清空天气</SelectItem>{weatherOptions.map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectContent></Select>{legacyWeather && <p className="text-sm text-destructive">历史旧值：{weatherValue}。重新保存前请选择有效天气或清空。</p>}</div>
-      {washCountEnabled && <label className="grid min-w-0 gap-1.5 font-medium">洗车数量<input aria-label="洗车数量" inputMode="numeric" type="text" disabled={status === "休息"} value={wash} onChange={(event) => setWash(event.target.value)} className={LEDGER_FIELD_CLASS} /></label>}
+      {washCountEnabled && <label className="grid min-w-0 gap-1.5 font-medium">洗车数量<input aria-label="洗车数量" inputMode="numeric" type="text" disabled={status === "休息" || status === "未统计"} value={status === "未统计" ? "" : wash} onChange={(event) => setWash(event.target.value)} className={LEDGER_FIELD_CLASS} /></label>}
     </section>
-    {composed ? <fieldset aria-label="收入项目" disabled={status === "休息"} className="grid min-w-0 gap-3"><legend className="font-semibold">收入项目</legend><div className="grid min-w-0 grid-cols-2 items-end gap-3 md:grid-cols-3 xl:grid-cols-4">{effectiveCategories.map((category) => <label className="grid min-w-0 gap-1.5 font-medium" key={category.id}><span className="break-words">{category.name}{!category.include_in_total && <span className="block text-sm font-normal text-muted-foreground">其他数据</span>}</span><input aria-label={category.name} inputMode="numeric" type="text" value={amounts[category.id] ?? ""} onChange={(event) => setAmounts((old) => ({ ...old, [category.id]: event.target.value }))} className={LEDGER_FIELD_CLASS} /></label>)}</div></fieldset> : <label className="grid min-w-0 gap-1.5 font-medium">当日营业额（€）<input aria-label="当日营业额" inputMode="numeric" type="text" disabled={status === "休息"} value={directTotal} onChange={(event) => setDirectTotal(event.target.value)} className={LEDGER_FIELD_CLASS} /></label>}
+    {composed ? <fieldset aria-label="收入项目" disabled={status === "休息" || status === "未统计"} className="grid min-w-0 gap-3"><legend className="font-semibold">收入项目</legend><div className="grid min-w-0 grid-cols-2 items-end gap-3 md:grid-cols-3 xl:grid-cols-4">{effectiveCategories.map((category) => <label className="grid min-w-0 gap-1.5 font-medium" key={category.id}><span className="break-words">{category.name}{!category.include_in_total && <span className="block text-sm font-normal text-muted-foreground">其他数据</span>}</span><input aria-label={category.name} inputMode="numeric" type="text" value={status === "未统计" ? "" : amounts[category.id] ?? ""} onChange={(event) => setAmounts((old) => ({ ...old, [category.id]: event.target.value }))} className={LEDGER_FIELD_CLASS} /></label>)}</div></fieldset> : <label className="grid min-w-0 gap-1.5 font-medium">当日营业额（€）<input aria-label="当日营业额" inputMode="numeric" type="text" disabled={status === "休息" || status === "未统计"} value={status === "未统计" ? "" : directTotal} onChange={(event) => setDirectTotal(event.target.value)} className={LEDGER_FIELD_CLASS} /></label>}
     <section className="grid min-w-0 gap-3">
       <label className="grid min-w-0 gap-1.5 font-medium">事件<textarea aria-label="事件" placeholder="记录可能影响经营的特殊情况，如当地活动、泥雨等（选填）" value={activity} onChange={(event) => setActivity(event.target.value)} className={`${LEDGER_FIELD_CLASS} resize-y`} /></label>
     </section>
+    {status === "未统计" && <p role="note">营业额与洗车数量未知，不计入经营统计。集中清点的收入记在清点当天，之前日期保持未统计；可在事件中说明覆盖时段。</p>}
     {validationError && <p role="alert" className="text-sm text-destructive">{validationError}</p>}
     <footer className="flex min-w-0 flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
-      {composed && <p className="text-xl font-semibold tabular-nums">合计金额 {formatWholeEuro(status === "休息" ? 0 : latestValidTotal)}</p>}
+      {composed && <p className="text-xl font-semibold tabular-nums">合计金额 {formatWholeEuro(status === "未统计" ? null : status === "休息" ? 0 : latestValidTotal)}</p>}
       <Button className="min-h-11 w-full px-6 text-base sm:ml-auto sm:w-auto sm:min-w-40" disabled={saving} type="submit">{saving ? "保存中…" : submitLabel}</Button>
     </footer>
-  </form>;
+  </form><AlertDialog open={pendingClearBody !== null} onOpenChange={(open) => { if (!open) setPendingClearBody(null); }}>
+    <AlertDialogContent><AlertDialogTitle>确认改为未统计</AlertDialogTitle><AlertDialogDescription>保存将清除本日金额、洗车数量和收入分类明细，包括已知零值。保留记账方式及天气、事件；以后切回经营状态需要重新填写数值。</AlertDialogDescription><AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction onClick={() => { if (pendingClearBody) onSave({ ...pendingClearBody, confirm_clear_values: true }); setPendingClearBody(null); }}>确认清除并保存</AlertDialogAction></AlertDialogFooter></AlertDialogContent>
+  </AlertDialog></>;
 }

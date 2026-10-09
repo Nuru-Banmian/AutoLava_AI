@@ -69,7 +69,7 @@ function databaseResponse(items: RecordSnapshot[], page = 1, total = items.lengt
   return {
     items,
     categories: [],
-    sum_daily_revenue: items.reduce((sum, item) => sum + item.daily_revenue, 0),
+    sum_daily_revenue: items.reduce((sum, item) => sum + (item.daily_revenue ?? 0), 0),
     total,
     page,
     page_size: 15,

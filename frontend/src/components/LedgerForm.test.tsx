@@ -64,6 +64,44 @@ function savedRecord(overrides: Partial<RecordSnapshot> = {}): RecordSnapshot {
 }
 
 describe("LedgerForm", () => {
+  it("未统计只保存状态，已有真实零也必须先确认清值；取消不保存", async () => {
+    const onSave = vi.fn();
+    render(<LedgerForm categories={[]} config={directConfig} record={savedRecord({ income_mode: "legacy_total", daily_revenue: 0, items: [] })} onSave={onSave} />);
+    fireEvent.change(screen.getByLabelText("状态"), { target: { value: "未统计" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(onSave).not.toHaveBeenCalled();
+    expect(await screen.findByRole("alertdialog")).toHaveTextContent("清除");
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(onSave).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    fireEvent.click(await screen.findByRole("button", { name: "确认清除并保存" }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ is_open: "未统计", daily_revenue: null, wash_count: null, items: [], confirm_clear_values: true }));
+  });
+
+  it("从未统计切回经营必须重填，空白不自动补零", () => {
+    const onSave = vi.fn();
+    render(<LedgerForm categories={[]} config={directConfig} record={savedRecord({ income_mode: "legacy_total", is_open: "未统计", daily_revenue: null, wash_count: null, items: [] })} onSave={onSave} />);
+    fireEvent.change(screen.getByLabelText("状态"), { target: { value: "营业" } });
+    expect(screen.getByLabelText("当日营业额")).toHaveValue("");
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(onSave).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("重新填写");
+    fireEvent.change(screen.getByLabelText("当日营业额"), { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(onSave).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("洗车数量"), { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ daily_revenue: 0, wash_count: 0 }));
+  });
+
+  it("保存未统计可保留未经本次编辑的历史天气", async () => {
+    const onSave = vi.fn();
+    render(<LedgerForm weatherOptions={weatherOptions} categories={[]} config={directConfig} record={savedRecord({ income_mode: "legacy_total", weather: "旧天气", weather_legacy: true, weather_edited: true })} onSave={onSave} />);
+    fireEvent.change(screen.getByLabelText("状态"), { target: { value: "未统计" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    fireEvent.click(await screen.findByRole("button", { name: "确认清除并保存" }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ weather: undefined, is_open: "未统计" }));
+  });
   it("uses direct total when configuration is disabled", () => {
     render(<LedgerForm weatherOptions={weatherOptions} categories={[]} config={directConfig} onSave={vi.fn()} />);
 

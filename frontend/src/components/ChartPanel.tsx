@@ -6,7 +6,8 @@ import { formatCompactEuro } from "@/lib/compact-euro";
 export const chartSeriesColors = ["var(--primary)", "var(--chart-series-2)", "var(--chart-series-3)"];
 export type ChartKind = "bar" | "horizontal-bar" | "line";
 export function chartTooltipValue(row: Record<string, unknown>, valueKey: string) {
-  const value = row[`${valueKey}_raw`] ?? row[valueKey] ?? 0;
+  const value = row[`${valueKey}_raw`] ?? row[valueKey];
+  if (value == null) return "—";
   return formatWholeEuro(typeof value === "number" ? value : Number(value));
 }
 interface ChartPanelProps {

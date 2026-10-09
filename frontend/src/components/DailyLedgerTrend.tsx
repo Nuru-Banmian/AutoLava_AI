@@ -31,8 +31,8 @@ export function DailyLedgerTrend({ data }: { data: ChartsResponse }) {
   const comparisonMessage = comparison?.status === "comparable"
     ? `每日台账营业额较上期 ${comparison.change_percent! > 0 ? "+" : ""}${comparison.change_percent!.toFixed(1)}%`
     : comparison?.status === "zero_previous" ? "上期每日台账营业额为 0，不可比较增幅。"
-      : comparison?.status === "no_current_records" ? "本期没有已记录每日台账，不可比较。"
-        : comparison?.status === "no_previous_records" ? "上期没有已记录每日台账，不可比较。"
+      : comparison?.status === "no_current_records" ? "本期没有已统计每日台账，不可比较。"
+        : comparison?.status === "no_previous_records" ? "上期没有已统计每日台账，不可比较。"
           : "暂无每日台账同期数据，不可比较。";
 
   return <section aria-label="每日台账营业额趋势" className="grid min-w-0 gap-2">

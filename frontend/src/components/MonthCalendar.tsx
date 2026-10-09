@@ -8,12 +8,13 @@ export interface MonthCalendarProps {
   selected: string;
   today: string;
   recordedDates: ReadonlySet<string>;
+  unreportedDates?: ReadonlySet<string>;
   onSelect(date: string): void;
 }
 
 const weekdayLabels = ["一", "二", "三", "四", "五", "六", "日"];
 
-export function MonthCalendar({ month, selected, today, recordedDates, onSelect }: MonthCalendarProps) {
+export function MonthCalendar({ month, selected, today, recordedDates, unreportedDates, onSelect }: MonthCalendarProps) {
   const monthDate = parseISO(`${month}-01`);
   const days = eachDayOfInterval({
     start: startOfWeek(startOfMonth(monthDate), { weekStartsOn: 1 }),
@@ -65,7 +66,7 @@ export function MonthCalendar({ month, selected, today, recordedDates, onSelect 
               <div key={iso} role="gridcell" aria-selected={iso === selected} className="aspect-square min-w-0">
                 <button
                   type="button"
-                  aria-label={`${format(day, "yyyy年M月d日")}${recorded ? "，已有记录" : ""}`}
+                  aria-label={`${format(day, "yyyy年M月d日")}${unreportedDates?.has(iso) ? "，未统计" : recorded ? "，已有记录" : ""}`}
                   aria-pressed={iso === selected}
                   tabIndex={iso === focusedDate ? 0 : -1}
                   data-recorded={recorded || undefined}
@@ -85,7 +86,7 @@ export function MonthCalendar({ month, selected, today, recordedDates, onSelect 
                   )}
                 >
                   {format(day, "d")}
-                  {recorded && <span aria-hidden="true" className={cn("absolute bottom-1 size-1 rounded-full", iso === selected ? "bg-primary-foreground" : "bg-primary")} />}
+                  {recorded && <span aria-hidden="true" className={cn("absolute bottom-1 size-1 rounded-full", iso === selected ? "bg-primary-foreground" : unreportedDates?.has(iso) ? "bg-violet-500" : "bg-primary")} />}
                 </button>
               </div>
             );

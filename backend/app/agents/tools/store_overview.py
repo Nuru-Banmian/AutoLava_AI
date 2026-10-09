@@ -65,7 +65,9 @@ async def store_overview(session, context, arguments: OverviewInput):
         },
         "coverage": {
             "record_days": coverage["record_days"], "interval_days": coverage["interval_days"],
-            "rest_days": coverage["record_days"] - kpis["open_days"],
+            "rest_days": coverage["rest_days"],
+            "statistical_days": coverage["statistical_days"],
+            "unreported_days": coverage["unreported_days"],
             "missing_record_days": coverage["interval_days"] - coverage["record_days"],
             "wash_count_covered_days": kpis["wash_count_covered_days"],
             "wash_count_status": kpis["wash_count_coverage_status"],
@@ -76,7 +78,8 @@ async def store_overview(session, context, arguments: OverviewInput):
         "unavailable": unavailable,
         "definitions": [
             "金额单位为整数欧元；平均值四舍五入到整数欧元。未来结束日期截到门店当地今天。",
-            "经营日仅含营业与提前休息；休息不是经营日，未录入不当作零收入。",
+            "经营日仅含营业与提前休息；休息不是经营日，未录入与未统计不当作零收入。金额合计仅为已统计部分，无已统计台账时不代表已知零收入。",
+            "集中清点收入记在清点当天，不补零或跨日分摊；解释集中统计的覆盖时段必须有事件或上下文证据，不能仅凭相邻未统计日期推断。",
             "经营日均台账营业额=经营日台账营业额合计/经营日数，不含公司结算。",
             "已确认公司结算按开票月份归属；查询与月份重叠即整笔纳入，关闭业务仍保留历史已确认收入。",
             "平均每车收入仅使用同时记录洗车数量的经营日台账营业额/洗车数量，不含公司结算；部分覆盖不能外推全期。",

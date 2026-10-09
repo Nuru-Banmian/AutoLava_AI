@@ -21,7 +21,7 @@ export function BusinessCalendar({ data, today, onSelectDate }: {
   const offset = (getDay(startOfMonth(month)) + 6) % 7;
   const records = new Map(data.daily.map((row) => [row.date, row]));
   const available = dates.filter((date) => date >= data.range.start && date <= data.range.end && date <= today);
-  const revenues = data.daily.filter((row) => available.includes(row.date) && row.is_open !== "休息").map((row) => row.revenue).sort((a, b) => a - b);
+  const revenues = data.daily.filter((row) => available.includes(row.date) && row.is_open !== "休息").map((row) => row.revenue).filter((value): value is number => value !== null).sort((a, b) => a - b);
   // Quantiles keep an unusually high day from making every other day look alike.
   const limits = revenues.length ? [...new Set(Array.from({ length: 5 }, (_, index) => revenues[Math.ceil(revenues.length * (index + 1) / 5) - 1]))] : [];
   const colorForBand = (index: number) => revenueColors[limits.length === 1 ? 2 : Math.round(index * 4 / (limits.length - 1))];
@@ -44,10 +44,11 @@ export function BusinessCalendar({ data, today, onSelectDate }: {
         const enabled = available.includes(date);
         const resting = record?.is_open === "休息";
         const earlyClose = enabled && record?.is_open === "提前休息";
-        const band = record ? limits.findIndex((limit) => record.revenue <= limit) : -1;
+        const band = record?.revenue != null ? limits.findIndex((limit) => record.revenue! <= limit) : -1;
         const colors = !enabled ? "border-slate-100 bg-slate-50 text-slate-400"
           : !record ? "border-dashed border-amber-400 bg-amber-50 text-amber-950"
-            : resting ? "border-slate-300 bg-slate-200 text-slate-700" : colorForBand(band);
+            : record.is_open === "未统计" ? "border-violet-300 bg-violet-50 text-violet-950"
+              : resting ? "border-slate-300 bg-slate-200 text-slate-700" : colorForBand(band);
         return <button key={date} type="button" aria-label={label(date)} title={label(date)} disabled={!enabled}
           aria-current={date === today ? "date" : undefined}
           className={`relative flex min-h-[76px] min-w-0 flex-col items-center justify-start gap-0.5 overflow-hidden rounded-md border px-0.5 py-1.5 text-xs tabular-nums ${colors} ${enabled ? "hover:brightness-95" : ""} ${date === today ? "ring-2 ring-slate-900 ring-offset-1" : ""} focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary lg:justify-center`}
@@ -69,6 +70,7 @@ export function BusinessCalendar({ data, today, onSelectDate }: {
       </div>}
       <div aria-label="营业状态图例" className="flex flex-wrap gap-x-3 gap-y-1.5">
         <span className="inline-flex items-center gap-1"><span aria-hidden="true" className="size-3 rounded-sm border border-slate-300 bg-slate-200" />休息</span>
+        <span className="inline-flex items-center gap-1"><span aria-hidden="true" className="size-3 rounded-sm border border-violet-300 bg-violet-50" />未统计（—）</span>
         <span className="inline-flex items-center gap-1"><span aria-hidden="true" className="size-3 rounded-sm border border-dashed border-amber-400 bg-amber-50" />未录入</span>
         <span className="inline-flex items-center gap-1"><span aria-hidden="true" className="size-2.5 rounded-bl-sm bg-orange-400 ring-1 ring-orange-900" />提前休息角标</span>
       </div>

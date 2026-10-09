@@ -18,6 +18,7 @@ from app.models.ledger import (
 from app.schemas.database import DatabaseFilters, DatabasePage
 from app.schemas.time import timestamp_status, trusted_utc
 from app.services.record_payload import record_payload
+from app.services.ledger_statistics import OPERATING_STATES
 
 router = APIRouter(prefix="/database", tags=["database"])
 
@@ -39,7 +40,7 @@ def build_record_query(store_id: int, filters: DatabaseFilters) -> Select:
             )
         )
     if filters.missing_wash_count:
-        conditions.append(StoreDailyRecord.wash_count.is_(None))
+        conditions.extend([StoreDailyRecord.wash_count.is_(None), StoreDailyRecord.is_open.in_(OPERATING_STATES)])
     return (
         select(StoreDailyRecord)
         .where(*conditions)
@@ -50,7 +51,7 @@ def build_record_query(store_id: int, filters: DatabaseFilters) -> Select:
 def _filters(
     start: date | None,
     end: date | None,
-    status: Literal["营业", "休息", "提前休息"] | None,
+    status: Literal["营业", "休息", "提前休息", "未统计"] | None,
     weather: str | None,
     activity_query: str | None,
     missing_wash_count: bool,
@@ -192,7 +193,7 @@ async def export_records(
     session: Session,
     start: date | None = None,
     end: date | None = None,
-    status: Literal["营业", "休息", "提前休息"] | None = None,
+    status: Literal["营业", "休息", "提前休息", "未统计"] | None = None,
     weather: Annotated[str | None, Query(max_length=50)] = None,
     activity_query: Annotated[str | None, Query(max_length=2000)] = None,
     missing_wash_count: bool = False,
@@ -248,7 +249,7 @@ async def record_page(
     session: Session,
     start: date | None = None,
     end: date | None = None,
-    status: Literal["营业", "休息", "提前休息"] | None = None,
+    status: Literal["营业", "休息", "提前休息", "未统计"] | None = None,
     weather: Annotated[str | None, Query(max_length=50)] = None,
     activity_query: Annotated[str | None, Query(max_length=2000)] = None,
     missing_wash_count: bool = False,

@@ -10,6 +10,8 @@ from openpyxl import load_workbook
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.models.agent  # noqa: F401 - register all tables before the session schema fixture
+
 from app.models.identity import Store, StoreMember, User
 from app.models.ledger import IncomeCategory, StoreDailyRecord
 from app.services.scheduler import apply_refreshed_weather
@@ -101,6 +103,182 @@ async def delete_ledger(client: AsyncClient, path: str):
         "expected_identity": current["identity"],
         "expected_revision": current["revision"],
     })
+
+
+async def test_unreported_can_save_only_status_and_preserve_unknown_values(
+    auth_client: AsyncClient, assigned_store: AssignedStore,
+) -> None:
+    path = f"/api/ledger/{assigned_store.id}/2026-07-01"
+    response = await put_ledger(auth_client, path, json={"is_open": "未统计"})
+    assert response.status_code == 201, response.text
+    assert response.json()["daily_revenue"] is None
+    record = (await auth_client.get(path)).json()
+    assert record["is_open"] == "未统计"
+    assert record["daily_revenue"] is None
+    assert record["wash_count"] is None
+    assert record["items"] == []
+
+
+async def test_unreported_clear_requires_fresh_confirmation_and_keeps_context(
+    auth_client: AsyncClient, assigned_store: AssignedStore, ledger_payload: dict,
+) -> None:
+    path = f"/api/ledger/{assigned_store.id}/2026-07-02"
+    original = await put_ledger(auth_client, path, json=ledger_payload | {"activity": "集中清点前三天收入"})
+    assert original.status_code == 201
+    before = (await auth_client.get(path)).json()
+    denied = await put_ledger(auth_client, path, json={"is_open": "未统计"})
+    assert denied.status_code == 409
+    assert denied.json()["detail"]["code"] == "clear_values_confirmation_required"
+    assert denied.json()["detail"]["current"]["daily_revenue"] == 200
+    assert (await auth_client.get(path)).json()["revision"] == before["revision"]
+    cleared = await put_ledger(auth_client, path, json={"is_open": "未统计", "confirm_clear_values": True})
+    assert cleared.status_code == 200
+    after = (await auth_client.get(path)).json()
+    assert (after["id"], after["identity"], after["income_mode"]) == (before["id"], before["identity"], before["income_mode"])
+    assert after["revision"] == before["revision"] + 1
+    assert (after["weather"], after["activity"]) == ("晴", "集中清点前三天收入")
+    assert (after["daily_revenue"], after["wash_count"], after["items"]) == (None, None, [])
+    stale = await auth_client.put(path, json={
+        "is_open": "未统计", "confirm_clear_values": True,
+        "expected_identity": before["identity"], "expected_revision": before["revision"],
+        "expected_config_revision": before["config_revision"],
+    })
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["code"] == "ledger_revision_conflict"
+    assert (await auth_client.get(path)).json()["revision"] == after["revision"]
+    back = await put_ledger(auth_client, path, json={"is_open": "营业"})
+    assert back.status_code == 422
+    assert (await auth_client.get(path)).json()["is_open"] == "未统计"
+    restored = await put_ledger(auth_client, path, json=ledger_payload)
+    assert restored.status_code == 200
+
+
+@pytest.mark.parametrize("values", [
+    {"daily_revenue": 0}, {"wash_count": 0}, {"items": [{"category_id": 1, "amount": 0}]},
+])
+async def test_unreported_rejects_even_zero_values(
+    auth_client: AsyncClient, assigned_store: AssignedStore, values: dict,
+) -> None:
+    path = f"/api/ledger/{assigned_store.id}/2026-07-03"
+    response = await put_ledger(auth_client, path, json={"is_open": "未统计"} | values)
+    assert response.status_code == 422
+    assert (await auth_client.get(path)).status_code == 404
+
+
+async def test_unreported_return_requires_explicit_enabled_quantity(
+    auth_client: AsyncClient, assigned_store: AssignedStore, ledger_payload: dict,
+) -> None:
+    path = f"/api/ledger/{assigned_store.id}/2026-07-08"
+    assert (await put_ledger(auth_client, path, json={"is_open": "未统计"})).status_code == 201
+    for count in (None,):
+        denied = await put_ledger(auth_client, path, json=ledger_payload | {"wash_count": count})
+        assert denied.status_code == 422
+    omitted = await put_ledger(auth_client, path, json={k: v for k, v in ledger_payload.items() if k != "wash_count"})
+    assert omitted.status_code == 422
+    assert (await auth_client.get(path)).json()["is_open"] == "未统计"
+    saved = await put_ledger(auth_client, path, json=ledger_payload | {"wash_count": 0})
+    assert saved.status_code == 200
+    assert (await auth_client.get(path)).json()["wash_count"] == 0
+
+
+async def test_unreported_preserves_omitted_historical_weather_and_can_clear_context(
+    auth_client: AsyncClient, assigned_store: AssignedStore, ledger_payload: dict,
+    db_session: AsyncSession,
+) -> None:
+    path = f"/api/ledger/{assigned_store.id}/2026-07-09"
+    assert (await put_ledger(auth_client, path, json=ledger_payload | {"activity": "原事件"})).status_code == 201
+    record = await db_session.scalar(select(StoreDailyRecord).where(StoreDailyRecord.store_id == assigned_store.id))
+    record.weather = "旧版任意天气"
+    await db_session.commit()
+    clear_values = await put_ledger(auth_client, path, json={"is_open": "未统计", "confirm_clear_values": True})
+    assert clear_values.status_code == 200
+    saved = (await auth_client.get(path)).json()
+    assert (saved["weather"], saved["activity"], saved["daily_revenue"]) == ("旧版任意天气", "原事件", None)
+    clear_context = await put_ledger(auth_client, path, json={"is_open": "未统计", "weather": None, "activity": None})
+    assert clear_context.status_code == 200
+    saved = (await auth_client.get(path)).json()
+    assert (saved["weather"], saved["activity"]) == (None, None)
+
+
+async def test_unreported_analysis_retains_state_but_excludes_unknown_values(
+    auth_client: AsyncClient, assigned_store: AssignedStore, ledger_payload: dict,
+) -> None:
+    base = f"/api/ledger/{assigned_store.id}"
+    for day, payload in [
+        (1, ledger_payload), (2, ledger_payload | {"is_open": "提前休息"}),
+        (3, ledger_payload | {"is_open": "休息"}),
+        (4, {"is_open": "未统计", "activity": "尚未清点"}),
+        (5, ledger_payload | {"items": [{"category_id": assigned_store.cash_id, "amount": 0}, {"category_id": assigned_store.excluded_id, "amount": 0}]}),
+    ]:
+        assert (await put_ledger(auth_client, f"{base}/2026-07-0{day}", json=payload)).status_code == 201
+    assert (await put_ledger(auth_client, f"{base}/2026-06-01", json={"is_open": "未统计"})).status_code == 201
+    response = await auth_client.get(f"/api/charts/{assigned_store.id}", params={
+        "start": "2026-07-01", "end": "2026-07-06", "compare_start": "2026-06-01", "compare_end": "2026-06-06",
+    })
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["kpis"]["total_revenue"] == 400
+    assert data["kpis"]["open_days"] == 3
+    assert data["kpis"]["average_revenue"] == 133
+    assert data["period_coverage"] == {
+        "start": "2026-07-01", "end": "2026-07-06", "record_days": 5, "interval_days": 6,
+        "statistical_days": 4, "unreported_days": 1, "operating_days": 3, "rest_days": 1, "missing_record_days": 1,
+    }
+    assert data["daily"][3] == {"date": "2026-07-04", "revenue": None, "is_open": "未统计"}
+    assert data["ledger_comparison"]["status"] == "no_previous_records"
+    assert data["ledger_comparison"]["change_percent"] is None
+    all_unknown = (await auth_client.get(f"/api/charts/{assigned_store.id}?start=2026-06-01&end=2026-06-06")).json()
+    assert all_unknown["monthly"] == [{"month": "2026-06", "revenue": None, "daily_ledger_revenue": None, "confirmed_settlement_income": 0, "monthly_total_income": None}]
+    page = (await auth_client.get(f"/api/database/{assigned_store.id}/records?status=未统计")).json()
+    assert page["total"] == 2
+    missing = (await auth_client.get(f"/api/database/{assigned_store.id}/records?missing_wash_count=true")).json()
+    assert all(row["is_open"] in ("营业", "提前休息") for row in missing["items"])
+    exported = await auth_client.get(f"/api/database/{assigned_store.id}/export.xlsx")
+    assert exported.status_code == 200
+    workbook = load_workbook(BytesIO(exported.content), read_only=True)
+    unknown_row = next(row for row in workbook["经营记录"].values if "尚未清点" in row)
+    assert unknown_row[2:5] == ("未统计", None, None)
+    assert unknown_row[6] == "尚未清点"
+    assert not any(row[0] and str(row[0]).startswith("2026-07-04") for row in list(workbook["收入明细"].values)[1:])
+
+
+async def test_unreported_cached_briefings_and_recent_keep_unknown_state(
+    auth_client: AsyncClient, assigned_store: AssignedStore,
+) -> None:
+    today = today_for(assigned_store)
+    for day in (today - timedelta(days=1), today):
+        assert (await put_ledger(auth_client, f"/api/ledger/{assigned_store.id}/{day}", json={"is_open": "未统计"})).status_code == 201
+    refreshed = await auth_client.post(f"/api/dashboard/{assigned_store.id}/refresh")
+    assert refreshed.status_code == 200, refreshed.text
+    cached = await auth_client.get(f"/api/dashboard/{assigned_store.id}")
+    assert cached.status_code == 200
+    cards = {card["card_type"]: card for card in cached.json()}
+    for name in ("today", "yesterday"):
+        assert cards[name]["state"] == "unreported"
+        assert cards[name]["revenue"] is None
+    recent = (await auth_client.get(f"/api/ledger/{assigned_store.id}/recent")).json()
+    assert len(recent) == 2
+    assert all(row["is_open"] == "未统计" and row["daily_revenue"] is None for row in recent)
+
+
+async def test_clear_confirmation_for_real_zero_checks_config_before_confirmation(
+    auth_client: AsyncClient, assigned_store: AssignedStore, ledger_payload: dict,
+) -> None:
+    path = f"/api/ledger/{assigned_store.id}/2026-07-07"
+    zero_items = [{"category_id": item["category_id"], "amount": 0} for item in ledger_payload["items"]]
+    assert (await put_ledger(auth_client, path, json=ledger_payload | {"items": zero_items})).status_code == 201
+    current = (await auth_client.get(path)).json()
+    stale_config = await auth_client.put(path, json={
+        "is_open": "未统计", "confirm_clear_values": True,
+        "expected_identity": current["identity"], "expected_revision": current["revision"],
+        "expected_config_revision": 99,
+    })
+    assert stale_config.status_code == 409
+    assert stale_config.json()["detail"]["code"] == "income_config_revision_conflict"
+    absent = await put_ledger(auth_client, path, json={"is_open": "未统计"})
+    assert absent.status_code == 409
+    assert absent.json()["detail"]["code"] == "clear_values_confirmation_required"
+    assert (await auth_client.get(path)).json()["daily_revenue"] == 0
 
 
 async def test_put_releases_dependency_transaction_before_weather(
