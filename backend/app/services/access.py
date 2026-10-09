@@ -1,11 +1,11 @@
 from typing import Literal, get_args
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, exists, false
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.identity import Store, StoreMember, User
-from app.services.owner import is_administrator
+from app.services.owner import is_administrator, is_owner
 from app.services.sessions import current_credentials, request_auth_required, require_credentials
 
 
@@ -67,21 +67,11 @@ async def require_fresh_store_access(
     store_id: int,
     capability: Capability,
 ) -> tuple[User, Store]:
-    user = await require_fresh_user(
-        session, user_id=user_id, capability=capability
-    )
+    user = await require_fresh_user(session, user_id=user_id, capability=capability)
     store = await session.get(Store, store_id, populate_existing=True)
     if store is None or not store.is_active:
         raise HTTPException(404, "Store not found")
-    if not is_administrator(user):
-        membership = await session.scalar(
-            select(StoreMember.id).where(
-                StoreMember.store_id == store_id,
-                StoreMember.user_id == user_id,
-            )
-        )
-        if membership is None:
-            raise HTTPException(403, "Store membership required")
+    await require_store_scope(session, user, store_id)
     return user, store
 
 
@@ -103,10 +93,44 @@ async def require_company_settlement_access(
     return user, store
 
 
+async def store_scope_clause(session: AsyncSession, user: User):
+    """One authority for business, management and background store access."""
+    if is_owner(user):
+        from sqlalchemy import true
+
+        return true()
+    own = (
+        exists()
+        .where(StoreMember.store_id == Store.id, StoreMember.user_id == user.id)
+        .correlate(Store)
+    )
+    if is_administrator(user):
+        return own
+    manager = (
+        await session.get(User, user.manager_id, populate_existing=True)
+        if user.manager_id is not None
+        else None
+    )
+    if manager is None or not is_administrator(manager):
+        return false()
+    if is_owner(manager):
+        return own
+    return own & exists().where(
+        StoreMember.store_id == Store.id, StoreMember.user_id == manager.id
+    ).correlate(Store)
+
+
+async def require_store_scope(session: AsyncSession, user: User, store_id: int) -> None:
+    allowed = await session.scalar(
+        select(Store.id).where(Store.id == store_id, await store_scope_clause(session, user))
+    )
+    if allowed is None:
+        raise HTTPException(404, "Store not found")
+
+
 async def list_accessible_stores(session: AsyncSession, user: User) -> list[Store]:
     query = select(Store).order_by(Store.name)
+    query = query.where(await store_scope_clause(session, user))
     if not is_administrator(user):
-        query = query.where(Store.is_active.is_(True)).join(StoreMember).where(
-            StoreMember.user_id == user.id
-        )
+        query = query.where(Store.is_active.is_(True))
     return list((await session.scalars(query)).all())

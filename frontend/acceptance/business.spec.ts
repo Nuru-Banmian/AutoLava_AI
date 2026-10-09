@@ -6,6 +6,9 @@ const password = "ci-acceptance-password";
 async function identity(request: APIRequestContext, role: "user" | "admin") {
   const login = await request.post("/api/auth/login", { data: { username: "ci-owner", password } });
   expect(login.status()).toBe(200);
+  const me = await request.get("/api/auth/me");
+  expect(me.status()).toBe(200);
+  const owner = await me.json();
   const createdStore = await request.post("/api/admin/stores", { data: {
     name: `浏览器验收-${randomUUID().slice(0, 8)}`, address: "Rome", latitude: "41.9", longitude: "12.5",
   } });
@@ -14,6 +17,7 @@ async function identity(request: APIRequestContext, role: "user" | "admin") {
   const username = `browser-${randomUUID().slice(0, 8)}`;
   const createdUser = await request.post("/api/admin/users", { data: {
     username, password, role, store_ids: [store.id],
+    ...(role === "user" ? { manager_id: owner.id } : {}),
   } });
   expect(createdUser.status()).toBe(201);
   return { username, storeId: store.id };

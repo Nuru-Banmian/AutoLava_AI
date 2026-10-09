@@ -33,7 +33,8 @@ class ChatRunner:
             "agent_timeout_seconds": settings.agent_memory_timeout_seconds,
             "agent_output_tokens": settings.agent_memory_output_tokens,
         })
-        self.memory_model = memory_model if memory_model is not None else BailianChat(memory_settings)
+        self.memory_model = (memory_model if memory_model is not None
+                             else BailianChat(memory_settings, required_tool="propose_memory"))
         self.memory_graph = create_memory_graph(self.memory_model, self.memory, settings)
         self.jobs = MemoryJobs(self.memory, settings)
         self.jobs.graph = create_memory_graph(self.memory_model, self.memory, settings, jobs=self.jobs)

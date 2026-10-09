@@ -10,7 +10,7 @@ import httpx
 import pytest
 import respx
 
-from tests.api.test_agent_chat import StreamingModel, chat_app, completed, general_plan_sse
+from tests.api.test_agent_chat import StreamingModel, chat_app, completed
 
 
 class ToolModel:
@@ -210,37 +210,59 @@ def sse(*deltas):
     return "\n\n".join('data: ' + json.dumps(value, ensure_ascii=False) for value in deltas) + "\n\ndata: [DONE]\n\n"
 
 
-async def test_bailian_fragmented_tool_call_and_result_messages(tmp_path):
+async def test_bailian_fragmented_tool_call_and_result_messages(tmp_path, monkeypatch):
     from tests.api.test_agent_chat import provider
-    first = sse(
-        {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call-1", "type": "function",
-            "function": {"name": "store_overview", "arguments": '{"start":"2026-07-10",'}}]}}]},
-        {"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": '"end":"2026-07-11"}'}}]},
-                      "finish_reason": "tool_calls"}]},
-        {"choices": [], "usage": {"prompt_tokens": 30, "completion_tokens": 10}},
-    )
+    monkeypatch.setenv("AUTOLAVA_AGENT_CONTEXT_CHARS", "64000")
+
+    def tool_response(name, arguments, call_id):
+        return sse({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": call_id,
+            "type": "function", "function": {"name": name, "arguments": json.dumps(arguments)}}]},
+            "finish_reason": "tool_calls"}]})
+
+    plan = tool_response("plan_response", {"kind": "query", "queries": []}, "plan-1")
+    discovery = tool_response("store_data_catalog", {}, "catalog-1")
     final = sse({"choices": [{"delta": {"content": "查询已完成"}}]},
                 {"choices": [{"delta": {}, "finish_reason": "stop"}]},
                 {"choices": [], "usage": {"prompt_tokens": 50, "completion_tokens": 5}})
+
+    def respond(request):
+        wire = json.loads(request.content)
+        if wire["tools"][0]["function"]["name"] == "plan_response":
+            return httpx.Response(200, text=plan)
+        receipts = [json.loads(m["content"]) for m in wire["messages"] if m["role"] == "tool"]
+        if not any("domains" in receipt or "targets" in receipt for receipt in receipts):
+            return httpx.Response(200, text=discovery)
+        if "domains" in receipts[-1]:
+            arguments = json.dumps({"catalog_version": receipts[-1]["catalog_version"], "targets": [{
+                "id": "ledger", "domain": "daily_ledger", "range": {"start": "2026-07-10", "end": "2026-07-11"},
+                "fields": ["date", "daily_revenue"],
+            }]})
+            split = len(arguments) // 2
+            fragmented = sse(
+                {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call-1", "type": "function",
+                    "function": {"name": "store_", "arguments": arguments[:split]}}]}}]},
+                {"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {
+                    "name": "query", "arguments": arguments[split:]}}]}, "finish_reason": "tool_calls"}]},
+                {"choices": [], "usage": {"prompt_tokens": 30, "completion_tokens": 10}},
+            )
+            return httpx.Response(200, text=fragmented)
+        return httpx.Response(200, text=final)
+
     with respx.mock() as mock:
-        transport = mock.post("https://bailian.test/v1/chat/completions").mock(side_effect=[
-            httpx.Response(200, text=general_plan_sse()),
-            httpx.Response(200, text=first), httpx.Response(200, text=final),
-        ])
+        transport = mock.post("https://bailian.test/v1/chat/completions").mock(side_effect=respond)
         async with chat_app(tmp_path, provider()) as (client, _, _):
             await save_day(client, "2026-07-10", 150, wash=3)
             run = await ask(client, "查询指定期间")
             assert run["status"] == "completed", run
-            assert run["calls"] == 3
+            assert run["calls"] == 4
+            assert transport.call_count == 4
             assert run["usage"] == {"prompt_tokens": 80, "completion_tokens": 15}
-            wire = json.loads(transport.calls[2].request.content)
-            tool_message = next(item for item in wire["messages"]
-                                if item.get("tool_call_id") == "call-1")
-            result = json.loads(tool_message["content"])
-            assert result["income_summary"]["daily_ledger_revenue"] == 150
-            assert tool_message["role"] == "tool"
-            call_message = next(item for item in wire["messages"] if item.get("tool_calls"))
-            assert call_message["tool_calls"][0]["function"]["name"] == "store_overview"
+            wire = json.loads(transport.calls[-1].request.content)
+            receipt = next(m for m in wire["messages"] if m.get("tool_call_id") == "call-1")
+            result = json.loads(receipt["content"])
+            assert result["targets"][0]["rows"] == [{"date": "2026-07-10", "daily_revenue": 150}]
+            call = next(m for m in wire["messages"] if m.get("tool_calls") and m["tool_calls"][0]["id"] == "call-1")
+            assert call["tool_calls"][0]["function"]["name"] == "store_query"
             assert {item["function"]["name"] for item in wire["tools"]} == {
                 "read_skill", "read_skill_resource", "store_data_catalog", "store_query", "calculate", "store_chart",
             }

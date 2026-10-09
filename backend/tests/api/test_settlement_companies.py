@@ -216,7 +216,7 @@ async def test_every_operation_rechecks_access_flag_and_company_store_scope(
     db_session.add(private)
     await db_session.commit()
 
-    assert (await client.get(f"/api/settlements/{other.id}/companies")).status_code == 403
+    assert (await client.get(f"/api/settlements/{other.id}/companies")).status_code == 404
     assert (
         await client.patch(
             f"/api/settlements/{store_id}/companies/{private.id}", json={"name": "Stolen"}

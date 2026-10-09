@@ -1,6 +1,7 @@
 """Project immutable query results into bounded, run-local chart drafts."""
 import json
 import math
+import re
 from datetime import date, timedelta
 from calendar import monthrange
 from collections import defaultdict
@@ -8,7 +9,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
+from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 from app.agents.tools.query_definitions import METRICS
 
@@ -17,46 +18,23 @@ class CreateChartInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     operation: Literal["create"]
     result_ref: str = Field(min_length=32, max_length=32)
-    block: Literal["main", "comparison"] = "main"
+    block: Literal["main", "comparison"] = Field(default="main", description=(
+        "main contains only current-period rows; comparison contains only baseline-period rows. "
+        "Neither merges periods. A two-month chart requires one query spanning both months with group_by:[month]."))
     dimension: Literal["day", "week", "month", "year", "category", "weather", "weekday", "date"]
-    series: list[str] = Field(min_length=1, max_length=6)
+    series: list[str] = Field(min_length=1, max_length=6, description=(
+        "Selected numeric metric/field keys, not display labels. Category pivot requires series:[amount] "
+        "and series_by:category, never category names."))
     series_by: Literal["category"] | None = None
     type: Literal["line", "grouped_bar", "stacked_bar", "horizontal_bar"]
     title: str = Field(min_length=1, max_length=80)
 
 
-class ReadSavedInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    operation: Literal["read_saved"]
-    message_id: int | None = Field(default=None, gt=0)
-    chart_id: str | None = Field(default=None, min_length=32, max_length=32)
-    series: list[str] | None = Field(default=None, min_length=1, max_length=6)
-    point_start: int = Field(default=1, ge=1)
-    point_end: int | None = Field(default=None, ge=1)
-    result_ref: str | None = Field(default=None, min_length=32, max_length=32)
-    cursor: str | None = Field(default=None, max_length=128)
-    page_size: int = Field(default=50, ge=1, le=200)
-
-    @model_validator(mode="after")
-    def selection_or_continuation(self):
-        if self.result_ref is not None:
-            if not self.cursor or self.model_fields_set - {"operation", "result_ref", "cursor", "page_size"}:
-                raise ValueError("Continuation cannot change the saved selection")
-        elif self.message_id is None or self.chart_id is None or self.cursor is not None:
-            raise ValueError("Saved read requires its message and chart")
-        if self.series and len(set(self.series)) != len(self.series):
-            raise ValueError("Duplicate series")
-        return self
-
-
-class ChartInput(RootModel[CreateChartInput | ReadSavedInput]):
+class ChartInput(RootModel[CreateChartInput]):
     @classmethod
     def model_json_schema(cls, **kwargs):
-        # Providers require an object at the root. Validation still uses the
-        # strict operation-specific models, including continuation exclusivity.
-        properties = {**CreateChartInput.model_json_schema()["properties"],
-                      **ReadSavedInput.model_json_schema()["properties"]}
-        properties["operation"] = {"type": "string", "enum": ["create", "read_saved"]}
+        # Providers receive the same creation-only contract as runtime validation.
+        schema = CreateChartInput.model_json_schema()
 
         def compact(value):
             if isinstance(value, list):
@@ -68,14 +46,15 @@ class ChartInput(RootModel[CreateChartInput | ReadSavedInput]):
                 if "anyOf" in value:
                     alternatives = [item for item in value["anyOf"] if item.get("type") != "null"]
                     if len(alternatives) == 1:
-                        return compact(alternatives[0])
-                return {key: ({name: compact(schema) for name, schema in item.items()}
-                              if key == "properties" else compact(item))
-                        for key, item in value.items() if key not in ("title", "default")}
+                        return compact({**alternatives[0], **{
+                            key: item for key, item in value.items() if key != "anyOf"
+                        }})
+                return {key: ({name: compact(item) for name, item in content.items()}
+                              if key == "properties" else compact(content))
+                        for key, content in value.items() if key not in ("title", "default")}
             return value
 
-        return compact({"type": "object", "additionalProperties": False,
-                        "properties": properties, "required": ["operation"]})
+        return compact(schema)
 
 
 def byte_size(value):
@@ -257,21 +236,42 @@ def category_points(snapshot, block, args, definitions):
 
 
 async def store_chart(session, context, args):
-    if args.operation == "read_saved":
-        from app.agents.tools.saved_charts import read_saved
-        return await read_saved(session, context, args)
     snapshot = context.results.get(args.result_ref)
     if snapshot is None:
         return {"error": "invalid_chart_source", "message": "图表来源不属于本轮有效查询。"}
+    # Input validity alone does not prove the selected block covers the user's
+    # comparison or categories. Reject misleading drafts before preparing them.
+    comparison = snapshot.get("comparison", {})
+    if (args.dimension == "month" and comparison
+            and re.search(r"比较|对比|对照|两月|双月", context.question)
+            and not re.search(r"只(?:画|绘制|显示|展示).{0,8}(?:本期|基期|上月|本月)", context.question)):
+        required = {row["month"] for block in (snapshot, comparison)
+                    for row in block.get("rows", []) if "month" in row}
+        selected = snapshot if args.block == "main" else comparison
+        actual = {row["month"] for row in selected.get("rows", []) if "month" in row}
+        if required and not required.issubset(actual):
+            ranges = [block["range"] for block in (snapshot, comparison) if block.get("range")]
+            return {"error": "chart_periods_missing", "required_months": sorted(required),
+                    "selected_months": sorted(actual),
+                    "required_range": {"start": min(r["start"] for r in ranges),
+                                       "end": max(r["end"] for r in ranges)},
+                    "message": "双月比较图未生成：所选block只有一个时期，不能表示双方。"
+                               "保留compare回执计算差额；另用store_query覆盖required_range、"
+                               "相同domain/metrics及group_by:[month]，再用新result_ref画图。"
+                               "不要在旧引用上切换block重试；不得宣称图已包含两个月。"}
+    if (args.type == "stacked_bar" and args.series_by != "category"
+            and re.search(r"现金|刷卡|分类|各类", context.question)):
+        return {"error": "chart_categories_missing",
+                "message": "分类构成图未生成：台账合计不能代替现金/刷卡等独立分类。"
+                           "需要公司结算的月度分类构成用income_composition、metrics:[amount]、"
+                           "group_by:[month,category]重新查询；store_chart用dimension:month、"
+                           "series:[amount]、series_by:category、type:stacked_bar。"
+                           "排除不计入总额的数据；使用新result_ref，不声称聚合台账系列已拆分类。"}
     # result_ref addresses the complete immutable snapshot, never a returned page.
     # Chart projection must not force thousands of source rows into model context.
     try:
         if snapshot.get("source") == "saved_chart":
-            from app.agents.tools.saved_charts import project_saved
-            drafts = project_saved(snapshot, args)
-            context.results.prepare_charts(drafts)
-            return {"status": "prepared", "source": "saved_chart", "queried_at": snapshot["queried_at"],
-                    "charts": [descriptor(draft) for draft in drafts], "message": "历史图已准备，原查询时间不变。"}
+            raise ValueError("invalid_chart_source")
         definitions = source_definitions(snapshot)
         if any(name not in definitions for name in args.series):
             raise ValueError("invalid_chart_source")
@@ -284,6 +284,10 @@ async def store_chart(session, context, args):
     except (ValueError, InvalidOperation) as exc:
         code = str(exc) if str(exc) in {"invalid_chart_source", "chart_mixed_units", "chart_unsafe_value", "chart_incompatible_stack", "chart_explicit_ranking_required",
                                        "chart_capacity_exceeded"} else "invalid_chart_source"
-        return {"error": code, "message": "图表未生成；请检查完整来源、单位及容量。"}
+        return {"error": code, "message": "图表未生成；来源须完整，group_by与dimension一致且有分组行。"
+                                          "月度图用一个完整日期范围目标和group_by:[month]；"
+                                          "分类月度堆叠用[month,category]、series:[amount]及series_by:category，series不传分类名。"
+                                          "无分组汇总不能直接画图，请修正查询/图表参数后重试；核对单位和容量。"}
     return {"status": "prepared", "charts": [descriptor(draft) for draft in drafts],
-            "message": "图表已准备，随最终回答保存；请给简短分析，用户要求明细时仍提供。"}
+            "message": "图表已从完整快照准备，随最终回答保存；point_count为图中全部点数，与模型已读明细页数分别说明。"
+                       "请给简短分析，用户要求明细时仍提供。"}

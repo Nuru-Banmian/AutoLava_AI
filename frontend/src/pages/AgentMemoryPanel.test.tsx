@@ -32,7 +32,7 @@ it("confirms, edits and rejects candidates and displays curation failures", asyn
   const user = userEvent.setup();
   render(<AgentMemoryPanel storeId={1} />);
   await user.click(screen.getByRole("button", { name: "查看记忆" }));
-  await screen.findByText(/整理失败/);
+  await screen.findByText("最新：整理失败");
   const candidate = (content: string) => screen.getByText(content).closest("article")!;
   await user.click(within(candidate("直接确认")).getByRole("button", { name: "确认" }));
   await screen.findByText("候选已确认。索引待处理。");
@@ -48,6 +48,26 @@ it("confirms, edits and rejects candidates and displays curation failures", asyn
     { id: "c1", decision: "confirm", expected_version: 1, content: "以后回答简短" },
     { id: "c2", decision: "reject", expected_version: 1 },
   ]);
+});
+
+it("distinguishes a normal decision not to save from failures and pending candidates", async () => {
+  server.use(
+    http.get("/api/agent/1/memories", () => HttpResponse.json({ items: [], revision: 0 })),
+    http.get("/api/agent/1/memory-jobs", () => HttpResponse.json({ items: [
+      { id: 3, message_id: 5, status: "completed", result: { status: "not_saved" }, attempts: 1, calls: 1, error_code: null, failures: [] },
+      { id: 2, message_id: 4, status: "completed", result: { status: "pending_confirmation" }, attempts: 1, calls: 1, error_code: null, failures: [] },
+      { id: 1, message_id: 3, status: "failed", result: null, attempts: 3, calls: 3, error_code: "memory_invalid_proposal", failures: [{ code: "memory_invalid_proposal" }] },
+    ] })),
+  );
+  render(<AgentMemoryPanel storeId={1} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "查看记忆" }));
+  expect(await screen.findByText("最新：整理完成：无需保存长期记忆")).toBeVisible();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.queryByText("记忆已保存")).not.toBeInTheDocument();
+  await user.click(screen.getByText(/查看整理记录/));
+  expect(screen.getByText(/来源消息 #4 · 候选记忆待确认，尚未生效/)).toBeVisible();
+  expect(screen.getByText("失败记录：memory_invalid_proposal")).toBeVisible();
 });
 
 it("keeps a correction draft on conflict and requires explicit deletion and clearing", async () => {

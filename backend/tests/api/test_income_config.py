@@ -12,8 +12,8 @@ from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
 
 
 @pytest.fixture
-async def admin_client(client, user_factory) -> AsyncClient:
-    await user_factory(username="config-admin", password="secret", role="admin")
+async def admin_client(client, primary_admin_factory) -> AsyncClient:
+    await primary_admin_factory(username="config-admin", password="secret", role="admin")
     response = await client.post(
         "/api/auth/login",
         json={"username": "config-admin", "password": "secret"},
@@ -98,9 +98,9 @@ async def test_income_config_version_routes_do_not_exist(
 
 
 async def test_used_category_can_be_archived_but_not_permanently_deleted(
-    admin_client, store_factory, user_factory, db_session: AsyncSession
+    admin_client, store_factory, primary_admin_factory, db_session: AsyncSession
 ) -> None:
-    owner = await user_factory(username="category-owner", password="secret")
+    owner = await primary_admin_factory(username="category-owner", password="secret")
     store = await store_factory(name="Protected category")
     category = IncomeCategory(
         store_id=store.id, name="Used", include_in_total=True, is_active=True, sort_order=0
@@ -154,9 +154,9 @@ async def test_used_category_can_be_archived_but_not_permanently_deleted(
 
 
 async def test_current_category_patch_preserves_historical_total_and_item_snapshot(
-    admin_client, store_factory, user_factory, db_session: AsyncSession
+    admin_client, store_factory, primary_admin_factory, db_session: AsyncSession
 ) -> None:
-    owner = await user_factory(username="snapshot-owner", password="secret")
+    owner = await primary_admin_factory(username="snapshot-owner", password="secret")
     store = await store_factory(name="Historical category snapshot")
     category = IncomeCategory(
         store_id=store.id,

@@ -313,7 +313,8 @@ class MemoryService:
             payload = explicit_content(run.input)
             # Do not let a model invent a source, extract somebody else's quote, or expand
             # a small user fragment into a new fact. T5 stores the user's own full payload.
-            if (not payload or not run.user_message_id or proposal.content != payload
+            if (not payload or not run.user_message_id
+                    or (proposal.action != "reject" and proposal.content != payload)
                     or proposal.action not in {"save", "duplicate", "conflict", "reject"}
                     or proposal.evidence is not None):
                 raise ModelFailure("memory_invalid_proposal")
@@ -329,9 +330,8 @@ class MemoryService:
                 if versions != {m["id"]: m["version"] for m in snapshot["memories"]}:
                     raise ModelFailure("memory_version_conflict")
                 target = next((m for m in rows if m.id == proposal.target_id), None)
-                if proposal.action == "duplicate" or (
-                        proposal.action == "conflict" and (
-                            proposal.target_id is not None or proposal.target_version is not None)):
+                if proposal.action == "duplicate" or (proposal.action == "conflict" and (
+                        proposal.target_id is not None or proposal.target_version is not None)):
                     if (not target or target.status != "active"
                             or target.version != proposal.target_version
                             or target.category != proposal.category):
@@ -349,10 +349,10 @@ class MemoryService:
                 if memory is None:
                     memory = AgentMemory(id=uuid4().hex, user_id=scope.user_id,
                                          store_id=scope.store_id, content=payload,
-                                         category=proposal.category, version=1,
-                                         status="pending_confirmation" if proposal.action == "conflict" else "active",
-                                         target_id=target.id if proposal.action == "conflict" and target else None,
-                                         target_version=target.version if proposal.action == "conflict" and target else None)
+                                     category=proposal.category, version=1,
+                                     status="pending_confirmation" if proposal.action == "conflict" else "active",
+                                     target_id=target.id if proposal.action == "conflict" and target else None,
+                                     target_version=target.version if proposal.action == "conflict" and target else None)
                     session.add(memory)
                     await session.flush()
                     if memory.status == "active":

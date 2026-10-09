@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
@@ -35,6 +35,206 @@ beforeEach(() => {
 afterEach(() => { server.resetHandlers(); server.close(); vi.unstubAllGlobals(); });
 
 describe("AI conversation", () => {
+  it("renders saved charts inside the answer and deduplicates completed-event replay", async () => {
+    const descriptor = { chart_id: "chart-1", schema_version: 1, type: "line", title: "保存的趋势", unit: "EUR", range: { start: "2026-07-01", end: "2026-07-01" }, point_count: 1 };
+    let completed = false;
+    let chartReads = 0;
+    server.use(
+      http.get("/api/agent/1/conversation", () => HttpResponse.json({ generation: 0,
+        messages: [{ id: 4, role: "assistant", content: "真实保存的图表分析", charts: [descriptor, descriptor] }],
+        run: completed ? { ...run, status: "completed" } : run })),
+      http.get("/api/agent/1/messages/4/charts/chart-1", () => {
+        chartReads++;
+        return HttpResponse.json({ chart_id: "chart-1", message_id: 4, schema_version: 1, source: {}, created_at: "2026-10-10",
+          payload: { ...descriptor, dimension: "day", granularity: "day", queried_at: "2026-10-10", unfinished: false, coverage: {}, notes: [],
+            series: [{ key: "total_revenue", label: "营业额" }], points: [{ dimension: "2026-07-01", state: "营业", values: { total_revenue: { exact: "19", plot: 19, status: "available" } } }] } });
+      }),
+    );
+    render(<AgentChatPage />);
+    const answer = (await screen.findByText("真实保存的图表分析")).closest("article")!;
+    expect(await within(answer).findByLabelText("保存的趋势查看日期")).toBeVisible();
+    expect(screen.getAllByRole("figure", { name: "保存的趋势" })).toHaveLength(1);
+    await waitFor(() => expect(EventStream.streams).toHaveLength(1));
+    act(() => EventStream.streams[0].emit("tool", { name: "store_chart", status: "completed" }));
+    expect(screen.getByText("已准备图表，完成后保存")).toBeVisible();
+    completed = true;
+    act(() => EventStream.streams[0].emit("completed", { message_id: 4, charts: [descriptor] }));
+    await waitFor(() => expect(EventStream.streams[0].closed).toBe(true));
+    expect(screen.getAllByRole("figure", { name: "保存的趋势" })).toHaveLength(1);
+    expect(chartReads).toBe(1);
+    expect(screen.queryByText("已准备图表，完成后保存")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "AI对话" })).not.toBeInTheDocument();
+  });
+
+  it("fills editable questions without sending and preserves an existing draft", async () => {
+    const submitted: { content: string }[] = [];
+    server.use(http.post("/api/agent/1/messages", async ({ request }) => {
+      submitted.push(await request.json() as { content: string });
+      return HttpResponse.json(run);
+    }));
+    render(<AgentChatPage />);
+    const user = userEvent.setup();
+    const question = await screen.findByRole("button", { name: "本月经营概览" });
+    await waitFor(() => expect(question).toBeEnabled());
+    expect(within(screen.getByRole("region", { name: "固定提问" })).getAllByRole("button")).toHaveLength(6);
+    await user.type(screen.getByLabelText("发送消息"), "先保留我的要求");
+    await user.click(question);
+    const input = screen.getByLabelText("发送消息");
+    expect(input).toHaveFocus();
+    expect((input as HTMLTextAreaElement).value).toMatch(/^先保留我的要求\n\n请概括当前门店/);
+    expect(submitted).toHaveLength(0);
+    await user.type(input, "补充说明");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(submitted).toHaveLength(1));
+    expect(submitted[0].content).toContain("补充说明");
+  });
+
+  it("keeps preset examples separate from saved history and available after reset", async () => {
+    let reset = false;
+    server.use(
+      http.get("/api/agent/1/conversation", () => HttpResponse.json({ generation: 0,
+        messages: reset ? [] : [{ id: 1, role: "assistant", content: "真实保存的历史" }], run: null })),
+      http.post("/api/agent/1/conversation/reset", () => {
+        reset = true;
+        return HttpResponse.json({ generation: 1, messages: [], run: null });
+      }),
+    );
+    const page = render(<AgentChatPage />);
+    await screen.findByText("真实保存的历史");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "示例会话" }));
+    const examples = screen.getByRole("region", { name: "示例会话" });
+    expect(examples).toHaveTextContent("预设演示问答，不是实际查询记录");
+    expect(examples).not.toHaveTextContent("真实保存的历史");
+    await user.click(screen.getByText("未统计与集中清点解释", { selector: "summary" }));
+    expect(within(examples).getByText("未统计是不是零营业额？")).toBeVisible();
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "重置对话" }));
+    await waitFor(() => expect(screen.queryByText("真实保存的历史")).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "示例会话" }));
+    expect(screen.getByRole("region", { name: "示例会话" })).toHaveTextContent("未统计是不是零营业额？");
+    page.unmount();
+    render(<AgentChatPage />);
+    await user.click(screen.getByRole("button", { name: "示例会话" }));
+    expect(screen.getByRole("region", { name: "示例会话" })).toBeVisible();
+  });
+
+  it("opens the chosen example without changing drafts or saved history and restores input focus", async () => {
+    render(<AgentChatPage />);
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("发送消息"), "我的问题草稿");
+    await user.click(screen.getByRole("button", { name: /示例 03/ }));
+    const dialog = screen.getByRole("dialog", { name: "示例会话" });
+    expect(within(dialog).getByText("未统计是不是零营业额？")).toBeVisible();
+    expect(within(dialog).getByText("每日台账与公司结算有什么区别？")).not.toBeVisible();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("发送消息")).toHaveValue("我的问题草稿");
+    expect(screen.getByLabelText("发送消息")).toHaveFocus();
+  });
+
+  it("does not truncate long drafts and clears selected prompts when switching stores", async () => {
+    const page = render(<AgentChatPage />);
+    const question = await screen.findByRole("button", { name: "每日收入折线图" });
+    await waitFor(() => expect(question).toBeEnabled());
+    fireEvent.change(screen.getByLabelText("发送消息"), { target: { value: "长".repeat(5999) } });
+    await userEvent.setup().click(question);
+    expect(screen.getByLabelText("发送消息")).toHaveValue("长".repeat(5999));
+    expect(screen.getByRole("alert")).toHaveTextContent("超过 6,000 字");
+    storeId = 2;
+    page.rerender(<AgentChatPage />);
+    expect(screen.getByLabelText("发送消息")).toHaveValue("");
+  });
+
+  it("disables fixed questions while a response is running", async () => {
+    server.use(http.get("/api/agent/1/conversation", () => HttpResponse.json({ messages: [], run })));
+    render(<AgentChatPage />);
+    await screen.findByText("正在生成回答…");
+    for (const button of within(screen.getByRole("region", { name: "固定提问" })).getAllByRole("button")) {
+      expect(button).toBeDisabled();
+    }
+  });
+
+  it("renders assistant Markdown and keeps user messages as the original text", async () => {
+    server.use(http.get("/api/agent/1/conversation", () => HttpResponse.json({
+      messages: [
+        { id: 1, role: "user", content: "**请分析**\n第二行" },
+        { id: 2, role: "assistant", content: "## 经营摘要\n\n**营业额**增长。\n\n- 检查经营日\n- 对比上周\n\n| 指标 | 数值 |\n| --- | --- |\n| 营业额 | 100 |\n\n```python\nprint('你好')\n```\n\n[参考资料](https://example.com/report)" },
+      ], run: null,
+    })));
+    render(<AgentChatPage />);
+    expect(await screen.findByRole("heading", { name: "经营摘要" })).toBeVisible();
+    expect(screen.getByText("营业额", { selector: "strong" })).toBeVisible();
+    expect(screen.getByRole("table")).toHaveTextContent("营业额100");
+    expect(screen.getByText("print('你好')", { selector: "code" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "参考资料" })).toHaveAttribute("rel", "noopener noreferrer");
+    const message = screen.getByRole("article", { name: "你的消息" });
+    expect(message).toHaveTextContent("**请分析**");
+    expect(message.querySelector("strong")).toBeNull();
+    expect(within(screen.getByRole("region", { name: "聊天记录" })).getByRole("heading", { name: "经营摘要" })).toBeVisible();
+  });
+
+  it("blocks raw HTML and unsafe links without fetching remote Markdown images", async () => {
+    server.use(http.get("/api/agent/1/conversation", () => HttpResponse.json({
+      messages: [{ id: 1, role: "assistant", content: "[危险链接](javascript:alert%281%29)\n\n[危险数据](data:text/html,bad)\n\n<script>alert('bad')</script>\n\n<iframe src='https://example.com/embed'></iframe>\n\n![示意图](https://example.com/image.png)\n\n安全内容" }], run: null,
+    })));
+    render(<AgentChatPage />);
+    await screen.findByText("安全内容");
+    expect(screen.queryByRole("link", { name: "危险链接" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "危险数据" })).not.toBeInTheDocument();
+    const message = screen.getByRole("article", { name: "AI 助手的消息" });
+    expect(message.querySelector("script, iframe, img")).toBeNull();
+    expect(screen.getByRole("link", { name: "图片：示意图" })).toHaveAttribute("href", "https://example.com/image.png");
+  });
+
+  it("renders Markdown while streaming and preserves failed output for review", async () => {
+    server.use(http.get("/api/agent/1/conversation", () => HttpResponse.json({ messages: [], run })));
+    render(<AgentChatPage />);
+    await waitFor(() => expect(EventStream.streams).toHaveLength(1));
+    act(() => EventStream.streams[0].emit("delta", { text: "## 实时结论\n\n**正在整理**" }));
+    expect(screen.getByRole("heading", { name: "实时结论" })).toBeVisible();
+    expect(screen.getByText("正在整理", { selector: "strong" })).toBeVisible();
+    act(() => EventStream.streams[0].emit("failed", { error_code: "model_timeout" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("模型响应超时");
+    expect(screen.getByRole("heading", { name: "实时结论" })).toBeVisible();
+    expect(screen.queryByText("回答已完成并保存")).not.toBeInTheDocument();
+  });
+
+  it("explains invalid memory proposals and keeps the original failure record", async () => {
+    server.use(
+      http.get("/api/agent/1/memories", () => HttpResponse.json({ items: [], next_before: null })),
+      http.get("/api/agent/1/memory-jobs", () => HttpResponse.json({ items: [{ id: 1, message_id: 2,
+        status: "failed", attempts: 3, calls: 3, error_code: "memory_invalid_proposal",
+        failures: [{ code: "memory_invalid_proposal" }], created_at: "2026-10-08T01:00:00" }], next_before: null })),
+    );
+    render(<AgentChatPage />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "查看记忆" }));
+    expect(await screen.findByText("最新：整理失败")).toBeVisible();
+    expect(screen.getAllByText(/整理结果格式不符合要求，本次未保存/)[0]).toBeVisible();
+    await userEvent.setup().click(screen.getByText(/查看整理记录/));
+    expect(screen.getByText(/失败记录：memory_invalid_proposal/)).toBeVisible();
+  });
+
+  it("sends on Enter, preserves Shift+Enter newlines, and waits for Chinese composition", async () => {
+    const submitted: { content: string }[] = [];
+    server.use(http.post("/api/agent/1/messages", async ({ request }) => {
+      submitted.push(await request.json() as { content: string });
+      return HttpResponse.json(run, { status: 202 });
+    }));
+    render(<AgentChatPage />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "重置对话" })).toBeEnabled());
+    const user = userEvent.setup();
+    const input = screen.getByLabelText("发送消息");
+    await user.type(input, "第一行{shift>}{enter}{/shift}第二行");
+    expect(input).toHaveValue("第一行\n第二行");
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter", isComposing: true });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter", keyCode: 229 });
+    expect(submitted).toHaveLength(0);
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(submitted).toHaveLength(1));
+    expect(submitted[0].content).toBe("第一行\n第二行");
+  });
+
   it("reads saved memory evidence after reset and discards a late old-store list", async () => {
     let release!: () => void;
     const barrier = new Promise<void>((resolve) => { release = resolve; });

@@ -12,13 +12,18 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.database import get_session, sqlite_url
+from app.core.config import get_settings
 from app.core.security import hash_password
 from app.main import create_app
 
 
-async def test_old_store_migrates_and_description_survives_restart(tmp_path: Path):
+async def test_old_store_migrates_and_description_survives_restart(tmp_path: Path, monkeypatch):
     database = tmp_path / "description.sqlite3"
-    environment = os.environ | {"AUTOLAVA_DATABASE_PATH": str(database)}
+    monkeypatch.setattr(get_settings(), "bootstrap_username", "old-admin")
+    environment = os.environ | {
+        "AUTOLAVA_DATABASE_PATH": str(database),
+        "AUTOLAVA_BOOTSTRAP_USERNAME": "old-admin",
+    }
     backend = Path(__file__).parents[2]
     for revision in ("0021", "head"):
         subprocess.run([sys.executable, "-m", "alembic", "upgrade", revision],
@@ -39,6 +44,11 @@ async def test_old_store_migrates_and_description_survives_restart(tmp_path: Pat
                     "is_open, weather, weather_edited, scanned, created_by, updated_by) "
                     "VALUES ('old-record-identity', 1, '2026-07-28', 940, 'legacy_total', '营业', '晴', 1, 0, 1, 1)"
                 )
+
+    subprocess.run(
+        [sys.executable, "-m", "app.scripts.initialize_permissions"],
+        cwd=backend, env=environment, check=True, capture_output=True,
+    )
 
     for restart in (False, True):
         migrated_engine = create_async_engine(sqlite_url(database))

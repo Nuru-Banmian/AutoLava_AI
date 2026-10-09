@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.identity import Store
 from app.services.owner import is_administrator
 from app.services.sessions import require_credentials
+from app.services.access import require_store_scope
 
 
 @dataclass(frozen=True)
@@ -19,7 +20,7 @@ class ChatScope:
         user = await require_credentials(session, self.auth_identity, self.session_id)
         if user.id != self.user_id or not is_administrator(user):
             raise HTTPException(403, "Administrator access required")
-        # Existing policy: administrators can access every active store.
+        await require_store_scope(session, user, self.store_id)
         store = await session.get(Store, self.store_id, populate_existing=True)
         if store is None or not store.is_active:
             raise HTTPException(404, "Store not found")

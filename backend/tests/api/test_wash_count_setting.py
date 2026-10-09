@@ -18,9 +18,9 @@ async def put_ledger(client: AsyncClient, path: str, *, json: dict):
 
 @pytest.fixture
 async def admin_client(
-    client: AsyncClient, user_factory, db_session: AsyncSession
+    client: AsyncClient, primary_admin_factory, db_session: AsyncSession
 ) -> AsyncClient:
-    await user_factory(username="wash-count-admin", password="secret", role="admin")
+    await primary_admin_factory(username="wash-count-admin", password="secret", role="admin")
     response = await client.post(
         "/api/auth/login",
         json={"username": "wash-count-admin", "password": "secret"},

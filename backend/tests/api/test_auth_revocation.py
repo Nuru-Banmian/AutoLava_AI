@@ -11,6 +11,7 @@ from app.models.identity import User
 
 async def _reset_database() -> None:
     async with engine.begin() as connection:
+        await connection.exec_driver_sql("PRAGMA defer_foreign_keys=ON")
         for table in reversed(Base.metadata.sorted_tables):
             await connection.execute(table.delete())
 

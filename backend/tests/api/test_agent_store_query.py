@@ -191,7 +191,7 @@ async def test_calendar_presets_leap_mapping_future_cutoff_and_default(tmp_path,
         assert "默认本月至今" in result["targets"][5]["notes"][0]
 
 
-async def test_many_full_events_paginate_without_truncation_and_keep_small_target(tmp_path):
+async def test_many_full_events_bound_response_without_truncation_and_keep_small_target(tmp_path):
     model = QueryModel([("store_data_catalog", {}), query([
         {"id": "large", "domain": "daily_ledger", "range": {"all_history": True}, "fields": ["date", "activity"]},
         {"id": "small", "domain": "daily_ledger", "range": {"all_history": True}, "fields": ["date"], "top_n": 1},
@@ -206,8 +206,8 @@ async def test_many_full_events_paginate_without_truncation_and_keep_small_targe
         result = model.results[-1]
         assert result["status"] == "partial", result
         paged, success = result["targets"]
-        assert paged["status"] == "partial" and paged["has_more"]
-        assert paged["result_ref"] and paged["next_cursor"]
+        assert paged["status"] == "partial" and paged["truncated"]
+        assert paged["result_ref"] and "next_cursor" not in paged
         assert paged["matched_count"] == paged["selected_count"] == 10
         assert 0 < len(paged["rows"]) < 10
         assert all(row["activity"] == "完整事件" * 500 for row in paged["rows"])
@@ -294,9 +294,9 @@ async def test_projection_queries_never_access_settlement_or_unselected_business
     {"fields": ["date"], "group_by": ["date", "weather", "weekday"]},
     {"fields": ["date"], "metrics": ["total_income"]},
     {"fields": ["date"], "store_id": 2},
-    {"fields": ["date"], "page_size": 0},
-    {"fields": ["date"], "page_size": 201},
-    {"fields": ["date"], "page_size": True},
+    {"fields": ["date"], "row_limit": 0},
+    {"fields": ["date"], "row_limit": 201},
+    {"fields": ["date"], "row_limit": True},
 ])
 async def test_invalid_target_keeps_valid_neighbor(tmp_path, change):
     model = QueryModel([("store_data_catalog", {}), query([
@@ -351,7 +351,7 @@ async def test_default_planning_does_not_advertise_legacy_business_route(tmp_pat
     class InspectPlan(QueryModel):
         async def stream_plan(self, messages, tools):
             enum = tools[0]["function"]["parameters"]["properties"]["kind"]["enum"]
-            assert enum == ["general", "clarify", "query", "saved_chart"]
+            assert enum == ["general", "clarify", "query"]
             async for call in super().stream_plan(messages, tools):
                 yield call
     model = InspectPlan([("store_data_catalog", {}), query([
@@ -432,14 +432,24 @@ async def test_local_calendar_edges_through_chat(tmp_path, monkeypatch, today, s
 @pytest.mark.parametrize("escaped", [False, True])
 async def test_small_context_refuses_six_targets_before_business_reads(tmp_path, monkeypatch, escaped):
     from sqlalchemy import event
-    monkeypatch.setenv("AUTOLAVA_AGENT_CONTEXT_CHARS", "12000")
+    # Calibrate the remaining space at the query boundary, so growth of the
+    # provider schema cannot turn this into an unrelated pre-query budget test.
+    monkeypatch.setenv("AUTOLAVA_AGENT_CONTEXT_CHARS", "64000")
     queries = []
-    model = QueryModel([("store_data_catalog", {}), query([
+    request = query([
         {"id": (str(index) + "\u0001" * 63) if escaped else str(index).zfill(64),
          "domain": "daily_ledger", "fields": ["date"]}
         for index in range(6)
-    ]), "伪造业务合计999欧元。"])
-    async with chat_app(tmp_path, model) as (client, _, factory):
+    ])
+    def constrained_query(model):
+        from app.agents.registry import capabilities
+        _, tools = capabilities()
+        used = len(json.dumps(model.messages[-1], ensure_ascii=False)) + len(json.dumps(tools.schemas, ensure_ascii=False))
+        runner.settings.agent_context_chars = used + 1000
+        return request(model)
+    model = QueryModel([("store_data_catalog", {}), constrained_query, "伪造业务合计999欧元。"])
+    async with chat_app(tmp_path, model) as (client, app, factory):
+        runner = app.state.agent_runner
         engine = factory.kw["bind"].sync_engine
         def observe(connection, cursor, statement, parameters, context, many):
             sql = statement.lower()
@@ -479,13 +489,13 @@ async def test_large_first_target_reserves_escaped_neighbor_receipts(tmp_path, m
         batch = model.results[-1]
         assert batch["status"] == "partial"
         first = batch["targets"][0]
-        assert first["status"] == "partial" and first["has_more"] and first["result_ref"]
+        assert first["status"] == "partial" and first["truncated"] and first["result_ref"]
         assert all(row["activity"] == "完整事件" * 475 for row in first["rows"])
         assert batch["targets"][-1]["rows"] == [{"date": "2026-07-01"}]
         assert len(json.dumps(batch, ensure_ascii=False)) <= 12000
 
 
-async def test_escaped_events_paginate_within_context_and_keep_small_target(tmp_path):
+async def test_escaped_events_bound_response_within_context_and_keep_small_target(tmp_path):
     model = QueryModel([("store_data_catalog", {}), query([
         {"id": "events", "domain": "daily_ledger", "fields": ["date", "activity"],
          "range": {"all_history": True}},
@@ -503,7 +513,7 @@ async def test_escaped_events_paginate_within_context_and_keep_small_target(tmp_
         batch = model.results[-1]
         assert batch["status"] == "partial", batch
         first = batch["targets"][0]
-        assert first["status"] == "partial" and first["has_more"] and first["result_ref"]
+        assert first["status"] == "partial" and first["truncated"] and first["result_ref"]
         assert all(row["activity"] == "\\" * 1700 for row in first["rows"])
         assert batch["targets"][1]["rows"] == [{"date": "2026-07-01"}]
         events = (await client.get(f"/api/agent/1/runs/{run['id']}/events")).text

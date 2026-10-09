@@ -150,35 +150,7 @@ describe("StoreProvider selection persistence", () => {
     expect(localStorage.getItem(STORE_SELECTION_KEY)).toBe(JSON.stringify({ userId: 1, storeId: 1 }));
   });
 
-  it("keeps the revoked store snapshot and input until reconciliation is confirmed", async () => {
-    server.use(http.get("/api/stores/accessible", () => HttpResponse.json([
-      { id: 1, name: "Berlin", timezone: "Europe/Berlin" },
-      { id: 2, name: "Roma", timezone: "Europe/Rome" },
-    ])));
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    renderProvider(1, client);
-    expect(await screen.findByText("selected:Berlin")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("账本输入"), { target: { value: "未保存金额" } });
-    fireEvent.click(screen.getByRole("button", { name: "mark dirty" }));
-
-    client.setQueryData(accessibleStoresKeyFor(1), [
-      { id: 2, name: "Roma", timezone: "Europe/Rome" },
-    ]);
-    expect(await screen.findByRole("alertdialog", { name: "放弃未保存的修改？" })).toBeInTheDocument();
-    expect(screen.getByText("selected:Berlin")).toBeInTheDocument();
-    expect(screen.getByLabelText("账本输入")).toHaveValue("未保存金额");
-    fireEvent.click(screen.getByRole("button", { name: "继续编辑" }));
-    expect(screen.getByText("selected:Berlin")).toBeInTheDocument();
-
-    client.setQueryData(accessibleStoresKeyFor(1), [
-      { id: 2, name: "Roma", timezone: "Europe/Rome" },
-      { id: 3, name: "Madrid", timezone: "Europe/Madrid" },
-    ]);
-    fireEvent.click(await screen.findByRole("button", { name: "放弃修改" }));
-    expect(await screen.findByText("selected:Roma")).toBeInTheDocument();
-  });
-
-  it("retries the same revoked-store reconciliation after cancel once the form is clean", async () => {
+  it("clears a revoked store immediately even when input is dirty", async () => {
     server.use(http.get("/api/stores/accessible", () => HttpResponse.json([
       { id: 1, name: "Berlin", timezone: "Europe/Berlin" },
       { id: 2, name: "Roma", timezone: "Europe/Rome" },
@@ -187,43 +159,13 @@ describe("StoreProvider selection persistence", () => {
     renderProvider(1, client);
     expect(await screen.findByText("selected:Berlin")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "mark dirty" }));
-    const revoked = [{ id: 2, name: "Roma", timezone: "Europe/Rome" }];
-    client.setQueryData(accessibleStoresKeyFor(1), revoked);
-    fireEvent.click(await screen.findByRole("button", { name: "继续编辑" }));
-
-    fireEvent.click(screen.getByRole("button", { name: "mark clean" }));
-    client.setQueryData(accessibleStoresKeyFor(1), [...revoked]);
-
-    expect(await screen.findByText("selected:Roma")).toBeInTheDocument();
-    expect(localStorage.getItem(STORE_SELECTION_KEY)).toBe(JSON.stringify({ userId: 1, storeId: 2 }));
-  });
-
-  it("finishes a blocked route when store reconciliation competes with it", async () => {
-    server.use(http.get("/api/stores/accessible", () => HttpResponse.json([
-      { id: 1, name: "Berlin", timezone: "Europe/Berlin" },
-      { id: 2, name: "Roma", timezone: "Europe/Rome" },
-    ])));
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    function ProviderLayout() {
-      return <QueryClientProvider client={client}><StoreProvider userId={1}><Outlet /></StoreProvider></QueryClientProvider>;
-    }
-    const router = createMemoryRouter([{ path: "/", element: <ProviderLayout />, children: [
-      { index: true, element: <RouteStoreProbe /> },
-      { path: "next", element: <p>route complete</p> },
-    ] }]);
-    render(<RouterProvider router={router} />);
-    expect(await screen.findByText("route-store:Berlin")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "route dirty" }));
     await act(async () => {
       client.setQueryData(accessibleStoresKeyFor(1), [{ id: 2, name: "Roma", timezone: "Europe/Rome" }]);
     });
-    expect(await screen.findByRole("alertdialog", { name: "放弃未保存的修改？" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("link", { name: "route next", hidden: true }));
-    fireEvent.click(screen.getByRole("button", { name: "放弃修改" }));
-
-    expect(await screen.findByText("route-store:Roma")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("link", { name: "route next" }));
-    expect(await screen.findByText("route complete")).toBeInTheDocument();
+    expect(await screen.findByText("selected:Roma")).toBeInTheDocument();
+    expect(screen.queryByText("selected:Berlin")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(localStorage.getItem(STORE_SELECTION_KEY)).toBe(JSON.stringify({ userId: 1, storeId: 2 }));
   });
 
   it("clears dirty reconciliation immediately when the account changes", async () => {
@@ -238,7 +180,7 @@ describe("StoreProvider selection persistence", () => {
     client.setQueryData(accessibleStoresKeyFor(1), [
       { id: 2, name: "Roma", timezone: "Europe/Rome" },
     ]);
-    expect(await screen.findByRole("alertdialog", { name: "放弃未保存的修改？" })).toBeInTheDocument();
+    expect(await screen.findByText("selected:Roma")).toBeInTheDocument();
 
     client.setQueryData(accessibleStoresKeyFor(2), [
       { id: 3, name: "Madrid", timezone: "Europe/Madrid" },

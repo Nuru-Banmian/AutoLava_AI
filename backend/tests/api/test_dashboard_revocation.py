@@ -28,6 +28,7 @@ class PausedWeather:
 
 async def _reset_database() -> None:
     async with engine.begin() as connection:
+        await connection.exec_driver_sql("PRAGMA defer_foreign_keys=ON")
         for table in reversed(Base.metadata.sorted_tables):
             await connection.execute(table.delete())
 
@@ -50,6 +51,11 @@ async def _setup_dashboard() -> tuple[int, int]:
         )
         setup.add_all([user, store])
         await setup.flush()
+        manager = User(username="dashboard-manager", password_hash=user.password_hash, role="admin")
+        setup.add(manager)
+        await setup.flush()
+        user.manager_id = manager.id
+        setup.add(StoreMember(store_id=store.id, user_id=manager.id))
         setup.add(StoreMember(store_id=store.id, user_id=user.id))
         await setup.commit()
         return user.id, store.id
@@ -74,7 +80,7 @@ async def test_refresh_rejects_user_deactivated_during_weather() -> None:
         refresh = asyncio.create_task(
             client.post(f"/api/dashboard/{store_id}/refresh")
         )
-        await weather.all_entered.wait()
+        await asyncio.wait_for(weather.all_entered.wait(), 5)
         async with async_session_factory() as revoke:
             user = await revoke.get(User, user_id)
             assert user is not None
@@ -109,7 +115,7 @@ async def test_refresh_rejects_membership_removed_during_weather() -> None:
         refresh = asyncio.create_task(
             client.post(f"/api/dashboard/{store_id}/refresh")
         )
-        await weather.all_entered.wait()
+        await asyncio.wait_for(weather.all_entered.wait(), 5)
         async with async_session_factory() as revoke:
             await revoke.execute(
                 delete(StoreMember).where(
@@ -121,7 +127,7 @@ async def test_refresh_rejects_membership_removed_during_weather() -> None:
         weather.release.set()
         response = await refresh
 
-    assert response.status_code == 403
+    assert response.status_code == 404
     async with async_session_factory() as verify:
         assert await verify.scalar(
             select(func.count()).select_from(DailyBriefing)

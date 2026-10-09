@@ -15,14 +15,13 @@ import pytest
 import httpx
 import respx
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy import event
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.database import configure_sqlite, get_session, sqlite_url
 from app.main import create_app
 from app.core.config import Settings
-from app.agents.providers.bailian import BailianChat
-from app.agents.providers.bailian import ToolCall
+from app.agents.providers.bailian import BailianChat, ToolCall
 
 
 def general_plan_sse():
@@ -88,7 +87,16 @@ async def chat_app(tmp_path, model, *, historical_messages=0, memory_model=None,
                 for number in range(historical_messages):
                     db.execute("INSERT INTO agent_messages (conversation_id, role, content) "
                                "VALUES (1, 'user', ?)", (f"更多历史{number}",))
+    # These legacy administrators retain both pre-upgrade stores via the real initializer.
+    subprocess.run(
+        [sys.executable, "-m", "app.scripts.initialize_permissions"],
+        cwd=Path(__file__).parents[2],
+        env=os.environ | {"AUTOLAVA_DATABASE_PATH": str(database), "AUTOLAVA_BOOTSTRAP_USERNAME": "user-3"},
+        check=True, capture_output=True,
+    )
     engine = create_async_engine(sqlite_url(database))
+    # Match application connections: reset relies on ON DELETE CASCADE for
+    # chart snapshots, including when SQLite reuses a deleted message ID.
     event.listen(engine.sync_engine, "connect", configure_sqlite)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     app = create_app(session_factory=factory, agent_model=model, memory_model=memory_model,
@@ -221,6 +229,12 @@ async def test_provider_errors_are_bounded_and_saved(tmp_path, status, body, cod
 
 
 async def test_bailian_stream_and_usage_through_public_api(tmp_path):
+    plan = '\n\n'.join([
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"plan-1",'
+        '"function":{"name":"plan_response","arguments":"{\\"kind\\":\\"general\\",\\"queries\\":[]}"}}]},'
+        '"finish_reason":"tool_calls"}]}',
+        'data: [DONE]',
+    ]) + '\n\n'
     body = '\n\n'.join([
         'data: {"choices":[{"delta":{"role":"assistant","content":"你好"}}]}',
         'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
@@ -229,7 +243,7 @@ async def test_bailian_stream_and_usage_through_public_api(tmp_path):
     ]) + '\n\n'
     with respx.mock() as mock:
         transport = mock.post("https://bailian.test/v1/chat/completions").mock(
-            side_effect=[httpx.Response(503), httpx.Response(200, text=general_plan_sse()),
+            side_effect=[httpx.Response(503), httpx.Response(200, text=plan),
                          httpx.Response(200, text=body)],
         )
         async with chat_app(tmp_path, provider()) as (client, _, _):
@@ -453,6 +467,22 @@ async def test_missing_configuration_timeout_and_output_budget(tmp_path, monkeyp
         assert (await completed(client, run["id"]))["error_code"] == "output_budget"
 
 
+async def test_short_term_context_keeps_only_recent_messages_without_deleting_history(tmp_path):
+    model = StreamingModel()
+    async with chat_app(tmp_path, model, historical_messages=20) as (client, _, _):
+        run = (await client.post("/api/agent/1/messages", json={
+            "request_id": uuid4().hex, "generation": 0, "content": "当前短期问题",
+        })).json()
+        assert (await completed(client, run["id"]))["status"] == "completed"
+        recent = [m["content"] for m in model.calls[-1]
+                  if m["role"] in ("user", "assistant")
+                  and not m["content"].startswith('{"store_background":')]
+        assert len(recent) == 10
+        assert recent[0] == "更多历史11" and recent[-1] == "当前短期问题"
+        history = (await client.get("/api/agent/1/conversation")).json()["messages"]
+        assert len(history) == 24 and history[0]["content"] == "历史问题"
+
+
 async def test_history_pagination_input_scope_and_context_budget(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTOLAVA_AGENT_CONTEXT_CHARS", "8000")
     model = StreamingModel()
@@ -465,7 +495,8 @@ async def test_history_pagination_input_scope_and_context_budget(tmp_path, monke
         assert len(older["messages"]) == 3
         for content in ("上一条" * 1500, "当前问题" * 1500):
             run = (await client.post("/api/agent/1/messages", json={"request_id": uuid4().hex, "generation": 0, "content": content})).json()
-            assert (await completed(client, run["id"]))["status"] == "completed"
+            finished = await completed(client, run["id"])
+            assert finished["status"] == "completed", json.dumps(finished, ensure_ascii=False)
         assert sum(len(item["content"]) for item in model.calls[-1]) <= 8000
         assert model.calls[-1][-1]["content"] == "当前问题" * 1500
         for body in ({"content": " "}, {"content": "x" * 6001}, {"content": "hi", "user_id": 2}):
@@ -495,3 +526,30 @@ async def test_final_administrator_and_store_revocation(tmp_path, monkeypatch):
         assert stream.status_code == 404 or "access_revoked" in stream.text
         allowed = (await client.post("/api/agent/2/messages", json={"request_id": uuid4().hex, "generation": 0, "content": "另一个启用门店"})).json()
         assert (await completed(client, allowed["id"], store=2))["status"] == "completed"
+
+
+async def test_store_revoke_and_immediate_regrant_cannot_resume_old_ai_run(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOLAVA_BOOTSTRAP_USERNAME", "user-3")
+    model = WaitingModel()
+    async with chat_app(tmp_path, model) as (client, app, _):
+        submitted = await client.post("/api/agent/1/messages", json={
+            "request_id": uuid4().hex, "generation": 0, "content": "受控等待",
+        })
+        assert submitted.status_code == 202
+        run_id = submitted.json()["id"]
+        await asyncio.wait_for(model.entered.wait(), 5)
+        async with AsyncClient(transport=ASGITransport(app), base_url="http://testserver") as primary:
+            await primary.post("/api/auth/login", json={"username": "user-3", "password": "Password123"})
+            assert (await primary.patch("/api/admin/users/1", json={"store_ids": []})).status_code == 200
+            assert (await primary.patch("/api/admin/users/1", json={"store_ids": [1, 2]})).status_code == 200
+        assert (await client.get(f"/api/agent/1/runs/{run_id}/events")).status_code == 401
+        model.release.set()
+        await asyncio.wait_for(model.closed.wait(), 5)
+        await client.post("/api/auth/login", json={"username": "user-1", "password": "Password123"})
+        history = (await client.get("/api/agent/1/conversation")).json()
+        assert all("不得泄漏" not in message["content"] for message in history["messages"])
+        fresh = await client.post("/api/agent/1/messages", json={
+            "request_id": uuid4().hex, "generation": 0, "content": "重新授权的新请求",
+        })
+        assert fresh.status_code == 202
+        assert (await completed(client, fresh.json()["id"]))["status"] == "completed"

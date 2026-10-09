@@ -119,6 +119,9 @@ async def test_migrated_legacy_weather_remains_available_through_public_endpoint
 
 
 EXPECTED_TABLES = {
+    "employee_editors",
+    "permission_initializations",
+    "demo_imports",
     "users",
     "login_sessions",
     "stores",
@@ -409,7 +412,7 @@ def test_applied_revision_0004_upgrades_without_losing_existing_data(tmp_path: P
 
     with closing(sqlite3.connect(database_path)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0030",
+            "0032",
         )
         assert connection.execute("SELECT username FROM users").fetchall() == [
             ("existing-admin",)
@@ -605,7 +608,7 @@ def test_reused_legacy_revision_0010_upgrades_to_new_agent_schema(
 
     with closing(sqlite3.connect(database_path)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0030",
+            "0032",
         )
         tables = {
             name

@@ -73,8 +73,21 @@ class BoundTools:
                 arguments = tool.arguments.model_validate_json(call.arguments)
                 if isinstance(arguments, ChartInput):
                     arguments = arguments.root
-            except ValidationError:
-                return {"error": "invalid_tool_arguments", "message": "Use the advertised JSON schema"}
+            except ValidationError as exc:
+                message = "Use the advertised JSON schema"
+                if call.name == "store_query":
+                    message += ("; new queries require catalog_version and targets, each with a unique "
+                                "id and domain plus fields OR metrics. targets must be a JSON array, "
+                                "not a JSON-encoded string. Correct arguments and retry before answering. Pagination is unavailable; request a smaller date range.")
+                    if any(error["loc"] == ("targets",) and error["type"] == "list_type"
+                           for error in exc.errors(include_input=False)):
+                        message += (
+                            ' targets形状错误：必须直接传数组，不能传带引号的JSON文本。示例结构：'
+                            '{"catalog_version":"使用当前目录版本","targets":[{"id":"day",'
+                            '"domain":"daily_ledger","range":{"start":"2026-06-20",'
+                            '"end":"2026-06-20"},"fields":["date","is_open","daily_revenue"]}]}。'
+                            '请按用户日期重建对象数组；不连续日期可分别使用独立目标，重试成功前不回答数值。')
+                return {"error": "invalid_tool_arguments", "message": message}
             try:
                 result = await tool.execute(session, context, arguments)
             except SkillError:
@@ -94,9 +107,9 @@ def default_registry(skills):
                 "body": skills.resource(args.skill, args.path)}
 
     return ToolRegistry([
-        Tool("store_chart", "create须result_ref/dimension/series/type/title；完整本轮快照制图，不传值。read_saved须message_id/chart_id，可选series及1起point_start/end；续页仅result_ref/cursor/page_size。历史source/queried_at不变，引用仅本轮有效。图型/容量依技能；prepared随回复保存。", ChartInput, store_chart),
+        Tool("store_chart", "create须result_ref/dimension/series/type/title；用本轮store_query完整快照制图，不传值。图表追问重新查询最新数据，复用近期日期/指标/分组；缺信息先追问。旧图保留查看。图型/容量依技能；prepared随回复保存。", ChartInput, store_chart),
         Tool("store_data_catalog", "发现当前授权门店已上线受控数据，参数为空；有效目录可跨轮复用。", CatalogInput, store_data_catalog),
-        Tool("store_query", "批量只读查询或continuations续页至多6目标；完整行默认50/最多200，未读须说明部分完成；目录失效新查询整批不执行。", QueryInput, store_query),
+        Tool("store_query", "批量只读查询至多6目标；月/年先汇总、周趋势按天，细问再拆分；单次明细最多200完整行，容量不足如实说明并缩小范围新查；不支持续页。", QueryInput, store_query),
         Tool("calculate", "临时十进制四则运算（正负号、小数、括号）；只传expression。"
              "结果为字符串，exact=false须说明有限表示，error不能当成功。"
              "经营工具已计算的指标不重算，计算照常计入工具预算。",

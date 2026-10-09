@@ -146,7 +146,7 @@ async def test_horizontal_ranking_uses_explicit_selection_and_preserves_order(tm
 def long_query(end="2026-07-04"):
     return query([{"id": "long", "domain": "daily_ledger",
                    "range": {"start": "2024-01-01", "end": end},
-                   "metrics": ["total_revenue"], "group_by": ["day"], "page_size": 2}])
+                   "metrics": ["total_revenue"], "group_by": ["day"], "row_limit": 2}])
 
 
 async def test_long_trend_keeps_all_days_and_a_common_vertical_axis(tmp_path):
@@ -192,7 +192,7 @@ async def test_category_ranking_limit_never_silently_truncates(tmp_path, count):
         "id": "rank", "domain": "daily_ledger",
         "range": {"start": "2026-01-01", "end": "2026-03-31"},
         "metrics": ["total_revenue"], "group_by": ["day"], "top_n": count,
-        "order_by": [{"field": "total_revenue", "direction": "desc"}], "page_size": 2,
+        "order_by": [{"field": "total_revenue", "direction": "desc"}], "row_limit": 2,
     }]), chart(type="horizontal_bar"), "按明确选择作图。"])
     async with chat_app(tmp_path, model) as (client, _, _):
         await save_day(client, "2026-01-01", 19)
@@ -210,7 +210,7 @@ async def test_unit_split_group_rejection_retains_previous_success(tmp_path):
     metrics = ["total_revenue", "average_ledger_revenue", "average_revenue_per_car", "min_revenue", "max_revenue", "total_wash_count"]
     model = QueryModel([("store_data_catalog", {}), query([{
         "id": "many", "domain": "daily_ledger", "range": {"start": "2025-01-01", "end": "2025-12-31"},
-        "metrics": metrics, "group_by": ["day"], "page_size": 2,
+        "metrics": metrics, "group_by": ["day"], "row_limit": 2,
     }]), chart(series=["total_wash_count"]), chart(series=metrics), "全部图已生成。"])
     async with chat_app(tmp_path, model) as (client, _, _):
         await save_day(client, "2025-01-01", 19)

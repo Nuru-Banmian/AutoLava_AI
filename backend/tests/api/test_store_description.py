@@ -3,16 +3,16 @@ import pytest
 
 
 @pytest.fixture
-async def description_admin(client, user_factory):
-    await user_factory(username="description-admin", password="password123", role="admin")
+async def description_admin(client, primary_admin_factory):
+    await primary_admin_factory(username="description-admin", password="password123", role="admin")
     await client.post("/api/auth/login", json={
         "username": "description-admin", "password": "password123",
     })
     return client
 
 
-async def test_description_create_read_update_and_clear(client: AsyncClient, user_factory):
-    await user_factory(username="description-admin", password="password123", role="admin")
+async def test_description_create_read_update_and_clear(client: AsyncClient, primary_admin_factory):
+    await primary_admin_factory(username="description-admin", password="password123", role="admin")
     assert (await client.post("/api/auth/login", json={
         "username": "description-admin", "password": "password123",
     })).status_code == 200
@@ -114,6 +114,7 @@ async def test_ordinary_user_cannot_write_either_store(description_admin):
     })).json() for name in ("烘焙", "维修")]
     assert (await client.post("/api/admin/users", json={
         "username": "description-user", "password": "password123", "store_ids": [stores[0]["id"]],
+        "manager_id": (await client.get("/api/auth/me")).json()["id"],
     })).status_code == 201
     await client.post("/api/auth/login", json={"username": "description-user", "password": "password123"})
     for store in stores:

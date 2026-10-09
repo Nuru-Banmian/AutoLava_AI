@@ -17,6 +17,7 @@ from app.models.ledger import DailyIncomeItem, IncomeCategory, StoreDailyRecord
 
 async def _reset_database() -> None:
     async with engine.begin() as connection:
+        await connection.exec_driver_sql("PRAGMA defer_foreign_keys=ON")
         for table in reversed(Base.metadata.sorted_tables):
             await connection.execute(table.delete())
 
@@ -40,6 +41,12 @@ async def _setup_ledger(*, role: str = "user", with_record: bool = False):
         )
         session.add_all([user, store])
         await session.flush()
+        if role == "user":
+            manager = User(username="ledger-manager", password_hash=user.password_hash, role="admin")
+            session.add(manager)
+            await session.flush()
+            user.manager_id = manager.id
+            session.add(StoreMember(store_id=store.id, user_id=manager.id))
         category = IncomeCategory(
             store_id=store.id,
             name="Cash",
@@ -155,7 +162,7 @@ async def test_update_rejects_membership_removed_while_waiting_for_write_lock() 
     response = await request
     await client.aclose()
 
-    assert response.status_code == 403
+    assert response.status_code == 404
     async with async_session_factory() as verify:
         assert await verify.scalar(
             select(StoreDailyRecord.daily_revenue).where(

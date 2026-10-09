@@ -27,6 +27,7 @@ def user(owner, store_ids, role="user"):
     username = "acceptance-" + uuid4().hex[:10]
     created = request(owner, "POST", "admin/users", 201, json={
         "username": username, "password": PASSWORD, "role": role, "store_ids": store_ids,
+        **({"manager_id": request(owner, "GET", "auth/me")["id"]} if role == "user" else {}),
     })
     return created["id"], username
 
@@ -239,7 +240,10 @@ def test_agent_receipts_charts_restore_and_reset_scope(owner, base_url):
     replay = events(owner, run_path + f"/events?after={captured[-2][0]}")
     assert replay == captured[-1:]
     complete = request(owner, "GET", run_path)
-    receipt = json.loads(complete["output"].split("验收结果：", 1)[1])
+    result_text = complete["output"].split("验收结果：", 1)[1]
+    notice = "\n\n本轮结果来自最新数据（本轮重新查询）。"
+    assert result_text.endswith(notice)
+    receipt = json.loads(result_text.removesuffix(notice))
     assert receipt["calculation"] == {"result": "0.3", "exact": True}
     assert "999" not in complete["output"]
     conversation = request(owner, "GET", base + "/conversation")

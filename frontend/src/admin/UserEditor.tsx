@@ -17,6 +17,8 @@ import {
 } from "@/components/ui/alert-dialog";
 
 export interface UserDraft {
+  editor_ids?: number[];
+  manager_id?: number | null;
   username: string;
   role: UserRole;
   is_active: boolean;
@@ -27,6 +29,8 @@ export interface UserDraft {
 export function draftForUser(user: AdminUser): UserDraft {
   return {
     username: user.username,
+    manager_id: user.manager_id ?? null,
+    editor_ids: [...(user.editor_ids ?? [])],
     role: user.role,
     is_active: user.is_active,
     store_ids: [...user.store_ids].sort((a, b) => a - b),
@@ -39,10 +43,14 @@ const createDraft: UserDraft = {
   role: "user",
   is_active: true,
   store_ids: [],
+  editor_ids: [],
   password: "",
 };
 
 export interface UserEditorProps {
+  editorOptions?: { id: number; username: string }[];
+  canManageEditors?: boolean;
+  managers?: AdminUser[];
   mode: "create" | "edit";
   user: AdminUser | null;
   stores: AdminStore[];
@@ -64,6 +72,8 @@ function sameDraft(first: UserDraft, second: UserDraft) {
     && first.role === second.role
     && first.is_active === second.is_active
     && first.password === second.password
+    && first.manager_id === second.manager_id
+    && JSON.stringify(first.editor_ids ?? []) === JSON.stringify(second.editor_ids ?? [])
     && first.store_ids.length === second.store_ids.length
     && first.store_ids.every((id, index) => id === second.store_ids[index]);
 }
@@ -72,6 +82,9 @@ export function UserEditor({
   mode,
   user,
   stores,
+  managers = [],
+  editorOptions = [],
+  canManageEditors = false,
   isOwner,
   pending,
   error,
@@ -149,8 +162,8 @@ export function UserEditor({
           onChange={(event) => update((current) => ({ ...current, role: event.target.value as UserRole }))}
           value={draft.role}
         >
-          <option value="user">普通用户</option>
-          {isOwner && <option value="admin">管理员</option>}
+          <option value="user">员工</option>
+          {isOwner && <option value="admin">从管理员</option>}
         </select>
       </div>
 
@@ -165,9 +178,33 @@ export function UserEditor({
         账号启用
       </label>}
 
-      {draft.role === "user" && <fieldset className="min-w-0 space-y-2">
+      {draft.role === "user" && canManageEditors && <fieldset className="space-y-2">
+        <legend className="text-sm font-medium">可编辑此员工的管理员</legend>
+        <p className="text-sm text-muted-foreground">主管理员、创建者和所属管理员可编辑；仅主管理员和创建者能调整此名单。</p>
+        {editorOptions.map((editor) => <label key={editor.id} className="flex min-h-11 items-center gap-3 text-sm">
+          <input type="checkbox" disabled={pending} checked={(draft.editor_ids ?? []).includes(editor.id)}
+            onChange={(event) => update((current) => ({ ...current, editor_ids: event.target.checked
+              ? [...(current.editor_ids ?? []), editor.id].sort((a, b) => a - b)
+              : (current.editor_ids ?? []).filter((id) => id !== editor.id) }))} />
+          {editor.username}
+        </label>)}
+      </fieldset>}
+
+      {draft.role === "user" && (isOwner ? <div className="space-y-2">
+        <label className="block text-sm font-medium" htmlFor="user-manager">管理归属</label>
+        <select id="user-manager" required className="h-11 w-full rounded-lg border border-input bg-card px-3" disabled={pending}
+          value={draft.manager_id ?? ""} onChange={(event) => update((current) => ({
+            ...current, manager_id: event.target.value ? Number(event.target.value) : null,
+            store_ids: current.store_ids.filter((id) => !event.target.value || managers.find((manager) => manager.id === Number(event.target.value))?.store_ids.includes(id)),
+          }))}>
+          <option value="" disabled>请选择所属管理员</option>
+          {managers.map((manager) => <option key={manager.id} value={manager.id}>{manager.username}</option>)}
+        </select>
+      </div> : <p className="text-sm text-muted-foreground">管理归属：{user?.manager_id ?? "当前从管理员"}</p>)}
+
+      <fieldset className="min-w-0 space-y-2">
         <legend className="text-sm font-medium">可访问门店</legend>
-        {stores.filter((store) => store.is_active).map((store) => <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm" key={store.id}>
+        {stores.filter((store) => (store.is_active || draft.role === "admin") && (!isOwner || draft.role === "admin" || draft.manager_id == null || managers.find((manager) => manager.id === draft.manager_id)?.store_ids.includes(store.id))).map((store) => <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm" key={store.id}>
           <input
             className="size-4 shrink-0 accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             checked={draft.store_ids.includes(store.id)}
@@ -177,7 +214,7 @@ export function UserEditor({
           />
           <span className="min-w-0 [overflow-wrap:anywhere]">{store.name}</span>
         </label>)}
-        {assignedUnavailable.map((storeOrId) => {
+        {draft.role === "user" && assignedUnavailable.map((storeOrId) => {
           const id = typeof storeOrId === "number" ? storeOrId : storeOrId.id;
           const label = typeof storeOrId === "number"
             ? `未知门店 #${storeOrId}（不可用）`
@@ -195,7 +232,7 @@ export function UserEditor({
         })}
         {stores.filter((store) => store.is_active).length === 0 && assignedUnavailable.length === 0
           && <p className="text-sm text-muted-foreground">暂无可用门店</p>}
-      </fieldset>}
+      </fieldset>
 
       <div className="space-y-2">
         <label className="block text-sm font-medium" htmlFor="user-password">{mode === "create" ? "初始密码" : "重置密码（可选）"}</label>

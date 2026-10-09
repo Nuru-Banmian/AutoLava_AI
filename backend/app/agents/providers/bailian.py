@@ -34,9 +34,10 @@ class ToolCall:
 
 
 class BailianChat:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, *, required_tool: str | None = None):
         self.settings = settings
         self.model_name = settings.agent_chat_model
+        self.required_tool = required_tool
 
     def stream(self, messages):
         return self.stream_tools(messages, [])
@@ -52,6 +53,10 @@ class BailianChat:
         url = settings.agent_chat_base_url.rstrip("/") + "/chat/completions"
         if not url.startswith("https://"):
             raise ModelFailure("model_configuration")
+        if self.required_tool and self.required_tool not in {
+            tool["function"]["name"] for tool in tools
+        }:
+            raise ModelFailure("model_configuration")
         try:
             async with httpx.AsyncClient(timeout=settings.agent_timeout_seconds) as client:
                 async with client.stream("POST", url, headers={
@@ -60,9 +65,13 @@ class BailianChat:
                     "model": self.model_name, "messages": messages, "stream": True,
                     "stream_options": {"include_usage": True},
                     "max_tokens": settings.agent_output_tokens,
-                    **({"enable_thinking": settings.agent_chat_enable_thinking}
-                       if settings.agent_chat_enable_thinking is not None else {}),
                     **({"tools": tools, "parallel_tool_calls": False} if tools else {}),
+                    **({"enable_thinking": settings.agent_chat_enable_thinking}
+                       if settings.agent_chat_enable_thinking is not None
+                       and (self.model_name.lower().startswith("qwen3")
+                            or "agent_chat_enable_thinking" in settings.model_fields_set) else {}),
+                    **({"tool_choice": {"type": "function", "function": {"name": self.required_tool}},
+                        "enable_thinking": False} if self.required_tool else {}),
                 }) as response:
                     if response.status_code == 429:
                         raise ModelFailure("model_rate_limited", retryable=True)
@@ -137,7 +146,10 @@ class BailianChat:
                                 if reason == "length":
                                     raise ModelFailure("output_budget")
                                 if reason is not None:
-                                    if reason not in {"stop", "tool_calls"} or (reason == "tool_calls") != bool(calls):
+                                    # Qwen Plus finishes forced function calls with
+                                    # "stop". The terminator and complete identity/
+                                    # arguments still undergo validation at DONE.
+                                    if reason not in {"stop", "tool_calls"} or (reason == "tool_calls" and not calls):
                                         raise ModelFailure("model_format")
                                     finished = True
                         if len(buffer) > 65536:

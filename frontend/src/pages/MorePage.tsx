@@ -18,7 +18,7 @@ export function MorePage() {
     </div>
     <div className="flex min-w-0 items-center gap-3 rounded-xl border bg-card p-4">
       <div className="flex size-11 shrink-0 items-center justify-center rounded-lg bg-accent text-primary"><UserRound aria-hidden="true" className="size-5" /></div>
-      <div className="min-w-0"><p className="font-semibold">{user?.username}</p><p className="text-xs text-muted-foreground">{user?.is_owner ? "最终管理员" : user?.role === "admin" ? "管理员" : "门店用户"}</p></div>
+      <div className="min-w-0"><p className="font-semibold">{user?.username}</p><p className="text-xs text-muted-foreground">{user?.is_owner ? "主管理员" : user?.role === "admin" ? "从管理员" : "员工"}</p></div>
     </div>
     <nav aria-label="更多功能" className="grid gap-2 sm:grid-cols-2">
       {user?.role === "admin" && <Link className={moreLinkClass} to="/ai"><MessageSquare aria-hidden="true" className="size-5 shrink-0 text-primary" /><span className="min-w-0 flex-1">AI 对话</span><ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" /></Link>}
