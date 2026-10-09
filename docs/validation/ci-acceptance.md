@@ -44,8 +44,10 @@
 - 进一步检查 HTTP server log，主动断开非终态 SSE 后 reset 的用例仍有同样清理异常；增加日志断言后该定向用例出现 teardown ERROR。对 SSE 的短数据库读取/会话清理使用现有 AnyIO cancellation shield，防止断连取消打断 SQLAlchemy 的 rollback/close；不屏蔽后续流取消、外部模型或整轮运行。修复后该用例 1 passed / 7.40s，无服务端异常。
 - 生产构建在带空格的 Windows 工作区初次失败；Vite alias 从 URL pathname 改用 `fileURLToPath` 后构建通过（含 TypeScript）。OpenAPI check、生成类型零 diff、Ruff 通过。
 - 临时反向探针：pytest skip（显示 1 skipped）仍 exit 1；Playwright skip、expected failure（runner 显示 passed）及模拟服务端 ERROR 分别 exit 1。探针文件已移除，正常套件不包含故意失败/跳过用例。
+- 完整新套件（包含服务端日志拒绝）：HTTP/gate 17 passed / 18.75s，桌面/窄屏 6 passed / 34.6s，无服务端 ERROR/Traceback。
+- 两轴复核：Standards 未发现问题；Spec 指出 reset 对照同时改变管理员和门店，不能分别证明单维隔离。已改为两个非空对照：当前管理员的其他门店、当前门店的其他管理员；reset 后均回读 conversation/generation 和图表快照，保持不变。随后定向重跑该场景。
 
-最终完整运行及 GitHub Actions 耗时在 PR/交付记录中补充。以上秒数为本机单次实测，非性能 SLA；GitHub 总耗时还包含依赖安装、浏览器安装、构建和 runner 排队。
+GitHub Actions 耗时在 PR/交付记录中补充。以上秒数为本机单次实测，非性能 SLA；GitHub 总耗时还包含依赖安装、浏览器安装、构建和 runner 排队。
 
 ## 运行方式
 

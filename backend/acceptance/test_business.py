@@ -260,19 +260,27 @@ def test_agent_receipts_charts_restore_and_reset_scope(owner, base_url):
         assert request(other_admin, "GET", base + "/conversation")["messages"] == []
         request(other_admin, "GET", chart_path, 404)
         request(owner, "GET", f"agent/{other}/runs/{submitted['id']}", 404)
-        # Keep a second administrator/store conversation to prove reset isolation.
-        second = request(other_admin, "POST", f"agent/{other}/messages", 202, json={
-            "content": "查询并画图", "generation": 0, "request_id": uuid4().hex,
-        })
-        events(other_admin, f"agent/{other}/runs/{second['id']}/events")
-        other_history = request(other_admin, "GET", f"agent/{other}/conversation")
+        # Vary one scope dimension at a time: user-only/store-only resets must fail.
+        controls = []
+        for client, scope in ((other_admin, base), (owner, f"agent/{other}")):
+            second = request(client, "POST", scope + "/messages", 202, json={
+                "content": "查询并画图", "generation": 0, "request_id": uuid4().hex,
+            })
+            assert events(client, scope + f"/runs/{second['id']}/events")[-1][1] == "completed"
+            history = request(client, "GET", scope + "/conversation")
+            message = history["messages"][-1]
+            assert len(history["messages"]) == 2 and len(message["charts"]) == 1
+            saved_path = scope + f"/messages/{message['id']}/charts/{message['charts'][0]['chart_id']}"
+            controls.append((client, scope, history, saved_path, request(client, "GET", saved_path)))
         reset = request(owner, "POST", base + "/conversation/reset", json={"generation": 0})
         assert reset["generation"] == 1 and reset["messages"] == []
         request(owner, "GET", chart_path, 404)
         request(owner, "POST", base + "/messages", 409, json={
             "content": "过期页面提交", "generation": 0, "request_id": uuid4().hex,
         })
-        assert request(other_admin, "GET", f"agent/{other}/conversation") == other_history
+        for client, scope, history, saved_path, saved in controls:
+            assert request(client, "GET", scope + "/conversation") == history
+            assert request(client, "GET", saved_path) == saved
 
 
 def test_agent_failure_and_reset_during_model_wait(owner):
