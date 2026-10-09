@@ -80,7 +80,7 @@ def project(snapshot, args):
         raise ValueError("invalid_chart_source")
     if args.type == "line" and args.dimension not in ("day", "week", "month", "year"):
         raise ValueError("invalid_chart_source")
-    if args.series_by and args.dimension == "category":
+    if args.series_by and (args.dimension == "category" or args.type == "horizontal_bar"):
         raise ValueError("invalid_chart_source")
     if (snapshot.get("status") != "complete" or block.get("status", "complete") != "complete"
             or (not detail and set(snapshot.get("group_by", [])) != set(grouping)) or not block.get("rows")

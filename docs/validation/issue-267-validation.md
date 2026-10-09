@@ -2,7 +2,7 @@
 
 日期：2026-10-09（Asia/Shanghai）。父规格 #260；本票 #267。
 
-独立工作区 `D:/work/myself/AI-try/AutoLava-AI-267`，分支 `codex/issue-267-chart-groups`。固定基线 `de731bf2537f181fa46966c84cf8144ab5a779ce`（#266 PR #275 已合并）。原项目既有改动不暂存；从更新的 origin/main 实施。
+独立工作区 `D:/work/myself/AI-try/AutoLava-AI-267`，分支 `codex/issue-267-chart-groups`。固定基线 `de731bf2537f181fa46966c84cf8144ab5a779ce`（#266 PR #275 已合并）。原项目既有改动不暂存；从更新的 origin/main 实施。提交检查发现两份README因Windows文本写入改变行尾，已恢复原LF，diff检查通过且文档只保留本票四行变化。
 
 使用 implement、tdd、writing-for-agents、Playwright；完成后使用 code-review 两轴及 pr。遵从用户仅运行新增/受影响定向测试的要求，不运行本地全量测试。read_saved、历史图懒加载及缓存属于 #268，本票不将其标为已完成。
 
@@ -25,7 +25,7 @@ store_chart create 新增 grouped_bar、stacked_bar、horizontal_bar；series_by
 ## 定向与浏览器证据
 
 - 新增 HTTP/SSE 用例使用真实登录、真实查询工具、逐级迁移临时 SQLite 与受控模型；保存图通过公开 history/单图端点读取。覆盖一次查询、构成、单位拆分、排名顺序、50/51边界、916日完整分段、重复创建累计超量、单图超量导致新增整组拒绝并保留先前图，以及默认24000预算普通图成功。
-- 最终受影响后端回归：`test_agent_chart_groups.py`、`test_agent_chat_charts.py`、`test_agent_tools.py`、`test_agent_pagination_budget.py`。日志 `C:/Users/1/AppData/Local/Temp/issue267-backend-final.log`，结果待回读。
+- 最终受影响后端回归：`test_agent_chart_groups.py`、`test_agent_chat_charts.py`、`test_agent_tools.py`、`test_agent_pagination_budget.py`。日志 `C:/Users/1/AppData/Local/Temp/issue267-backend-final.log`，**63项通过（235.85秒）**。随后新增金额/占比精确8.33及不安全数量整组拒绝2项专项通过（9.12秒）；最终审查修复的排名透视拒绝与相关构成/普通排名5项专项通过（19.42秒）。重复用例不相加，相关用例合计66项均有通过证据。
 - 前端 `AgentChart.test.tsx` / `AgentChatPage.test.tsx`：17项通过（5.83秒）；tsc、build、受影响Python Ruff及 OpenAPI --check 通过。
 - 实际 Chromium 1280px/390px：10项通过（41.2秒）。构成、比较及单位拆分、排名、长趋势、同轮多次创建超量；桌面hover/手机tap显示准确值，真实零/未知、分段范围/段数、末日99、刷新恢复和无下载入口/无横向溢出。使用真实 HTTP/SSE，非拦截伪造图表payload；转发到隔离临时数据库验收服务器。
 - 截图 `frontend/output/playwright/issue267-{构成,比较,排名,长趋势,超量长趋势}-{1280,390}.png`。已视觉查看390构成和1280长趋势；截图是验收证据，不是产品截图存储能力。
@@ -34,6 +34,6 @@ store_chart create 新增 grouped_bar、stacked_bar、horizontal_bar；series_by
 
 ## 审查、CI 与未验证范围
 
-固定命令 `git diff de731bf2537f181fa46966c84cf8144ab5a779ce...HEAD`。规范与规格两轴审查结果、精确最终HEAD、PR及自动CI结果待回读。
+固定命令 `git diff de731bf2537f181fa46966c84cf8144ab5a779ce...HEAD`。规范与规格两轴审查结果、精确最终HEAD、PR及自动CI**63项通过（235.85秒）**。随后新增金额/占比精确8.33及不安全数量整组拒绝2项专项通过（9.12秒）；最终审查修复的排名透视拒绝与相关构成/普通排名5项专项通过（19.42秒）。重复用例不相加，相关用例合计66项均有通过证据。
 
 未执行真实供应商/付费模型调用、生产部署、生产数据验收或生产负载性能测试。受控模型、浏览器和CI证据分别报告，不将它们当作真实供应商或生产证据。#268功能和#260其他子票不在本票完成范围。

@@ -234,3 +234,56 @@ async def test_default_budget_still_reports_chart_success_or_explicit_failure(tm
         assert run["status"] == "completed", run
         assert model.results[-1].get("status") == "prepared", model.results[-1]
         assert len(await saved(client)) == 1
+
+
+async def test_composition_amount_and_percent_have_separate_units_and_exact_decimals(tmp_path):
+    from tests.api.test_charts_daily_migrated import confirm_settlement
+    model = QueryModel([("store_data_catalog", {}), query([{
+        "id": "parts", "domain": "income_composition", "range": {"start": "2026-07-01", "end": "2026-08-31"},
+        "metrics": ["amount", "share_percent"], "group_by": ["month", "category"],
+    }]), chart(type="grouped_bar", dimension="month", series=["amount", "share_percent"], series_by="category"),
+        "金额与占比分图，结算按开票月计入。"])
+    async with chat_app(tmp_path, model) as (client, _, _):
+        await seed_composition(client)
+        assert (await client.patch("/api/admin/stores/1", json={"company_settlement_enabled": True})).status_code == 200
+        await confirm_settlement(client, 1, "2026-07", 200)
+        run = await ask(client, "收入构成金额与占比")
+        assert run["status"] == "completed", run
+        charts = await saved(client)
+        assert [c["payload"]["unit"] for c in charts] == ["EUR", "%"]
+        percent = charts[1]["payload"]
+        cash = next(s["key"] for s in percent["series"] if s["label"] == "现金")
+        assert percent["points"][0]["values"][cash] == {"exact": "8.33", "plot": 8.33, "status": "available"}
+
+
+async def test_unsafe_value_rejects_entire_unit_group_without_fabricated_plot(tmp_path):
+    model = QueryModel([("store_data_catalog", {}), query([{
+        "id": "unsafe", "domain": "daily_ledger", "range": {"start": "2026-07-01", "end": "2026-07-01"},
+        "metrics": ["total_revenue", "total_wash_count"], "group_by": ["day"],
+    }]), chart(series=["total_revenue", "total_wash_count"]), "图表全部生成。"])
+    async with chat_app(tmp_path, model) as (client, _, _):
+        response = await client.put("/api/ledger/1/2026-07-01", json={
+            "expected_identity": None, "expected_revision": None, "expected_config_revision": 1,
+            "is_open": "营业", "daily_revenue": 19, "wash_count": 9007199254740992,
+        })
+        assert response.status_code == 201, response.text
+        run = await ask(client, "金额数量分图")
+        assert run["status"] == "completed", run
+        assert model.results[-1].get("error") == "chart_unsafe_value", model.results[-1]
+        assert await saved(client) == []
+        assert "图表请求未生成" in run["output"]
+
+
+async def test_ranking_cannot_pivot_and_reorder_selected_category_rows(tmp_path):
+    model = QueryModel([("store_data_catalog", {}), query([{
+        "id": "rank", "domain": "income_items", "range": {"start": "2026-07-01", "end": "2026-08-31"},
+        "metrics": ["amount"], "group_by": ["weekday", "category"], "top_n": 2,
+        "order_by": [{"field": "amount", "direction": "desc"}],
+    }]), chart(type="horizontal_bar", dimension="weekday", series=["amount"], series_by="category"),
+        "排名已完成。"])
+    async with chat_app(tmp_path, model) as (client, _, _):
+        await seed_composition(client)
+        run = await ask(client, "按星期分类金额取最高两项")
+        assert run["status"] == "completed", run
+        assert model.results[-1].get("error") == "invalid_chart_source", model.results[-1]
+        assert await saved(client) == []
