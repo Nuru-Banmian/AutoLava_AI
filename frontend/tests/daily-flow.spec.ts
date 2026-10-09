@@ -492,6 +492,8 @@ for (const viewport of [
     await expect(detail.getByText("€100", { exact: true }).first()).toBeVisible();
     await expect(detail.getByRole("link", { name: "修改这天记录" })).toBeVisible();
     if (mobile) {
+      // Wait for the detail's animation-frame autofocus before moving focus ourselves.
+      await expect(detail.getByRole("heading", { level: 3 })).toBeFocused();
       const deleteButton = detail.getByRole("button", { name: "删除记录" });
       await deleteButton.focus();
       await page.keyboard.press("Enter");
