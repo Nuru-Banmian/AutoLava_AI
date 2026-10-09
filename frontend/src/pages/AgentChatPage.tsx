@@ -7,6 +7,7 @@ import { useAuth } from "@/auth/AuthProvider";
 import { currentSessionScope } from "@/auth/sessionScope";
 import { Button } from "@/components/ui/button";
 import { AgentChart } from "@/components/AgentChart";
+import { AgentChartCache } from "@/components/AgentChartCache";
 import { useStore } from "@/stores/StoreProvider";
 import { AgentMemoryPanel } from "./AgentMemoryPanel";
 
@@ -109,6 +110,7 @@ function Chat({ storeId }: { storeId: number }) {
       if (id) lastEventId = id;
       const data = JSON.parse((event as MessageEvent).data) as {
         name: string; status: string; range?: { start: string; end: string }; message?: string;
+        source?: string; queried_at?: string[];
       };
       const labels: Record<string, string> = {
         read_skill: "已读取经营分析技能", read_skill_resource: "已读取指标口径参考",
@@ -118,7 +120,9 @@ function Chat({ storeId }: { storeId: number }) {
         calculate: "已完成计算",
         store_chart: "已准备图表，完成后保存",
       };
-      const text = data.status === "completed"
+      const text = data.source === "saved_chart"
+        ? `${data.status === "partial" ? "历史图部分读取" : "已读取保存图快照"}：原查询时间 ${data.queried_at?.join("、") ?? "见回答"}`
+        : data.status === "completed"
         ? (labels[data.name] ?? "查询已完成") + (data.range ? `：${data.range.start} 至 ${data.range.end}` : "")
         : (data.name === "store_query" ? `${data.status === "partial" ? "查询部分完成" : "查询未完成"}：${data.message ?? "请查看逐项结果。"}`
           : data.name === "calculate" ? `计算未完成：${data.message ?? "请求未获执行。"}`
@@ -245,7 +249,7 @@ function Chat({ storeId }: { storeId: number }) {
     </div>
     {!conversation && !error && <p role="status">正在读取对话…</p>}
     {error && <div role="alert" className="text-destructive">{error} <Button variant="outline" onClick={() => void reload()}>重新读取</Button></div>}
-    <div aria-label="聊天记录" className="grid min-w-0 gap-3">
+    <AgentChartCache key={`${conversation?.generation ?? 0}:${epoch.current}`}><div aria-label="聊天记录" className="grid min-w-0 gap-3">
       {conversation?.next_before && <Button variant="outline" disabled={loadingOlder} onClick={() => void older()}>读取更早对话</Button>}
       {conversation?.messages.map((message) => <article key={message.id} className="min-w-0 rounded-xl border bg-card p-4">
         <p className="mb-2 text-sm font-semibold text-muted-foreground">{message.role === "user" ? "你" : "AI 助手"}</p>
@@ -260,6 +264,7 @@ function Chat({ storeId }: { storeId: number }) {
           : <p role="alert" className="text-destructive">回答失败：{failures[conversation.run.error_code ?? ""] ?? "处理失败，请稍后重新发送。"}</p>}
       </article>}
     </div>
+    </AgentChartCache>
     {status === "completed" && <p role="status" className="text-sm text-muted-foreground">回答已完成并保存</p>}
     {status === "running" && connection && <p role="status">{connection}</p>}
     {activity && activity.runId === runId && <p role="status" className="text-sm text-muted-foreground">{activity.text}</p>}

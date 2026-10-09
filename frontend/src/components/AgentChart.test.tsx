@@ -1,10 +1,11 @@
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { AgentChart } from "./AgentChart";
 import { advanceSessionScope } from "@/auth/sessionScope";
+import { AgentChartCache } from "./AgentChartCache";
 
 const description = { chart_id: "chart-1", schema_version: 1 as const, type: "line" as const,
   title: "日趋势", unit: "EUR", range: { start: "2026-07-01", end: "2026-07-03" }, point_count: 3 };
@@ -60,6 +61,32 @@ it("drops late responses after store or session scope changes", async () => {
   expect(screen.queryByLabelText("日趋势查看日期")).not.toBeInTheDocument();
 });
 
+it("loads only near the viewport and draws only while visible with stable space", async () => {
+  const observers: { callback: IntersectionObserverCallback; options?: IntersectionObserverInit }[] = [];
+  vi.stubGlobal("IntersectionObserver", class {
+    constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) { observers.push({ callback, options }); }
+    observe() {} disconnect() {}
+  });
+  let reads = 0;
+  server.use(http.get("/api/agent/1/messages/4/charts/chart-1", () => { reads++; return HttpResponse.json(snapshot); }));
+  const view = render(<AgentChart storeId={1} messageId={4} description={description} />);
+  try {
+    expect(reads).toBe(0);
+    expect(screen.queryByLabelText("日趋势查看日期")).not.toBeInTheDocument();
+    const near = observers.find(o => o.options?.rootMargin);
+    const visible = observers.find(o => !o.options?.rootMargin);
+    expect(near).toBeDefined(); expect(visible).toBeDefined();
+    await act(async () => near!.callback([{ isIntersecting: true }] as IntersectionObserverEntry[], {} as IntersectionObserver));
+    await screen.findByText(/图表已读取/);
+    expect(reads).toBe(1);
+    expect(screen.queryByLabelText("日趋势查看日期")).not.toBeInTheDocument();
+    await act(async () => visible!.callback([{ isIntersecting: true }] as IntersectionObserverEntry[], {} as IntersectionObserver));
+    expect(await screen.findByLabelText("日趋势查看日期")).toBeVisible();
+    await act(async () => visible!.callback([{ isIntersecting: false }] as IntersectionObserverEntry[], {} as IntersectionObserver));
+    expect(screen.queryByLabelText("日趋势查看日期")).not.toBeInTheDocument();
+  } finally { view.unmount(); vi.unstubAllGlobals(); }
+});
+
 it.each(["grouped_bar", "stacked_bar", "horizontal_bar"] as const)("renders %s with exact selection and segment context", async (type) => {
   const changed = { ...snapshot, payload: { ...snapshot.payload, type, y_domain: [0, 100],
     segment: { index: 1, count: 2, total_range: { start: "2026-01-01", end: "2026-12-31" } } } };
@@ -70,4 +97,37 @@ it.each(["grouped_bar", "stacked_bar", "horizontal_bar"] as const)("renders %s w
   expect(view.container.querySelector(".recharts-bar")).not.toBeNull();
   await userEvent.selectOptions(select, "1");
   expect(within(screen.getByRole("status", { name: "图表数据" })).getByText(/营业额：0 EUR/)).toBeVisible();
+});
+
+it("deduplicates a shared chart and invalidates cached data on generation reset", async () => {
+  let reads = 0;
+  server.use(http.get("/api/agent/1/messages/4/charts/chart-1", () => { reads++; return HttpResponse.json(snapshot); }));
+  const charts = <><AgentChart storeId={1} messageId={4} description={description} /><AgentChart storeId={1} messageId={4} description={description} /></>;
+  const view = render(<AgentChartCache key="generation-0">{charts}</AgentChartCache>);
+  expect(await screen.findAllByLabelText("日趋势查看日期")).toHaveLength(2);
+  expect(reads).toBe(1);
+  view.rerender(<AgentChartCache key="generation-0">{charts}</AgentChartCache>);
+  expect(reads).toBe(1);
+  view.rerender(<AgentChartCache key="generation-1">{charts}</AgentChartCache>);
+  expect(await screen.findAllByLabelText("日趋势查看日期")).toHaveLength(2);
+  expect(reads).toBe(2);
+});
+
+it.each(["reset", "unmount"])("aborts and discards a delayed chart after %s", async action => {
+  let release!: () => void;
+  const barrier = new Promise<void>(resolve => { release = resolve; });
+  let started!: () => void;
+  const requested = new Promise<void>(resolve => { started = resolve; });
+  let aborted = false;
+  server.use(http.get("/api/agent/1/messages/4/charts/chart-1", async ({ request }) => {
+    request.signal.addEventListener("abort", () => { aborted = true; }); started();
+    await barrier; return HttpResponse.json(snapshot);
+  }));
+  const view = render(<AgentChartCache key="generation-0"><AgentChart storeId={1} messageId={4} description={description} /></AgentChartCache>);
+  await requested;
+  if (action === "reset") view.rerender(<AgentChartCache key="generation-1"><p>重置后没有历史图</p></AgentChartCache>);
+  else view.unmount();
+  await act(async () => { release(); await barrier; });
+  expect(aborted).toBe(true);
+  expect(screen.queryByLabelText("日趋势查看日期")).not.toBeInTheDocument();
 });

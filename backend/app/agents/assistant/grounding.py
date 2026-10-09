@@ -13,7 +13,7 @@ from app.agents.tools.store_overview import OverviewInput
 
 class TurnPlan(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    kind: Literal["general", "clarify", "business", "query"]
+    kind: Literal["general", "clarify", "business", "query", "saved_chart"]
     queries: list[OverviewInput] = Field(max_length=3)
 
     @model_validator(mode="after")
@@ -29,7 +29,7 @@ PLAN_SCHEMA = [{"type": "function", "function": {
     "parameters": TurnPlan.model_json_schema(),
 }}]
 # Parse old plans for compatibility, but never offer that path to a new model plan.
-PLAN_SCHEMA[0]["function"]["parameters"]["properties"]["kind"]["enum"] = ["general", "clarify", "query"]
+PLAN_SCHEMA[0]["function"]["parameters"]["properties"]["kind"]["enum"] = ["general", "clarify", "query", "saved_chart"]
 PLAN_SCHEMA[0]["function"]["parameters"]["properties"]["queries"] = {"type": "array", "maxItems": 0, "items": {}}
 PLAN_SCHEMA[0]["function"]["parameters"].pop("$defs", None)
 PLAN_PROMPT = (
@@ -41,6 +41,7 @@ PLAN_PROMPT = (
     "按门店local_date解析相对日期，不猜含糊日期。其他路径queries为空。"
     "用户直接提供数字表达式的临时算数属于general，后续可用calculate；"
     "依赖当前经营数据的指标仍属于query，不能以计算工具替代查询。"
+    "追问旧图选saved_chart，须read_saved取得原时间；旧图超出上下文先问是否重新查询，不能自动查。要求最新或确认重新查询选query并生成新图，不能改旧图。"
 )
 
 
@@ -83,8 +84,10 @@ class TurnEvidence:
 
 
 def require_evidence(plan, evidence, scope, run_id, generation):
-    if plan.kind == "query":
-        if not any(e.scope == scope and e.run_id == run_id and e.generation == generation for e in evidence):
+    if plan.kind in ("query", "saved_chart"):
+        source = "saved_chart" if plan.kind == "saved_chart" else "query"
+        if not any(e.scope == scope and e.run_id == run_id and e.generation == generation
+                   and e.query[0] == source for e in evidence):
             raise ModelFailure("grounding_unavailable")
         return
     if plan.kind != "business":

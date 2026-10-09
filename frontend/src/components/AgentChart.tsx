@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { api, friendlyApiError } from "@/api/client";
+import { friendlyApiError } from "@/api/client";
 import type { components } from "@/api/generated";
 import { currentSessionScope } from "@/auth/sessionScope";
 import { Button } from "@/components/ui/button";
+import { useChartCache } from "./AgentChartCache";
 
 type Descriptor = components["schemas"]["ChartDescriptor"];
 type Snapshot = components["schemas"]["ChatChart"];
@@ -22,6 +23,26 @@ const coverageLabels: Record<string, string> = {
 };
 
 export function AgentChart({ storeId, messageId, description }: { storeId: number; messageId: number; description: Descriptor }) {
+  const element = useRef<HTMLDivElement>(null);
+  const cache = useChartCache();
+  const [near, setNear] = useState(typeof IntersectionObserver === "undefined");
+  const [visible, setVisible] = useState(typeof IntersectionObserver === "undefined");
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") return;
+    const nearby = new IntersectionObserver(entries => { if (entries.some(e => e.isIntersecting)) setNear(true); }, { rootMargin: "600px 0px" });
+    const viewport = new IntersectionObserver(entries => setVisible(entries.some(e => e.isIntersecting)));
+    if (element.current) { nearby.observe(element.current); viewport.observe(element.current); }
+    return () => { nearby.disconnect(); viewport.disconnect(); };
+  }, []);
+  return <div ref={element} className="mt-4 min-w-0" style={{ height: 620, overflow: "auto" }} data-chart-id={description.chart_id}>
+    {near ? <LoadedChart key={`${currentSessionScope()}:${storeId}:${messageId}:${description.chart_id}`} storeId={storeId} messageId={messageId} description={description} visible={visible} cache={cache} />
+      : <div role="status" className="rounded-lg border p-3">图表等待进入附近区域：{description.title}</div>}
+  </div>;
+}
+
+function LoadedChart({ storeId, messageId, description, visible, cache }: {
+  storeId: number; messageId: number; description: Descriptor; visible: boolean; cache: ReturnType<typeof useChartCache>;
+}) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
@@ -30,15 +51,16 @@ export function AgentChart({ storeId, messageId, description }: { storeId: numbe
     let active = true;
     const session = currentSessionScope();
     setSnapshot(null); setError(""); setSelected(null);
-    void api<Snapshot>(`/agent/${storeId}/messages/${messageId}/charts/${description.chart_id}`).then((value) => {
+    void cache.read(storeId, messageId, description.chart_id).then((value) => {
       if (active && session === currentSessionScope() && value.chart_id === description.chart_id && value.message_id === messageId) setSnapshot(value);
     }).catch((cause) => {
       if (active && session === currentSessionScope()) setError(friendlyApiError(cause, "图表读取失败"));
     });
     return () => { active = false; };
-  }, [storeId, messageId, description.chart_id, retry]);
+  }, [storeId, messageId, description.chart_id, retry, cache]);
   if (error) return <div role="alert">{error} <Button variant="outline" onClick={() => setRetry((value) => value + 1)}>重试图表</Button></div>;
   if (!snapshot) return <div role="status" className="min-h-64">正在读取图表：{description.title}</div>;
+  if (!visible) return <div role="status" className="rounded-lg border p-3">图表已读取，进入可见区域时绘制：{description.title}</div>;
   const chart = snapshot.payload;
   const point = selected === null ? null : chart.points[selected];
   const horizontal = chart.type === "horizontal_bar";

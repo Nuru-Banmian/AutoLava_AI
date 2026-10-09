@@ -14,6 +14,7 @@ from app.agents.tools.store_catalog import CatalogCache, version
 from app.core.database import sqlite_short_write
 from app.models.agent import AgentChart, AgentConversation, AgentEvent, AgentMemoryJob, AgentMessage, AgentRun
 from app.agents.tools.store_chart import descriptor
+from app.agents.tools.saved_charts import authorized_chart
 from app.models.identity import Store
 from app.agents.memory.repository import scope_revision, scope_epoch
 from app.schemas.agent import ChartDescriptor, ChatConversation, ChatMessage, ChatRun
@@ -205,10 +206,7 @@ class ChatRepository:
     async def chart(self, scope: ChatScope, message_id: int, chart_id: str):
         async with self.sessions() as session:
             await scope.authorize(session)
-            chart = await session.scalar(select(AgentChart).join(AgentMessage).join(AgentConversation).where(
-                AgentChart.chart_id == chart_id, AgentChart.message_id == message_id, AgentMessage.role == "assistant",
-                AgentConversation.user_id == scope.user_id, AgentConversation.store_id == scope.store_id,
-            ))
+            chart = await authorized_chart(session, scope, message_id, chart_id)
             if chart is None:
                 raise HTTPException(404, "Chart not found")
             return {"chart_id": chart.chart_id, "message_id": chart.message_id, "schema_version": chart.schema_version,

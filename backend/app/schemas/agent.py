@@ -35,6 +35,8 @@ class ChartDescriptor(BaseModel):
     range: dict[str, str] | None
     point_count: int
     segment: ChartSegment | None = None
+    queried_at: str | None = None
+    source: Literal["store_query", "saved_chart"] | None = None
 
 
 class ChartValue(BaseModel):
