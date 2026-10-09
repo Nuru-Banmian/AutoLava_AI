@@ -155,6 +155,9 @@ async def test_partial_targets_literal_keywords_and_unknown_values(tmp_path):
 
 
 async def test_calendar_presets_leap_mapping_future_cutoff_and_default(tmp_path, monkeypatch):
+    # Exercise six date rules with room for the complete advertised tool schemas.
+    # Context-capacity behavior is covered separately by pagination-budget tests.
+    monkeypatch.setenv("AUTOLAVA_AGENT_CONTEXT_CHARS", "32000")
     from datetime import datetime
     import app.agents.tools.store_catalog as catalog_module
     class Clock(datetime):

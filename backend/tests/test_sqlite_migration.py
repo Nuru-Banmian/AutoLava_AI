@@ -143,6 +143,7 @@ EXPECTED_TABLES = {
     "agent_memory_scopes",
     "agent_memory_changes",
     "agent_memory_jobs",
+    "agent_charts",
     # The replacement runtime does not map or use these archival tables. They
     # remain in the physical schema so upgrading does not destroy old chats.
     "retired_agent_system_settings",
