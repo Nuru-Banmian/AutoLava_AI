@@ -62,6 +62,13 @@ class ChartInput(RootModel[CreateChartInput | ReadSavedInput]):
             if isinstance(value, list):
                 return [compact(item) for item in value]
             if isinstance(value, dict):
+                # Optional arguments are omitted rather than explicitly null.
+                # Keep bounds and business property names while dropping the
+                # redundant null branch from the provider-facing schema.
+                if "anyOf" in value:
+                    alternatives = [item for item in value["anyOf"] if item.get("type") != "null"]
+                    if len(alternatives) == 1:
+                        return compact(alternatives[0])
                 return {key: ({name: compact(schema) for name, schema in item.items()}
                               if key == "properties" else compact(item))
                         for key, item in value.items() if key not in ("title", "default")}

@@ -351,7 +351,7 @@ async def test_default_planning_does_not_advertise_legacy_business_route(tmp_pat
     class InspectPlan(QueryModel):
         async def stream_plan(self, messages, tools):
             enum = tools[0]["function"]["parameters"]["properties"]["kind"]["enum"]
-            assert enum == ["general", "clarify", "query"]
+            assert enum == ["general", "clarify", "query", "saved_chart"]
             async for call in super().stream_plan(messages, tools):
                 yield call
     model = InspectPlan([("store_data_catalog", {}), query([
