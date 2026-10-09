@@ -72,3 +72,4 @@ class ToolContext:
     remaining_result_chars: int
     results: ResultRepository
     catalogs: object | None = None
+    remaining_context_chars: int | None = None

@@ -126,8 +126,14 @@ def serialized_size(value):
     return len(json.dumps(value, ensure_ascii=False, allow_nan=False))
 
 
-def failure_receipt_capacity(targets):
-    return sum(250 + serialized_size(target["id"]) for target in targets)
+def message_size(value):
+    # Tool JSON is a string inside messages; account for its second escaping.
+    content = json.dumps(value, ensure_ascii=False, allow_nan=False)
+    return len(json.dumps(content, ensure_ascii=False)) - 2
+
+
+def failure_receipt_capacity(targets, size=serialized_size):
+    return sum(250 + size(target["id"]) for target in targets)
 
 
 async def execute_target(session, context, store, target, hard_capacity):
@@ -180,6 +186,10 @@ async def execute_target(session, context, store, target, hard_capacity):
         if row_size + serialized_size({**result, "rows": []}) > 12000:
             raise QueryError("row_too_large", "单完整行超过工具硬容量，未截断字段或事件。", required_chars=row_size)
         result["rows"].append(values)
+        if (context.remaining_context_chars is not None
+                and message_size(result) > context.remaining_context_chars):
+            raise QueryError("context_capacity", "完整结果序列化后无法装入本轮上下文；未截断事件。",
+                             matched_count=result["matched_count"], selected_count=result["selected_count"], range=dates["range"])
         if serialized_size(result) > context.remaining_result_chars:
             code = "context_capacity" if context.remaining_result_chars < hard_capacity else "result_capacity_exceeded"
             raise QueryError(code, "完整结果无法装入本轮容量；未返回截断明细。",
@@ -198,7 +208,10 @@ async def store_query(session, context, arguments):
     # Reserve complete failure receipts for every id before any target reads.
     # At low remaining budgets even six small error messages may not fit.
     minimum_receipts = 300 + failure_receipt_capacity(arguments.targets)
-    if context.remaining_result_chars < max(1000, minimum_receipts):
+    context_capacity = context.remaining_context_chars
+    if (context.remaining_result_chars < max(1000, minimum_receipts)
+            or (context_capacity is not None
+                and context_capacity < 300 + failure_receipt_capacity(arguments.targets, message_size))):
         return {"error": "context_capacity", "message": "结果元数据及完整行空间不足，整批未执行。"}
     for index, raw in enumerate(arguments.targets):
         try:
@@ -206,10 +219,16 @@ async def store_query(session, context, arguments):
             overhead = serialized_size(response) + failure_receipt_capacity(arguments.targets[index:])
             hard_capacity = 12000 - overhead
             available = min(12000, context.remaining_result_chars) - overhead
+            available_context = (context_capacity - message_size(response)
+                                 - failure_receipt_capacity(arguments.targets[index:], message_size)
+                                 if context_capacity is not None else None)
+            if available_context is not None and available_context < 700:
+                raise QueryError("context_capacity", "序列化后的完整目标元数据及单行空间不足，当前目标未查询。")
             if available < 700:
                 raise QueryError("context_capacity" if context.remaining_result_chars < 12000 else "result_capacity_exceeded",
                                  "完整目标元数据及单行空间不足，当前目标未查询。")
-            result = await execute_target(session, replace(context, remaining_result_chars=available), store, target, hard_capacity)
+            result = await execute_target(session, replace(context, remaining_result_chars=available,
+                                          remaining_context_chars=available_context), store, target, hard_capacity)
         except (ValidationError, ValueError, OverflowError) as exc:
             if isinstance(exc, QueryError):
                 result = {"id": raw["id"], "status": "failed", "error": exc.code,
@@ -218,9 +237,10 @@ async def store_query(session, context, arguments):
                 result = {"id": raw["id"], "status": "failed", "error": "invalid_query_target",
                           "message": "字段、筛选、范围或参数组合不符合已上线目录。"}
         candidate = {**response, "targets": [*response["targets"], result]}
-        if serialized_size(candidate) > min(12000, context.remaining_result_chars):
+        exceeds_context = context_capacity is not None and message_size(candidate) > context_capacity
+        if serialized_size(candidate) > min(12000, context.remaining_result_chars) or exceeds_context:
             result = {"id": raw["id"], "status": "failed", "error": (
-                "context_capacity" if context.remaining_result_chars < 12000 else "result_capacity_exceeded"),
+                "context_capacity" if exceeds_context or context.remaining_result_chars < 12000 else "result_capacity_exceeded"),
                       "message": "整个批量剩余容量不足，未截断当前目标。"}
         response["targets"].append(result)
     succeeded = sum(r["status"] in ("complete", "unavailable") for r in response["targets"])

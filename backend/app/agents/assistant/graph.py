@@ -150,11 +150,13 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
             if tool_count > settings.agent_max_tool_calls:
                 raise ModelFailure("tool_budget")
             empty_result = {"role": "tool", "tool_call_id": call.id, "content": ""}
+            remaining_context = max(0, settings.agent_context_chars
+                                    - context_size([*messages, empty_result]) - 3000)
             context = ToolContext(
                 scope=state["scope"], run_id=state["run_id"], generation=state["generation"],
-                remaining_result_chars=max(0, min(12000, settings.agent_context_chars
-                    - context_size([*messages, empty_result]) - 3000)),
+                remaining_result_chars=min(12000, remaining_context),
                 results=results, catalogs=storage.catalogs,
+                remaining_context_chars=remaining_context,
             )
             result = await tools.execute(call, storage, context)
             if (call.name == "store_query" and plan.kind == "query"
