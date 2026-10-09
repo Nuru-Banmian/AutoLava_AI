@@ -181,7 +181,7 @@ T4 已接入 `registry.py`、`tools/`、`skills/`。后续记忆 Agent 与记忆
 
 失败返回 `{error: string, message: string}`，没有 result/exact。错误码包括 invalid_expression、division_by_zero、expression_capacity、literal_capacity、operation_capacity、nesting_capacity、calculation_overflow、result_capacity；参数 schema 拒绝仍沿用 invalid_tool_arguments。SSE tool 事件保留 name/status，计算失败增加 error_code/message；页面显示具体失败原因。结果字符串经模型读取，最终回复仍沿用现有 delta/history 契约，不新增公开工具端点，OpenAPI HTTP 模型不变。
 
-remaining_result_chars 每次执行按当前完整 messages、工具 schemas 及返回消息封装重新计算，上限12000字符，并保留2000字符回答和1000字符控制/错误空间；不丢弃本轮工具证据。临时仓库接口提供 put/get/clear，不可变 JSON 副本、随机引用、每run总计4 MiB；按完整 ChatScope/run/generation 隔离，完成、失败、停止或重置清理。当前计算及概览不使用它保存业务数据；查询快照和游标协议由后续子票实施。原概览、技能行为与全部调用/步骤/时长配置上限保持原值。
+remaining_result_chars 每次执行按当前完整 messages、工具 schemas、返回消息封装及后续回答提示重新计算，上限12000字符，并保留2000字符回答和1000字符控制/错误空间；不丢弃本轮已读工具证据。临时仓库使用不可变 UTF-8 JSON 副本、随机引用、每run总计4 MiB；按完整 ChatScope/run/generation 隔离，完成、失败、停止、重置或撤权清理。查询使用同份快照分页，游标绑定查询/数据摘要及稳定顺序；未来图表使用get读取同份完整快照。原概览、技能行为与全部调用/步骤/时长配置上限保持原值。
 
 新增技能：在 skills/<name>/SKILL.md 写 name、description 与必要能力/工具/参考元数据，正文放步骤和完成条件，按需资料放 references/ 或 assets/。在对应 AgentDefinition.skills 启用；测试启动诊断、按需读取、禁用与越界拒绝，重新构建 wheel 并从仓库外工作目录读取资源。
 
@@ -240,7 +240,7 @@ remaining_result_chars 每次执行按当前完整 messages、工具 schemas 及
 - 真实百炼调用、向量存储/Embedding、模型内容质量、Docker 和生产部署：未执行。本地实际业务数据库只读核对迁移为 0022，未为本次测试升级或写入。
 
 
-## 针对性查询与分组比较（#263、#264）
+## 针对性查询、分组比较与分页（#263–#265）
 
 主模型发现工具为 `store_data_catalog` 与 `store_query`，另保留 `calculate`、受限技能读取。
 旧 `store_overview` 只在已发布旧计划/旧调用兼容时执行，不进入主模型默认工具 schema。
@@ -274,6 +274,7 @@ range选择 `{start,end}`、`{preset,n?}` 或 `{all_history:true}`；省略默�
 
 结果包含requested_range/range/local_date/queried_at、字段或指标类型单位口径、matched_count/selected_count、完整rows及独立目标状态；汇总还提供完整匹配统计、覆盖、分母和不可用状态。
 批量状态complete/partial/failed；参数失败保留其他成功目标，权限/代际失败终止整轮。
-分页尚未上线，完整结果最多200行，整个工具正文最多12,000字符并受剩余上下文容量限制；超量明确拒绝，不截断文本或暗改粒度。
-当前has_more=false，next_cursor/result_ref为空，不承诺续页；不可变分页由#265接入，图表由后续工单接入。
+新查询可指定page_size（默认50、1–200）。每个成功目标返回result_ref、page_range、has_more、next_cursor，以及累计read_range/read_ranges/unread_range/unread_ranges；rows仅包含本页完整选中字段。统计和matched_count来自全部匹配，selected_count为显式top_n后总量。比较分组两侧按相同位置完整成对装页，row_count/page_range/读进度以逻辑行对计，comparison保留各自统计及页范围。
+续页输入为`{"continuations":[{"result_ref":"...","cursor":"...","page_size":50}]}`，至多6个唯一引用；不附catalog_version/targets/字段/范围。随机引用及HMAC游标绑定管理员、门店、登录身份、run、generation、查询/数据摘要及稳定顺序；续页只读原快照，并重新验证当前授权。并发编辑、删除、插入以及目录版本变化不改变该快照；跨范围、已结束或篡改引用拒绝。
+整个批量单次正文最多12,000字符，并受累计剩余模型容量限制，按完整行分配；单行硬超量返回row_too_large及required_chars。context_capacity保留同ref、计数、已读/未读与可续页状态，已读内容不删改；最终回答及SSE明确部分完成。全部临时快照每run合计4 MiB，完整物化失败返回result_capacity_exceeded，保留同批成功目标及全匹配统计，不以首批代替汇总。每次续页计入既有工具次数。结束/停止/重置/撤权清理；重启沿既有中断策略，不重查、不自动调用模型。图表由后续工单接入。
 新工具只经过聊天调用，不新增公开执行工具API。OpenAPI及生成前端类型仍需核对，但本票没有新增HTTP请求/响应模型。

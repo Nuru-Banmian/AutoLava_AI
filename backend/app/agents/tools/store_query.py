@@ -1,12 +1,15 @@
 """Read-only projected queries; no ORM business object or settlement loading."""
 import json
-from dataclasses import replace
 from datetime import datetime
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
-from sqlalchemy import Integer, cast, func, select
+from sqlalchemy import Integer, cast, func, select, text
+
+from app.agents.tools.query_results import (
+    capacity_receipt, materialize, message_size, page, serialized_size,
+)
 
 from app.agents.tools.query_dates import DateRange, comparison_range, resolve_range
 from app.agents.tools.query_aggregation import ledger_groups, ledger_summary, load_ledger
@@ -21,17 +24,33 @@ class StrictInput(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
 
+class Continuation(StrictInput):
+    result_ref: str = Field(min_length=32, max_length=32)
+    cursor: str = Field(min_length=1, max_length=128)
+    page_size: int = Field(default=50, ge=1, le=200)
+
+
 class QueryInput(StrictInput):
-    catalog_version: str = Field(min_length=1, max_length=64)
-    targets: list[dict[str, Any]] = Field(min_length=1, max_length=6, description=(
+    catalog_version: str | None = Field(default=None, min_length=1, max_length=64)
+    targets: list[dict[str, Any]] = Field(default_factory=list, max_length=6, description=(
         "Unique id, domain daily_ledger/income_items/monthly_income/income_composition, fields or metrics (1-16), range: start/end OR preset"
         "(+n for last_n_*; +base for same_period_last_year) OR all_history:true. Omit range=month to date. "
         "Optional filters:[{field,op,value}], order_by:[{field,direction:asc/desc}], top_n:1-100. "
         "Choose fields OR metrics; group_by uses catalog dimensions. compare: {preset:previous_period/"
-        "same_period_last_year} OR {range:{start,end/preset}}. No pagination yet."))
+        "same_period_last_year} OR {range:{start,end/preset}}. page_size:1-200 (default 50)."))
+    continuations: list[Continuation] = Field(default_factory=list, max_length=6,
+        description="Continue immutable results with result_ref, cursor and optional page_size only; omit catalog_version/targets.")
 
     @model_validator(mode="after")
     def unique_ids(self):
+        if bool(self.targets) == bool(self.continuations):
+            raise ValueError("Choose new queries or continuations")
+        if self.continuations:
+            if self.catalog_version is not None or len({c.result_ref for c in self.continuations}) != len(self.continuations):
+                raise ValueError("Continuation cannot change catalog or repeat references")
+            return self
+        if self.catalog_version is None:
+            raise ValueError("New queries require catalog_version")
         ids = [target.get("id") for target in self.targets]
         if any(not isinstance(value, str) or not 1 <= len(value) <= 64 for value in ids):
             raise ValueError("Each target requires an id")
@@ -73,6 +92,7 @@ class QueryTarget(StrictInput):
     order_by: list[Order] = Field(default_factory=list, max_length=2)
     top_n: int | None = Field(default=None, ge=1, le=100)
     compare: Comparison | None = None
+    page_size: int = Field(default=50, ge=1, le=200)
 
     @model_validator(mode="after")
     def supported(self):
@@ -171,21 +191,25 @@ def apply_filter(item, columns, metadata):
     return column == value
 
 
-def serialized_size(value):
-    return len(json.dumps(value, ensure_ascii=False, allow_nan=False))
-
-
-def message_size(value):
-    # Tool JSON is a string inside messages; account for its second escaping.
-    content = json.dumps(value, ensure_ascii=False, allow_nan=False)
-    return len(json.dumps(content, ensure_ascii=False)) - 2
-
-
 def failure_receipt_capacity(targets, size=serialized_size):
     return sum(250 + size(target["id"]) for target in targets)
 
 
-async def execute_target(session, context, store, target, hard_capacity):
+def following_target_capacity(targets, store, size=serialized_size):
+    """Leave room for a small valid neighbor as well as invalid-target receipts."""
+    capacity = 0
+    for raw in targets:
+        try:
+            target = QueryTarget.model_validate(raw)
+            if not set(target.fields).issubset(fields_for(store, target.domain)):
+                raise ValueError("Unknown field")
+            capacity += 1500 + size(raw)
+        except ValueError:
+            capacity += 250 + size(raw["id"])
+    return capacity
+
+
+async def execute_target(session, context, store, target):
     metadata = fields_for(store, target.domain)
     filters = filter_metadata(store, target.domain)
     if not set(target.fields).issubset(metadata) or not {f.field for f in target.filters}.issubset(filters):
@@ -245,13 +269,6 @@ async def execute_target(session, context, store, target, hard_capacity):
                 result["comparison"] = {**previous_dates, **previous,
                                         "changes": metric_changes(result, previous, target)}
         result["page_range"] = {"start": 1 if result["rows"] else 0, "end": len(result["rows"])}
-        if serialized_size(result) > context.remaining_result_chars:
-            raise QueryError("context_capacity" if context.remaining_result_chars < hard_capacity else "result_capacity_exceeded",
-                             "完整分组及比较无法装入本轮容量；未截断结果。",
-                             matched_count=result["matched_count"], selected_count=result["selected_count"])
-        if context.remaining_context_chars is not None and message_size(result) > context.remaining_context_chars:
-            raise QueryError("context_capacity", "完整分组及比较序列化后超出剩余上下文；未截断结果。",
-                             matched_count=result["matched_count"], selected_count=result["selected_count"])
         return result
     base = select(*[columns[field].label(field) for field in target.fields]).select_from(StoreDailyRecord)
     count = select(func.count()).select_from(StoreDailyRecord)
@@ -260,9 +277,6 @@ async def execute_target(session, context, store, target, hard_capacity):
         count = count.join(DailyIncomeItem, DailyIncomeItem.record_id == StoreDailyRecord.id)
     result["matched_count"] = await session.scalar(count.where(*conditions))
     result["selected_count"] = min(result["matched_count"], target.top_n) if target.top_n else result["matched_count"]
-    if result["selected_count"] > 200:
-        raise QueryError("result_capacity_exceeded", "分页尚未上线，结果超过200完整行；请明确缩小范围或选择top_n。",
-                         matched_count=result["matched_count"], selected_count=result["selected_count"], range=dates["range"])
     ordering = []
     for order in target.order_by:
         column = columns[order.field]
@@ -274,20 +288,23 @@ async def execute_target(session, context, store, target, hard_capacity):
     statement = base.where(*conditions).order_by(*ordering)
     if target.top_n:
         statement = statement.limit(target.top_n)
-    for row in (await session.execute(statement)).mappings():
-        values = {key: value.isoformat() if hasattr(value, "isoformat") else value for key, value in row.items()}
-        row_size = serialized_size(values)
-        if row_size + serialized_size({**result, "rows": []}) > 12000:
-            raise QueryError("row_too_large", "单完整行超过工具硬容量，未截断字段或事件。", required_chars=row_size)
-        result["rows"].append(values)
-        if serialized_size(result) > hard_capacity:
-            raise QueryError("result_capacity_exceeded", "完整结果超过批量硬容量；未返回截断明细。",
-                             matched_count=result["matched_count"], selected_count=result["selected_count"], range=dates["range"])
-    if (serialized_size(result) > context.remaining_result_chars
-            or (context.remaining_context_chars is not None
-                and message_size(result) > context.remaining_context_chars)):
-        raise QueryError("context_capacity", "完整结果序列化后无法装入本轮上下文；未截断事件。",
-                         matched_count=result["matched_count"], selected_count=result["selected_count"], range=dates["range"])
+    materialized_bytes = len(json.dumps(result, ensure_ascii=False).encode("utf-8"))
+    stream = await session.stream(statement)
+    try:
+        async for row in stream.mappings():
+            values = {key: value.isoformat() if hasattr(value, "isoformat") else value for key, value in row.items()}
+            required = serialized_size(values) + serialized_size({**result, "rows": []})
+            if required > 12000:
+                raise QueryError("row_too_large", "单完整行超过工具硬容量，未截断字段或事件。",
+                                 required_chars=required, matched_count=result["matched_count"],
+                                 selected_count=result["selected_count"])
+            materialized_bytes += len(json.dumps(values, ensure_ascii=False).encode("utf-8")) + 2
+            if materialized_bytes > 4 * 1024 * 1024:
+                raise QueryError("result_capacity_exceeded", "完整物化超过本轮4 MiB容量；未保留部分快照。",
+                                 matched_count=result["matched_count"], selected_count=result["selected_count"], range=dates["range"])
+            result["rows"].append(values)
+    finally:
+        await stream.close()
     result["page_range"] = {"start": 1 if result["rows"] else 0, "end": len(result["rows"])}
     return result
 
@@ -350,9 +367,6 @@ def metric_changes(current, previous, target):
 
 def select_rows(result, target):
     rows = result["rows"]
-    if len(rows) > 200 and target.top_n is None:
-        raise QueryError("result_capacity_exceeded", "分页尚未上线，完整分组超过200行。",
-                         matched_count=result["matched_count"], selected_count=result["selected_count"])
     for order in reversed(target.order_by):
         def value(row):
             return row.get("metrics", {}).get(order.field, row.get(order.field))
@@ -367,50 +381,93 @@ def select_rows(result, target):
 
 
 async def store_query(session, context, arguments):
-    store = await session.get(Store, context.scope.store_id)
-    current_version = version(store)
-    if arguments.catalog_version != current_version:
-        return {"error": "catalog_stale", "catalog_version": current_version,
-                "message": "能力配置已变化；整批未执行，请刷新目录后重试。"}
-    response = {"status": "complete", "catalog_version": current_version, "targets": []}
+    continuations = bool(arguments.continuations)
+    requests = arguments.continuations if continuations else arguments.targets
+    response = {"status": "complete", "targets": []}
+    if not continuations:
+        # SQLite's legacy SELECT mode otherwise starts no physical read transaction.
+        # A short read snapshot covers counts, rows, summaries and all batch targets.
+        await session.execute(text("BEGIN"))
+        store = await session.get(Store, context.scope.store_id, populate_existing=True)
+        current_version = version(store)
+        if arguments.catalog_version != current_version:
+            return {"error": "catalog_stale", "catalog_version": current_version,
+                    "message": "能力配置已变化；整批未执行，请刷新目录后重试。"}
+        response["catalog_version"] = current_version
     # Reserve complete failure receipts for every id before any target reads.
     # At low remaining budgets even six small error messages may not fit.
-    minimum_receipts = 300 + failure_receipt_capacity(arguments.targets)
+    receipt_targets = [{"id": request.result_ref} if continuations else request for request in requests]
+    minimum_receipts = 300 + failure_receipt_capacity(receipt_targets)
     context_capacity = context.remaining_context_chars
     if (context.remaining_result_chars < max(1000, minimum_receipts)
             or (context_capacity is not None
-                and context_capacity < 300 + failure_receipt_capacity(arguments.targets, message_size))):
+                and context_capacity < 300 + failure_receipt_capacity(receipt_targets, message_size))):
+        if continuations:
+            for request in requests:
+                found = context.results.lookup_cursor(request.result_ref, request.cursor)
+                if found:
+                    snapshot, offset = found
+                    response["targets"].append(capacity_receipt(snapshot, request.result_ref, offset, context.results))
+                else:
+                    response["targets"].append({"id": request.result_ref,
+                                               "status": "failed", "error": "invalid_result_reference",
+                                               "message": "结果引用或游标无效。"})
+            response["status"] = "partial" if any(t.get("result_ref") for t in response["targets"]) else "failed"
+            return response
         return {"error": "context_capacity", "message": "结果元数据及完整行空间不足，整批未执行。"}
-    for index, raw in enumerate(arguments.targets):
+    for index, raw in enumerate(requests):
+        reference, snapshot, offset, end = None, None, 0, 0
         try:
-            target = QueryTarget.model_validate(raw)
-            overhead = serialized_size(response) + failure_receipt_capacity(arguments.targets[index:])
-            hard_capacity = 12000 - overhead
+            reserve = (failure_receipt_capacity(receipt_targets[index + 1:]) if continuations else
+                       following_target_capacity(requests[index + 1:], store))
+            reserve_context = (failure_receipt_capacity(receipt_targets[index + 1:], message_size) if continuations else
+                               following_target_capacity(requests[index + 1:], store, message_size))
+            overhead = serialized_size(response) + reserve + 152
             available = min(12000, context.remaining_result_chars) - overhead
             available_context = (context_capacity - message_size(response)
-                                 - failure_receipt_capacity(arguments.targets[index:], message_size)
+                                 - reserve_context - 154
                                  if context_capacity is not None else None)
-            if available_context is not None and available_context < 700:
-                raise QueryError("context_capacity", "序列化后的完整目标元数据及单行空间不足，当前目标未查询。")
-            if available < 700:
-                raise QueryError("context_capacity" if context.remaining_result_chars < 12000 else "result_capacity_exceeded",
-                                 "完整目标元数据及单行空间不足，当前目标未查询。")
-            result = await execute_target(session, replace(context, remaining_result_chars=available,
-                                          remaining_context_chars=available_context), store, target, hard_capacity)
+            if continuations:
+                found = context.results.lookup_cursor(raw.result_ref, raw.cursor)
+                if not found:
+                    raise QueryError("invalid_result_reference", "结果引用或游标无效、已结束或不属于本轮授权范围。")
+                snapshot, offset = found
+                reference, page_size = raw.result_ref, raw.page_size
+            else:
+                target = QueryTarget.model_validate(raw)
+                if available < 700 or (available_context is not None and available_context < 700):
+                    raise QueryError("context_capacity", "完整目标元数据及单行空间不足，当前目标未查询。")
+                snapshot = await execute_target(session, context, store, target)
+                reference, failure = materialize(snapshot, context.results, target.model_dump(mode="json"))
+                if failure:
+                    response["targets"].append(failure)
+                    continue
+                page_size = target.page_size
+            result, end = page(snapshot, reference, offset, page_size, context.results,
+                               available, available_context)
         except (ValidationError, ValueError, OverflowError) as exc:
+            target_id = snapshot["id"] if snapshot else raw.result_ref if continuations else raw["id"]
             if isinstance(exc, QueryError):
-                result = {"id": raw["id"], "status": "failed", "error": exc.code,
+                result = {"id": target_id, "status": "failed", "error": exc.code,
                           "message": exc.message, **exc.metadata}
             else:
-                result = {"id": raw["id"], "status": "failed", "error": "invalid_query_target",
+                result = {"id": target_id, "status": "failed", "error": "invalid_query_target",
                           "message": "字段、筛选、范围或参数组合不符合已上线目录。"}
         candidate = {**response, "targets": [*response["targets"], result]}
         exceeds_context = context_capacity is not None and message_size(candidate) > context_capacity
         if serialized_size(candidate) > min(12000, context.remaining_result_chars) or exceeds_context:
-            result = {"id": raw["id"], "status": "failed", "error": (
-                "context_capacity" if exceeds_context or context.remaining_result_chars < 12000 else "result_capacity_exceeded"),
-                      "message": "整个批量剩余容量不足，未截断当前目标。"}
+            if reference:
+                result = capacity_receipt(snapshot, reference, offset, context.results)
+                end = offset
+            else:
+                result = {"id": result["id"], "status": "failed", "error": "context_capacity",
+                          "message": "整个批量剩余容量不足，未截断当前目标。"}
         response["targets"].append(result)
-    succeeded = sum(r["status"] in ("complete", "unavailable") for r in response["targets"])
-    response["status"] = "complete" if succeeded == len(response["targets"]) else "partial" if succeeded else "failed"
+        if reference and end > offset:
+            context.results.record_read(reference, offset, end)
+    completed = sum(r["status"] in ("complete", "unavailable") for r in response["targets"])
+    succeeded = sum(r["status"] in ("complete", "unavailable", "partial") for r in response["targets"])
+    response["status"] = "complete" if completed == len(response["targets"]) else "partial" if succeeded else "failed"
+    if response["status"] == "partial":
+        response["message"] = "查询部分完成；已读页保留，未读范围见各目标，续页受本轮剩余容量限制。"
     return response

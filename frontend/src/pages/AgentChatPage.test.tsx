@@ -81,6 +81,63 @@ describe("AI conversation", () => {
     }));
     expect(screen.getByText("已查询经营概览：2026-07-10 至 2026-07-14")).toBeInTheDocument();
   });
+  it("explains pagination partial results and context capacity through tool events", async () => {
+    server.use(http.get("/api/agent/1/conversation", () => HttpResponse.json({
+      generation: 0, messages: [], run,
+    })));
+    render(<AgentChatPage />);
+    await waitFor(() => expect(EventStream.streams).toHaveLength(1));
+    const stream = EventStream.streams[0];
+    act(() => stream.emit("tool", {
+      name: "store_query", status: "partial", message: "已读取当前页 2 行，剩余结果尚未读取。",
+    }));
+    expect(screen.getByText("查询部分完成：已读取当前页 2 行，剩余结果尚未读取。")).toBeVisible();
+    act(() => stream.emit("tool", {
+      name: "store_query", status: "partial",
+      message: "上下文容量不足，剩余结果未读取，请缩小查询范围。",
+      failures: [{ code: "context_capacity" }],
+    }));
+    expect(screen.getByText("查询部分完成：上下文容量不足，剩余结果未读取，请缩小查询范围。")).toBeVisible();
+    expect(screen.queryByText("本次工具请求未获执行")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+  it("keeps the saved pagination partial answer after completion and a fresh page read", async () => {
+    const question = "请查询所有经营记录";
+    const answer = "部分完成：本轮仅读取 2 / 8 行，剩余 6 行未读取。请缩小查询范围后继续。";
+    let submissions = 0;
+    let completed = false;
+    server.use(
+      http.get("/api/agent/1/conversation", () => HttpResponse.json({
+        generation: 0,
+        messages: submissions ? [
+          { id: 1, role: "user", content: question },
+          ...(completed ? [{ id: 2, role: "assistant", content: answer }] : []),
+        ] : [],
+        run: submissions ? { ...run, status: completed ? "completed" : "running", output: completed ? answer : "" } : null,
+      })),
+      http.post("/api/agent/1/messages", () => { submissions++; return HttpResponse.json(run, { status: 202 }); }),
+    );
+    const view = render(<AgentChatPage />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByRole("button", { name: "重置对话" })).toBeEnabled());
+    await user.type(screen.getByLabelText("发送消息"), question);
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(EventStream.streams).toHaveLength(1));
+    act(() => EventStream.streams[0].emit("delta", { text: answer }));
+    expect(screen.getByText(answer)).toBeVisible();
+    completed = true;
+    act(() => EventStream.streams[0].emit("completed", { status: "completed" }));
+    await screen.findByText("回答已完成并保存");
+    expect(screen.getByText(answer)).toBeVisible();
+    view.unmount();
+    render(<AgentChatPage />);
+    expect(await screen.findByText(answer)).toBeVisible();
+    expect(screen.getByText("回答已完成并保存")).toBeVisible();
+    expect(screen.queryByText("正在生成回答…")).not.toBeInTheDocument();
+    expect(EventStream.streams).toHaveLength(1);
+    expect(EventStream.streams[0].closed).toBe(true);
+    expect(submissions).toBe(1);
+  });
   it("starts a new run on the first retry after a lost response was reconciled as failed", async () => {
     const ids: string[] = [];
     server.use(

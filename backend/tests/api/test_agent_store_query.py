@@ -188,7 +188,7 @@ async def test_calendar_presets_leap_mapping_future_cutoff_and_default(tmp_path,
         assert "默认本月至今" in result["targets"][5]["notes"][0]
 
 
-async def test_many_full_events_fail_without_truncation_and_keep_small_target(tmp_path):
+async def test_many_full_events_paginate_without_truncation_and_keep_small_target(tmp_path):
     model = QueryModel([("store_data_catalog", {}), query([
         {"id": "large", "domain": "daily_ledger", "range": {"all_history": True}, "fields": ["date", "activity"]},
         {"id": "small", "domain": "daily_ledger", "range": {"all_history": True}, "fields": ["date"], "top_n": 1},
@@ -202,9 +202,12 @@ async def test_many_full_events_fail_without_truncation_and_keep_small_target(tm
         assert (await ask(client))["status"] == "completed"
         result = model.results[-1]
         assert result["status"] == "partial", result
-        failed, success = result["targets"]
-        assert failed["error"] == "result_capacity_exceeded"
-        assert "rows" not in failed
+        paged, success = result["targets"]
+        assert paged["status"] == "partial" and paged["has_more"]
+        assert paged["result_ref"] and paged["next_cursor"]
+        assert paged["matched_count"] == paged["selected_count"] == 10
+        assert 0 < len(paged["rows"]) < 10
+        assert all(row["activity"] == "完整事件" * 500 for row in paged["rows"])
         assert success["rows"] == [{"date": "2026-07-01"}]
         assert success["matched_count"] == 10 and success["selected_count"] == 1
         assert len(json.dumps(result, ensure_ascii=False)) <= 12000
@@ -288,7 +291,9 @@ async def test_projection_queries_never_access_settlement_or_unselected_business
     {"fields": ["date"], "group_by": ["date", "weather", "weekday"]},
     {"fields": ["date"], "metrics": ["total_income"]},
     {"fields": ["date"], "store_id": 2},
-    {"fields": ["date"], "page_size": 1},
+    {"fields": ["date"], "page_size": 0},
+    {"fields": ["date"], "page_size": 201},
+    {"fields": ["date"], "page_size": True},
 ])
 async def test_invalid_target_keeps_valid_neighbor(tmp_path, change):
     model = QueryModel([("store_data_catalog", {}), query([
@@ -443,8 +448,10 @@ async def test_small_context_refuses_six_targets_before_business_reads(tmp_path,
         finally:
             event.remove(engine, "before_cursor_execute", observe)
         assert run["error_code"] == "grounding_unavailable", run
-        assert model.results[-1]["error"] == "context_capacity", model.results[-1]
-        assert "targets" not in model.results[-1]
+        events = (await client.get(f"/api/agent/1/runs/{run['id']}/events")).text
+        assert '"error_code": "context_capacity"' in events
+        assert events.count('"name": "store_query"') == 1
+        assert "context_budget" not in events
         assert not queries
         assert "999" not in run["output"]
 
@@ -468,13 +475,14 @@ async def test_large_first_target_reserves_escaped_neighbor_receipts(tmp_path, m
         assert run["status"] == "completed", run
         batch = model.results[-1]
         assert batch["status"] == "partial"
-        assert batch["targets"][0]["error"] == "result_capacity_exceeded"
-        assert "rows" not in batch["targets"][0]
+        first = batch["targets"][0]
+        assert first["status"] == "partial" and first["has_more"] and first["result_ref"]
+        assert all(row["activity"] == "完整事件" * 475 for row in first["rows"])
         assert batch["targets"][-1]["rows"] == [{"date": "2026-07-01"}]
         assert len(json.dumps(batch, ensure_ascii=False)) <= 12000
 
 
-async def test_escaped_events_refuse_context_overflow_but_keep_small_target(tmp_path):
+async def test_escaped_events_paginate_within_context_and_keep_small_target(tmp_path):
     model = QueryModel([("store_data_catalog", {}), query([
         {"id": "events", "domain": "daily_ledger", "fields": ["date", "activity"],
          "range": {"all_history": True}},
@@ -491,8 +499,9 @@ async def test_escaped_events_refuse_context_overflow_but_keep_small_target(tmp_
         assert run["status"] == "completed", run
         batch = model.results[-1]
         assert batch["status"] == "partial", batch
-        assert batch["targets"][0]["error"] == "context_capacity"
-        assert "rows" not in batch["targets"][0]
+        first = batch["targets"][0]
+        assert first["status"] == "partial" and first["has_more"] and first["result_ref"]
+        assert all(row["activity"] == "\\" * 1700 for row in first["rows"])
         assert batch["targets"][1]["rows"] == [{"date": "2026-07-01"}]
         events = (await client.get(f"/api/agent/1/runs/{run['id']}/events")).text
         assert '"status": "partial"' in events
