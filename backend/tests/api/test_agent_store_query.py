@@ -419,3 +419,29 @@ async def test_local_calendar_edges_through_chat(tmp_path, monkeypatch, today, s
         run = await ask(client)
         assert run["status"] == "completed", run
         assert model.results[-1]["targets"][0]["range"] == {"start": expected[0], "end": expected[1]}
+
+
+async def test_small_context_refuses_six_targets_before_business_reads(tmp_path, monkeypatch):
+    from sqlalchemy import event
+    monkeypatch.setenv("AUTOLAVA_AGENT_CONTEXT_CHARS", "12000")
+    queries = []
+    model = QueryModel([("store_data_catalog", {}), query([
+        {"id": str(index).zfill(64), "domain": "daily_ledger", "fields": ["date"]}
+        for index in range(6)
+    ]), "伪造业务合计999欧元。"])
+    async with chat_app(tmp_path, model) as (client, _, factory):
+        engine = factory.kw["bind"].sync_engine
+        def observe(connection, cursor, statement, parameters, context, many):
+            sql = statement.lower()
+            if sql.startswith("select") and "from store_daily_records" in sql and "min(" not in sql:
+                queries.append(sql)
+        event.listen(engine, "before_cursor_execute", observe)
+        try:
+            run = await ask(client)
+        finally:
+            event.remove(engine, "before_cursor_execute", observe)
+        assert run["error_code"] == "grounding_unavailable", run
+        assert model.results[-1]["error"] == "context_capacity", model.results[-1]
+        assert "targets" not in model.results[-1]
+        assert not queries
+        assert "999" not in run["output"]
