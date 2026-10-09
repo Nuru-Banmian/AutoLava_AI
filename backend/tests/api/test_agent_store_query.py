@@ -421,12 +421,14 @@ async def test_local_calendar_edges_through_chat(tmp_path, monkeypatch, today, s
         assert model.results[-1]["targets"][0]["range"] == {"start": expected[0], "end": expected[1]}
 
 
-async def test_small_context_refuses_six_targets_before_business_reads(tmp_path, monkeypatch):
+@pytest.mark.parametrize("escaped", [False, True])
+async def test_small_context_refuses_six_targets_before_business_reads(tmp_path, monkeypatch, escaped):
     from sqlalchemy import event
     monkeypatch.setenv("AUTOLAVA_AGENT_CONTEXT_CHARS", "12000")
     queries = []
     model = QueryModel([("store_data_catalog", {}), query([
-        {"id": str(index).zfill(64), "domain": "daily_ledger", "fields": ["date"]}
+        {"id": (str(index) + "\u0001" * 63) if escaped else str(index).zfill(64),
+         "domain": "daily_ledger", "fields": ["date"]}
         for index in range(6)
     ]), "伪造业务合计999欧元。"])
     async with chat_app(tmp_path, model) as (client, _, factory):

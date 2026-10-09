@@ -193,7 +193,7 @@ async def store_query(session, context, arguments):
     response = {"status": "complete", "catalog_version": current_version, "targets": []}
     # Reserve complete failure receipts for every id before any target reads.
     # At low remaining budgets even six small error messages may not fit.
-    minimum_receipts = 300 + sum(250 + len(target["id"]) for target in arguments.targets)
+    minimum_receipts = 300 + sum(250 + serialized_size(target["id"]) for target in arguments.targets)
     if context.remaining_result_chars < max(1000, minimum_receipts):
         return {"error": "context_capacity", "message": "结果元数据及完整行空间不足，整批未执行。"}
     for index, raw in enumerate(arguments.targets):
