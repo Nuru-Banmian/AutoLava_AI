@@ -8,12 +8,12 @@ from decimal import Decimal, InvalidOperation
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 
 from app.agents.tools.query_definitions import METRICS
 
 
-class ChartInput(BaseModel):
+class CreateChartInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     operation: Literal["create"]
     result_ref: str = Field(min_length=32, max_length=32)
@@ -25,6 +25,50 @@ class ChartInput(BaseModel):
     title: str = Field(min_length=1, max_length=80)
 
 
+class ReadSavedInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    operation: Literal["read_saved"]
+    message_id: int | None = Field(default=None, gt=0)
+    chart_id: str | None = Field(default=None, min_length=32, max_length=32)
+    series: list[str] | None = Field(default=None, min_length=1, max_length=6)
+    point_start: int = Field(default=1, ge=1)
+    point_end: int | None = Field(default=None, ge=1)
+    result_ref: str | None = Field(default=None, min_length=32, max_length=32)
+    cursor: str | None = Field(default=None, max_length=128)
+    page_size: int = Field(default=50, ge=1, le=200)
+
+    @model_validator(mode="after")
+    def selection_or_continuation(self):
+        if self.result_ref is not None:
+            if not self.cursor or self.model_fields_set - {"operation", "result_ref", "cursor", "page_size"}:
+                raise ValueError("Continuation cannot change the saved selection")
+        elif self.message_id is None or self.chart_id is None or self.cursor is not None:
+            raise ValueError("Saved read requires its message and chart")
+        if self.series and len(set(self.series)) != len(self.series):
+            raise ValueError("Duplicate series")
+        return self
+
+
+class ChartInput(RootModel[CreateChartInput | ReadSavedInput]):
+    @classmethod
+    def model_json_schema(cls, **kwargs):
+        # Providers require an object at the root. Validation still uses the
+        # strict operation-specific models, including continuation exclusivity.
+        properties = {**CreateChartInput.model_json_schema()["properties"],
+                      **ReadSavedInput.model_json_schema()["properties"]}
+        properties["operation"] = {"type": "string", "enum": ["create", "read_saved"]}
+
+        def compact(value):
+            if isinstance(value, list):
+                return [compact(item) for item in value]
+            if isinstance(value, dict):
+                return {key: compact(item) for key, item in value.items() if key not in ("title", "default")}
+            return value
+
+        return compact({"type": "object", "additionalProperties": False,
+                        "properties": properties, "required": ["operation"]})
+
+
 def byte_size(value):
     return len(json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8"))
 
@@ -33,7 +77,8 @@ def descriptor(draft):
     payload = draft["payload"]
     return {"chart_id": draft["chart_id"], "schema_version": 1, "type": payload["type"],
             "title": payload["title"], "unit": payload["unit"], "range": payload["range"],
-            "point_count": len(payload["points"]), "segment": payload.get("segment")}
+            "point_count": len(payload["points"]), "segment": payload.get("segment"),
+            "queried_at": payload["queried_at"], "source": draft["source"].get("source", "store_query")}
 
 
 def chart_value(raw, status):
@@ -203,12 +248,21 @@ def category_points(snapshot, block, args, definitions):
 
 
 async def store_chart(session, context, args):
+    if args.operation == "read_saved":
+        from app.agents.tools.saved_charts import read_saved
+        return await read_saved(session, context, args)
     snapshot = context.results.get(args.result_ref)
     if snapshot is None:
         return {"error": "invalid_chart_source", "message": "图表来源不属于本轮有效查询。"}
     # result_ref addresses the complete immutable snapshot, never a returned page.
     # Chart projection must not force thousands of source rows into model context.
     try:
+        if snapshot.get("source") == "saved_chart":
+            from app.agents.tools.saved_charts import project_saved
+            drafts = project_saved(snapshot, args)
+            context.results.prepare_charts(drafts)
+            return {"status": "prepared", "source": "saved_chart", "queried_at": snapshot["queried_at"],
+                    "charts": [descriptor(draft) for draft in drafts], "message": "历史图已准备，原查询时间不变。"}
         definitions = source_definitions(snapshot)
         if any(name not in definitions for name in args.series):
             raise ValueError("invalid_chart_source")

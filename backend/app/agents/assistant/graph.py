@@ -61,6 +61,20 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
                  "store_background为当前快照；经营数据须本轮读技能并查询，不复述历史数字。"
                  "洗车数量关闭仅表示本轮不使用，不表示缺乏数据。"
                  "本轮后台记忆整理尚未执行，不确认保存、合并或索引，不复述历史操作回执。"}]
+        references = []
+        current_question = {"role": "user", "content": conversation.messages[-1].content}
+        for message in reversed(conversation.messages):
+            for chart in reversed(message.charts):
+                proposed = [*references, {"message_id": message.id, **chart.model_dump(mode="json")}]
+                protected = {"role": "user", "content": json.dumps({"store_background": {
+                    **background, "saved_charts": proposed}}, ensure_ascii=False)}
+                if (len(proposed) <= 4 and len(json.dumps(proposed, ensure_ascii=False)) <= 1500
+                        and turn_context_size([*base[:2], protected, base[-1], current_question])
+                        <= settings.agent_context_chars - 3000):
+                    references = proposed
+                    base[2] = protected
+            if len(references) >= 4:
+                break
         messages = []
         for message in reversed(conversation.messages):
             candidate = {"role": message.role, "content": message.content}
@@ -104,6 +118,7 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
         capacity_requests = set()
         query_started = False
         chart_failures = []
+        saved_sources = {}
 
         def partial_completion():
             selected = read = 0
@@ -118,6 +133,8 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
             if read < selected:
                 parts.append(f"已读取 {read}/{selected} 行，仍有 {selected - read} 行未读取。"
                              "明细结论仅涵盖已读页，完整统计以工具注明的全部匹配口径为准。")
+            if any(t.get("error") == "context_capacity" for t in result_progress.values()):
+                parts.append("context_capacity：本轮容量不足，已读证据保留，未读范围和游标保留。")
             if query_failures:
                 reasons = "、".join(sorted(set(query_failures.values())))
                 parts.append(f"有{len(query_failures)}个查询目标未完成，原因：{reasons}。")
@@ -231,6 +248,12 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
                 # Only successful server results can ground business prose; errors remain receipts.
                 evidence.append(TurnEvidence(state["scope"], state["run_id"], state["generation"],
                                              ("query", "query"), ("query", "query"), call.id))
+            if call.name == "store_chart" and result.get("source") == "saved_chart":
+                for target in result.get("targets", []):
+                    if target.get("result_ref") and target.get("status") in ("complete", "partial"):
+                        evidence.append(TurnEvidence(state["scope"], state["run_id"], state["generation"],
+                            ("saved_chart", "saved_chart"), ("saved_chart", "saved_chart"), call.id))
+                        saved_sources[target["result_ref"]] = target["queried_at"]
             # Reauthorizes after execution; reset/stopped/revoked runs cannot publish.
             await storage.record(state["scope"], state["run_id"], "tool", {
                 "name": call.name if call.name in tools.tools else "unauthorized",
@@ -240,6 +263,12 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
                     "error_code": result.get("error", "context_capacity" if context_capacity else "query_targets_failed")}
                    if call.name == "store_query" and ("error" in result or result.get("status") in ("partial", "failed")) else {}),
                 **({"range": result["range"]} if "range" in result else {}),
+                **({"source": "saved_chart", "queried_at": list(saved_sources.values())}
+                   if result.get("source") == "saved_chart" else {}),
+                **({"targets": [{key: target[key] for key in (
+                    "result_ref", "error", "row_count", "selected_count", "read_ranges", "unread_ranges", "has_more", "next_cursor")
+                    if key in target} for target in result.get("targets", [])]}
+                   if result.get("source") == "saved_chart" else {}),
                 **({"error_code": result["error"], "message": (
                     "计算请求参数无效，请使用表达式参数。" if result["error"] == "invalid_tool_arguments"
                     else result.get("message", "计算请求未获执行。")
@@ -276,7 +305,7 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
             messages.append(grounding_message())
 
         def trim_query_history():
-            if plan.kind not in ("business", "query") or query_started or not history_messages:
+            if plan.kind not in ("business", "query", "saved_chart") or query_started or not history_messages:
                 return
             old_ids = {id(message) for message in history_messages}
             minimum = [message for message in messages if id(message) not in old_ids]
@@ -294,6 +323,12 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
         async def complete_answer():
             nonlocal output_size
             require_evidence(plan, evidence, state["scope"], state["run_id"], state["generation"])
+            if saved_sources:
+                notice = "\n\n历史图来源：saved_chart；原查询时间：" + "、".join(sorted(set(saved_sources.values()))) + "。本轮读取保存快照。"
+                if output_size + len(notice) > settings.agent_output_chars:
+                    raise ModelFailure("output_budget")
+                output_size += len(notice)
+                await storage.record(state["scope"], state["run_id"], "delta", {"text": notice})
             if note := partial_completion():
                 notice = "\n\n" + note
                 if output_size + len(notice) > settings.agent_output_chars:
@@ -310,7 +345,7 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
         })
         if attempts >= settings.agent_max_steps:
             raise ModelFailure("step_budget")
-        if plan.kind in ("business", "query"):
+        if plan.kind in ("business", "query", "saved_chart"):
             if 1 + len(plan.queries) > settings.agent_max_tool_calls:
                 raise ModelFailure("tool_budget")
             skill = ToolCall(uuid4().hex, "read_skill", '{"skill":"store-analysis"}')

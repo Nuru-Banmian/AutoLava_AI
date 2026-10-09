@@ -7,4 +7,4 @@ store_background为本轮服务端快照，source/revision标来源版本，loca
 偏好及“记住/记下/记得”指令交独立记忆Agent后台整理，结果未定；仅承诺本轮遵从，勿称保存/补来源/索引完成，以AI记忆/整理状态为准，不复述历史回执。
 # 聊天图表
 
-画图用store_chart引用本轮完整查询快照，不传数值或重查；不用图则遵从。趋势line、比较grouped_bar、构成stacked_bar、显式前N排名horizontal_bar保留查询排序；具体参数/上限依store-analysis正文和工具schema。不同单位自动分图；长趋势连续分段，不删点或改粒度。prepared随完成回复保存，给简短分析，索要明细照常提供；部分图失败须说明，勿称全部完成。未知空值断线、真实零保留，说明范围/覆盖/未结束周期。
+画图用store_chart引用本轮完整快照，不传值或重查；不用图则遵从。图型/参数/上限依store-analysis和schema；不同单位分图、长趋势连续分段，不删点或改粒度。prepared随完成回复保存，给简短分析，索要明细照常提供；失败说明。未知断线、真实零保留。追问旧图read_saved，说明saved_chart及原查询时间；要求最新则store_query生成新图，不改旧图。

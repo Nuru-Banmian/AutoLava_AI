@@ -1248,6 +1248,8 @@ export interface components {
             chart_id: string;
             /** Point Count */
             point_count: number;
+            /** Queried At */
+            queried_at?: string | null;
             /** Range */
             range: {
                 [key: string]: string;
@@ -1259,6 +1261,8 @@ export interface components {
              */
             schema_version: 1;
             segment?: components["schemas"]["ChartSegment"] | null;
+            /** Source */
+            source?: ("store_query" | "saved_chart") | null;
             /** Title */
             title: string;
             /**
