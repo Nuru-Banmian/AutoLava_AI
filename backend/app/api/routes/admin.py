@@ -3,7 +3,6 @@ import asyncio
 from app.services import admin_commands
 from app.services.admin_commands import (
     _user_payload,
-    _managed_user_payload,
     _store_payload,
     _require_store,
     _category_payload,
@@ -13,7 +12,14 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 
-from app.api.deps import Session, require_admin, require_capability
+from app.api.deps import Session, require_admin, require_capability, require_final_admin
+from app.services.access import list_accessible_stores, require_store_scope, store_scope_clause
+from app.services.owner import is_owner
+from app.services.employee_access import (
+    employee_management_clause,
+    managed_user_payload,
+    require_manage_target,
+)
 from app.core.config import get_settings
 from app.models.identity import Store, StoreMember, User
 from app.models.ledger import IncomeCategory
@@ -76,12 +82,18 @@ def _task_log_payload(task_log: ScheduledTaskLog) -> dict[str, Any]:
     }
 
 
-@router.get("/users", response_model=list[AdminUserResponse], dependencies=[Depends(require_capability("users.manage"))])
-async def list_users(session: Session) -> list[dict[str, Any]]:
+@router.get(
+    "/users",
+    response_model=list[AdminUserResponse],
+    dependencies=[Depends(require_capability("users.manage"))],
+)
+async def list_users(session: Session, actor: UsersManager) -> list[dict[str, Any]]:
     statement = select(User).order_by(User.username, User.id)
     configured_owner = owner_username()
     if configured_owner:
         statement = statement.where(User.username != configured_owner)
+    if not is_owner(actor):
+        statement = statement.where(User.role == "user", employee_management_clause(actor))
     users = (await session.scalars(statement)).all()
     memberships = await session.execute(
         select(StoreMember.user_id, StoreMember.store_id).order_by(
@@ -91,12 +103,27 @@ async def list_users(session: Session) -> list[dict[str, Any]]:
     store_ids_by_user: dict[int, list[int]] = {}
     for user_id, store_id in memberships:
         store_ids_by_user.setdefault(user_id, []).append(store_id)
-    return [_managed_user_payload(user, store_ids_by_user.get(user.id, [])) for user in users]
+    return [
+        await managed_user_payload(session, actor, user, store_ids_by_user.get(user.id, []))
+        for user in users
+    ]
 
 
 @router.post("/users", status_code=201, response_model=AdminUserResponse)
 async def create_user(body: UserCreate, session: Session, actor: UsersManager) -> dict[str, Any]:
     return await admin_commands.create_user(body, session, actor)
+
+
+@router.get("/users/editor-options", response_model=list[UserSummaryResponse])
+async def employee_editor_options(session: Session, actor: UsersManager) -> list[dict[str, Any]]:
+    users = (
+        await session.scalars(
+            select(User)
+            .where(User.role == "admin", User.username != owner_username())
+            .order_by(User.username, User.id)
+        )
+    ).all()
+    return [_user_payload(user) for user in users]
 
 
 @router.patch("/users/{user_id}", response_model=AdminUserResponse)
@@ -116,14 +143,19 @@ async def delete_unused_user(user_id: int, session: Session, actor: UsersManager
     response_model=list[AdminStoreResponse],
     dependencies=[Depends(require_capability("users.manage"))],
 )
-async def list_user_stores(user_id: int, session: Session) -> list[dict[str, Any]]:
-    if await session.get(User, user_id) is None:
+async def list_user_stores(
+    user_id: int, session: Session, actor: UsersManager
+) -> list[dict[str, Any]]:
+    target = await session.get(User, user_id)
+    if target is None:
         raise HTTPException(404, "User not found")
+    await require_manage_target(session, actor, target)
     stores = (
         await session.scalars(
             select(Store)
             .join(StoreMember, StoreMember.store_id == Store.id)
             .where(StoreMember.user_id == user_id)
+            .where(await store_scope_clause(session, actor))
             .order_by(Store.name, Store.id)
         )
     ).all()
@@ -157,9 +189,13 @@ async def timezone_for_store_location(
     return {"timezone": timezone}
 
 
-@router.get("/stores", response_model=list[AdminStoreResponse], dependencies=[Depends(require_capability("stores.manage"))])
-async def list_stores(session: Session) -> list[dict[str, Any]]:
-    stores = (await session.scalars(select(Store).order_by(Store.name, Store.id))).all()
+@router.get(
+    "/stores",
+    response_model=list[AdminStoreResponse],
+    dependencies=[Depends(require_capability("stores.manage"))],
+)
+async def list_stores(session: Session, actor: StoresManager) -> list[dict[str, Any]]:
+    stores = await list_accessible_stores(session, actor)
     return [_store_payload(store) for store in stores]
 
 
@@ -187,13 +223,19 @@ async def delete_store(store_id: int, session: Session, actor: StoresManager) ->
     response_model=list[UserSummaryResponse],
     dependencies=[Depends(require_capability("stores.manage"))],
 )
-async def list_store_members(store_id: int, session: Session) -> list[dict[str, Any]]:
+async def list_store_members(
+    store_id: int, session: Session, actor: StoresManager
+) -> list[dict[str, Any]]:
     await _require_store(session, store_id)
+    await require_store_scope(session, actor, store_id)
     users = (
         await session.scalars(
             select(User)
             .join(StoreMember, StoreMember.user_id == User.id)
             .where(StoreMember.store_id == store_id)
+            .where(User.role == "user")
+            .where(User.username != owner_username())
+            .where(employee_management_clause(actor))
             .order_by(User.username, User.id)
         )
     ).all()
@@ -212,8 +254,11 @@ async def replace_members(
     response_model=list[IncomeCategoryResponse],
     dependencies=[Depends(require_capability("income_config.manage"))],
 )
-async def list_income_categories(store_id: int, session: Session) -> list[dict[str, Any]]:
+async def list_income_categories(
+    store_id: int, session: Session, actor: IncomeConfigManager
+) -> list[dict[str, Any]]:
     await _require_store(session, store_id)
+    await require_store_scope(session, actor, store_id)
     categories = (
         await session.scalars(
             select(IncomeCategory)
@@ -254,33 +299,51 @@ async def delete_unused_category(
     return await admin_commands.delete_unused_category(category_id, session, actor, body)
 
 
-@router.get("/alerts", response_model=list[SystemAlertResponse], dependencies=[Depends(require_admin)])
-async def list_alerts(session: Session) -> list[dict[str, Any]]:
+@router.get(
+    "/alerts", response_model=list[SystemAlertResponse], dependencies=[Depends(require_admin)]
+)
+async def list_alerts(session: Session, actor: StoresManager) -> list[dict[str, Any]]:
     alerts = (
         await session.scalars(
-            select(SystemAlert).order_by(SystemAlert.created_at.desc(), SystemAlert.id.desc())
+            select(SystemAlert)
+            .where(
+                True
+                if is_owner(actor)
+                else SystemAlert.store_id.in_(
+                    select(Store.id).where(await store_scope_clause(session, actor))
+                )
+            )
+            .order_by(SystemAlert.created_at.desc(), SystemAlert.id.desc())
         )
     ).all()
     return [_alert_payload(alert) for alert in alerts]
 
 
-@router.get("/task-logs", response_model=list[ScheduledTaskLogResponse], dependencies=[Depends(require_admin)])
-async def list_task_logs(session: Session) -> list[dict[str, Any]]:
+@router.get(
+    "/task-logs",
+    response_model=list[ScheduledTaskLogResponse],
+    dependencies=[Depends(require_admin)],
+)
+async def list_task_logs(session: Session, actor: StoresManager) -> list[dict[str, Any]]:
     task_logs = (
         await session.scalars(
-            select(ScheduledTaskLog).order_by(
-                ScheduledTaskLog.created_at.desc(), ScheduledTaskLog.id.desc()
+            select(ScheduledTaskLog)
+            .where(
+                True
+                if is_owner(actor)
+                else ScheduledTaskLog.store_id.in_(
+                    select(Store.id).where(await store_scope_clause(session, actor))
+                )
             )
+            .order_by(ScheduledTaskLog.created_at.desc(), ScheduledTaskLog.id.desc())
         )
     ).all()
     return [_task_log_payload(task_log) for task_log in task_logs]
 
 
-@router.get("/diagnostics", dependencies=[Depends(require_admin)])
+@router.get("/diagnostics", dependencies=[Depends(require_final_admin)])
 async def diagnostics(session: Session) -> dict[str, Any]:
-    latest_backup = await asyncio.to_thread(
-        latest_valid_backup_at, get_settings().backup_directory
-    )
+    latest_backup = await asyncio.to_thread(latest_valid_backup_at, get_settings().backup_directory)
     latest_tasks = {}
     for task_type in ("weather_refresh", "sqlite_backup", "sqlite_backup_copy"):
         task = await session.scalar(
@@ -289,17 +352,23 @@ async def diagnostics(session: Session) -> dict[str, Any]:
             .order_by(ScheduledTaskLog.created_at.desc(), ScheduledTaskLog.id.desc())
             .limit(1)
         )
-        latest_tasks[task_type] = None if task is None else {
-            "status": task.status,
-            "finished_at": trusted_utc(task.finished_at, task.timestamp_contract),
-        }
+        latest_tasks[task_type] = (
+            None
+            if task is None
+            else {
+                "status": task.status,
+                "finished_at": trusted_utc(task.finished_at, task.timestamp_contract),
+            }
+        )
     return {
         "latest_valid_local_backup_at": latest_backup,
         "local_snapshot": "success" if latest_backup is not None else "no_valid_backup",
         "offsite_copy": (
-            "not_configured" if not get_settings().backup_ssh_host else
-            latest_tasks["sqlite_backup_copy"]["status"]
-            if latest_tasks["sqlite_backup_copy"] else "not_attempted"
+            "not_configured"
+            if not get_settings().backup_ssh_host
+            else latest_tasks["sqlite_backup_copy"]["status"]
+            if latest_tasks["sqlite_backup_copy"]
+            else "not_attempted"
         ),
         "isolated_restore": await asyncio.to_thread(
             restore_drill_status, get_settings().backup_restore_report_file

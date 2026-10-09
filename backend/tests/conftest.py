@@ -24,6 +24,7 @@ from app.services.weather import OpenMeteoProvider, WeatherService
 import app.models.ledger  # noqa: F401
 import app.models.operations  # noqa: F401
 import app.models.settlement  # noqa: F401
+import app.models.agent  # noqa: F401
 
 UserFactory = Callable[..., Awaitable[User]]
 StoreFactory = Callable[..., Awaitable[Store]]
@@ -47,6 +48,7 @@ class NoNetworkWeather:
 def test_jwt_secret(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setitem(Settings.model_config, "env_file", None)
     monkeypatch.setenv("AUTOLAVA_JWT_SECRET", "test-only-jwt-secret-with-32-bytes")
+    monkeypatch.setenv("AUTOLAVA_BOOTSTRAP_USERNAME", "test-primary")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -59,16 +61,20 @@ async def database_schema() -> AsyncIterator[None]:
     try:
         yield
     finally:
-        async with engine.begin() as connection:
-            await connection.run_sync(Base.metadata.drop_all)
-        await engine.dispose()
-        _test_database_directory.cleanup()
+        try:
+            async with engine.begin() as connection:
+                await connection.execute(User.__table__.update().values(manager_id=None, creator_id=None))
+                await connection.run_sync(Base.metadata.drop_all)
+        finally:
+            await engine.dispose()
+            _test_database_directory.cleanup()
 
 
 @pytest.fixture
 async def db_session() -> AsyncIterator[AsyncSession]:
     async with engine.connect() as connection:
         transaction = await connection.begin()
+        await connection.exec_driver_sql("PRAGMA defer_foreign_keys=ON")
         for table in reversed(Base.metadata.sorted_tables):
             await connection.execute(table.delete())
 
@@ -126,14 +132,24 @@ def user_factory(db_session: AsyncSession) -> UserFactory:
         password: str,
         role: str = "user",
         is_active: bool = True,
+        manager_id: int | None = None,
     ) -> User:
-        # Fixture users need real bcrypt verification, not production hashing cost.
         password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=4)).decode()
+        if role == "user" and username != get_settings().bootstrap_username and manager_id is None:
+            from sqlalchemy import select
+            configured = get_settings().bootstrap_username
+            manager = await db_session.scalar(select(User).where(User.username == configured))
+            if manager is None and configured == "test-primary":
+                manager = User(id=0, username=configured, password_hash=password_hash, role="admin")
+                db_session.add(manager)
+                await db_session.flush()
+            manager_id = manager.id if manager else None
         user = User(
             username=username,
             password_hash=password_hash,
             role=role,
             is_active=is_active,
+            manager_id=manager_id,
         )
         db_session.add(user)
         await db_session.flush()
@@ -163,6 +179,17 @@ def store_factory(db_session: AsyncSession) -> StoreFactory:
         return store
 
     return create_store
+
+
+@pytest.fixture
+def primary_admin_factory(user_factory, monkeypatch):
+    """Explicit global actor for existing business/configuration acceptance tests."""
+    async def create(**kwargs):
+        if kwargs.get("role") == "admin":
+            monkeypatch.setenv("AUTOLAVA_BOOTSTRAP_USERNAME", kwargs["username"])
+            get_settings.cache_clear()
+        return await user_factory(**kwargs)
+    return create
 
 
 @pytest.fixture

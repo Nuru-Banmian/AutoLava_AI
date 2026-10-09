@@ -7,15 +7,18 @@ from pathlib import Path
 from sqlalchemy import event
 from sqlalchemy import text
 from sqlalchemy.engine import URL
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from app.core.config import get_settings
 
 
 SQLITE_WRITE_LOCK = asyncio.Lock()
-_SQLITE_WRITE_ACTIVE: ContextVar[bool] = ContextVar(
-    "_SQLITE_WRITE_ACTIVE", default=False
-)
+_SQLITE_WRITE_ACTIVE: ContextVar[bool] = ContextVar("_SQLITE_WRITE_ACTIVE", default=False)
 
 
 async def end_read_transaction(session: AsyncSession) -> None:
@@ -25,7 +28,7 @@ async def end_read_transaction(session: AsyncSession) -> None:
 
 @asynccontextmanager
 async def sqlite_short_write(
-    session: AsyncSession, *, begin_immediate: bool = False
+    session: AsyncSession, *, begin_immediate: bool = True
 ) -> AsyncIterator[None]:
     """Run one fresh, process-serialized write transaction."""
     if _SQLITE_WRITE_ACTIVE.get():

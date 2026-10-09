@@ -16,9 +16,9 @@ from app.models.settlement import (
 
 @pytest.fixture
 async def admin_client(
-    client: AsyncClient, user_factory, db_session: AsyncSession
+    client: AsyncClient, primary_admin_factory, db_session: AsyncSession
 ) -> AsyncClient:
-    await user_factory(username="settlement-admin", password="secret", role="admin")
+    await primary_admin_factory(username="settlement-admin", password="secret", role="admin")
     response = await client.post(
         "/api/auth/login",
         json={"username": "settlement-admin", "password": "secret"},
@@ -84,9 +84,9 @@ async def test_regular_user_cannot_modify_the_store_flag(
 
 
 async def test_accessible_store_payload_exposes_server_flag_and_gate_is_store_scoped(
-    client, user_factory, store_factory, db_session
+    client, primary_admin_factory, store_factory, db_session
 ) -> None:
-    member = await user_factory(username="settlement-member", password="secret")
+    member = await primary_admin_factory(username="settlement-member", password="secret")
     enabled = await store_factory(name="Enabled")
     enabled.company_settlement_enabled = True
     disabled = await store_factory(name="Disabled")
@@ -114,7 +114,7 @@ async def test_accessible_store_payload_exposes_server_flag_and_gate_is_store_sc
     denied = await client.get(f"/api/settlements/{disabled.id}")
     assert denied.status_code == 403
     assert denied.json() == {"detail": "当前门店未启用公司结算"}
-    assert (await client.get(f"/api/settlements/{other.id}")).status_code == 403
+    assert (await client.get(f"/api/settlements/{other.id}")).status_code == 404
 
 
 async def test_all_store_roles_can_read_enabled_company_settlement(
@@ -126,19 +126,20 @@ async def test_all_store_roles_can_read_enabled_company_settlement(
 ) -> None:
     monkeypatch.setenv("AUTOLAVA_BOOTSTRAP_USERNAME", "settlement-final-admin")
     get_settings.cache_clear()
-    member = await user_factory(username="settlement-member", password="secret")
+    final_administrator = await user_factory(
+        username="settlement-final-admin",
+        password="secret",
+    )
+    member = await user_factory(username="settlement-member", password="secret", manager_id=final_administrator.id)
     admin = await user_factory(
         username="settlement-admin-reader",
         password="secret",
         role="admin",
     )
-    final_administrator = await user_factory(
-        username="settlement-final-admin",
-        password="secret",
-    )
     store = await store_factory(name="Shared enabled store")
     store.company_settlement_enabled = True
     db_session.add(StoreMember(store_id=store.id, user_id=member.id))
+    db_session.add(StoreMember(store_id=store.id, user_id=admin.id))
     company = SettlementCompany(
         store_id=store.id,
         name="Shared Fleet",

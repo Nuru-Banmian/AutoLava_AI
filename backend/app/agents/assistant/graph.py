@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+from datetime import date
 from importlib.resources import files
 from typing import Protocol
 from collections.abc import AsyncGenerator
@@ -17,6 +18,7 @@ from app.agents.providers.bailian import ModelFailure, ModelUsage, ToolCall
 from app.agents.registry import capabilities
 from app.agents.runtime.repository import ChatRepository
 from app.agents.tools.context import ToolContext
+from app.agents.tools.query_granularity import month_followup_range
 from app.core.config import Settings
 
 
@@ -26,6 +28,26 @@ class ChatModel(Protocol):
     def stream(self, messages: list[dict[str, str]]) -> AsyncGenerator[str | ModelUsage, None]: ...
 
     def stream_plan(self, messages: list[dict], schemas: list[dict]) -> AsyncGenerator[str | ModelUsage | ToolCall, None]: ...
+
+
+def explicit_dates(question):
+    """Read unambiguous literal dates; leave relative/ambiguous intent to planning."""
+    year = None
+    selected = set()
+    for match in re.finditer(r"(\d{4}-\d{2}-\d{2})|(?:(\d{4})年)?(\d{1,2})月(\d{1,2})日", question):
+        try:
+            if match[1]:
+                value = date.fromisoformat(match[1])
+                year = value.year
+            else:
+                year = int(match[2]) if match[2] else year
+                if year is None:
+                    continue
+                value = date(year, int(match[3]), int(match[4]))
+            selected.add(value.isoformat())
+        except ValueError:
+            continue
+    return selected
 
 
 def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
@@ -63,13 +85,18 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
                  "洗车数量关闭仅表示本轮不使用，不表示缺乏数据。"
                  "本轮后台记忆整理尚未执行，不确认保存、合并或索引，不复述历史操作回执。"}]
         messages = []
-        for message in reversed(conversation.messages):
+        # Short-term recall is a recent slice, separate from durable memories
+        # and the paginated conversation kept for the user's history view.
+        for message in reversed(conversation.messages[-10:]):
             candidate = {"role": message.role, "content": message.content}
-            for chart in message.charts:
-                description = json.dumps({"message_id": message.id, **chart.model_dump(mode="json")}, ensure_ascii=False)
-                extended = {**candidate, "content": candidate["content"] + "\n历史图描述：" + description}
-                if turn_context_size([*base, extended, *reversed(messages)]) <= settings.agent_context_chars - 3000:
-                    candidate = extended
+            if message.charts and message.role == "assistant":
+                # Retain referent metadata, without replaying old numeric prose
+                # as assistant instructions or evidence for a new data answer.
+                descriptions = [{key: chart.model_dump(mode="json")[key]
+                                 for key in ("type", "title", "range", "unit")}
+                                for chart in message.charts]
+                candidate["content"] = "此前图表范围（仅识别追问，数值须重新查询）：" + json.dumps(
+                    descriptions, ensure_ascii=False)
             if turn_context_size([*base, candidate, *reversed(messages)]) > settings.agent_context_chars:
                 if not messages:
                     raise ModelFailure("context_budget")
@@ -82,7 +109,7 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
             "status": retrieval["status"],
             "references": [{"id": m["id"], "version": m["version"]} for m in retrieval["items"]],
         })
-        if retrieval["status"] != "available":
+        if memory_index and retrieval["status"] != "available":
             await storage.record(state["scope"], state["run_id"], "delta", {
                 "text": "记忆检索受限，本轮未参考长期记忆。\n\n",
             })
@@ -110,7 +137,15 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
         capacity_requests = set()
         query_started = False
         chart_failures = []
-        saved_sources = {}
+        chart_required = chart_attempted = chart_prepared = False
+        chart_repairs = 0
+        requested_dates = set()
+        queried_dates = set()
+        date_repairs = 0
+        comparison_required = comparison_obtained = False
+        comparison_repairs = 0
+        partial_repairs = 0
+        deferred_text = False
 
         def partial_completion():
             selected = read = 0
@@ -124,9 +159,9 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
             parts = []
             if read < selected:
                 parts.append(f"已读取 {read}/{selected} 行，仍有 {selected - read} 行未读取。"
-                             "明细结论仅涵盖已读页，完整统计以工具注明的全部匹配口径为准。")
+                             "明细结论仅涵盖已返回行，完整统计以工具注明的全部匹配口径为准。")
             if any(t.get("error") == "context_capacity" for t in result_progress.values()):
-                parts.append("context_capacity：本轮容量不足，已读证据保留，未读范围和游标保留。")
+                parts.append("context_capacity：本轮容量不足，已读证据保留，需要更多明细请缩小日期范围重新查询。")
             if query_failures:
                 reasons = "、".join(sorted(set(query_failures.values())))
                 parts.append(f"有{len(query_failures)}个查询目标未完成，原因：{reasons}。")
@@ -139,7 +174,8 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
             return "本轮查询仅部分完成：" + "".join(parts) if parts else ""
 
         async def response(input_messages, schemas, *, planning=False):
-            nonlocal attempts, output_size
+            nonlocal attempts, output_size, deferred_text
+            deferred_text = False
             calls, text = [], ""
             for retry in range(settings.agent_max_calls):
                 if attempts >= settings.agent_max_steps:
@@ -174,10 +210,18 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
                                     raise ModelFailure("output_budget")
                                 if chunk:
                                     text += chunk
-                                    if not planning:
+                                    if (not planning and not (requested_dates - queried_dates)
+                                            and (not comparison_required or comparison_obtained)
+                                            and (not chart_required or chart_prepared)
+                                            and (plan.kind not in ("query", "business", "saved_chart") or evidence)):
                                         require_evidence(plan, evidence, state["scope"], state["run_id"],
                                                          state["generation"])
-                                        await storage.record(state["scope"], state["run_id"], "delta", {"text": chunk})
+                                        if partial_completion():
+                                            # Validate completeness claims before publishing prose
+                                            # when receipts still contain unread rows or failures.
+                                            deferred_text = True
+                                        else:
+                                            await storage.record(state["scope"], state["run_id"], "delta", {"text": chunk})
                             else:
                                 raise ModelFailure("model_format")
                     break
@@ -188,7 +232,7 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
             return calls, text
 
         async def execute(call):
-            nonlocal tool_count, query_started
+            nonlocal tool_count, query_started, chart_attempted, chart_prepared, comparison_obtained
             tool_count += 1
             if tool_count > settings.agent_max_tool_calls:
                 raise ModelFailure("tool_budget")
@@ -205,8 +249,31 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
                 remaining_result_chars=min(12000, remaining_context),
                 results=results, catalogs=storage.catalogs,
                 remaining_context_chars=remaining_context,
+                question=state["messages"][-1]["content"],
             )
             result = await tools.execute(call, storage, context)
+            if call.name == "store_chart":
+                chart_attempted = True
+                chart_prepared = chart_prepared or result.get("status") == "prepared"
+            if call.name == "store_query":
+                for target in result.get("targets", []):
+                    if target.get("comparison", {}).get("changes"):
+                        comparison_obtained = True
+                    period = target.get("requested_range") or target.get("range")
+                    if target.get("status") not in ("complete", "partial", "unavailable") or not period:
+                        continue
+                    date_filters = [f for f in target.get("query_description", {}).get("filters", [])
+                                    if f["field"] == "date"]
+                    for selected in requested_dates:
+                        if not period["start"] <= selected <= period["end"]:
+                            continue
+                        if any((f["op"] == "eq" and selected != f.get("value"))
+                               or (f["op"] == "in" and selected not in f.get("value", []))
+                               or (f["op"] == "gte" and selected < f.get("value", ""))
+                               or (f["op"] == "lte" and selected > f.get("value", ""))
+                               for f in date_filters):
+                            continue
+                        queried_dates.add(selected)
             if call.name == "store_chart" and result.get("error"):
                 chart_failures.append(result["error"])
             context_capacity = result.get("error") == "context_capacity" or any(
@@ -228,10 +295,6 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
                         query_failures[target["id"]] = target["error"]
                     elif target.get("status") in ("complete", "partial", "unavailable"):
                         query_failures.pop(target["id"], None)
-                        # Invalid-cursor receipts cannot trust snapshot ids and
-                        # use the requested reference. A verified retry resolves
-                        # that same reference as well as the business target id.
-                        query_failures.pop(target.get("result_ref"), None)
             if (call.name == "store_query" and plan.kind == "query"
                     and result.get("status") in ("complete", "partial")
                     and any(target.get("status") in ("complete", "unavailable")
@@ -240,13 +303,6 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
                 # Only successful server results can ground business prose; errors remain receipts.
                 evidence.append(TurnEvidence(state["scope"], state["run_id"], state["generation"],
                                              ("query", "query"), ("query", "query"), call.id))
-            if call.name == "store_chart" and result.get("source") == "saved_chart":
-                for target in result.get("targets", []):
-                    if target.get("result_ref") and target.get("status") in ("complete", "partial"):
-                        evidence.append(TurnEvidence(state["scope"], state["run_id"], state["generation"],
-                            ("saved_chart", "saved_chart"), ("saved_chart", "saved_chart"), call.id))
-                        saved_sources[target["result_ref"]] = target["queried_at"]
-            # Reauthorizes after execution; reset/stopped/revoked runs cannot publish.
             await storage.record(state["scope"], state["run_id"], "tool", {
                 "name": call.name if call.name in tools.tools else "unauthorized",
                 "status": ("denied" if "error" in result or result.get("status") == "failed" else
@@ -255,12 +311,6 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
                     "error_code": result.get("error", "context_capacity" if context_capacity else "query_targets_failed")}
                    if call.name == "store_query" and ("error" in result or result.get("status") in ("partial", "failed")) else {}),
                 **({"range": result["range"]} if "range" in result else {}),
-                **({"source": "saved_chart", "queried_at": list(saved_sources.values())}
-                   if result.get("source") == "saved_chart" else {}),
-                **({"targets": [{key: target[key] for key in (
-                    "result_ref", "error", "row_count", "selected_count", "read_ranges", "unread_ranges", "has_more", "next_cursor")
-                    if key in target} for target in result.get("targets", [])]}
-                   if result.get("source") == "saved_chart" else {}),
                 **({"error_code": result["error"], "message": (
                     "计算请求参数无效，请使用表达式参数。" if result["error"] == "invalid_tool_arguments"
                     else result.get("message", "计算请求未获执行。")
@@ -289,7 +339,7 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
                              "记录洗车数量关闭只说明本轮不使用指标，不说明没有历史记录、"
                              "没有发生洗车业务或行业本身不能计算该指标。"
                              "不可用原因只能采用工具明确给出的当前原因。"
-                             "分页结果按最新read_ranges核对累计已读行；仍有未读内容时，"
+                             "明细按read_ranges核对已返回行；仍有未返回内容时，"
                              "须说明本轮部分完成、已读/总行数及未读范围，不声称明细完整。"
                              "context_capacity只表示本轮容量不足，保留已成功结果并解释未读部分。"}
 
@@ -304,7 +354,7 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
             following = grounding_message()
             page_room = min(12000, max(0, settings.agent_context_chars
                                       - context_size([*minimum, following]) - 2000 - 1000))
-            # Reserve the largest page that the protected context can support,
+            # Reserve the largest bounded result the protected context supports,
             # along with answer/control room, before the first business read.
             # Skill/catalog receipts remain in messages and reduce this room.
             while (history_messages and context_size([*messages, following])
@@ -315,8 +365,8 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
         async def complete_answer():
             nonlocal output_size
             require_evidence(plan, evidence, state["scope"], state["run_id"], state["generation"])
-            if saved_sources:
-                notice = "\n\n历史图来源：saved_chart；原查询时间：" + "、".join(sorted(set(saved_sources.values()))) + "。本轮读取保存快照。"
+            if plan.kind == "query":
+                notice = "\n\n本轮结果来自最新数据（本轮重新查询）。"
                 if output_size + len(notice) > settings.agent_output_chars:
                     raise ModelFailure("output_budget")
                 output_size += len(notice)
@@ -332,6 +382,35 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
 
         calls, _ = await response(plan_messages(messages), PLAN_SCHEMA, planning=True)
         plan = parse_plan(calls)
+        question = state["messages"][-1]["content"]
+        background = json.loads(state["messages"][-3]["content"])["store_background"]
+        followup_range = month_followup_range(question, date.fromisoformat(background["local_date"]))
+        previous_answer = next((item for item in reversed(history_messages) if item["role"] == "assistant"), None)
+        chart_followup = bool(followup_range and previous_answer
+                              and previous_answer["content"].startswith("此前图表范围（仅识别追问，数值须重新查询）："))
+        # Compatibility with stale provider plans never permits historical evidence.
+        if plan.kind == "saved_chart" or chart_followup:
+            plan = plan.model_copy(update={"kind": "query"})
+        if chart_followup:
+            messages.insert(-1, {"role": "system", "content":
+                "本轮是上一张图的月份追问，继承该图指标、分组和图型，重新查询并生成新图。"
+                "按门店当地今天解析，本轮日期范围为" + json.dumps(followup_range, ensure_ascii=False)
+                + "；使用此显式range，不沿用旧月份或旧数值。必须取得本轮store_chart的prepared后说明生成。"})
+        if plan.kind == "query":
+            messages.insert(-1, {"role": "system", "content":
+                "图表追问也必须重新查询数据。沿用近期日期、指标和分组；必要信息不足先追问，"
+                "说明结果来自最新数据，需要时生成新图，旧图保留查看。"
+                "一般查询先汇总：月收入一次查询整月，年收入一次查询全年总结；"
+                "周查询一次查询一周并按天分组，不逐日调用。用户细问再按月、日或分类拆分；"
+                "明确要求明细、趋势图、分类或比较时遵从用户粒度。月份结算不能重复计入每天。"})
+        requested_dates = explicit_dates(question) if plan.kind == "query" else set()
+        comparison_required = (plan.kind == "query"
+                               and bool(re.search(r"差额|变化率|环比|同比", question)))
+        chart_required = (plan.kind == "query"
+                          and (chart_followup or bool(re.search(r"(?:用|画|绘制|生成|重做).{0,160}(?:图|趋势)|"
+                                                               r"图表|折线图|柱状图|条形图|趋势图|\bchart\b", question, re.I)))
+                          and not re.search(r"(?:不用|不要|不需要|不)(?:再)?(?:画|生成|绘制)?(?:新)?"
+                                            r"(?:折线|分组柱状|堆叠柱状|柱状|条形|趋势)?图", question))
         await storage.record(state["scope"], state["run_id"], "plan", {
             "kind": plan.kind, "queries": [q.model_dump(mode="json") for q in plan.queries],
         })
@@ -371,16 +450,7 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
 
         while attempts < settings.agent_max_steps:
             trim_query_history()
-            # Missing historical references are a conversation clarification,
-            # never permission to silently query current business data.
-            if (plan.kind == "saved_chart" and not saved_sources
-                    and not any("历史图描述：" in (m.get("content") or "") for m in messages)
-                    and not re.search(r"\b[0-9a-f]{32}\b", state["messages"][-1]["content"])):
-                await storage.record(state["scope"], state["run_id"], "delta", {
-                    "text": "这张旧图已超出当前上下文，是否重新查询最新数据？"})
-                await storage.record(state["scope"], state["run_id"], "completed", {"status": "completed"})
-                return {}
-            # Error receipts (including invalid continuations) can consume the
+            # Error receipts (including invalid arguments) can consume the
             # control reserve. Preserve evidence and the answer reserve rather
             # than issuing another model request with too little space.
             if (evidence and partial_completion()
@@ -390,6 +460,48 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
             if not calls:
                 if not text:
                     raise ModelFailure("model_format")
+                if missing := requested_dates - queried_dates:
+                    if date_repairs == 0:
+                        date_repairs += 1
+                        messages.append({"role": "system", "content":
+                            "用户明确要求的日期尚未取得查询回执：" + "、".join(sorted(missing))
+                            + "。dates是已有记录覆盖，不是查询限制；请用store_query的range查询这些日期。"
+                            "无匹配记录才能说明未录入；未统计已有状态记录，只是金额未知。"})
+                        continue
+                    raise ModelFailure("grounding_unavailable")
+                if comparison_required and not comparison_obtained:
+                    if comparison_repairs == 0:
+                        comparison_repairs += 1
+                        messages.append({"role": "system", "content":
+                            "本轮尚未取得后端差额/变化率。请用store_query一个目标的range和compare取得"
+                            "comparison.changes，再引用difference/change_percent回答；两次独立汇总不能替代compare。"})
+                        continue
+                    raise ModelFailure("grounding_unavailable")
+                if chart_required and not chart_prepared:
+                    # Query evidence cannot substantiate a chart success claim.
+                    # Keep speculative prose out of SSE, then give the provider
+                    # one bounded opportunity to perform the missing operation.
+                    if not chart_attempted and chart_repairs == 0:
+                        chart_repairs += 1
+                        messages.append({"role": "system", "content":
+                            "用户明确要求画图，本轮尚无store_chart的prepared回执。"
+                            "请用当前result_ref调用store_chart；图表参数依技能/schema。"
+                            "取得prepared后再回答，不能仅用文字声称已生成。"})
+                        continue
+                    if not chart_attempted or not chart_failures:
+                        raise ModelFailure("grounding_unavailable")
+                    return await complete_answer()
+                if deferred_text:
+                    if re.search(r"(?:已读取|已读|读取已完成).{0,16}(?:全部|所有)|"
+                                 r"(?:已全部|已完整).{0,8}(?:读取|读完)|无遗漏|无未读", text):
+                        if partial_repairs == 0:
+                            partial_repairs += 1
+                            messages.append({"role": "system", "content":
+                                partial_completion() + "请按真实回执修正回答，不宣称明细全部读完。"
+                                "图表完整点数与模型已读明细分别说明；更多明细须缩小日期范围新查，不支持续页。"})
+                            continue
+                        raise ModelFailure("grounding_unavailable")
+                    await storage.record(state["scope"], state["run_id"], "delta", {"text": text})
                 return await complete_answer()
             messages.append({"role": "assistant", "content": text or None,
                              "tool_calls": [call.wire() for call in calls]})

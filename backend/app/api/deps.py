@@ -4,13 +4,12 @@ from typing import Annotated
 
 from fastapi import Cookie, Depends, HTTPException, Request
 from jwt import InvalidTokenError
-from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_session
 from app.core.security import decode_access_token
-from app.models.identity import Store, StoreMember, User
-from app.services.access import Capability, has_capability
+from app.models.identity import Store, User
+from app.services.access import Capability, has_capability, require_store_scope
 from app.services.owner import is_administrator, is_owner
 from app.services.sessions import current_credentials, request_auth_required, require_credentials
 
@@ -78,11 +77,7 @@ async def require_store_access(store_id: int, user: CurrentUser, session: Sessio
     store = await session.get(Store, store_id)
     if store is None or not store.is_active:
         raise HTTPException(404, "Store not found")
-    allowed = is_administrator(user) or await session.scalar(
-        select(exists().where(StoreMember.store_id == store_id, StoreMember.user_id == user.id))
-    )
-    if not allowed:
-        raise HTTPException(404, "Store not found")
+    await require_store_scope(session, user, store_id)
     return StoreAccess(store=store, user=user)
 
 
@@ -92,9 +87,5 @@ async def require_store_read_access(
     store = await session.get(Store, store_id)
     if store is None or (not store.is_active and not is_administrator(user)):
         raise HTTPException(404, "Store not found")
-    allowed = is_administrator(user) or await session.scalar(
-        select(exists().where(StoreMember.store_id == store_id, StoreMember.user_id == user.id))
-    )
-    if not allowed:
-        raise HTTPException(404, "Store not found")
+    await require_store_scope(session, user, store_id)
     return StoreAccess(store=store, user=user)

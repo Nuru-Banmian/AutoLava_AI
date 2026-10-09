@@ -20,11 +20,15 @@ vi.mock("@/auth/AuthProvider", () => ({ useAuth: () => authState }));
 const roma = { id: 9, name: "Roma", address: "Via Roma", latitude: "41.9",
   longitude: "12.5", timezone: "Europe/Rome", is_active: true };
 const maria = { id: 2, username: "maria", role: "user" as const,
+  manager_id: 1,
+  can_manage_editors: false,
   is_active: true, store_ids: [9] };
 const operator = { id: 3, username: "operator", role: "user" as const,
+  manager_id: 1,
+  can_manage_editors: false,
   is_active: true, store_ids: [] };
 
-const server = setupServer();
+const server = setupServer(http.get("/api/admin/users/editor-options", () => HttpResponse.json([])));
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => {
@@ -51,6 +55,15 @@ function renderPanel() {
   );
   return { ...result, client };
 }
+
+it("allows primary administrator to explicitly assign stores to a subadministrator", async () => {
+  server.use(
+    http.get("/api/admin/users", () => HttpResponse.json([{ ...maria, role: "admin" }])),
+    http.get("/api/admin/stores", () => HttpResponse.json([roma])),
+  );
+  renderPanel();
+  expect(await screen.findByRole("checkbox", { name: "Roma" })).toBeChecked();
+});
 
 function renderStrictPanel(items: AdminUser[]) {
   const client = new QueryClient({ defaultOptions: {
@@ -169,6 +182,8 @@ it("does not invent a user selection for an empty list", async () => {
 
 it("selects a newly created user", async () => {
   const created = { id: 10, username: "new-operator", role: "user" as const,
+    manager_id: 1,
+    can_manage_editors: false,
     is_active: true, store_ids: [9] };
   let users = [maria];
   server.use(
@@ -183,6 +198,7 @@ it("selects a newly created user", async () => {
   await screen.findByRole("heading", { name: "编辑 maria" });
   await userEvent.click(screen.getByRole("button", { name: "新建用户" }));
   await userEvent.type(screen.getByLabelText("用户名"), "new-operator");
+  await userEvent.selectOptions(screen.getByLabelText("管理归属"), "1");
   await userEvent.type(screen.getByLabelText("初始密码"), "operator123");
   await userEvent.click(screen.getByRole("checkbox", { name: "Roma" }));
   await userEvent.click(screen.getByRole("button", { name: "添加用户" }));
@@ -212,7 +228,7 @@ it("renders administrators read-only for a non-owner", async () => {
   renderPanel();
   await userEvent.click(await screen.findByRole("button", { name: /other-admin/ }));
 
-  expect(screen.getByText("管理员账号只能由最终管理员编辑")).toBeInTheDocument();
+  expect(screen.getByText("从管理员账号只能由主管理员编辑")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "保存用户" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "永久删除" })).not.toBeInTheDocument();
 });
@@ -239,8 +255,8 @@ it("does not offer administrator creation to a non-owner", async () => {
   renderPanel();
   await userEvent.click(await screen.findByRole("button", { name: "新建用户" }));
 
-  expect(screen.getByRole("option", { name: "普通用户" })).toBeInTheDocument();
-  expect(screen.queryByRole("option", { name: "管理员" })).not.toBeInTheDocument();
+  expect(screen.getByRole("option", { name: "员工" })).toBeInTheDocument();
+  expect(screen.queryByRole("option", { name: "从管理员" })).not.toBeInTheDocument();
 });
 
 it("guards user switches while the editor is dirty", async () => {
@@ -277,6 +293,7 @@ it("keeps a dirty create editor dirty when the persistent new-user button is cli
   const newUser = await screen.findByRole("button", { name: "新建用户" });
   await userEvent.click(newUser);
   await userEvent.type(screen.getByLabelText("用户名"), "operator");
+  await userEvent.selectOptions(screen.getByLabelText("管理归属"), "1");
   await userEvent.type(screen.getByLabelText("初始密码"), "operator123");
 
   await userEvent.click(newUser);
@@ -294,11 +311,14 @@ it("creates a user with store access in the right-hand workspace", async () => {
   renderPanel();
   await userEvent.click(await screen.findByRole("button", { name: "新建用户" }));
   await userEvent.type(screen.getByLabelText("用户名"), "operator");
+  await userEvent.selectOptions(screen.getByLabelText("管理归属"), "1");
   await userEvent.type(screen.getByLabelText("初始密码"), "operator123");
   await userEvent.click(screen.getByRole("checkbox", { name: "Roma" }));
   await userEvent.click(screen.getByRole("button", { name: "添加用户" }));
 
   await waitFor(() => expect(posted).toEqual({
+    editor_ids: [],
+    manager_id: 1,
     username: "operator",
     password: "operator123",
     role: "user",

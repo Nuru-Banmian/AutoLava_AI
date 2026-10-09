@@ -266,6 +266,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/users/editor-options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Employee Editor Options */
+        get: operations["employee_editor_options_api_admin_users_editor_options_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/users/{user_id}": {
         parameters: {
             query?: never;
@@ -1138,10 +1155,18 @@ export interface components {
         };
         /** AdminUserResponse */
         AdminUserResponse: {
+            /** Can Manage Editors */
+            can_manage_editors?: boolean | null;
+            /** Creator Id */
+            creator_id?: number | null;
+            /** Editor Ids */
+            editor_ids?: number[];
             /** Id */
             id: number;
             /** Is Active */
             is_active: boolean;
+            /** Manager Id */
+            manager_id?: number | null;
             /**
              * Role
              * @enum {string}
@@ -2324,6 +2349,10 @@ export interface components {
         };
         /** UserCreate */
         UserCreate: {
+            /** Editor Ids */
+            editor_ids?: number[];
+            /** Manager Id */
+            manager_id?: number | null;
             /** Password */
             password: string;
             /**
@@ -2339,8 +2368,12 @@ export interface components {
         };
         /** UserPatch */
         UserPatch: {
+            /** Editor Ids */
+            editor_ids?: number[] | null;
             /** Is Active */
             is_active?: boolean | null;
+            /** Manager Id */
+            manager_id?: number | null;
             /** Password */
             password?: string | null;
             /** Role */
@@ -3149,6 +3182,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdminUserResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    employee_editor_options_api_admin_users_editor_options_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                access_token?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserSummaryResponse"][];
                 };
             };
             /** @description Validation Error */

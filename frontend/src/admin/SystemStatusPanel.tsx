@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { api } from "@/api/client";
 import type { AdminStore, BriefingCard, ScheduledTaskLog, SystemAlert } from "@/api/types";
 import { dashboardKey } from "@/lib/user-api";
+import { useAuth } from "@/auth/AuthProvider";
 
 type ParsedTimestamp = { value: string; epoch: number };
 type Diagnostics = {
@@ -42,10 +43,12 @@ function formatTimestamp(value: ParsedTimestamp | null, issue: TimestampIssue = 
 }
 
 export function SystemStatusPanel() {
+  const { user } = useAuth();
+  const globalAccess = user?.is_owner === true;
   const stores = useQuery({ queryKey: ["admin", "stores"], queryFn: () => api<AdminStore[]>("/admin/stores") });
   const alerts = useQuery({ queryKey: ["admin", "alerts"], queryFn: () => api<SystemAlert[]>("/admin/alerts") });
   const taskLogs = useQuery({ queryKey: ["admin", "task-logs"], queryFn: () => api<ScheduledTaskLog[]>("/admin/task-logs") });
-  const diagnostics = useQuery({ queryKey: ["admin", "diagnostics"], queryFn: () => api<Diagnostics>("/admin/diagnostics") });
+  const diagnostics = useQuery({ queryKey: ["admin", "diagnostics"], queryFn: () => api<Diagnostics>("/admin/diagnostics"), enabled: globalAccess });
   const dashboardQueries = useQueries({ queries: (stores.data ?? []).filter((store) => store.is_active).map((store) => ({
     queryKey: dashboardKey(store.id),
     queryFn: () => api<BriefingCard[]>(`/dashboard/${store.id}`),
@@ -82,8 +85,8 @@ export function SystemStatusPanel() {
     || (task.finished_at !== null && parseTimestamp(task.finished_at) === null));
   const hasUnresolvedError = unresolvedAlerts.some((alert) => alert.level.toLowerCase() === "error");
   const latestWeatherFailed = latestWeather !== null && latestWeather.task.status.toLowerCase() !== "success";
-  const loading = stores.isPending || alerts.isPending || taskLogs.isPending || diagnostics.isPending || dashboardQueries.some((query) => query.isPending);
-  const failed = stores.isError || alerts.isError || taskLogs.isError || diagnostics.isError || dashboardQueries.some((query) => query.isError);
+  const loading = stores.isPending || alerts.isPending || taskLogs.isPending || (globalAccess && diagnostics.isPending) || dashboardQueries.some((query) => query.isPending);
+  const failed = stores.isError || alerts.isError || taskLogs.isError || (globalAccess && diagnostics.isError) || dashboardQueries.some((query) => query.isError);
   const empty = stores.isSuccess && alerts.isSuccess && taskLogs.isSuccess
     && activeStores.length === 0 && alerts.data.length === 0 && taskLogs.data.length === 0 && dashboardCards.length === 0;
   const everyStoreHasDashboard = activeStores.length > 0 && dashboardStates.every((state) => state.latest !== null && state.issue === null);
@@ -106,12 +109,14 @@ export function SystemStatusPanel() {
       {!loading && !failed && <dl className="grid min-w-0 gap-4 text-sm leading-6 sm:grid-cols-2">
         <div className="min-w-0 space-y-1"><dt className="text-muted-foreground">最近天气更新</dt><dd className="tabular-nums">{formatTimestamp(latestWeather?.parsed ?? null, weatherIssue)}</dd></div>
         <div className="min-w-0 space-y-1"><dt className="text-muted-foreground">最近仪表盘生成</dt><dd className="tabular-nums">{formatTimestamp(dashboardGeneratedAt, dashboardIssue)}</dd></div>
+        {globalAccess && <>
         <div className="min-w-0 space-y-1"><dt className="text-muted-foreground">最近有效本地备份</dt><dd className="tabular-nums">{formatTimestamp(parseTimestamp(diagnostics.data?.latest_valid_local_backup_at))}</dd></div>
         <div className="min-w-0 space-y-1"><dt className="text-muted-foreground">本地快照</dt><dd>{diagnostics.data?.local_snapshot === "success" ? "已验证" : "无有效备份"}</dd></div>
         <div className="min-w-0 space-y-1"><dt className="text-muted-foreground">异机复制</dt><dd>未配置</dd></div>
         <div className="min-w-0 space-y-1"><dt className="text-muted-foreground">隔离恢复</dt><dd>未验证</dd></div>
         <div className="min-w-0 space-y-1"><dt className="text-muted-foreground">最近天气任务结果</dt><dd>{diagnostics.data?.latest_tasks.weather_refresh?.status ?? "暂无记录"}</dd></div>
         <div className="min-w-0 space-y-1"><dt className="text-muted-foreground">最近备份任务结果</dt><dd>{diagnostics.data?.latest_tasks.sqlite_backup?.status ?? "暂无记录"}</dd></div>
+        </>}
         <div className="min-w-0 space-y-1 sm:col-span-2"><dt className="text-muted-foreground">各门店仪表盘</dt><dd><ul className="space-y-2">{dashboardStates.map((state) => <li key={state.store.id}>{state.store.name}：{formatTimestamp(state.latest, state.issue)}</li>)}</ul></dd></div>
       </dl>}
     </section>

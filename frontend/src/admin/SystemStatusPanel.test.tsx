@@ -6,6 +6,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 
 import { SystemStatusPanel } from "@/admin/SystemStatusPanel";
 
+vi.mock("@/auth/AuthProvider", () => ({ useAuth: () => ({ user: { is_owner: true } }) }));
+
 vi.mock("@/stores/StoreProvider", () => ({
   useStore: () => ({ selected: { id: 1, name: "Roma", timezone: "Europe/Rome" } }),
 }));

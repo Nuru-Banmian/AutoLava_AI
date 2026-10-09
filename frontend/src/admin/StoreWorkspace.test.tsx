@@ -9,6 +9,9 @@ import { StoreWorkspace } from "@/admin/StoreWorkspace";
 import { UnsavedChangesProvider } from "@/navigation/UnsavedChanges";
 import { accessibleStoresKey } from "@/stores/StoreProvider";
 
+const authState = vi.hoisted(() => ({ user: { is_owner: true } }));
+vi.mock("@/auth/AuthProvider", () => ({ useAuth: () => authState }));
+
 vi.mock("@/components/StoreLocationPicker", () => ({
   StoreLocationPicker: ({ value, onConfirm, buttonLabel }: {
     value: unknown;
@@ -47,6 +50,7 @@ const server = setupServer();
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => {
+  authState.user.is_owner = true;
   server.resetHandlers();
   vi.restoreAllMocks();
 });

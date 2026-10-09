@@ -125,9 +125,10 @@ async def store_data_catalog(session, context, arguments):
                                     "metrics": list(METRICS[domain]), "group_by": GROUPS[domain],
                                     "dates": dates[domain]}
     result["notes"] = (
-        "fields/metrics互斥；汇总fields=[]。至多2分组且1日历维。filter_fields引用域fields；category引用"
-        "分类属性。默认本月至今；全历史重查无366天限。当前期截至今日，完整期按"
-        "自然边界；比较给出双方范围与未完期。未统计/未录入未知，集中收入不分摊。"
+        "fields/metrics互斥；最多2分组且1日历维。filter_fields引用域fields；category为分类属性。"
+        "默认本月至今，全历史不限366天；当前期截至local_date，完整期用自然边界；比较返回双方范围。"
+        "dates是已记录范围，显式range可超出它查询至local_date。无记录=未录入；"
+        "未统计已有状态但金额未知；休息=真实零。集中收入不分摊。"
     )
     context.catalogs.put(context.scope, context.generation, result)
     return result

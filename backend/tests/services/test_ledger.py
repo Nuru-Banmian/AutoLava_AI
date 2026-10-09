@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import SQLITE_WRITE_LOCK, async_session_factory, engine
 from app.models.base import Base
-from app.models.identity import Store, User
+from app.models.identity import Store, StoreMember, User
 from app.models.ledger import IncomeCategory, StoreDailyRecord
 from app.schemas.income_config import IncomeConfigPublishBody
 from app.services.income_config import IncomeConfigService
@@ -41,6 +41,7 @@ async def ledger_context(db_session, user_factory, store_factory) -> LedgerConte
         username="ledger-user", password="secret", role="admin"
     )
     store = await store_factory(name="Ledger Store", timezone="Europe/Berlin")
+    db_session.add(StoreMember(user_id=user.id, store_id=store.id))
     store.income_items_enabled = True
     cash = IncomeCategory(
         store_id=store.id,
@@ -194,6 +195,7 @@ async def test_legacy_total_uses_integer_and_rejects_items(
         username="direct-user", password="secret", role="admin"
     )
     store = await store_factory(name="Direct", timezone="Europe/Berlin")
+    db_session.add(StoreMember(user_id=user.id, store_id=store.id))
     user_id, store_id, timezone = user.id, store.id, store.timezone
     await db_session.commit()
     result = await LedgerService(db_session).upsert(
@@ -256,6 +258,7 @@ async def test_delete_removes_current_record(ledger_context: LedgerContext) -> N
 
 async def test_same_day_creates_are_serialized_to_one_current_record() -> None:
     async with engine.begin() as connection:
+        await connection.exec_driver_sql("PRAGMA defer_foreign_keys=ON")
         for table in reversed(Base.metadata.sorted_tables):
             await connection.execute(table.delete())
     async with async_session_factory() as setup:
@@ -275,6 +278,8 @@ async def test_same_day_creates_are_serialized_to_one_current_record() -> None:
             income_items_enabled=False,
         )
         setup.add_all([user, store])
+        await setup.flush()
+        setup.add(StoreMember(user_id=user.id, store_id=store.id))
         await setup.commit()
         user_id, store_id = user.id, store.id
         timezone = store.timezone
@@ -297,6 +302,7 @@ async def test_same_day_creates_are_serialized_to_one_current_record() -> None:
 
 async def test_new_record_rejects_stale_config_before_using_fresh_rules() -> None:
     async with engine.begin() as connection:
+        await connection.exec_driver_sql("PRAGMA defer_foreign_keys=ON")
         for table in reversed(Base.metadata.sorted_tables):
             await connection.execute(table.delete())
     async with async_session_factory() as setup:
@@ -316,6 +322,8 @@ async def test_new_record_rejects_stale_config_before_using_fresh_rules() -> Non
             income_items_enabled=False,
         )
         setup.add_all([user, store])
+        await setup.flush()
+        setup.add(StoreMember(user_id=user.id, store_id=store.id))
         await setup.commit()
         user_id, store_id = user.id, store.id
 

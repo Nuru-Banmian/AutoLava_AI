@@ -64,6 +64,12 @@ export async function apiRequest(
   assertSessionScope(scope);
 
   if (!response.ok) {
+    if (!normalizedPath.startsWith("/auth/") && response.status === 401) {
+      window.dispatchEvent(new Event("autolava:session-revoked"));
+    }
+    if (!normalizedPath.startsWith("/auth/") && (response.status === 403 || response.status === 404)) {
+      window.dispatchEvent(new Event("autolava:refresh-store-access"));
+    }
     const contentType = response.headers.get("content-type") ?? "";
     if (contentType.includes("json")) {
       const body = await response.json().catch(() => null);

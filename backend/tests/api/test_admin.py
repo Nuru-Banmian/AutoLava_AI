@@ -30,7 +30,9 @@ from app.services.sqlite_backup import backup_sqlite
 
 
 @pytest.fixture
-async def admin_client(client, user_factory, db_session: AsyncSession) -> AsyncClient:
+async def admin_client(client, user_factory, db_session: AsyncSession, monkeypatch) -> AsyncClient:
+    monkeypatch.setenv("AUTOLAVA_BOOTSTRAP_USERNAME", "administrator")
+    get_settings.cache_clear()
     await user_factory(username="administrator", password="secret", role="admin")
     response = await client.post(
         "/api/auth/login",
@@ -266,6 +268,7 @@ async def test_owner_protection_rejects_self_management(
 async def committed_database():
     async def clear() -> None:
         async with engine.begin() as connection:
+            await connection.exec_driver_sql("PRAGMA defer_foreign_keys=ON")
             for table in reversed(Base.metadata.sorted_tables):
                 await connection.execute(table.delete())
 
@@ -306,6 +309,7 @@ async def test_admin_can_create_list_patch_user_and_replace_store_access(
         "/api/admin/users",
         json={
             "username": "family-user",
+            "manager_id": 1,
             "password": "first-secret",
             "role": "user",
             "store_ids": [zulu.id, alpha.id, zulu.id],
@@ -314,6 +318,10 @@ async def test_admin_can_create_list_patch_user_and_replace_store_access(
     assert created.status_code == 201
     user_id = created.json()["id"]
     assert created.json() == {
+        "creator_id": 1,
+        "editor_ids": [],
+        "can_manage_editors": True,
+        "manager_id": 1,
         "id": user_id,
         "username": "family-user",
         "role": "user",
@@ -336,7 +344,6 @@ async def test_admin_can_create_list_patch_user_and_replace_store_access(
     assert patched.json()["is_active"] is False
     assert patched.json()["store_ids"] == [zulu.id]
     assert [item["username"] for item in listed.json()] == [
-        "administrator",
         "family-user",
     ]
     assert [item["name"] for item in stores.json()] == ["Zulu"]
@@ -372,7 +379,7 @@ async def test_user_validation_boundaries_return_422(
 async def test_duplicate_username_is_409_and_transaction_remains_usable(
     admin_client,
 ) -> None:
-    body = {"username": "duplicate", "password": "secret123", "role": "user"}
+    body = {"username": "duplicate", "password": "secret123", "role": "user", "manager_id": 1}
     assert (await admin_client.post("/api/admin/users", json=body)).status_code == 201
 
     duplicate = await admin_client.post("/api/admin/users", json=body)
@@ -487,6 +494,7 @@ async def test_create_user_with_invalid_store_is_atomic(
         "/api/admin/users",
         json={
             "username": f"{store_kind}-assignment",
+            "manager_id": 1,
             "password": "secret123",
             "store_ids": [store_id],
         },
@@ -889,7 +897,7 @@ async def test_invalid_store_membership_replacement_is_atomic(
     )
 
     assert missing.status_code == 404
-    assert admin_member.status_code == 409
+    assert admin_member.status_code == 403
     assert list(
         await db_session.scalars(
             select(StoreMember.user_id).where(StoreMember.store_id == store_id)

@@ -88,6 +88,9 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        from app.scripts.initialize_permissions import initialize_permissions
+        async with session_factory() as session:
+            await initialize_permissions(session)
         await agent_runner.storage.recover()
         agent_runner.index.start()
         await agent_runner.jobs.start()

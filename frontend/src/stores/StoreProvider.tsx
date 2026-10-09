@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createContext, type PropsWithChildren, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "@/api/client";
@@ -45,19 +45,27 @@ interface StoreProviderProps extends PropsWithChildren {
 }
 
 function StoreStateProvider({ children, userId }: StoreProviderProps) {
+  const queryClient = useQueryClient();
   const authScope = currentSessionScope();
   const { requestTransition, resetUnsavedChanges } = useUnsavedChanges();
   const { data: stores = [], isLoading, isSuccess, error, refetch } = useQuery({
     queryKey: accessibleStoresKeyFor(userId),
     queryFn: () => { assertSessionScope(authScope); return api<AccessibleStore[]>("/stores/accessible"); },
     retry: (failureCount) => authScope === currentSessionScope() && failureCount < 3,
+    refetchInterval: 30000,
   });
   const [selection, setSelection] = useState<{ userId: number | undefined; storeId: number | null; snapshot: AccessibleStore | null }>(() => ({ userId, storeId: readStoredSelection(userId), snapshot: null }));
   const reconciliationRef = useRef<string | null>(null);
   const sameUser = selection.userId === userId;
   const selectedId = sameUser ? selection.storeId : null;
   const liveSelected = sameUser ? stores.find((store) => store.id === selectedId) ?? null : null;
-  const selected = liveSelected ?? (sameUser ? selection.snapshot : null);
+  const selected = liveSelected ?? (!isSuccess && sameUser ? selection.snapshot : null);
+
+  useEffect(() => {
+    const refresh = () => { void refetch(); };
+    window.addEventListener("autolava:refresh-store-access", refresh);
+    return () => window.removeEventListener("autolava:refresh-store-access", refresh);
+  }, [refetch]);
 
   useEffect(() => {
     if (!sameUser) {
@@ -77,6 +85,17 @@ function StoreStateProvider({ children, userId }: StoreProviderProps) {
     }
 
     const fallback = stores[0] ?? null;
+    if (selection.snapshot && !liveSelected) {
+      resetUnsavedChanges();
+      const lostId = selection.snapshot.id;
+      const lostQueries = (query: { queryKey: readonly unknown[] }) => query.queryKey[0] !== "auth"
+        && query.queryKey[0] !== "stores" && query.queryKey.includes(lostId);
+      void queryClient.cancelQueries({ predicate: lostQueries }).then(() => queryClient.removeQueries({ predicate: lostQueries }));
+      setSelection({ userId, storeId: fallback?.id ?? null, snapshot: fallback });
+      if (userId !== undefined && fallback) writeStoredSelection(userId, fallback.id);
+      else localStorage.removeItem(STORE_SELECTION_KEY);
+      return;
+    }
     const reconciliationKey = `${userId ?? "none"}:${selectedId ?? "none"}:${fallback?.id ?? "none"}:${stores.map((store) => store.id).join(",")}`;
     if (reconciliationRef.current === reconciliationKey) return;
     reconciliationRef.current = reconciliationKey;
@@ -88,7 +107,7 @@ function StoreStateProvider({ children, userId }: StoreProviderProps) {
     }, () => {
       if (reconciliationRef.current === reconciliationKey) reconciliationRef.current = null;
     });
-  }, [isSuccess, liveSelected, requestTransition, resetUnsavedChanges, sameUser, selectedId, selection.snapshot, stores, userId]);
+  }, [isSuccess, liveSelected, requestTransition, resetUnsavedChanges, sameUser, selectedId, selection.snapshot, stores, userId, queryClient]);
 
   const value = useMemo(
     () => ({

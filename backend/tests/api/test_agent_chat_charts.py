@@ -20,10 +20,125 @@ def trend(model):
                            "type": "line", "title": "逐日营业额"}
 
 
-def trend_query(page_size=50):
+def trend_query(row_limit=50):
     return query([{"id": "trend", "domain": "daily_ledger",
                   "range": {"start": "2026-07-01", "end": "2026-07-04"},
-                  "metrics": ["total_revenue"], "group_by": ["day"], "page_size": page_size}])
+                  "metrics": ["total_revenue"], "group_by": ["day"], "row_limit": row_limit}])
+
+
+async def test_consecutive_charts_use_new_results_and_preserve_first_snapshot(tmp_path):
+    model = QueryModel([("store_data_catalog", {}), trend_query(), trend, "第一张图。",
+                        ("store_data_catalog", {}), trend_query(), trend, "第二张图。"])
+    async with chat_app(tmp_path, model) as (client, _, _):
+        await save_day(client, "2026-07-01", 19)
+        first = await ask(client, "我想看2026年7月1日至4日收入折线图")
+        assert first["status"] == "completed", first
+        messages = (await client.get("/api/agent/1/conversation")).json()["messages"]
+        first_message = messages[-1]
+        first_chart = first_message["charts"][0]
+        first_path = f"/api/agent/1/messages/{first_message['id']}/charts/{first_chart['chart_id']}"
+        original = (await client.get(first_path)).json()
+        await save_day(client, "2026-07-02", 99)
+        second = await ask(client, "再给我一张2026年7月1日至4日收入折线图")
+        assert second["status"] == "completed", second
+        messages = (await client.get("/api/agent/1/conversation")).json()["messages"]
+        charts = [m for m in messages if m["charts"]]
+        assert len(charts) == 2
+        second_message = charts[-1]
+        second_chart = second_message["charts"][0]
+        assert second_chart["chart_id"] != first_chart["chart_id"]
+        current = (await client.get(f"/api/agent/1/messages/{second_message['id']}/charts/{second_chart['chart_id']}")).json()
+        assert current["payload"]["points"][1]["values"]["total_revenue"]["exact"] == "99"
+        assert (await client.get(first_path)).json() == original
+        assert "event: completed" in (await client.get(f"/api/agent/1/runs/{second['id']}/events")).text
+
+
+async def test_relative_month_chart_followup_requeries_correct_month_and_requires_chart(tmp_path):
+    august = query([{"id": "august", "domain": "daily_ledger",
+                     "range": {"start": "2026-08-01", "end": "2026-08-31"},
+                     "metrics": ["total_revenue"], "group_by": ["day"]}])
+    model = QueryModel([("store_data_catalog", {}), trend_query(), trend, "第一张图。",
+                        ("store_data_catalog", {}), august, "第二张图已生成。", trend, "八月新图已实际准备。"])
+    async with chat_app(tmp_path, model) as (client, _, _):
+        await save_day(client, "2026-07-01", 19)
+        await save_day(client, "2026-08-01", 99)
+        assert (await ask(client, "我想看上个月月内每天的收入的折线图"))["status"] == "completed"
+        run = await ask(client, "上上个月的呢")
+        assert run["status"] == "completed", run
+        messages = (await client.get("/api/agent/1/conversation")).json()["messages"]
+        assert len(messages[-1]["charts"]) == 1
+        chart = messages[-1]["charts"][0]
+        assert chart["range"] == {"start": "2026-08-01", "end": "2026-08-31"}
+        snapshot = (await client.get(f"/api/agent/1/messages/{messages[-1]['id']}/charts/{chart['chart_id']}")).json()
+        assert len(snapshot["payload"]["points"]) == 31
+        assert snapshot["payload"]["points"][0]["values"]["total_revenue"]["exact"] == "99"
+        assert "第二张图已生成" not in run["output"]
+
+
+async def test_unread_chart_source_cannot_claim_all_detail_was_read(tmp_path):
+    model = QueryModel([("store_data_catalog", {}), trend_query(row_limit=2), trend,
+                        "明细读取已完成全部4行，无遗漏。", "图含4点，明细只读2行，另外2行未读。"])
+    async with chat_app(tmp_path, model) as (client, _, _):
+        await save_day(client, "2026-07-01", 19)
+        run = await ask(client, "画2026年7月1日至4日台账营业额图")
+        assert run["status"] == "completed", run
+        events = (await client.get(f"/api/agent/1/runs/{run['id']}/events")).text
+        assert "已完成全部4行" not in run["output"] and "已完成全部4行" not in events
+        assert "另外2行未读" in run["output"]
+
+
+@pytest.mark.parametrize("question", ["查询四天收入，不用图", "查询四天收入，不用再画折线图",
+                                     "查询四天收入，不需要生成新柱状图"])
+async def test_reset_then_new_message_cannot_inherit_old_chart(tmp_path, question):
+    from sqlalchemy import text
+    model = QueryModel([("store_data_catalog", {}), trend_query(), trend, "已画图。",
+                        ("store_data_catalog", {}), trend_query(), "本轮不用图。"])
+    async with chat_app(tmp_path, model) as (client, _, factory):
+        initial = (await client.get("/api/agent/1/conversation")).json()
+        assert (await client.post("/api/agent/1/conversation/reset", json={"generation":initial["generation"]})).status_code == 200
+        await save_day(client, "2026-07-01", 19)
+        assert (await ask(client, "画趋势图"))["status"] == "completed"
+        history = (await client.get("/api/agent/1/conversation")).json()
+        assert len(history["messages"][-1]["charts"]) == 1
+        reset = await client.post("/api/agent/1/conversation/reset", json={"generation":history["generation"]})
+        assert reset.status_code == 200
+        assert (await ask(client, question))["status"] == "completed"
+        history = (await client.get("/api/agent/1/conversation")).json()
+        assert history["messages"][-1]["charts"] == []
+        async with factory() as session:
+            assert (await session.execute(text("PRAGMA foreign_keys"))).scalar() == 1
+            assert (await session.execute(text("SELECT count(*) FROM agent_charts"))).scalar() == 0
+
+
+@pytest.mark.parametrize("question", ["画2026年7月每日营业额折线图", "用分组柱状图比较2026年7月和6月营业额",
+                                     "我想看上个月月内每天的收入的折线图", "上个月每天收入折线图"])
+async def test_chart_request_repairs_unprepared_success_claim_before_publishing(tmp_path, question):
+    model = QueryModel([("store_data_catalog", {}), trend_query(), "已生成堆叠图。",
+                        trend, "图表已实际准备。"])
+    async with chat_app(tmp_path, model) as (client, _, _):
+        await save_day(client, "2026-07-01", 19)
+        run = await ask(client, question)
+        assert run["status"] == "completed", run
+        message = (await client.get("/api/agent/1/conversation")).json()["messages"][-1]
+        assert len(message["charts"]) == 1
+        events = (await client.get(f"/api/agent/1/runs/{run['id']}/events")).text
+        assert "已生成堆叠图" not in run["output"] and "已生成堆叠图" not in events
+        assert "图表已实际准备" in run["output"]
+
+
+async def test_chart_request_cannot_publish_false_success_after_chart_error(tmp_path):
+    def invalid(model):
+        name, args = trend(model)
+        return name, {**args, "series": ["unselected_metric"]}
+    model = QueryModel([("store_data_catalog", {}), trend_query(), invalid, "已生成折线图。"])
+    async with chat_app(tmp_path, model) as (client, _, _):
+        await save_day(client, "2026-07-01", 19)
+        run = await ask(client, "画2026年7月每日营业额折线图")
+        assert run["status"] == "completed", run
+        assert "已生成折线图" not in run["output"]
+        assert "invalid_chart_source" in run["output"]
+        message = (await client.get("/api/agent/1/conversation")).json()["messages"][-1]
+        assert message["charts"] == []
 
 
 async def test_chart_is_saved_with_message_and_replayed_as_descriptor(tmp_path, monkeypatch):
@@ -240,7 +355,7 @@ async def test_single_snapshot_byte_limit_is_explicit(tmp_path):
         return name, {**args, "series": series}
     model = QueryModel([("store_data_catalog", {}), query([{
         "id": "large", "domain": "daily_ledger", "range": {"start": "2025-01-01", "end": "2025-12-31"},
-        "metrics": series, "group_by": ["day"], "page_size": 5,
+        "metrics": series, "group_by": ["day"], "row_limit": 5,
     }]), chart, "图表超出允许条件，未生成。"])
     async with chat_app(tmp_path, model) as (client, _, _):
         await save_day(client, "2025-01-01", 1)
@@ -268,7 +383,7 @@ async def test_message_byte_limit_rejects_next_draft_before_count_limit(tmp_path
                     yield item
     model = ByteCharts([("store_data_catalog", {}), query([{
         "id": "large", "domain": "daily_ledger", "range": {"start": "2025-01-01", "end": "2025-10-27"},
-        "metrics": ["total_revenue", "min_revenue", "max_revenue"], "group_by": ["day"], "page_size": 5,
+        "metrics": ["total_revenue", "min_revenue", "max_revenue"], "group_by": ["day"], "row_limit": 5,
     }]), "保留已经准备的图，新增图超量拒绝。"])
     async with chat_app(tmp_path, model) as (client, _, _):
         await save_day(client, "2025-01-01", 1)

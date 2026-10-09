@@ -11,13 +11,17 @@ from app.schemas.income_config import (
     IncomeCategoryVersionBody,
 )
 from app.services.income_config import IncomeConfigCommands, IncomeConfigService
+from app.services.access import require_store_scope
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 IncomeConfigManager = Annotated[User, Depends(require_capability("income_config.manage"))]
 
 
 @router.get("/stores/{store_id}/income-config", response_model=IncomeConfigResponse)
-async def get_income_config(store_id: int, session: Session) -> IncomeConfigResponse:
+async def get_income_config(
+    store_id: int, session: Session, actor: IncomeConfigManager
+) -> IncomeConfigResponse:
+    await require_store_scope(session, actor, store_id)
     service = IncomeConfigService(session)
     return await service.current(store_id)
 

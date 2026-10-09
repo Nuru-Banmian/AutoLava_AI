@@ -4,7 +4,9 @@ from app.core.config import Settings
 from app.main import create_app
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
+import asyncio
 from app.core.database import sqlite_url
 import os
 from pathlib import Path
@@ -13,10 +15,22 @@ import sys
 import pytest
 
 
-def test_health() -> None:
-    app = create_app()
-    with TestClient(app) as client:
-        response = client.get("/health")
+def test_health(tmp_path) -> None:
+    database_path = tmp_path / "health.sqlite3"
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=Path(__file__).parents[1],
+        env=os.environ | {"AUTOLAVA_DATABASE_PATH": str(database_path)},
+        check=True,
+        capture_output=True,
+    )
+    migrated_engine = create_async_engine(sqlite_url(database_path), poolclass=NullPool)
+    app = create_app(session_factory=async_sessionmaker(migrated_engine, expire_on_commit=False))
+    try:
+        with TestClient(app) as client:
+            response = client.get("/health")
+    finally:
+        asyncio.run(migrated_engine.dispose())
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
     assert not hasattr(app.state, "sqlite_backup_scheduler")

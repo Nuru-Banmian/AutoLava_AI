@@ -8,10 +8,11 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from sqlalchemy import Integer, cast, func, select, text
 
 from app.agents.tools.query_results import (
-    capacity_receipt, materialize, message_size, page, serialized_size,
+    capacity_receipt, materialize, message_size, limited_rows, serialized_size,
 )
 
 from app.agents.tools.query_dates import DateRange, comparison_range, resolve_range
+from app.agents.tools.query_granularity import month_followup_range, needs_summary, summary_period
 from app.agents.tools.query_aggregation import ledger_groups, ledger_summary, load_ledger
 from app.agents.tools.query_definitions import GROUPS, METRICS
 from app.agents.tools.store_catalog import ITEM_FIELDS, date_snapshot, fields_for, local_today, version
@@ -24,33 +25,53 @@ class StrictInput(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
 
-class Continuation(StrictInput):
-    result_ref: str = Field(min_length=32, max_length=32)
-    cursor: str = Field(min_length=1, max_length=128)
-    page_size: int = Field(default=50, ge=1, le=200)
-
-
 class QueryInput(StrictInput):
-    catalog_version: str | None = Field(default=None, min_length=1, max_length=64)
-    targets: list[dict[str, Any]] = Field(default_factory=list, max_length=6, description=(
+    catalog_version: str = Field(min_length=1, max_length=64)
+    targets: list[dict[str, Any]] = Field(min_length=1, max_length=6, description=(
         "Unique id, domain daily_ledger/income_items/monthly_income/income_composition, fields or metrics (1-16), range: start/end OR preset"
         "(+n for last_n_*; +base for same_period_last_year) OR all_history:true. Omit range=month to date. "
         "Optional filters:[{field,op,value}], order_by:[{field,direction:asc/desc}], top_n:1-100. "
         "Choose fields OR metrics; group_by uses catalog dimensions. compare: {preset:previous_period/"
-        "same_period_last_year} OR {range:{start,end/preset}}. page_size:1-200 (default 50)."))
-    continuations: list[Continuation] = Field(default_factory=list, max_length=6,
-        description="Continue immutable results with result_ref, cursor and optional page_size only; omit catalog_version/targets.")
+        "same_period_last_year} OR {range:{start,end/preset}}. row_limit:1-200 (default 200)."))
+    @classmethod
+    def model_json_schema(cls, **kwargs):
+        schema = super().model_json_schema(**kwargs)
+        # Validate targets individually to retain partial batch successes, but
+        # publish their real structure so providers do not omit identity or
+        # flatten range/filter arguments. Field names still come from the catalog.
+        target = QueryTarget.model_json_schema()
+        target["oneOf"] = [
+            {"required": ["fields"], "properties": {"fields": {"minItems": 1}, "metrics": {"maxItems": 0}}},
+            {"required": ["metrics"], "properties": {"metrics": {"minItems": 1}, "fields": {"maxItems": 0}}},
+        ]
+        schema.setdefault("$defs", {}).update(target.pop("$defs", {}))
+        schema["properties"]["targets"]["items"] = target
+        schema["properties"]["targets"]["description"] = (
+            "JSON array of objects, never a JSON-encoded string. Unique id per target. Choose fields OR metrics from catalog; group_by uses catalog dimensions. "
+            "Omit range=month to date; all history uses range:{all_history:true}. "
+            "row_limit defaults to 200."
+        )
+        def compact(value):
+            if isinstance(value, list):
+                return [compact(item) for item in value]
+            if isinstance(value, dict):
+                # Optional arguments are omitted rather than explicitly null.
+                if "anyOf" in value:
+                    alternatives = [item for item in value["anyOf"] if item.get("type") != "null"]
+                    if len(alternatives) == 1:
+                        return compact({**alternatives[0], **{
+                            key: item for key, item in value.items() if key != "anyOf"
+                        }})
+                return {key: ({name: compact(item) for name, item in content.items()}
+                              if key == "properties" else compact(content))
+                        for key, content in value.items() if key not in {"title", "default"}}
+            return value
+
+        schema = compact(schema)
+        return schema
 
     @model_validator(mode="after")
     def unique_ids(self):
-        if bool(self.targets) == bool(self.continuations):
-            raise ValueError("Choose new queries or continuations")
-        if self.continuations:
-            if self.catalog_version is not None or len({c.result_ref for c in self.continuations}) != len(self.continuations):
-                raise ValueError("Continuation cannot change catalog or repeat references")
-            return self
-        if self.catalog_version is None:
-            raise ValueError("New queries require catalog_version")
         ids = [target.get("id") for target in self.targets]
         if any(not isinstance(value, str) or not 1 <= len(value) <= 64 for value in ids):
             raise ValueError("Each target requires an id")
@@ -87,12 +108,18 @@ class QueryTarget(StrictInput):
     range: DateRange | None = None
     fields: list[str] = Field(default_factory=list, max_length=16)
     metrics: list[str] = Field(default_factory=list, max_length=16)
-    group_by: list[str] = Field(default_factory=list, max_length=2)
+    group_by: list[str] = Field(default_factory=list, max_length=2, description=(
+        "Charts require grouped rows matching chart dimension. Multiple months: one target with full range "
+        "and group_by:[month]; category time series: group_by:[month,category]. Ungrouped totals have no chart rows."))
     filters: list[Filter] = Field(default_factory=list, max_length=8)
     order_by: list[Order] = Field(default_factory=list, max_length=2)
     top_n: int | None = Field(default=None, ge=1, le=100)
-    compare: Comparison | None = None
-    page_size: int = Field(default=50, ge=1, le=200)
+    compare: Comparison | None = Field(default=None, description=(
+        "For period comparisons, request one target with the current range and compare for the baseline. "
+        "Use comparison.changes[metric].difference and change_percent returned by the backend. "
+        "previous_period maps a complete month to the previous complete month; explicit baseline uses range. "
+        "Two independent totals do not provide backend difference/change_percent."))
+    row_limit: int = Field(default=200, ge=1, le=200)
 
     @model_validator(mode="after")
     def supported(self):
@@ -237,8 +264,7 @@ async def execute_target(session, context, store, target):
     result = {"id": target.id, "status": "complete", "domain": target.domain, **dates,
               "queried_at": datetime.now(ZoneInfo(store.timezone)).isoformat(),
               "fields": {key: metadata[key] for key in target.fields}, "metrics": {},
-              "matched_count": 0, "selected_count": 0, "rows": [], "has_more": False,
-              "next_cursor": None, "result_ref": None,
+              "matched_count": 0, "selected_count": 0, "rows": [], "truncated": False, "result_ref": None,
               "group_by": target.group_by, "statistics_scope": "all_matching",
               "definitions": "已统计=营业/提前休息/休息；未统计数值为空。台账及分类明细不含结算；月度收入按开票月计整笔已确认结算，不分摊日周；其他数据不等于成本/利润。"}
     if dates["range"] is None:
@@ -268,7 +294,7 @@ async def execute_target(session, context, store, target):
                 previous["notes"] = [*previous_dates["notes"], *previous.get("notes", [])]
                 result["comparison"] = {**previous_dates, **previous,
                                         "changes": metric_changes(result, previous, target)}
-        result["page_range"] = {"start": 1 if result["rows"] else 0, "end": len(result["rows"])}
+        result["returned_range"] = {"start": 1 if result["rows"] else 0, "end": len(result["rows"])}
         return result
     base = select(*[columns[field].label(field) for field in target.fields]).select_from(StoreDailyRecord)
     count = select(func.count()).select_from(StoreDailyRecord)
@@ -305,7 +331,7 @@ async def execute_target(session, context, store, target):
             result["rows"].append(values)
     finally:
         await stream.close()
-    result["page_range"] = {"start": 1 if result["rows"] else 0, "end": len(result["rows"])}
+    result["returned_range"] = {"start": 1 if result["rows"] else 0, "end": len(result["rows"])}
     return result
 
 
@@ -381,93 +407,79 @@ def select_rows(result, target):
 
 
 async def store_query(session, context, arguments):
-    continuations = bool(arguments.continuations)
-    requests = arguments.continuations if continuations else arguments.targets
+    requests = arguments.targets
     response = {"status": "complete", "targets": []}
-    if not continuations:
-        # SQLite's legacy SELECT mode otherwise starts no physical read transaction.
-        # A short read snapshot covers counts, rows, summaries and all batch targets.
-        await session.execute(text("BEGIN"))
-        store = await session.get(Store, context.scope.store_id, populate_existing=True)
-        current_version = version(store)
-        if arguments.catalog_version != current_version:
-            return {"error": "catalog_stale", "catalog_version": current_version,
-                    "message": "能力配置已变化；整批未执行，请刷新目录后重试。"}
-        response["catalog_version"] = current_version
-    # Reserve complete failure receipts for every id before any target reads.
-    # At low remaining budgets even six small error messages may not fit.
-    receipt_targets = [{"id": request.result_ref} if continuations else request for request in requests]
-    minimum_receipts = 300 + failure_receipt_capacity(receipt_targets)
+    # One immutable read snapshot supports summaries and complete chart data.
+    await session.execute(text("BEGIN"))
+    store = await session.get(Store, context.scope.store_id, populate_existing=True)
+    current_version = version(store)
+    if arguments.catalog_version != current_version:
+        return {"error": "catalog_stale", "catalog_version": current_version,
+                "message": "能力配置已变化；整批未执行，请刷新目录后重试。"}
+    response["catalog_version"] = current_version
+    period = summary_period(context.question)
+    required_range = month_followup_range(context.question, local_today(store))
+    for raw in requests:
+        try:
+            target = QueryTarget.model_validate(raw)
+        except ValidationError:
+            continue
+        if required_range and (target.range is None or target.range.start != required_range["start"]
+                               or target.range.end != required_range["end"]):
+            return {"error": "query_range_required", "required_range": required_range,
+                    "message": "月份追问按门店当地今天重新解析；请用required_range作为显式range重新查询，尚未读取业务数据。"}
+        if needs_summary(target, period, local_today(store)):
+            return {"error": "query_granularity_required", "message": (
+                "一般月/年收入查询先用完整期间范围和汇总metrics，不默认拆分日/月明细；"
+                "当前期间截至当地今天。用户明确细问后再拆分。尚未读取业务数据。")}
+    minimum_receipts = 300 + failure_receipt_capacity(requests)
     context_capacity = context.remaining_context_chars
     if (context.remaining_result_chars < max(1000, minimum_receipts)
             or (context_capacity is not None
-                and context_capacity < 300 + failure_receipt_capacity(receipt_targets, message_size))):
-        if continuations:
-            for request in requests:
-                found = context.results.lookup_cursor(request.result_ref, request.cursor)
-                if found:
-                    snapshot, offset = found
-                    response["targets"].append(capacity_receipt(snapshot, request.result_ref, offset, context.results))
-                else:
-                    response["targets"].append({"id": request.result_ref,
-                                               "status": "failed", "error": "invalid_result_reference",
-                                               "message": "结果引用或游标无效。"})
-            response["status"] = "partial" if any(t.get("result_ref") for t in response["targets"]) else "failed"
-            return response
-        return {"error": "context_capacity", "message": "结果元数据及完整行空间不足，整批未执行。"}
+                and context_capacity < 300 + failure_receipt_capacity(requests, message_size))):
+        return {"error": "context_capacity", "message": "完整结果空间不足，整批未执行；请汇总或缩小日期范围。"}
     for index, raw in enumerate(requests):
-        reference, snapshot, offset, end = None, None, 0, 0
+        reference, snapshot, end = None, None, 0
         try:
-            reserve = (failure_receipt_capacity(receipt_targets[index + 1:]) if continuations else
-                       following_target_capacity(requests[index + 1:], store))
-            reserve_context = (failure_receipt_capacity(receipt_targets[index + 1:], message_size) if continuations else
-                               following_target_capacity(requests[index + 1:], store, message_size))
-            overhead = serialized_size(response) + reserve + 152
-            available = min(12000, context.remaining_result_chars) - overhead
-            available_context = (context_capacity - message_size(response)
-                                 - reserve_context - 154
+            reserve = following_target_capacity(requests[index + 1:], store)
+            reserve_context = following_target_capacity(requests[index + 1:], store, message_size)
+            available = min(12000, context.remaining_result_chars) - serialized_size(response) - reserve - 152
+            available_context = (context_capacity - message_size(response) - reserve_context - 154
                                  if context_capacity is not None else None)
-            if continuations:
-                found = context.results.lookup_cursor(raw.result_ref, raw.cursor)
-                if not found:
-                    raise QueryError("invalid_result_reference", "结果引用或游标无效、已结束或不属于本轮授权范围。")
-                snapshot, offset = found
-                reference, page_size = raw.result_ref, raw.page_size
-            else:
-                target = QueryTarget.model_validate(raw)
-                if available < 700 or (available_context is not None and available_context < 700):
-                    raise QueryError("context_capacity", "完整目标元数据及单行空间不足，当前目标未查询。")
-                snapshot = await execute_target(session, context, store, target)
-                reference, failure = materialize(snapshot, context.results, target.model_dump(mode="json"))
-                if failure:
-                    response["targets"].append(failure)
-                    continue
-                page_size = target.page_size
-            result, end = page(snapshot, reference, offset, page_size, context.results,
-                               available, available_context)
+            target = QueryTarget.model_validate(raw)
+            if available < 700 or (available_context is not None and available_context < 700):
+                raise QueryError("context_capacity", "完整目标元数据及单行空间不足，当前目标未查询。")
+            snapshot = await execute_target(session, context, store, target)
+            reference, failure = materialize(snapshot, context.results, target.model_dump(mode="json"))
+            if failure:
+                response["targets"].append(failure)
+                continue
+            result, end = limited_rows(snapshot, reference, target.row_limit, context.results,
+                                       available, available_context)
         except (ValidationError, ValueError, OverflowError) as exc:
-            target_id = snapshot["id"] if snapshot else raw.result_ref if continuations else raw["id"]
+            target_id = snapshot["id"] if snapshot else raw["id"]
             if isinstance(exc, QueryError):
                 result = {"id": target_id, "status": "failed", "error": exc.code,
                           "message": exc.message, **exc.metadata}
             else:
                 result = {"id": target_id, "status": "failed", "error": "invalid_query_target",
-                          "message": "字段、筛选、范围或参数组合不符合已上线目录。"}
+                          "message": "字段、筛选、范围或参数组合无效。fields和metrics二选一；"
+                                     "汇总用metrics，时间趋势加group_by。请修正后重试。"}
         candidate = {**response, "targets": [*response["targets"], result]}
         exceeds_context = context_capacity is not None and message_size(candidate) > context_capacity
         if serialized_size(candidate) > min(12000, context.remaining_result_chars) or exceeds_context:
             if reference:
-                result = capacity_receipt(snapshot, reference, offset, context.results)
-                end = offset
+                result = capacity_receipt(snapshot, reference, context.results)
+                end = 0
             else:
                 result = {"id": result["id"], "status": "failed", "error": "context_capacity",
-                          "message": "整个批量剩余容量不足，未截断当前目标。"}
+                          "message": "整个批量剩余容量不足，当前目标未查询。"}
         response["targets"].append(result)
-        if reference and end > offset:
-            context.results.record_read(reference, offset, end)
+        if reference and end:
+            context.results.record_read(reference, 0, end)
     completed = sum(r["status"] in ("complete", "unavailable") for r in response["targets"])
     succeeded = sum(r["status"] in ("complete", "unavailable", "partial") for r in response["targets"])
     response["status"] = "complete" if completed == len(response["targets"]) else "partial" if succeeded else "failed"
     if response["status"] == "partial":
-        response["message"] = "查询部分完成；已读页保留，未读范围见各目标，续页受本轮剩余容量限制。"
+        response["message"] = "明细仅部分返回；全匹配汇总与明细覆盖分开说明。需要更多明细请缩小日期范围重新查询，不支持翻页。"
     return response

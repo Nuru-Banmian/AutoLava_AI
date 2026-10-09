@@ -376,6 +376,11 @@ async def test_admin_sees_active_and_archived_stores_but_regular_users_do_not(
     admin = await user_factory(username="admin", password="secret", role="admin")
     active = await store_factory(name="Active")
     inactive = await store_factory(name="Inactive", is_active=False)
+    db_session.add_all([
+        StoreMember(store_id=active.id, user_id=admin.id),
+        StoreMember(store_id=inactive.id, user_id=admin.id),
+    ])
+    await db_session.flush()
     await client.post(
         "/api/auth/login",
         json={"username": admin.username, "password": "secret"},
@@ -412,6 +417,8 @@ async def test_admin_dependencies_allow_admin(user_factory, store_factory, db_se
     deps = load_feature_module("app.api.deps")
     admin = await user_factory(username="root", password="secret", role="admin")
     store = await store_factory(name="Admin Store")
+    db_session.add(StoreMember(store_id=store.id, user_id=admin.id))
+    await db_session.flush()
 
     assert await deps.require_admin(admin) is admin
     access = await deps.require_store_access(store.id, admin, db_session)

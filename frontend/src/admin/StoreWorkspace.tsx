@@ -6,12 +6,14 @@ import type { AdminStore } from "@/api/types";
 import { IncomeItemsPanel } from "@/admin/IncomeItemsPanel";
 import { StoreDetailsCard } from "@/admin/StoreDetailsCard";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/auth/AuthProvider";
 import { useUnsavedChanges } from "@/navigation/UnsavedChanges";
 
 const storesKey = ["admin", "stores"] as const;
 type StoreSelection = number | "new" | null;
 
 export function StoreWorkspace() {
+  const { user } = useAuth();
   const [selection, setSelection] = useState<StoreSelection>(null);
   const selectionRef = useRef<StoreSelection>(null);
   const initializedSelectionRef = useRef(false);
@@ -143,7 +145,7 @@ export function StoreWorkspace() {
           <option hidden value="" />
           {list.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
         </select>
-        <Button className="shrink-0" type="button" onClick={() => select("new")}>新建门店</Button>
+        {user?.is_owner && <Button className="shrink-0" type="button" onClick={() => select("new")}>新建门店</Button>}
       </div>
       <aside aria-label="门店列表" className="hidden min-w-0 lg:col-start-1 lg:row-start-2 lg:block">
         <ul className="divide-y overflow-hidden rounded-xl border border-border bg-card shadow-sm">

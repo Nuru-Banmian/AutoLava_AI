@@ -224,38 +224,38 @@ async def test_record_reads_and_writes_recheck_membership_and_feature_flag(
     assert membership is not None
     await db_session.delete(membership)
     await db_session.commit()
-    assert (await client.get(f"/api/settlements/{store_id}/months/{month}")).status_code == 403
+    assert (await client.get(f"/api/settlements/{store_id}/months/{month}")).status_code == 404
     assert (
         await client.post(
             f"/api/settlements/{store_id}/records",
             json={"company_id": company["id"], "opening_month": month, "amount": 10},
         )
-    ).status_code == 403
+    ).status_code == 404
     assert (
         await client.patch(
             f"/api/settlements/{store_id}/records/{record['id']}",
             json={"amount": 20, "revision": 1},
         )
-    ).status_code == 403
+    ).status_code == 404
     assert (
         await client.request(
             "DELETE",
             f"/api/settlements/{store_id}/records/{record['id']}",
             json={"revision": 1},
         )
-    ).status_code == 403
+    ).status_code == 404
     assert (
         await client.post(
             f"/api/settlements/{store_id}/records/{record['id']}/confirm",
             json={"revision": 1},
         )
-    ).status_code == 403
+    ).status_code == 404
     assert (
         await client.post(
             f"/api/settlements/{store_id}/records/{record['id']}/revoke-confirmation",
             json={"revision": 1},
         )
-    ).status_code == 403
+    ).status_code == 404
 
     db_session.add(StoreMember(store_id=store_id, user_id=user_id))
     fresh_store = await db_session.get(type(store), store_id)
@@ -543,6 +543,7 @@ async def test_repeated_transitions_return_canonical_state_without_double_counti
 
 async def test_concurrent_confirm_and_revoke_requests_each_apply_once() -> None:
     async with engine.begin() as connection:
+        await connection.exec_driver_sql("PRAGMA defer_foreign_keys=ON")
         for table in reversed(Base.metadata.sorted_tables):
             await connection.execute(table.delete())
     async with async_session_factory() as setup:
@@ -563,6 +564,7 @@ async def test_concurrent_confirm_and_revoke_requests_each_apply_once() -> None:
         )
         setup.add_all([user, store])
         await setup.flush()
+        setup.add(StoreMember(store_id=store.id, user_id=user.id))
         company = SettlementCompany(
             store_id=store.id,
             name="Alpha",

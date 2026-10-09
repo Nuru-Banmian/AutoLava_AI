@@ -241,6 +241,7 @@ function Invoke-PythonCommand([string]$Label, [string[]]$Arguments) {
 function Invoke-DatabaseSetup {
     Invoke-PythonCommand "升级数据库结构" @("-m", "alembic", "upgrade", "head")
     Invoke-PythonCommand "初始化本地管理员" @("-m", "app.scripts.create_admin")
+    Invoke-PythonCommand "初始化门店权限" @("-m", "app.scripts.initialize_permissions")
 }
 
 function Start-Backend {

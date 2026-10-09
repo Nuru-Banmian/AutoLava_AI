@@ -16,6 +16,35 @@ from app.core.config import get_settings
 from app.main import create_app
 
 
+async def test_scope_is_rechecked_after_another_connection_holds_sqlite_writer(tmp_path):
+    from sqlalchemy import event
+    from tests.api.test_agent_chat import StreamingModel, chat_app
+
+    async with chat_app(tmp_path, StreamingModel()) as (client, app, sessions):
+        waiting = asyncio.Event()
+        engine = sessions.kw["bind"]
+
+        @event.listens_for(engine.sync_engine, "before_cursor_execute")
+        def detect_writer_wait(_connection, _cursor, statement, *_args):
+            if statement == "BEGIN IMMEDIATE":
+                waiting.set()
+
+        with closing(sqlite3.connect(engine.url.database)) as external:
+            external.execute("BEGIN IMMEDIATE")
+            external.execute("DELETE FROM store_members WHERE user_id = 1 AND store_id = 1")
+            pending = asyncio.create_task(client.patch("/api/admin/stores/1", json={"name": "Late write"}))
+            try:
+                await asyncio.wait_for(waiting.wait(), 5)
+            finally:
+                external.commit()
+            assert (await pending).status_code == 404
+        event.remove(engine.sync_engine, "before_cursor_execute", detect_writer_wait)
+        await client.post("/api/auth/login", json={"username": "user-2", "password": "Password123"})
+        assert {
+            store["name"] for store in (await client.get("/api/admin/stores")).json()
+        } == {"门店甲", "门店乙"}
+
+
 class WriteGate:
     def __init__(self) -> None:
         self.waiting = asyncio.Event()
@@ -72,6 +101,7 @@ async def test_migrated_management_commands_roll_back_and_recheck_identity(
     migrated_engine = create_async_engine(database.sqlite_url(database_path))
     sessions = async_sessionmaker(migrated_engine, expire_on_commit=False)
     monkeypatch.setenv("AUTOLAVA_COOKIE_SECURE", "false")
+    monkeypatch.setenv("AUTOLAVA_BOOTSTRAP_USERNAME", "command-admin")
     get_settings.cache_clear()
     app = create_app()
 
@@ -122,7 +152,7 @@ async def test_migrated_management_commands_roll_back_and_recheck_identity(
 
             with closing(sqlite3.connect(database_path)) as connection:
                 connection.execute(
-                    "CREATE TRIGGER reject_member_insert BEFORE INSERT ON store_members "
+                    "CREATE TRIGGER reject_member_insert BEFORE DELETE ON store_members "
                     "BEGIN SELECT RAISE(ABORT, 'injected write failure'); END"
                 )
                 connection.commit()
@@ -132,7 +162,7 @@ async def test_migrated_management_commands_roll_back_and_recheck_identity(
                 cookies=client.cookies,
             ) as failure_client:
                 failed = await failure_client.put(
-                    "/api/admin/stores/1/members", json={"user_ids": [2]}
+                    "/api/admin/stores/1/members", json={"user_ids": []}
                 )
                 assert failed.status_code == 500
             with closing(sqlite3.connect(database_path)) as connection:

@@ -43,6 +43,8 @@ export function UsersPanel() {
 
   const users = useQuery({ queryKey: usersKey, queryFn: () => api<AdminUser[]>("/admin/users") });
   const stores = useQuery({ queryKey: storesKey, queryFn: () => api<AdminStore[]>("/admin/stores") });
+  const editorOptions = useQuery({ queryKey: ["admin", "employee-editor-options"],
+    queryFn: () => api<{ id: number; username: string }[]>("/admin/users/editor-options") });
 
   function commitSelection(next: UserSelection) {
     selectionRef.current = next;
@@ -154,6 +156,11 @@ export function UsersPanel() {
     : null;
   const mountedTarget = targetFor(selection);
   const mountedRequest = mountedTarget ? requestStates[mountedTarget] : undefined;
+  const managers: AdminUser[] = [
+    ...(users.data ?? []).filter((user) => user.role === "admin"),
+    ...(actor?.is_owner ? [{ ...actor, username: `主管理员（${actor.username}）`,
+      is_active: true, store_ids: (stores.data ?? []).map((store) => store.id), manager_id: null }] : []),
+  ];
 
   useEffect(() => {
     if (!users.isSuccess || initializedSelectionRef.current) return;
@@ -190,7 +197,9 @@ export function UsersPanel() {
         username: draft.username.trim(),
         password: draft.password,
         role: draft.role,
-        store_ids: draft.role === "user" ? draft.store_ids : [],
+        store_ids: draft.store_ids,
+        ...(draft.role === "user" ? { editor_ids: draft.editor_ids ?? [] } : {}),
+        ...(actor?.is_owner && draft.role === "user" ? { manager_id: draft.manager_id } : {}),
       },
     });
   }
@@ -207,7 +216,10 @@ export function UsersPanel() {
       body: {
         role: draft.role,
         is_active: draft.is_active,
-        store_ids: draft.role === "user" ? draft.store_ids : [],
+        store_ids: draft.store_ids,
+        ...(draft.role === "user" && (actor?.is_owner || selectedUser?.can_manage_editors)
+          ? { editor_ids: draft.editor_ids ?? [] } : {}),
+        ...(actor?.is_owner && draft.role === "user" ? { manager_id: draft.manager_id } : {}),
         ...(draft.password ? { password: draft.password } : {}),
       },
     });
@@ -228,10 +240,13 @@ export function UsersPanel() {
       isOwner={actor?.is_owner === true}
       key="new"
       mode="create"
+      canManageEditors
+      editorOptions={editorOptions.data ?? []}
       onDirtyChange={markDirty}
       onSubmit={submitCreate}
       pending={mountedRequest?.pending === true}
       stores={stores.data ?? []}
+      managers={managers}
       successVersion={createSuccessVersion}
       user={null}
     />;
@@ -240,7 +255,7 @@ export function UsersPanel() {
   } else if (selectedUser.role === "admin" && !actor?.is_owner) {
     editor = <section className="min-w-0 space-y-2 rounded-xl border border-border bg-card p-4 shadow-sm [overflow-wrap:anywhere] sm:p-5">
       <h2 className="text-lg font-semibold">{selectedUser.username}</h2>
-      <p className="text-sm leading-6 text-muted-foreground">管理员账号只能由最终管理员编辑</p>
+      <p className="text-sm leading-6 text-muted-foreground">从管理员账号只能由主管理员编辑</p>
     </section>;
   } else {
     editor = <UserEditor
@@ -248,11 +263,14 @@ export function UsersPanel() {
       isOwner={actor?.is_owner === true}
       key={selectedUser.id}
       mode="edit"
+      canManageEditors={actor?.is_owner === true || selectedUser.can_manage_editors === true}
+      editorOptions={editorOptions.data ?? []}
       onDelete={() => removeUser(selectedUser.id)}
       onDirtyChange={markDirty}
       onSubmit={submitEdit}
       pending={mountedRequest?.pending === true}
       stores={stores.data ?? []}
+      managers={managers}
       successVersion={editSuccessVersion}
       user={selectedUser}
     />;
@@ -298,7 +316,7 @@ export function UsersPanel() {
             >
               <span className="block font-semibold">{user.username}</span>
               <span className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                <span>{user.role === "admin" ? "管理员" : "普通用户"}</span>
+                <span>{user.role === "admin" ? "从管理员" : "员工"}</span>
                 <span>{user.is_active ? "启用" : "停用"}</span>
                 <span>{user.store_ids.length} 个门店</span>
               </span>

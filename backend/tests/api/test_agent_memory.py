@@ -47,6 +47,33 @@ def chat_background(messages):
     return snapshots[0]
 
 
+@pytest.mark.parametrize("target_version", [1, 99])
+async def test_explicit_targeted_conflict_is_fenced_and_replaces_only_on_confirmation(tmp_path, target_version):
+    curator = Curator()
+    async with chat_app(tmp_path, StreamingModel(), memory_model=curator) as (client, _, _):
+        assert (await save(client))["status"] == "completed"
+        original = (await client.get("/api/agent/1/memories")).json()["items"][0]
+        content = "以后分析先列数据，再给结论"
+        curator.proposal = {"action": "conflict", "content": content, "category": "preference",
+                            "target_id": original["id"], "target_version": target_version}
+        run = await save(client, "记住：" + content)
+        state = (await client.get("/api/agent/1/memories")).json()["items"]
+        if target_version != original["version"]:
+            assert run["error_code"] == "memory_invalid_proposal"
+            assert len(state) == 1 and state[0]["id"] == original["id"]
+            assert "已保存" not in run["output"]
+            return
+        assert run["status"] == "completed", run
+        assert len(state) == 2
+        candidate = next(m for m in state if m["status"] == "pending_confirmation")
+        assert next(m for m in state if m["status"] == "active")["id"] == original["id"]
+        confirmed = await client.post(f'/api/agent/1/memories/{candidate["id"]}/confirm',
+                                      json={"expected_version": candidate["version"]})
+        assert confirmed.status_code == 200
+        state = (await client.get("/api/agent/1/memories")).json()["items"]
+        assert len(state) == 1 and state[0]["content"] == content and state[0]["status"] == "active"
+
+
 async def test_explicit_save_source_and_reset_retention(tmp_path):
     curator = Curator()
     async with chat_app(tmp_path, StreamingModel(), memory_model=curator) as (client, app, factory):

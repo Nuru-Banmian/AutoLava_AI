@@ -5,9 +5,9 @@ import pytest
 
 @pytest.mark.anyio
 async def test_old_config_and_ledger_draft_cannot_write_after_config_changes(
-    client, user_factory, store_factory, db_session
+    client, primary_admin_factory, store_factory, db_session
 ):
-    await user_factory(username="revision-admin", password="secret123", role="admin")
+    await primary_admin_factory(username="revision-admin", password="secret123", role="admin")
     assert (await client.post("/api/auth/login", json={"username": "revision-admin", "password": "secret123"})).status_code == 200
     store = await store_factory(name="Revision store")
     await db_session.commit()
@@ -33,9 +33,9 @@ async def test_old_config_and_ledger_draft_cannot_write_after_config_changes(
 
 @pytest.mark.anyio
 async def test_each_category_entry_advances_one_shared_revision(
-    client, user_factory, store_factory, db_session
+    client, primary_admin_factory, store_factory, db_session
 ):
-    await user_factory(username="category-admin", password="secret123", role="admin")
+    await primary_admin_factory(username="category-admin", password="secret123", role="admin")
     assert (await client.post("/api/auth/login", json={"username": "category-admin", "password": "secret123"})).status_code == 200
     store = await store_factory(name="Category revision store")
     await db_session.commit()
@@ -76,9 +76,9 @@ async def test_each_category_entry_advances_one_shared_revision(
 
 @pytest.mark.anyio
 async def test_missing_revision_requires_reload_without_mutation(
-    client, user_factory, store_factory, db_session
+    client, primary_admin_factory, store_factory, db_session
 ):
-    await user_factory(username="missing-admin", password="secret123", role="admin")
+    await primary_admin_factory(username="missing-admin", password="secret123", role="admin")
     assert (await client.post("/api/auth/login", json={"username": "missing-admin", "password": "secret123"})).status_code == 200
     store = await store_factory(name="Missing revision store")
     await db_session.commit()
@@ -99,9 +99,9 @@ async def test_missing_revision_requires_reload_without_mutation(
 
 @pytest.mark.anyio
 async def test_config_conflict_preserves_existing_record_and_category_snapshot(
-    client, user_factory, store_factory, db_session
+    client, primary_admin_factory, store_factory, db_session
 ):
-    await user_factory(username="snapshot-admin", password="secret123", role="admin")
+    await primary_admin_factory(username="snapshot-admin", password="secret123", role="admin")
     assert (await client.post("/api/auth/login", json={"username": "snapshot-admin", "password": "secret123"})).status_code == 200
     store = await store_factory(name="Snapshot revision store")
     store_id = store.id

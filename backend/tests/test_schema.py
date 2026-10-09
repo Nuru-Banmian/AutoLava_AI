@@ -11,6 +11,9 @@ import app.models.settlement  # noqa: F401
 def test_final_tables_are_registered() -> None:
     assert set(Base.metadata.tables) == {
         "users",
+        "employee_editors",
+        "permission_initializations",
+        "demo_imports",
         "login_sessions",
         "stores",
         "store_members",

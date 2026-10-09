@@ -14,6 +14,7 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.database import get_session, sqlite_url
+from app.core.config import get_settings
 from app.core.security import hash_password
 from app.main import create_app
 from app.models.identity import Store, StoreMember, User
@@ -26,7 +27,9 @@ class NoWeather:
 
 
 @pytest.fixture
-async def group_analysis(tmp_path: Path) -> AsyncIterator[tuple]:
+async def group_analysis(tmp_path: Path, monkeypatch) -> AsyncIterator[tuple]:
+    monkeypatch.setenv("AUTOLAVA_BOOTSTRAP_USERNAME", "group-analysis-admin")
+    get_settings.cache_clear()
     database = tmp_path / "group-analysis.sqlite3"
     subprocess.run(
         [sys.executable, "-m", "alembic", "upgrade", "head"],

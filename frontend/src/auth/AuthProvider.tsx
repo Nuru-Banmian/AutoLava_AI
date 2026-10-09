@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createContext, type PropsWithChildren, useContext } from "react";
+import { createContext, type PropsWithChildren, useContext, useEffect } from "react";
 
 import { api, ApiError } from "@/api/client";
 import type { components } from "@/api/generated";
@@ -68,6 +68,18 @@ export function AuthProvider({ children }: PropsWithChildren) {
       queryClient.setQueryData(authQueryKey, null);
     },
   });
+
+  useEffect(() => {
+    const revoked = () => {
+      advanceSessionScope();
+      queryClient.setQueryData(authQueryKey, null);
+      void queryClient.cancelQueries({ predicate: userQuery }).then(() => {
+        queryClient.removeQueries({ predicate: userQuery });
+      });
+    };
+    window.addEventListener("autolava:session-revoked", revoked);
+    return () => window.removeEventListener("autolava:session-revoked", revoked);
+  }, [queryClient]);
 
   return (
     <AuthContext.Provider

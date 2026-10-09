@@ -7,6 +7,22 @@ import { Button } from "@/components/ui/button";
 
 type MemoryList = components["schemas"]["MemoryList"];
 type MemoryItem = MemoryList["items"][number];
+type MemoryJob = components["schemas"]["MemoryJob"];
+
+const jobFailures: Record<string, string> = {
+  memory_invalid_proposal: "整理结果格式不符合要求，本次未保存；可以重新明确表达要记住的内容。",
+  memory_version_conflict: "记忆或门店背景已更新，本次未保存。",
+  memory_context_budget: "待整理内容过长，本次未保存。",
+  memory_model_format: "整理模型返回格式有误，本次未保存。",
+};
+
+function jobState(job: MemoryJob) {
+  if (job.status === "completed") {
+    return ({ not_saved: "整理完成：无需保存长期记忆", pending_confirmation: "候选记忆待确认，尚未生效",
+      saved: "记忆已保存", already_saved: "记忆已保存", already_processed: "整理完成（已处理）" } as Record<string, string>)[String(job.result?.status)] ?? "整理完成";
+  }
+  return { pending: "等待整理", running: "整理中", failed: "整理失败", stale: "来源或版本已失效" }[job.status];
+}
 
 export function AgentMemoryPanel({ storeId }: { storeId: number }) {
   const [value, setValue] = useState<MemoryList | null>(null);
@@ -242,16 +258,25 @@ export function AgentMemoryPanel({ storeId }: { storeId: number }) {
     </article>)}
     {value?.next_before && <Button variant="outline" disabled={loading} onClick={() => void load(value.next_before!)}>读取更多记忆</Button>}
     {jobError && <p role="alert">{jobError}</p>}
-    {jobs && <details open={processing || jobs.items.some((job) => job.status === "failed")} className="min-w-0 text-sm">
-      <summary>记忆整理状态</summary>
-      {!jobs.items.length && <p>暂无整理任务。</p>}
-      {jobs.items.map((job) => <p key={job.id} className="mt-2 break-words">
-        来源消息 #{job.message_id} · {{ pending: "等待整理", running: "整理中", completed: "整理完成", failed: "整理失败", stale: "来源或版本已失效" }[job.status]}
-        {` · 尝试 ${job.attempts} · 模型调用 ${job.calls}`}
-        {job.error_code && ` · ${job.error_code}`}
-        {!!job.failures.length && ` · 失败记录：${job.failures.map((failure) => String(failure.code)).join("、")}`}
-      </p>)}
-      {jobs.next_before && <Button variant="outline" onClick={() => void loadJobs(jobs.next_before!)}>读取更早整理任务</Button>}
-    </details>}
+    {jobs && <div className="min-w-0 rounded-lg border bg-muted/40 p-3 text-sm">
+      <h3 className="font-medium">记忆整理状态</h3>
+      {!jobs.items.length ? <p className="mt-2 text-muted-foreground">暂无整理任务。</p> : <>
+        <p className="mt-2 font-medium">最新：{jobState(jobs.items[0])}</p>
+        {jobs.items[0].error_code && <p className="mt-1 text-muted-foreground">{jobFailures[jobs.items[0].error_code] ?? "本次整理未完成，请查看整理记录。"}</p>}
+        <details className="mt-3">
+          <summary className="cursor-pointer text-muted-foreground">查看整理记录（{jobs.items.length} 条）</summary>
+          <div className="mt-2 grid gap-3">
+            {jobs.items.map((job) => <div key={job.id} className="min-w-0 border-t pt-2">
+              <p className="break-words">来源消息 #{job.message_id} · {jobState(job)}</p>
+              {job.error_code && <p className="mt-1 text-muted-foreground">{jobFailures[job.error_code] ?? "本次整理未完成。"}</p>}
+              <p className="mt-1 text-xs text-muted-foreground">尝试 {job.attempts} · 模型调用 {job.calls}</p>
+              {job.error_code && <p className="mt-1 break-all text-xs text-muted-foreground">错误代码：{job.error_code}</p>}
+              {!!job.failures.length && <p className="mt-1 break-all text-xs text-muted-foreground">失败记录：{job.failures.map((failure) => String(failure.code)).join("、")}</p>}
+            </div>)}
+          </div>
+          {jobs.next_before && <Button className="mt-2" variant="outline" onClick={() => void loadJobs(jobs.next_before!)}>读取更早整理任务</Button>}
+        </details>
+      </>}
+    </div>}
   </section>;
 }

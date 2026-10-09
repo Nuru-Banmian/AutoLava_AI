@@ -11,7 +11,8 @@ from app.agents.providers.bailian import ModelFailure, ToolCall
 from app.main import create_app
 from app.core.config import get_settings
 from tests.api.test_agent_chat import StreamingModel, chat_app, completed
-from tests.api.test_agent_memory import chat_background, save
+from tests.api.test_agent_memory import save
+from tests.api.test_agent_tools import background
 
 
 class BackgroundCurator:
@@ -99,8 +100,8 @@ async def test_automatic_save_merge_update_candidates_and_scopes(tmp_path):
             curator.action, curator.content = "reject", None
             probe = await turn(client, "你好")
             await settled(client, probe["id"])
-            background = chat_background(app.state.agent_runner.model.calls[-1])
-            assert candidate["id"] not in [m["id"] for m in background["memories"]]
+            current_background = background(app.state.agent_runner.model.calls[-1])
+            assert candidate["id"] not in [m["id"] for m in current_background["memories"]]
             path = f'/api/agent/1/memories/{candidate["id"]}'
             payload = {"expected_version": 1, **({"content": "以后回答简短"} if decision == "edit" else {})}
             operation = "reject" if decision == "reject" else "confirm"
@@ -164,6 +165,29 @@ async def test_failures_are_bounded_and_do_not_change_completed_answer(tmp_path)
         assert job["error_code"] == "model_unavailable"
         assert (await client.get(f'/api/agent/1/runs/{run["id"]}')).json() == run
         assert (await client.get("/api/agent/1/memories")).json()["items"] == []
+
+
+async def test_scope_revoke_and_immediate_regrant_fences_background_memory(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOLAVA_BOOTSTRAP_USERNAME", "user-3")
+    get_settings.cache_clear()
+    curator = BackgroundCurator()
+    curator.release.clear()
+    async with chat_app(tmp_path, StreamingModel(), memory_model=curator) as (client, app, _):
+        await app.state.agent_runner.jobs.start()
+        run = await turn(client, "撤权前的偏好不得迟到写入")
+        await asyncio.wait_for(curator.entered.wait(), 5)
+        async with AsyncClient(transport=ASGITransport(app), base_url="http://testserver") as primary:
+            await primary.post("/api/auth/login", json={"username": "user-3", "password": "Password123"})
+            assert (await primary.patch("/api/admin/users/1", json={"store_ids": []})).status_code == 200
+            assert (await primary.patch("/api/admin/users/1", json={"store_ids": [1, 2]})).status_code == 200
+        assert (await client.get("/api/agent/1/memory-jobs")).status_code == 401
+        curator.release.set()
+        await client.post("/api/auth/login", json={"username": "user-1", "password": "Password123"})
+        assert (await settled(client, run["id"]))["status"] == "stale"
+        assert (await client.get("/api/agent/1/memories")).json()["items"] == []
+        fresh = await turn(client, "重新授权后可以记住的新偏好")
+        assert (await settled(client, fresh["id"]))["status"] == "completed"
+        assert [m["content"] for m in (await client.get("/api/agent/1/memories")).json()["items"]] == ["重新授权后可以记住的新偏好"]
 
 
 async def test_queued_turn_rebases_normal_saves_but_not_user_mutations(tmp_path):

@@ -2,17 +2,25 @@
 from copy import deepcopy
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class MemoryProposal(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     action: Literal["save", "duplicate", "update", "conflict", "infer", "reject"]
-    content: str = Field(min_length=1, max_length=2000)
-    category: Literal["preference", "store_background"]
+    content: str | None = Field(default=None, min_length=1, max_length=2000,
+                               description="除 reject 外必须提供记忆内容；reject 可以省略。")
+    category: Literal["preference", "store_background"] | None = Field(
+        default=None, description="除 reject 外必须提供记忆类别；reject 可以省略。")
     target_id: str | None = None
     target_version: int | None = Field(default=None, ge=1)
     evidence: str | None = Field(default=None, min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def require_memory_fields(self):
+        if self.action != "reject" and (self.content is None or self.category is None):
+            raise ValueError("Memory operations require content and category")
+        return self
 
 
 MEMORY_TOOLS = [{"type": "function", "function": {

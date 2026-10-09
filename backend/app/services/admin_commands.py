@@ -25,24 +25,28 @@ from app.schemas.admin import (
     UserPatch,
 )
 from app.schemas.income_config import IncomeCategoryVersionBody
-from app.services.access import require_fresh_store_access, require_fresh_user
+from app.services.access import (
+    require_fresh_store_access,
+    require_fresh_user,
+    require_store_scope,
+    store_scope_clause,
+)
 from app.services.briefing import BriefingService
 from app.services.income_config import IncomeConfigService, require_category_manager
-from app.services.owner import is_owner
+from app.services.owner import is_owner, is_administrator, owner_username
 from app.services.sessions import revoke_all
 from app.services.weather import FrozenWeatherLocation
+from app.services.employee_access import (
+    employee_management_clause,
+    managed_user_payload,
+    replace_editors,
+    require_manage_target,
+)
 
 
 def _require_can_assign_role(actor: User, role: str | None) -> None:
     if role == "admin" and not is_owner(actor):
         raise HTTPException(403, "只有最终管理员可以授予管理员角色")
-
-
-def _require_can_manage_target(actor: User, target: User) -> None:
-    if is_owner(target):
-        raise HTTPException(403, "最终管理员账号受保护")
-    if target.role == "admin" and not is_owner(actor):
-        raise HTTPException(403, "只有最终管理员可以管理管理员账号")
 
 
 def _decimal(value: Decimal | None) -> str | None:
@@ -56,10 +60,6 @@ def _user_payload(user: User) -> dict[str, Any]:
         "role": user.role,
         "is_active": user.is_active,
     }
-
-
-def _managed_user_payload(user: User, store_ids: list[int]) -> dict[str, Any]:
-    return _user_payload(user) | {"store_ids": store_ids}
 
 
 def _store_payload(store: Store) -> dict[str, Any]:
@@ -109,14 +109,16 @@ async def _require_users(session: AsyncSession, user_ids: Iterable[int]) -> list
     return users
 
 
-async def _require_stores(session: AsyncSession, store_ids: Iterable[int]) -> None:
+async def _require_stores(
+    session: AsyncSession, store_ids: Iterable[int], *, allow_archived: bool = False
+) -> None:
     unique_ids = sorted(set(store_ids))
     if not unique_ids:
         return
     stores = list(await session.scalars(select(Store).where(Store.id.in_(unique_ids))))
     if {store.id for store in stores} != set(unique_ids):
         raise HTTPException(404, "Store not found")
-    if any(not store.is_active for store in stores):
+    if not allow_archived and any(not store.is_active for store in stores):
         raise HTTPException(409, "归档门店不能分配给用户")
 
 
@@ -128,6 +130,69 @@ async def _user_store_ids(session: AsyncSession, user_id: int) -> list[int]:
             .order_by(StoreMember.store_id)
         )
     )
+
+
+async def _employee_manager(
+    session: AsyncSession, actor: User, role: str, manager_id: int | None
+) -> User | None:
+    if role == "admin":
+        if manager_id is not None:
+            raise HTTPException(422, "管理员不能设置员工归属")
+        return None
+    manager = (
+        await session.get(User, manager_id, populate_existing=True)
+        if manager_id is not None
+        else await session.scalar(select(User).where(User.username == owner_username()))
+    )
+    if manager is None or not is_administrator(manager):
+        raise HTTPException(422, "员工必须归属主管理员或从管理员")
+    return manager
+
+
+async def _validate_assignment(
+    session: AsyncSession,
+    store_ids: list[int],
+    manager: User | None,
+    role: str,
+    *,
+    retained_ids: Iterable[int] = (),
+) -> None:
+    await _require_stores(session, store_ids, allow_archived=True)
+    if role != "admin":
+        await _require_stores(session, set(store_ids) - set(retained_ids))
+    if manager is not None:
+        for store_id in store_ids:
+            try:
+                await require_store_scope(session, manager, store_id)
+            except HTTPException as exc:
+                raise HTTPException(403, "员工门店范围不能超出所属管理员范围") from exc
+
+
+async def _replace_user_scope(session: AsyncSession, user: User, next_ids: list[int]) -> None:
+    previous_ids = await _user_store_ids(session, user.id)
+    removed = set(previous_ids) - set(next_ids)
+    if removed:
+        await revoke_all(session, user.auth_identity)
+        if is_administrator(user):
+            employees = (
+                await session.scalars(select(User).where(User.manager_id == user.id))
+            ).all()
+            for employee in employees:
+                employee_ids = await _user_store_ids(session, employee.id)
+                if removed & set(employee_ids):
+                    await session.execute(
+                        delete(StoreMember).where(
+                            StoreMember.user_id == employee.id, StoreMember.store_id.in_(removed)
+                        )
+                    )
+                    await revoke_all(session, employee.auth_identity)
+    await session.execute(delete(StoreMember).where(StoreMember.user_id == user.id))
+    session.add_all(StoreMember(store_id=store_id, user_id=user.id) for store_id in next_ids)
+
+
+async def _require_no_employees(session: AsyncSession, user_id: int) -> None:
+    if await session.scalar(select(exists().where(User.manager_id == user_id))):
+        raise HTTPException(409, "请先转移该管理员的员工归属")
 
 
 STORE_PROTECTED_REFERENCES = (
@@ -147,7 +212,7 @@ async def _store_has_protected_references(session: AsyncSession, store_id: int) 
 
 async def create_user(body: UserCreate, session: AsyncSession, actor: User) -> dict[str, Any]:
     actor_id = actor.id
-    next_store_ids = [] if body.role == "admin" else sorted(set(body.store_ids))
+    next_store_ids = sorted(set(body.store_ids))
     await session.commit()
     next_password_hash = await hash_password_async(body.password)
     try:
@@ -156,18 +221,33 @@ async def create_user(body: UserCreate, session: AsyncSession, actor: User) -> d
                 session, user_id=actor_id, capability="users.manage"
             )
             _require_can_assign_role(fresh_actor, body.role)
-            await _require_stores(session, next_store_ids)
+            if body.role == "user" and is_owner(fresh_actor) and body.manager_id is None:
+                raise HTTPException(422, "必须选择员工所属管理员")
+            if not is_owner(fresh_actor) and body.manager_id not in (None, fresh_actor.id):
+                raise HTTPException(403, "不能指定其他员工归属")
+            manager = await _employee_manager(
+                session,
+                fresh_actor,
+                body.role,
+                fresh_actor.id
+                if body.role == "user" and not is_owner(fresh_actor)
+                else body.manager_id,
+            )
+            await _validate_assignment(session, next_store_ids, manager, body.role)
             user = User(
                 username=body.username,
                 password_hash=next_password_hash,
                 role=body.role,
+                manager_id=manager.id if manager else None,
+                creator_id=fresh_actor.id if body.role == "user" else None,
             )
             session.add(user)
             await session.flush()
             session.add_all(
                 StoreMember(store_id=store_id, user_id=user.id) for store_id in next_store_ids
             )
-            response = _managed_user_payload(user, next_store_ids)
+            await replace_editors(session, fresh_actor, user, body.editor_ids)
+            response = await managed_user_payload(session, fresh_actor, user, next_store_ids)
     except IntegrityError as exc:
         raise HTTPException(409, "Username already exists") from exc
     return response
@@ -190,7 +270,10 @@ async def patch_user(
             active_admins = list(
                 await session.scalars(
                     select(User)
-                    .where(User.role == "admin", User.is_active.is_(True))
+                    .where(
+                        (User.role == "admin") | (User.username == owner_username()),
+                        User.is_active.is_(True),
+                    )
                     .order_by(User.id)
                     .execution_options(populate_existing=True)
                 )
@@ -198,7 +281,7 @@ async def patch_user(
         user = await session.get(User, user_id, populate_existing=True)
         if user is None:
             raise HTTPException(404, "User not found")
-        _require_can_manage_target(fresh_actor, user)
+        await require_manage_target(session, fresh_actor, user)
         _require_can_assign_role(fresh_actor, body.role)
         if body.is_active is False and user.is_active:
             if user.id == actor_id:
@@ -210,24 +293,67 @@ async def patch_user(
                 raise HTTPException(409, "At least one active administrator is required")
         previous_store_ids = await _user_store_ids(session, user.id)
         demotes_administrator = user.role == "admin" and body.role == "user"
-        includes_access_change = body.role is not None or body.store_ids is not None
+        if demotes_administrator:
+            await _require_no_employees(session, user.id)
+        next_role = body.role or user.role
+        manager_changed = "manager_id" in body.model_fields_set
+        if manager_changed and not is_owner(fresh_actor):
+            raise HTTPException(403, "只有主管理员可以转移员工归属")
+        if manager_changed and next_role == "user" and body.manager_id is None:
+            raise HTTPException(422, "必须选择员工所属管理员")
+        manager_id = body.manager_id if manager_changed else user.manager_id
+        if next_role == "admin":
+            manager_id = None
+        manager = await _employee_manager(session, fresh_actor, next_role, manager_id)
+        if manager is not None and manager.id == user.id:
+            raise HTTPException(422, "员工不能归属自己")
+        next_store_ids = (
+            sorted(set(body.store_ids)) if body.store_ids is not None else previous_store_ids
+        )
+        if body.store_ids is not None and not is_owner(fresh_actor):
+            for store_id in next_store_ids:
+                await _validate_assignment(
+                    session, [store_id], fresh_actor, next_role, retained_ids=previous_store_ids
+                )
+            visible_ids = set(
+                await session.scalars(
+                    select(Store.id).where(await store_scope_clause(session, fresh_actor))
+                )
+            )
+            next_store_ids = sorted(set(next_store_ids) | (set(previous_store_ids) - visible_ids))
+        if manager_changed and body.store_ids is None and manager is not None:
+            next_store_ids = [
+                store_id
+                for store_id in next_store_ids
+                if await session.scalar(
+                    select(Store.id).where(
+                        Store.id == store_id, await store_scope_clause(session, manager)
+                    )
+                )
+                is not None
+            ]
+        if body.store_ids is not None or manager_changed or body.role is not None:
+            await _validate_assignment(
+                session, next_store_ids, manager, next_role, retained_ids=previous_store_ids
+            )
+        if user.manager_id != (manager.id if manager else None):
+            await revoke_all(session, user.auth_identity)
+        user.manager_id = manager.id if manager else None
         if next_password_hash is not None:
             user.password_hash = next_password_hash
         if body.is_active is not None:
             user.is_active = body.is_active
         if body.role is not None:
             user.role = body.role
-        next_store_ids = previous_store_ids
-        if user.role == "admin":
-            next_store_ids = []
-        elif body.store_ids is not None:
-            next_store_ids = sorted(set(body.store_ids))
-            await _require_stores(session, next_store_ids)
-        if includes_access_change:
-            await session.execute(delete(StoreMember).where(StoreMember.user_id == user.id))
-            session.add_all(
-                StoreMember(store_id=store_id, user_id=user.id) for store_id in next_store_ids
-            )
+        if next_role == "admin":
+            user.creator_id = None
+            await replace_editors(session, fresh_actor, user, [])
+        elif demotes_administrator:
+            user.creator_id = fresh_actor.id
+        if body.editor_ids is not None:
+            await replace_editors(session, fresh_actor, user, body.editor_ids)
+        if body.store_ids is not None or manager_changed or body.role is not None:
+            await _replace_user_scope(session, user, next_store_ids)
         removes_store_access = bool(set(previous_store_ids) - set(next_store_ids))
         if (
             next_password_hash is not None
@@ -236,7 +362,7 @@ async def patch_user(
             or removes_store_access
         ):
             await revoke_all(session, user.auth_identity)
-        response = _managed_user_payload(user, next_store_ids)
+        response = await managed_user_payload(session, fresh_actor, user, next_store_ids)
     return response
 
 
@@ -247,9 +373,10 @@ async def delete_unused_user(user_id: int, session: AsyncSession, actor: User) -
         user = await session.get(User, user_id, populate_existing=True)
         if user is None:
             raise HTTPException(404, "User not found")
-        _require_can_manage_target(fresh_actor, user)
+        await require_manage_target(session, fresh_actor, user)
         if user.id == actor_id:
             raise HTTPException(409, "You cannot delete your current account")
+        await _require_no_employees(session, user.id)
         ledger_references = await session.scalar(
             select(func.count())
             .select_from(StoreDailyRecord)
@@ -267,7 +394,11 @@ async def delete_unused_user(user_id: int, session: AsyncSession, actor: User) -
 async def create_store(body: StoreCreate, session: AsyncSession, actor: User) -> dict[str, Any]:
     actor_id = actor.id
     async with sqlite_short_write(session):
-        await require_fresh_user(session, user_id=actor_id, capability="stores.manage")
+        fresh_actor = await require_fresh_user(
+            session, user_id=actor_id, capability="stores.manage"
+        )
+        if not is_owner(fresh_actor):
+            raise HTTPException(403, "只有主管理员可以创建门店")
         store = Store(**body.model_dump())
         session.add(store)
         await session.flush()
@@ -290,19 +421,23 @@ async def patch_store(
         store = await session.get(Store, store_id, populate_existing=True)
         if store is None or not store.is_active:
             raise HTTPException(404, "Store not found")
+        await require_store_scope(session, fresh_actor, store_id)
         changes = body.model_dump(exclude_none=True, exclude={"expected_description_revision"})
         if "description" in body.model_fields_set:
             if body.expected_description_revision is None:
                 raise HTTPException(422, "保存门店描述需要提供描述版本")
             if body.expected_description_revision != store.description_revision:
-                raise HTTPException(409, {
-                    "code": "store_description_revision_conflict",
-                    "message": "门店描述已被修改，请核对最新描述后再保存",
-                    "latest": {
-                        "description": store.description,
-                        "description_revision": store.description_revision,
+                raise HTTPException(
+                    409,
+                    {
+                        "code": "store_description_revision_conflict",
+                        "message": "门店描述已被修改，请核对最新描述后再保存",
+                        "latest": {
+                            "description": store.description,
+                            "description_revision": store.description_revision,
+                        },
                     },
-                })
+                )
             store.description_revision += 1
         previous_location = FrozenWeatherLocation.from_store(store)
         previous_settlement_enabled = store.company_settlement_enabled
@@ -334,10 +469,13 @@ async def delete_store(store_id: int, session: AsyncSession, actor: User) -> Non
     actor_id = actor.id
     try:
         async with sqlite_short_write(session):
-            await require_fresh_user(session, user_id=actor_id, capability="stores.manage")
+            fresh_actor = await require_fresh_user(
+                session, user_id=actor_id, capability="stores.manage"
+            )
             store = await session.get(Store, store_id, populate_existing=True)
             if store is None or not store.is_active:
                 raise HTTPException(404, "Store not found")
+            await require_store_scope(session, fresh_actor, store_id)
             if await _store_has_protected_references(session, store_id):
                 raise HTTPException(409, "该门店已有业务或历史记录，请归档门店而不是删除")
             await session.execute(delete(StoreMember).where(StoreMember.store_id == store_id))
@@ -355,17 +493,37 @@ async def replace_members(
     actor_id = actor.id
     user_ids = sorted(set(body.user_ids))
     async with sqlite_short_write(session):
-        await require_fresh_store_access(
+        fresh_actor, _ = await require_fresh_store_access(
             session,
             user_id=actor_id,
             store_id=store_id,
             capability="stores.manage",
         )
         users = await _require_users(session, user_ids)
-        if any(user.role == "admin" for user in users):
-            raise HTTPException(409, "管理员默认可访问全部门店，无需分配门店")
-        await session.execute(delete(StoreMember).where(StoreMember.store_id == store_id))
-        session.add_all(StoreMember(store_id=store_id, user_id=user_id) for user_id in user_ids)
+        for user in users:
+            await require_manage_target(session, fresh_actor, user)
+            if is_administrator(user):
+                raise HTTPException(403, "员工成员编辑不能修改管理员授权")
+            manager = await _employee_manager(session, fresh_actor, "user", user.manager_id)
+            await _validate_assignment(session, [store_id], manager, "user")
+        manageable = (
+            await session.scalars(
+                select(User).where(
+                    User.role == "user",
+                    User.username != owner_username(),
+                    employee_management_clause(fresh_actor),
+                )
+            )
+        ).all()
+        for user in manageable:
+            ids = await _user_store_ids(session, user.id)
+            next_ids = (
+                sorted(set(ids) | {store_id})
+                if user.id in user_ids
+                else [sid for sid in ids if sid != store_id]
+            )
+            if set(next_ids) != set(ids):
+                await _replace_user_scope(session, user, next_ids)
     return {"store_id": store_id, "user_ids": user_ids}
 
 

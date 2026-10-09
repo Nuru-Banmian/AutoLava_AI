@@ -28,11 +28,15 @@ TimeZoneName = Annotated[str, StringConstraints(max_length=64), AfterValidator(_
 Latitude = Annotated[Decimal, Field(ge=-90, le=90)]
 Longitude = Annotated[Decimal, Field(ge=-180, le=180)]
 StoreDescription = Annotated[
-    str, StringConstraints(max_length=3000), AfterValidator(lambda value: value if value.strip() else "")
+    str,
+    StringConstraints(max_length=3000),
+    AfterValidator(lambda value: value if value.strip() else ""),
 ]
 
 
 class UserCreate(BaseModel):
+    editor_ids: list[StrictInt] = Field(default_factory=list)
+    manager_id: int | None = None
     username: str = Field(min_length=3, max_length=80)
     password: str = Field(min_length=8, max_length=128)
     role: Literal["admin", "user"] = "user"
@@ -40,6 +44,8 @@ class UserCreate(BaseModel):
 
 
 class UserPatch(BaseModel):
+    editor_ids: list[StrictInt] | None = None
+    manager_id: int | None = None
     password: str | None = Field(default=None, min_length=8, max_length=128)
     role: Literal["admin", "user"] | None = None
     is_active: bool | None = None
@@ -97,6 +103,10 @@ class CategoryPatch(BaseModel):
 
 
 class AdminUserResponse(BaseModel):
+    creator_id: int | None = None
+    editor_ids: list[int] = Field(default_factory=list)
+    can_manage_editors: bool | None = None
+    manager_id: int | None = None
     id: int
     username: str
     role: Literal["admin", "user"]

@@ -1,0 +1,32 @@
+.agent-markdown {
+  min-width: 0;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+
+.agent-markdown > :first-child { margin-top: 0; }
+.agent-markdown > :last-child { margin-bottom: 0; }
+.agent-markdown p { margin: 0.65rem 0; white-space: pre-wrap; }
+.agent-markdown :is(h3, h4, h5, h6) { margin: 1.2rem 0 0.5rem; font-weight: 650; line-height: 1.5; }
+.agent-markdown h3 { font-size: 1.05rem; }
+.agent-markdown :is(h4, h5, h6) { font-size: 1rem; }
+.agent-markdown strong { font-weight: 650; }
+.agent-markdown :is(ul, ol) { margin: 0.65rem 0; padding-left: 1.5rem; }
+.agent-markdown ul { list-style: disc; }
+.agent-markdown ol { list-style: decimal; }
+.agent-markdown li { margin: 0.25rem 0; padding-left: 0.15rem; }
+.agent-markdown li > p { margin: 0.3rem 0; }
+.agent-markdown li :is(ul, ol) { margin: 0.25rem 0; }
+.agent-markdown a { color: var(--primary); text-decoration: underline; text-underline-offset: 3px; }
+.agent-markdown blockquote { margin: 0.85rem 0; border-left: 3px solid var(--border); padding: 0.2rem 0 0.2rem 0.85rem; color: var(--muted-foreground); }
+.agent-markdown code { border-radius: 0.3rem; background: var(--muted); padding: 0.15rem 0.35rem; font-family: Consolas, "Cascadia Code", monospace; font-size: 0.88em; }
+.agent-markdown pre { max-width: 100%; overflow-x: auto; margin: 0.85rem 0; border: 1px solid var(--border); border-radius: 0.75rem; background: var(--muted); padding: 0.85rem 1rem; line-height: 1.65; }
+.agent-markdown pre code { background: transparent; padding: 0; white-space: pre; overflow-wrap: normal; }
+.agent-markdown hr { margin: 1rem 0; border-color: var(--border); }
+.agent-markdown-table { max-width: 100%; overflow-x: auto; margin: 0.85rem 0; border: 1px solid var(--border); border-radius: 0.65rem; }
+.agent-markdown table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
+.agent-markdown :is(th, td) { min-width: 6rem; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+.agent-markdown th { background: var(--muted); font-weight: 600; }
+.agent-markdown tr:last-child td { border-bottom: 0; }
+.agent-markdown .task-list-item { list-style: none; }
+.agent-markdown input[type="checkbox"] { margin-right: 0.4rem; }

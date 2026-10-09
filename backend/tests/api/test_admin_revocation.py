@@ -16,6 +16,7 @@ from app.models.ledger import IncomeCategory
 
 async def _reset_database() -> None:
     async with engine.begin() as connection:
+        await connection.exec_driver_sql("PRAGMA defer_foreign_keys=ON")
         for table in reversed(Base.metadata.sorted_tables):
             await connection.execute(table.delete())
 
@@ -45,6 +46,8 @@ async def _setup_admin_mutation(operation: str):
         )
         session.add_all([actor, target, store])
         await session.flush()
+        target.manager_id = actor.id
+        session.add(StoreMember(store_id=store.id, user_id=actor.id))
         category = IncomeCategory(
             store_id=store.id,
             name="Before",
