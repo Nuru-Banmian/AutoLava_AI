@@ -186,13 +186,13 @@ async def execute_target(session, context, store, target, hard_capacity):
         if row_size + serialized_size({**result, "rows": []}) > 12000:
             raise QueryError("row_too_large", "单完整行超过工具硬容量，未截断字段或事件。", required_chars=row_size)
         result["rows"].append(values)
-        if (context.remaining_context_chars is not None
-                and message_size(result) > context.remaining_context_chars):
-            raise QueryError("context_capacity", "完整结果序列化后无法装入本轮上下文；未截断事件。",
-                             matched_count=result["matched_count"], selected_count=result["selected_count"], range=dates["range"])
         if serialized_size(result) > context.remaining_result_chars:
             code = "context_capacity" if context.remaining_result_chars < hard_capacity else "result_capacity_exceeded"
             raise QueryError(code, "完整结果无法装入本轮容量；未返回截断明细。",
+                             matched_count=result["matched_count"], selected_count=result["selected_count"], range=dates["range"])
+        if (context.remaining_context_chars is not None
+                and message_size(result) > context.remaining_context_chars):
+            raise QueryError("context_capacity", "完整结果序列化后无法装入本轮上下文；未截断事件。",
                              matched_count=result["matched_count"], selected_count=result["selected_count"], range=dates["range"])
     result["page_range"] = {"start": 1 if result["rows"] else 0, "end": len(result["rows"])}
     return result
