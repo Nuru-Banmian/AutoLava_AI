@@ -50,6 +50,7 @@ class ChartPayload(BaseModel):
     unit: str
     range: dict[str, str]
     queried_at: str
+    unfinished: bool
     coverage: dict
     notes: list[str]
     series: list[dict[str, str]]

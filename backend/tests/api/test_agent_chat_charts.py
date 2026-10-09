@@ -348,3 +348,19 @@ async def test_budget_failure_after_preparation_does_not_publish_chart(tmp_path,
         sse = (await client.get(f"/api/agent/1/runs/{run['id']}/events")).text
         assert '"name": "store_chart"' in sse and "event: completed" not in sse
         assert all(not m["charts"] for m in (await client.get("/api/agent/1/conversation")).json()["messages"])
+
+
+async def test_unfinished_period_is_preserved_in_saved_snapshot(tmp_path, monkeypatch):
+    from datetime import date
+    monkeypatch.setattr("app.agents.tools.store_query.local_today", lambda store: date(2026, 7, 4))
+    model = QueryModel([("store_data_catalog", {}), query([{
+        "id": "current", "domain": "daily_ledger", "range": {"preset": "this_month"},
+        "metrics": ["total_revenue"], "group_by": ["day"],
+    }]), trend, "本月尚未结束。"])
+    async with chat_app(tmp_path, model) as (client, _, _):
+        await save_day(client, "2026-07-01", 9)
+        assert (await ask(client, "本月至今趋势"))["status"] == "completed"
+        chart_id = (await client.get("/api/agent/1/conversation")).json()["messages"][-1]["charts"][0]["chart_id"]
+        saved = (await client.get(f"/api/agent/1/messages/4/charts/{chart_id}")).json()
+        assert saved["payload"]["unfinished"] is True
+        assert saved["payload"]["range"] == {"start": "2026-07-01", "end": "2026-07-04"}

@@ -1320,6 +1320,8 @@ export interface components {
              * @constant
              */
             type: "line";
+            /** Unfinished */
+            unfinished: boolean;
             /** Unit */
             unit: string;
         };

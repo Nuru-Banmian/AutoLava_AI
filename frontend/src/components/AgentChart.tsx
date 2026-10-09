@@ -44,6 +44,7 @@ export function AgentChart({ storeId, messageId, description }: { storeId: numbe
   return <figure className="mt-4 min-w-0 rounded-lg border p-3" aria-label={chart.title}>
     <figcaption className="font-semibold">{chart.title}</figcaption>
     <p className="text-xs text-muted-foreground">{chart.range.start} 至 {chart.range.end} · {granularities[chart.granularity] ?? chart.granularity} · {chart.unit}</p>
+    {chart.unfinished && <p className="text-xs text-muted-foreground">当前周期尚未结束，仅统计至查询日。</p>}
     <div className="h-72 w-full" aria-label={`${chart.title}趋势图`}>
       <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 600, height: 288 }}>
         <LineChart data={chart.points} margin={{ top: 10, right: 15, bottom: 10, left: 0 }}

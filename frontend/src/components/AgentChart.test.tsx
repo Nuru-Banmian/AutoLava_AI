@@ -9,7 +9,7 @@ import { advanceSessionScope } from "@/auth/sessionScope";
 const description = { chart_id: "chart-1", schema_version: 1 as const, type: "line" as const,
   title: "日趋势", unit: "EUR", range: { start: "2026-07-01", end: "2026-07-03" }, point_count: 3 };
 const snapshot = { ...description, message_id: 4, created_at: "2026-10-09", source: {}, payload: {
-  ...description, dimension: "day", granularity: "day", queried_at: "2026-10-09", coverage: { interval_days: 3 }, notes: [],
+  ...description, dimension: "day", granularity: "day", queried_at: "2026-10-09", unfinished: true, coverage: { interval_days: 3 }, notes: [],
   series: [{ key: "total_revenue", label: "营业额" }], points: [
     { dimension: "2026-07-01", state: "营业", values: { total_revenue: { exact: "19.12", plot: 19.12, status: "available" } } },
     { dimension: "2026-07-02", state: "营业", values: { total_revenue: { exact: "0", plot: 0, status: "available" } } },
@@ -25,6 +25,7 @@ it("reads a saved snapshot and selects exact decimals, real zero and unknown sta
   const user = userEvent.setup();
   render(<AgentChart storeId={1} messageId={4} description={description} />);
   const select = await screen.findByLabelText("日趋势查看日期");
+  expect(screen.getByText("当前周期尚未结束，仅统计至查询日。")).toBeVisible();
   const data = within(screen.getByRole("status", { name: "图表数据" }));
   await user.selectOptions(select, "0");
   expect(data.getByText(/营业额：19.12 EUR/)).toBeVisible();

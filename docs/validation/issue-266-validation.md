@@ -41,4 +41,12 @@
 
 ## 待最终回读
 
-最终受影响后端回归、最终两轴审查、提交/PR/必要CI/合并/关闭/远端main回读仍进行中。真实付费供应商、Docker、生产、负载未验证。
+后端受影响回归 `test_agent_chat_charts.py / test_agent_tools.py / test_agent_tool_context.py / test_agent_pagination_budget.py`：`issue266-backend-final.log` **53通过（205.74秒）**。随后新增禁止重查与prepared后预算失败3项，连同已有回放用例4项专项通过，未运行全量。
+
+最终独立浏览器配置 `issue266-browser-config-final.log` **2通过（9.1秒）**。首个真实验收服务器已终止，重启使用生产SQLite外键配置后的服务器用于复验；临时目录留存不声称Windows锁文件清理已完成。
+
+## 两轴审查与整改
+
+固定命令 `git diff d37f07c36f34e19bafa24bc6afd8d8cc9f624659...HEAD`。首检查点 `00090bb`，覆盖全部26文件：Standards 0硬性违规/0实质smell；Spec 1项P2，图表遗漏查询unfinished标记。已补payload/HTTP schema/生成类型/前端文案与公开接口、组件回归。最终图表文件及复审仍进行中。契约导出与类型生成曾误并行，首tsc发现旧类型缺unfinished；串行重新生成后tsc通过，没有放宽类型校验。
+
+PR/必要CI/合并/关闭/远端main回读仍进行中。真实付费供应商、Docker、生产、负载未验证。

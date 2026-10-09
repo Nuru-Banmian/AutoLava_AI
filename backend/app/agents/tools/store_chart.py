@@ -67,6 +67,7 @@ def project(snapshot, args):
     payload = {"type": args.type, "title": args.title, "dimension": args.dimension,
                "granularity": args.dimension, "unit": units.pop(), "range": block["range"],
                "queried_at": snapshot["queried_at"], "coverage": block.get("coverage", {}),
+               "unfinished": block.get("unfinished", False),
                "notes": block.get("notes", []),
                "series": [{"key": name, "label": definitions[name][1]} for name in args.series],
                "points": points}
