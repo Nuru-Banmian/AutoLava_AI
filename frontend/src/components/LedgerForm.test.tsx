@@ -96,11 +96,17 @@ describe("LedgerForm", () => {
 
   it("保存未统计可保留未经本次编辑的历史天气", async () => {
     const onSave = vi.fn();
-    render(<LedgerForm weatherOptions={weatherOptions} categories={[]} config={directConfig} record={savedRecord({ income_mode: "legacy_total", weather: "旧天气", weather_legacy: true, weather_edited: true })} onSave={onSave} />);
+    const original = savedRecord({ income_mode: "legacy_total", daily_revenue: 240, wash_count: 12, weather: "旧天气", weather_legacy: true, weather_edited: true });
+    const view = render(<LedgerForm weatherOptions={weatherOptions} categories={[]} config={directConfig} record={original} onSave={onSave} />);
     fireEvent.change(screen.getByLabelText("状态"), { target: { value: "未统计" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     fireEvent.click(await screen.findByRole("button", { name: "确认清除并保存" }));
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ weather: undefined, is_open: "未统计" }));
+    const body = onSave.mock.calls[0][0];
+    view.rerender(<LedgerForm weatherOptions={weatherOptions} categories={[]} config={directConfig} record={{ ...original, is_open: "未统计", daily_revenue: null, wash_count: null, items: [], revision: 2 }} savedSubmission={{ revision: 1, body, canonicalReady: true }} onSave={onSave} />);
+    fireEvent.change(screen.getByLabelText("状态"), { target: { value: "营业" } });
+    expect(screen.getByLabelText("当日营业额")).toHaveValue("");
+    expect(screen.getByLabelText("洗车数量")).toHaveValue("");
   });
   it("uses direct total when configuration is disabled", () => {
     render(<LedgerForm weatherOptions={weatherOptions} categories={[]} config={directConfig} onSave={vi.fn()} />);

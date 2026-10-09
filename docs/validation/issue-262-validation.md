@@ -38,3 +38,7 @@
 - 后台首次串行全套停留72项/10%长时间无进度，保留issue-262-full-backend.log，核对本票PID后中止（不是通过）。已按CI -n4 --dist loadscope --cov=app重跑，带-vv与faulthandler60，日志issue-262-full-backend-parallel.log；运行中不得称最终通过，#261 Windows锁风险仍保留。
 - 前端修复后全套1 failed/383 passed：AuthProvider旧门店描述页面等待失败（Unable to find label门店描述），并发后台/浏览器/E2E压力下出现；保留issue-262-full-frontend-final.log，降低maxWorkers4重验中，不改无关功能、不计为通过。
 - 当前阶段：本地检查点后相对原SHA两只读轴审查；完整检查仍须收集最终结果并修复，随后精确PR/CI/merge/close/readback。尚未远端写入/未完成本票。
+- 两轴首审（31c6e00...ba9e2ab）Standards：硬标准0，1项P1省略旧天气提交签名归一化导致canonical未吸收、清值后旧金额复活风险。新增savedSubmission/canonical再切回用例初始失败（240仍显示），修复后通过。Spec：2项P2，保存/删除revision冲突最新记录插值null欧元、两期null趋势Tooltip默认过滤丢独立状态。已修复空值冲突显示—、filterNull=false；delete冲突新用例通过。相关表单/删除/台账页面73 passed与tsc通过。待最终复审确认全部改动。
+- 后台完整并行首轮11 failed/683 passed/6warnings/455.28s；8项charts_daily_migrated仅新覆盖字段完整字典预期未同步，1项agent_integration迁移head预期0028。已同步覆盖字段/0029，既有金额与平均断言保留。另2项agent_vectors/pending_weather为SQLite database is locked，保留Windows风险；隔离文件重验中，不通过隐藏/skip方式处理。
+- 修复后frontend最终全套385 passed/37files/58.31s（maxWorkers4），production build通过；E2E最终复验运行中。此前最终384 passed及E2E96 passed/20条件跳过已有有效结果，本次因审查后实现变化再次验证。
+- 趋势未知提示真实桌面hover已通过“本期2026-10-09：未统计，—”，上期同位置无数据；390px首次tap因原session不支持touch失败，保留，已建立iPhone13（390px）touch专用session进行真实点选。页面HMR重置视图导致第一次定位趋势超时，重选经营分析后桌面验证通过；不是业务失败。

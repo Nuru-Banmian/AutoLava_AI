@@ -97,6 +97,16 @@ describe("DeleteRecordDialog", () => {
     expect(requests).toBe(1);
   });
 
+  it("shows unknown revenue when a concurrent writer saved unreported", async () => {
+    server.use(http.delete("/api/ledger/1/2026-07-14", () => HttpResponse.json({ detail: {
+      code: "ledger_revision_conflict", current: { ...record, is_open: "未统计", daily_revenue: null, wash_count: null, items: [], revision: 2 },
+    } }, { status: 409 })));
+    renderDialog();
+    fireEvent.click(screen.getByRole("button", { name: "确认永久删除" }));
+    expect(await screen.findByText("最新记录：未统计，营业额 —，修订号 2")).toBeVisible();
+    expect(screen.getByRole("button", { name: "确认永久删除" })).toBeDisabled();
+  });
+
   it("prevents duplicate actions while permanent deletion is pending", async () => {
     let requests = 0;
     let finishDelete!: () => void;

@@ -115,7 +115,7 @@ export function LedgerPage() {
         {conflict && <div role="group" aria-label={conflict.kind === "config" ? "最新收入配置" : "最新每日台账"} className="space-y-2 rounded-md border p-3">
           {conflict.kind === "config" && <><p>最新收入配置修订号：{conflict.config?.revision ?? "未知"}；记账方式：{conflict.config?.enabled ? "分类记账" : "总额记账"}</p><p>最新项目：</p><ol>{[...(conflict.config?.items ?? [])].sort((left, right) => left.sort_order - right.sort_order).map((item) => <li key={item.id}>{item.sort_order + 1}. {item.name}；{item.include_in_total ? "计入营业额" : "不计入营业额"}；{item.is_active ? "启用" : "停用"}{item.archived_at ? "；已归档" : ""}</li>)}</ol><p>原草稿金额：{priorDraft?.amounts ?? "无"}</p></>}
           {conflict.current ? <>
-            <p>{`最新记录：${conflict.current.is_open}，营业额 ${conflict.current.daily_revenue} 欧元，修订号 ${conflict.current.revision}`}</p>
+            <p>{`最新记录：${conflict.current.is_open}，营业额 ${conflict.current.daily_revenue === null ? "—" : `${conflict.current.daily_revenue} 欧元`}，修订号 ${conflict.current.revision}`}</p>
             <p>洗车数量：{conflict.current.wash_count ?? "未记录"}；天气：{conflict.current.weather ?? "未记录"}</p>
             <p>事件：{conflict.current.activity ?? "无"}</p>
             {conflict.current.items.length > 0 && <ul>{conflict.current.items.map((item) => <li key={item.category_id}>{item.category_name}：{item.amount} 欧元</li>)}</ul>}

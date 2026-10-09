@@ -206,7 +206,7 @@ export function LedgerForm({ categories, config, record, weather, weatherOptions
       : weatherValue || null;
     if (typeof requestedWeather === "string" && !isRecordWeather(requestedWeather)) return;
     if (status === "未统计") {
-      submittedWeather.current = requestedWeather ?? null;
+      submittedWeather.current = requestedWeather === undefined ? record?.weather ?? null : requestedWeather;
       const body: LedgerBody = {
         is_open: status, daily_revenue: null, wash_count: null, items: [],
         weather: requestedWeather, weather_edited: weatherEdited, activity: normalizedActivity(activity),
@@ -225,7 +225,7 @@ export function LedgerForm({ categories, config, record, weather, weatherOptions
       setDirectTotal("0");
     }
     if (!record && wash === "") setWash("0");
-    submittedWeather.current = requestedWeather ?? null;
+    submittedWeather.current = requestedWeather === undefined ? record?.weather ?? null : requestedWeather;
     onSave({
       is_open: status,
       daily_revenue: composed ? null : status === "休息" ? 0 : (directResult as { value: number }).value,

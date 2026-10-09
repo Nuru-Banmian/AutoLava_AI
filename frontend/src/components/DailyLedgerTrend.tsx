@@ -48,7 +48,7 @@ export function DailyLedgerTrend({ data }: { data: ChartsResponse }) {
           <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
           <XAxis dataKey="date" tickFormatter={(date: string) => date.slice(8)} minTickGap={26} tick={{ fontSize: 12 }} />
           <YAxis width={52} tick={{ fontSize: 12 }} tickFormatter={formatCompactEuro} />
-          <Tooltip content={({ active, payload }) => {
+          <Tooltip filterNull={false} content={({ active, payload }) => {
             const row = payload?.[0]?.payload as typeof rows[number] | undefined;
             return active && row ? <div className="max-w-60 rounded-md border bg-white p-3 text-sm shadow-sm"><p>本期 {readable(row.date)}</p><p>上期 {readable(row.previousDate, true)}</p></div> : null;
           }} />
