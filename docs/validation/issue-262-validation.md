@@ -47,3 +47,11 @@
 - 审查修复后的最终前端385 passed/37files/58.31s、production build通过；最终E2E96 passed/20条件跳过/2.1m。OpenAPI export --check、全库Ruff及重新generate:api-types零差异通过。保留jsdom scrollTo未实现提示；不是浏览器验收。
 - 真实触屏（iPhone13，390×844）在双方数值未知时tap读到“本期2026-10-09：未统计，—”，截图mobile-unknown-tooltip.png；桌面同位置hover也通过。此前不支持tap的session失败保留，不将resize冒称touch。桌面/窄屏analysis截图及首页截图已形成，独立紫色状态、未知合计、无金额色带，支持记录/详情/日期弹窗/分析联动。
 - 实施/审查完成，最终完整后台与PR/CI/合并/关闭/远端回读仍未完成；不启动#263。总控进度始终只读。
+
+## 最终后台全套及交付边界
+
+最终 Windows 后台全套：693 passed、1 failed、9 warnings，391.82s；覆盖率88%，达到85%阈值。失败为 `tests/api/test_agent_integration.py::test_automatic_memory_reset_restart_correction_backup_restore_and_deletion` 的 SQLite `database is locked` / `BEGIN IMMEDIATE`，日志保留于 `C:\Users\1\AppData\Local\Temp\issue-262-full-backend-final.log`。相关隔离33项此前通过，但锁失败在全套仍可复现，不能声称Windows后台完整通过或锁风险已解决；本票未修改锁机制。
+
+最终前端385通过、37文件；生产构建通过；E2E96通过、20既有manifest条件跳过。最终Ruff、OpenAPI检查和生成类型零差异通过。真实浏览器及390px触屏验收完成；本次自有8012/4182服务及两个浏览器会话已关闭，无这两个端口监听。
+
+远端交付仅在必要Linux CI全部通过后执行精确HEAD合并。PR/CI/merge SHA/Issue及远端main读回收据保存于 `C:\Users\1\AppData\Local\Temp\autolava-issue262-handoff\issue-262-delivery-20261009.md`。本票完成后停止，不启动263，父260保持打开。
