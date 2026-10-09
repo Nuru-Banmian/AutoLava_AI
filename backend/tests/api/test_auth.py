@@ -133,6 +133,7 @@ def test_password_and_jwt_primitives() -> None:
 
     password_hash = security.hash_password("secret")
     assert password_hash != "secret"
+    assert password_hash.startswith("$2b$12$")
     assert security.verify_password("secret", password_hash)
     assert not security.verify_password("incorrect", password_hash)
 

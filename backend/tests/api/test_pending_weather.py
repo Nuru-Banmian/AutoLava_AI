@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import asynccontextmanager, closing
 from datetime import datetime, timedelta
 import os
 from pathlib import Path
@@ -10,9 +11,10 @@ from zoneinfo import ZoneInfo
 
 import bcrypt
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.core.database import get_session, sqlite_url
+from app.core.database import configure_sqlite, get_session, sqlite_url
 from app.main import create_app
 from app.services.briefing import BriefingService
 from app.services.weather import WeatherResult
@@ -30,7 +32,7 @@ async def test_historical_weather_resumes_after_process_restart(
         check=True,
         capture_output=True,
     )
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection:
         connection.execute(
             "INSERT INTO users (auth_identity, username, password_hash, role, is_active) VALUES (?, ?, ?, 'admin', 1)",
             (token_hex(32), "weather-admin", bcrypt.hashpw(b"secret", bcrypt.gensalt()).decode()),
@@ -42,6 +44,8 @@ async def test_historical_weather_resumes_after_process_restart(
         connection.commit()
 
     engine = create_async_engine(sqlite_url(database_path))
+    # Match the real service's WAL, foreign-key and busy-timeout configuration.
+    event.listen(engine.sync_engine, "connect", configure_sqlite)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     entered = asyncio.Event()
     release = asyncio.Event()
@@ -64,6 +68,18 @@ async def test_historical_weather_resumes_after_process_restart(
                 yield session
 
         app.dependency_overrides[get_session] = migrated_session
+        application_lifespan = app.router.lifespan_context
+
+        @asynccontextmanager
+        async def process_lifespan(application):
+            try:
+                async with application_lifespan(application):
+                    yield
+            finally:
+                # A simulated process restart must also close its pooled connections.
+                await engine.dispose()
+
+        app.router.lifespan_context = process_lifespan
         return app
 
     path = "/api/ledger/1/2020-01-15"
@@ -437,7 +453,7 @@ async def test_historical_weather_resumes_after_process_restart(
                 ).status_code == 201
                 await asyncio.wait_for(briefing_interrupted.wait(), timeout=3)
 
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection:
         due_at, finished, weather = connection.execute(
             "SELECT weather_refresh_due_at, weather_refresh_finished, weather_auto FROM store_daily_records WHERE store_id = 1 AND date = ?",
             (interrupted_date,),
@@ -467,7 +483,7 @@ async def test_historical_weather_resumes_after_process_restart(
                     await asyncio.sleep(0)
 
             await asyncio.wait_for(recovered_briefing(), timeout=3)
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection:
         assert (
             connection.execute(
                 "SELECT weather_refresh_due_at FROM store_daily_records WHERE store_id = 1 AND date = ?",
