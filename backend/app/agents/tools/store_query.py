@@ -6,12 +6,15 @@ from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
-from sqlalchemy import func, select
+from sqlalchemy import Integer, cast, func, select
 
-from app.agents.tools.query_dates import DateRange, resolve_range
-from app.agents.tools.store_catalog import date_snapshot, fields_for, local_today, version
+from app.agents.tools.query_dates import DateRange, comparison_range, resolve_range
+from app.agents.tools.query_aggregation import ledger_groups, ledger_summary, load_ledger
+from app.agents.tools.query_definitions import GROUPS, METRICS
+from app.agents.tools.store_catalog import ITEM_FIELDS, date_snapshot, fields_for, local_today, version
 from app.models.identity import Store
 from app.models.ledger import DailyIncomeItem, StoreDailyRecord
+from app.services.business_metrics import rounded_percent
 
 
 class StrictInput(BaseModel):
@@ -21,10 +24,11 @@ class StrictInput(BaseModel):
 class QueryInput(StrictInput):
     catalog_version: str = Field(min_length=1, max_length=64)
     targets: list[dict[str, Any]] = Field(min_length=1, max_length=6, description=(
-        "Unique id, domain daily_ledger/income_items, fields (1-16), range: start/end OR preset"
+        "Unique id, domain daily_ledger/income_items/monthly_income/income_composition, fields or metrics (1-16), range: start/end OR preset"
         "(+n for last_n_*; +base for same_period_last_year) OR all_history:true. Omit range=month to date. "
         "Optional filters:[{field,op,value}], order_by:[{field,direction:asc/desc}], top_n:1-100. "
-        "Only catalog fields; no metrics/group_by/compare/page_size until those capabilities ship."))
+        "Choose fields OR metrics; group_by uses catalog dimensions. compare: {preset:previous_period/"
+        "same_period_last_year} OR {range:{start,end/preset}}. No pagination yet."))
 
     @model_validator(mode="after")
     def unique_ids(self):
@@ -47,21 +51,45 @@ class Order(StrictInput):
     direction: Literal["asc", "desc"] = "asc"
 
 
+class Comparison(StrictInput):
+    preset: Literal["previous_period", "same_period_last_year"] | None = None
+    range: DateRange | None = None
+
+    @model_validator(mode="after")
+    def valid(self):
+        if self.preset is not None and self.range is not None:
+            raise ValueError("Choose comparison preset or explicit range")
+        return self
+
+
 class QueryTarget(StrictInput):
     id: str = Field(min_length=1, max_length=64)
-    domain: Literal["daily_ledger", "income_items"]
+    domain: Literal["daily_ledger", "income_items", "monthly_income", "income_composition"]
     range: DateRange | None = None
-    fields: list[str] = Field(min_length=1, max_length=16)
+    fields: list[str] = Field(default_factory=list, max_length=16)
     metrics: list[str] = Field(default_factory=list, max_length=16)
     group_by: list[str] = Field(default_factory=list, max_length=2)
     filters: list[Filter] = Field(default_factory=list, max_length=8)
     order_by: list[Order] = Field(default_factory=list, max_length=2)
     top_n: int | None = Field(default=None, ge=1, le=100)
+    compare: Comparison | None = None
 
     @model_validator(mode="after")
     def supported(self):
-        if self.metrics or self.group_by:
-            raise ValueError("Metrics and grouping are not in the published catalog yet")
+        if bool(self.fields) == bool(self.metrics) or len(self.fields) + len(self.metrics) > 16:
+            raise ValueError("Choose detail fields or aggregate metrics")
+        if self.fields and (self.group_by or self.compare or self.domain not in ("daily_ledger", "income_items")):
+            raise ValueError("Details cannot be grouped")
+        if (not set(self.group_by).issubset(GROUPS[self.domain])
+                or len(set(self.group_by)) != len(self.group_by)
+                or len(set(self.group_by) & {"day", "week", "month", "year"}) > 1):
+            raise ValueError("Invalid grouping combination")
+        if self.metrics and not set(self.metrics).issubset(METRICS[self.domain]):
+            raise ValueError("Unknown metric")
+        if self.metrics and not self.group_by and self.domain != "income_composition" and (self.top_n or self.order_by):
+            raise ValueError("Aggregate ranking requires grouped rows")
+        if len(set(self.metrics)) != len(self.metrics):
+            raise ValueError("Duplicate metric")
         if len(set(self.fields)) != len(self.fields):
             raise ValueError("Duplicate field")
         if len({o.field for o in self.order_by}) != len(self.order_by):
@@ -76,10 +104,29 @@ class QueryError(ValueError):
 
 def field_columns(domain):
     r, i = StoreDailyRecord, DailyIncomeItem
-    if domain == "daily_ledger":
-        return {key: getattr(r, key) for key in ("date", "is_open", "daily_revenue", "wash_count", "weather", "activity")}
-    return {"date": r.date, **{key: getattr(i, key) for key in
-                              ("category_id", "category_name", "include_in_total", "amount")}}
+    columns = {key: getattr(r, key) for key in ("date", "is_open", "daily_revenue", "wash_count", "weather", "activity")}
+    columns["weekday"] = (cast(func.strftime("%w", r.date), Integer) + 6) % 7
+    if domain != "daily_ledger":
+        columns.update({key: getattr(i, key) for key in ("category_id", "category_name", "include_in_total", "amount")})
+    return columns
+
+
+def filter_metadata(store, domain):
+    metadata = {**fields_for(store, "daily_ledger"), "weekday": ["integer", None, "0=周一..6=周日"]}
+    if domain in ("income_items", "income_composition"):
+        metadata.update({key: info for key, info in ITEM_FIELDS.items()
+                         if domain == "income_items" or key != "amount"})
+    return metadata
+
+
+def conditions_for(store, target, columns, metadata, start, end):
+    conditions = [StoreDailyRecord.store_id == store.id,
+                  StoreDailyRecord.date >= start, StoreDailyRecord.date <= end]
+    for item in target.filters:
+        condition = apply_filter(item, columns, metadata)
+        if target.domain != "income_composition" or item.field not in ("category_id", "category_name", "include_in_total"):
+            conditions.append(condition)
+    return conditions
 
 
 def validate_value(field, value, info):
@@ -97,6 +144,8 @@ def validate_value(field, value, info):
         return date.fromisoformat(value)
     if field == "is_open" and value not in ("营业", "提前休息", "休息", "未统计"):
         raise ValueError("Unknown operating state")
+    if field == "weekday" and not 0 <= value <= 6:
+        raise ValueError("Weekday requires 0..6")
     return value
 
 
@@ -138,27 +187,64 @@ def failure_receipt_capacity(targets, size=serialized_size):
 
 async def execute_target(session, context, store, target, hard_capacity):
     metadata = fields_for(store, target.domain)
-    requested = set(target.fields) | {f.field for f in target.filters} | {o.field for o in target.order_by}
-    if not requested.issubset(metadata):
+    filters = filter_metadata(store, target.domain)
+    if not set(target.fields).issubset(metadata) or not {f.field for f in target.filters}.issubset(filters):
         raise ValueError("Unknown or disabled catalog field")
+    ordering_fields = set(target.fields) if target.fields else set(target.metrics) | set(target.group_by)
+    if not {o.field for o in target.order_by}.issubset(ordering_fields):
+        raise ValueError("Ordering must use selected fields, metrics or dimensions")
     columns = field_columns(target.domain)
-    conditions = [StoreDailyRecord.store_id == store.id]
-    conditions.extend(apply_filter(f, columns, metadata) for f in target.filters)
-    history = await date_snapshot(session, store.id, target.domain)
+    # Validate every predicate before any domain reads.
+    for item in target.filters:
+        apply_filter(item, columns, filters)
+    history_domain = ("daily_ledger" if target.domain == "monthly_income" and
+                      not set(target.metrics) & {"confirmed_settlement_income", "total_income", "monthly_average_income"}
+                      else target.domain)
+    history = await date_snapshot(session, store.id, history_domain)
     dates = resolve_range(target.range, local_today(store), history)
     result = {"id": target.id, "status": "complete", "domain": target.domain, **dates,
               "queried_at": datetime.now(ZoneInfo(store.timezone)).isoformat(),
               "fields": {key: metadata[key] for key in target.fields}, "metrics": {},
               "matched_count": 0, "selected_count": 0, "rows": [], "has_more": False,
               "next_cursor": None, "result_ref": None,
-              "definitions": "已统计=营业/提前休息/休息；未统计数值为空，不解释成零。台账和分类金额不含公司结算。其他数据不解释为成本或利润。"}
+              "group_by": target.group_by, "statistics_scope": "all_matching",
+              "definitions": "已统计=营业/提前休息/休息；未统计数值为空。台账及分类明细不含结算；月度收入按开票月计整笔已确认结算，不分摊日周；其他数据不等于成本/利润。"}
     if dates["range"] is None:
         result["status"] = "unavailable"
         result["reason"] = "no_valid_dates"
         return result
     from datetime import date
-    conditions.extend([StoreDailyRecord.date >= date.fromisoformat(dates["range"]["start"]),
-                       StoreDailyRecord.date <= date.fromisoformat(dates["range"]["end"])])
+    start, end = (date.fromisoformat(dates["range"][key]) for key in ("start", "end"))
+    conditions = conditions_for(store, target, columns, filters, start, end)
+    if target.metrics:
+        aggregate = await aggregate_target(session, store, target, start, end, conditions)
+        result["notes"].extend(aggregate.pop("notes", []))
+        result.update(aggregate)
+        result["metric_metadata"] = {key: METRICS[target.domain][key] for key in target.metrics}
+        result["selected_count"] = min(result["matched_count"], target.top_n) if target.top_n else result["matched_count"]
+        select_rows(result, target)
+        if target.compare:
+            previous_dates = comparison_range(target.range, target.compare, local_today(store), dates["range"], history)
+            if previous_dates["range"] is None:
+                result["comparison"] = {**previous_dates, "status": "no_valid_dates"}
+            else:
+                previous_start = date.fromisoformat(previous_dates["range"]["start"])
+                previous_end = date.fromisoformat(previous_dates["range"]["end"])
+                previous_conditions = conditions_for(store, target, columns, filters, previous_start, previous_end)
+                previous = await aggregate_target(session, store, target, previous_start, previous_end, previous_conditions)
+                select_rows(previous, target)
+                previous["notes"] = [*previous_dates["notes"], *previous.get("notes", [])]
+                result["comparison"] = {**previous_dates, **previous,
+                                        "changes": metric_changes(result, previous, target)}
+        result["page_range"] = {"start": 1 if result["rows"] else 0, "end": len(result["rows"])}
+        if serialized_size(result) > context.remaining_result_chars:
+            raise QueryError("context_capacity" if context.remaining_result_chars < hard_capacity else "result_capacity_exceeded",
+                             "完整分组及比较无法装入本轮容量；未截断结果。",
+                             matched_count=result["matched_count"], selected_count=result["selected_count"])
+        if context.remaining_context_chars is not None and message_size(result) > context.remaining_context_chars:
+            raise QueryError("context_capacity", "完整分组及比较序列化后超出剩余上下文；未截断结果。",
+                             matched_count=result["matched_count"], selected_count=result["selected_count"])
+        return result
     base = select(*[columns[field].label(field) for field in target.fields]).select_from(StoreDailyRecord)
     count = select(func.count()).select_from(StoreDailyRecord)
     if target.domain == "income_items":
@@ -186,16 +272,90 @@ async def execute_target(session, context, store, target, hard_capacity):
         if row_size + serialized_size({**result, "rows": []}) > 12000:
             raise QueryError("row_too_large", "单完整行超过工具硬容量，未截断字段或事件。", required_chars=row_size)
         result["rows"].append(values)
-        if serialized_size(result) > context.remaining_result_chars:
-            code = "context_capacity" if context.remaining_result_chars < hard_capacity else "result_capacity_exceeded"
-            raise QueryError(code, "完整结果无法装入本轮容量；未返回截断明细。",
+        if serialized_size(result) > hard_capacity:
+            raise QueryError("result_capacity_exceeded", "完整结果超过批量硬容量；未返回截断明细。",
                              matched_count=result["matched_count"], selected_count=result["selected_count"], range=dates["range"])
-        if (context.remaining_context_chars is not None
-                and message_size(result) > context.remaining_context_chars):
-            raise QueryError("context_capacity", "完整结果序列化后无法装入本轮上下文；未截断事件。",
-                             matched_count=result["matched_count"], selected_count=result["selected_count"], range=dates["range"])
+    if (serialized_size(result) > context.remaining_result_chars
+            or (context.remaining_context_chars is not None
+                and message_size(result) > context.remaining_context_chars)):
+        raise QueryError("context_capacity", "完整结果序列化后无法装入本轮上下文；未截断事件。",
+                         matched_count=result["matched_count"], selected_count=result["selected_count"], range=dates["range"])
     result["page_range"] = {"start": 1 if result["rows"] else 0, "end": len(result["rows"])}
     return result
+
+
+async def aggregate_target(session, store, target, start, end, conditions):
+    if target.domain in ("monthly_income", "income_composition"):
+        from app.agents.tools.query_income import aggregate_income
+        result = await aggregate_income(session, store, target, start, end, conditions)
+    elif target.domain == "income_items":
+        from app.agents.tools.query_categories import aggregate_categories
+        result = await aggregate_categories(session, store, target, start, end, conditions)
+    else:
+        records = await load_ledger(session, conditions, target.metrics,
+                                    [name for name in target.group_by if name == "weather"],
+                                    wash_count_enabled=store.wash_count_enabled)
+        rows = ledger_groups(records, target, store, start, end)
+        result = {**ledger_summary(records, target.metrics, store, start, end),
+                  "rows": rows, "source_count": len(records),
+                  "matched_count": len(rows) if target.group_by else len(records)}
+    result["selected_count"] = min(result["matched_count"], target.top_n) if target.top_n else result["matched_count"]
+    if target.filters:
+        # A filtered-out record is still recorded. Count the range independently;
+        # filter-specific quantities continue to describe only matching dates.
+        record_days = await session.scalar(select(func.count()).select_from(StoreDailyRecord).where(
+            StoreDailyRecord.store_id == store.id, StoreDailyRecord.date.between(start, end)))
+        coverage = result["coverage"]
+        coverage["interval_days"] = (end - start).days + 1
+        coverage["excluded_record_days"] = record_days - coverage["record_days"]
+        coverage["missing_record_days"] = coverage["interval_days"] - record_days
+        coverage["scope"] = "matching_records; missing_record_days covers the unfiltered date range"
+        for row in result["rows"]:
+            if "coverage" in row:
+                row["coverage"]["scope"] = "matching_group"
+                row["coverage"]["missing_record_days"] = None
+    return result
+
+
+def metric_changes(current, previous, target):
+    changes = {}
+    for name in target.metrics:
+        a, b = current["metrics"][name], previous["metrics"][name]
+        current_status, previous_status = current["metric_status"][name], previous["metric_status"][name]
+        difference = a - b if a is not None and b is not None and current_status == previous_status == "available" else None
+        if isinstance(difference, float):
+            from decimal import Decimal
+            difference = float(Decimal(str(a)) - Decimal(str(b)))
+        if previous_status != "available":
+            status = "no_previous_records" if previous_status in ("no_statistical_ledger", "no_statistical_items") else previous_status
+        elif current_status != "available":
+            status = "no_current_records" if current_status in ("no_statistical_ledger", "no_statistical_items") else current_status
+        elif b == 0:
+            status = "zero_previous"
+        else:
+            status = "comparable"
+        changes[name] = {"difference": difference,
+                         "change_percent": rounded_percent(difference, b) if status == "comparable" else None,
+                         "status": status, "unit": METRICS[target.domain][name][0], "denominator": b}
+    return changes
+
+
+def select_rows(result, target):
+    rows = result["rows"]
+    if len(rows) > 200 and target.top_n is None:
+        raise QueryError("result_capacity_exceeded", "分页尚未上线，完整分组超过200行。",
+                         matched_count=result["matched_count"], selected_count=result["selected_count"])
+    for order in reversed(target.order_by):
+        def value(row):
+            return row.get("metrics", {}).get(order.field, row.get(order.field))
+        known = [row for row in rows if value(row) is not None]
+        unknown = [row for row in rows if value(row) is None]
+        rows = sorted(known, key=value, reverse=order.direction == "desc") + unknown
+    if target.top_n:
+        rows = rows[:target.top_n]
+        for rank, row in enumerate(rows, 1):
+            row["rank"] = rank
+    result["rows"] = rows
 
 
 async def store_query(session, context, arguments):

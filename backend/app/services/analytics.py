@@ -1,7 +1,6 @@
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-from decimal import ROUND_HALF_UP, Decimal
 from typing import Literal
 
 from sqlalchemy import func, select
@@ -11,6 +10,7 @@ from sqlalchemy.orm import selectinload
 from app.models.identity import Store
 from app.models.ledger import StoreDailyRecord
 from app.models.settlement import SettlementRecord
+from app.services.business_metrics import rounded_average, rounded_percent
 from app.services.weather import LEGACY_WEATHER_LABEL, RECORD_WEATHER_OPTIONS, is_legacy_weather
 from app.services.ledger_statistics import OPERATING_STATES, period_coverage, statistical_records
 
@@ -29,11 +29,7 @@ def _weather_group_order(weather: str) -> tuple[int, str]:
 
 def _rounded_average(total: int, count: int) -> int:
     """Round fractional euro averages to a whole euro using ROUND_HALF_UP."""
-    if count == 0:
-        return 0
-    return int(
-        (Decimal(total) / Decimal(count)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
-    )
+    return rounded_average(total, count)
 
 
 @dataclass(frozen=True)
@@ -344,9 +340,8 @@ class AnalyticsService:
                 comparison_status = "no_current_records"
             else:
                 comparison_status = "comparable"
-                change_percent = float(
-                    (Decimal(daily_ledger_revenue - previous_revenue) * 100 / previous_revenue)
-                    .quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                change_percent = rounded_percent(
+                    daily_ledger_revenue - previous_revenue, previous_revenue
                 )
 
         return {
