@@ -213,6 +213,10 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
                         query_failures[target["id"]] = target["error"]
                     elif target.get("status") in ("complete", "partial", "unavailable"):
                         query_failures.pop(target["id"], None)
+                        # Invalid-cursor receipts cannot trust snapshot ids and
+                        # use the requested reference. A verified retry resolves
+                        # that same reference as well as the business target id.
+                        query_failures.pop(target.get("result_ref"), None)
             if (call.name == "store_query" and plan.kind == "query"
                     and result.get("status") in ("complete", "partial")
                     and any(target.get("status") in ("complete", "unavailable")

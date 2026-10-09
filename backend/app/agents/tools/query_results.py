@@ -61,22 +61,35 @@ def capacity_receipt(snapshot, reference, offset, repository):
             **progress(repository.read_ranges(reference), count)}
 
 
+def row_projection(snapshot, reference, offset, stop, ranges, next_cursor):
+    """One shape for both the hard-limit probe and a real complete-row page."""
+    count = row_count(snapshot)
+    result = {**metadata(snapshot), "result_ref": reference, "row_count": count,
+              "rows": snapshot["rows"][offset:stop],
+              "page_range": {"start": offset + 1 if stop > offset else 0,
+                             "end": stop if stop > offset else 0},
+              "has_more": stop < count, "next_cursor": next_cursor,
+              **progress(ranges, count, offset, stop)}
+    if "comparison" in result:
+        rows = snapshot["comparison"].get("rows", [])
+        result["page_unit"] = "ordered_row_pair; main and comparison rows share an offset"
+        result["comparison"] = {**result["comparison"], "rows": rows[offset:stop],
+            "page_range": {"start": offset + 1 if offset < min(stop, len(rows)) else 0,
+                           "end": min(stop, len(rows)) if offset < min(stop, len(rows)) else 0}}
+    if result["unread_ranges"]:
+        result["status"] = "partial"
+    return result
+
+
 def materialize(snapshot, repository, query_description):
     snapshot["query_description"] = query_description
     # A single complete logical row includes both sides when comparing groups.
     # Metadata/fields are never silently removed to fit the hard page ceiling.
     base = metadata(snapshot)
     for index in range(row_count(snapshot)):
-        probe = {**base, "rows": snapshot["rows"][index:index + 1]}
-        if "comparison" in probe:
-            probe["comparison"] = {**probe["comparison"],
-                "rows": snapshot["comparison"].get("rows", [])[index:index + 1]}
-        probe.update({"result_ref": "0" * 32, "row_count": row_count(snapshot),
-                      "page_range": {"start": index + 1, "end": index + 1},
-                      "has_more": index + 1 < row_count(snapshot),
-                      "next_cursor": "v1." + format(index + 1, "x") + "." + "0" * 64
-                      if index + 1 < row_count(snapshot) else None,
-                      **progress([], row_count(snapshot), index, index + 1)})
+        cursor = ("v1." + format(index + 1, "x") + "." + "0" * 64
+                  if index + 1 < row_count(snapshot) else None)
+        probe = row_projection(snapshot, "0" * 32, index, index + 1, [], cursor)
         required = serialized_size({"status": "partial", "catalog_version": "0" * 64,
                                     "targets": [probe], "message": "查询部分完成；已读页保留，未读范围见各目标，续页受本轮剩余容量限制。"})
         if required > 12000:
@@ -97,25 +110,11 @@ def materialize(snapshot, repository, query_description):
 def page(snapshot, reference, offset, page_size, repository, char_budget, context_budget):
     count = row_count(snapshot)
     receipt = capacity_receipt(snapshot, reference, offset, repository)
-    base = {**metadata(snapshot), "result_ref": reference, "row_count": count}
-    if "comparison" in base:
-        base["page_unit"] = "ordered_row_pair; main and comparison rows share an offset"
     end = offset
 
     def projection(stop):
-        result = {**base, "rows": snapshot["rows"][offset:stop],
-                  "page_range": {"start": offset + 1 if stop > offset else 0, "end": stop if stop > offset else 0},
-                  "has_more": stop < count,
-                  "next_cursor": repository.cursor(reference, stop) if stop < count else None,
-                  **progress(repository.read_ranges(reference), count, offset, stop)}
-        if "comparison" in result:
-            rows = snapshot["comparison"].get("rows", [])
-            result["comparison"] = {**result["comparison"], "rows": rows[offset:stop],
-                "page_range": {"start": offset + 1 if offset < min(stop, len(rows)) else 0,
-                               "end": min(stop, len(rows)) if offset < min(stop, len(rows)) else 0}}
-        if result["unread_ranges"]:
-            result["status"] = "partial"
-        return result
+        cursor = repository.cursor(reference, stop) if stop < count else None
+        return row_projection(snapshot, reference, offset, stop, repository.read_ranges(reference), cursor)
 
     def fits(result):
         return (serialized_size(result) <= char_budget

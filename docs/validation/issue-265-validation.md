@@ -20,6 +20,8 @@
 
 工具 schema、提示词、经营分析技能、README同步更新。未新增 HTTP 工具执行接口或 HTTP 数据模型；OpenAPI检查和生成前端类型无差异。
 
+续接修复：顶层 `context_capacity` 没有目标回执时按请求记录未完成状态，保留先前完整证据；错误回执占用控制空间后，在下一模型调用前检查至少2000字符回答预留，以服务器说明完成，仍计入输出上限，不伪造失败查询的证据。低容量无效续页回执带稳定 `id=result_ref`；验证成功的续页同时清理该引用和目标id对应的旧失败标记。单行硬容量探针与实际分页共享投影构造，比较侧页范围与行对口径同步计费。
+
 ## 定向证据与失败记录
 
 原始日志位于 `C:/Users/1/AppData/Local/Temp/`，保留红测试及修复前日志，不将历史结果冒称最终结果。
@@ -30,8 +32,32 @@
 - `issue265-pagination-two-green.log`：分组top_n测试误把全部历史截止当地今天的缺失日当成仅6行；改为明确6日范围后验证全匹配合计210、选中3行、两页完整排名。
 - `issue265-snapshots-capacity-final.log`：分页/排名/比较及容量6项通过。包括并发修改/删除/插入不改变续页、多目标完整事件、单行控制字符超限、单及累计4 MiB、默认50/max200行。
 - `autolava-265-pagination-security-20261009.log`：5通过/2测试口径错误（默认24k容量影响安全重试及把逐目标错误误当SSE直接字段）；修正后 `autolava-265-pagination-security-20261009-rerun.log` 为7通过。覆盖伪造/篡改/交换/Unicode游标、输入互斥、跨run/管理员/门店/generation、stop/reset/logout/停用后的迟到续页。
-- 累计上下文、首查询前历史裁剪、最终部分说明和输出上限的最终收据见后续最终检查。
+- 第一阶段预算六项曾通过（27.24秒，交接记录中的原工具输出，没有独立日志）；最新源码收据见下方续接最终检查，不将两阶段数量累计。
 - 前端定向组件2项及 Chromium 390/1280px共2项通过；真实渲染/原生EventSource、受控API响应，刷新不重提或重开流。详见 `issue-265-browser.md`；不冒称连接了真实后端/供应商。
-- 受影响 Python Ruff、OpenAPI `--check`、前端类型生成无漂移、`tsc -b` 和 diff检查通过；最终检查及两轴审查收据将在提交前补齐。
+- 第一阶段受影响 Python Ruff、OpenAPI `--check`、前端类型生成无漂移、`tsc -b` 和 diff检查通过。续接只修改后端预算、错误回执、共享投影和相关测试；前端实现、schema/HTTP模型与既有浏览器合同未变，沿用前端收据，不重复浏览器或全量测试。
+
+## 续接最终定向检查
+
+在隔离目录 `backend` 使用 `.venv/Scripts/python.exe`，受控模型、已认证 HTTP/SSE、从0022前向迁移到head（0029）的临时 SQLite；没有读取或改写业务数据库或 `.env`。
+
+- `pytest tests/api/test_agent_pagination.py tests/api/test_agent_pagination_budget.py tests/api/test_agent_pagination_capacity.py tests/api/test_agent_pagination_security.py -q`：审查修复前21项通过（88.49秒），审查修复后 **22项通过（90.72秒）**，日志 `issue265-stage2-reviewed-pagination-final.log`。含8项预算回归和8项安全回归；新增顶层拒绝、低容量无效续页和合法游标重试3项，模型入口验证回答预留，最终 HTTP/history/SSE 均正常且诚实说明范围。首查无成功证据仍拒绝发布，输出超限仍失败。
+- `pytest tests/api/test_agent_query_metrics.py -q`：**10项通过（40.26秒）**，日志 `issue265-stage2-metrics-final.log`，覆盖受分页投影影响的分组/比较指标。第一阶段10项40.90秒单列在 `issue265-metrics-final.log`，不相加。
+- `pytest tests/api/test_agent_store_query.py -q -k 'paginate or large_first or small_context'`：审查修复前5项通过、42项未选择（22.84秒）；审查修复后 **5项通过、42项未选择（19.62秒）**，日志 `issue265-stage2-reviewed-query-contract-final.log`。最新分页、指标和合同共37项通过，均属于本票新增或受影响功能，未选择其余测试。
+- 受影响10个Python文件 Ruff 通过；续接最终 OpenAPI `--check` exit0、`git diff --check` 通过。未更改HTTP schema，生成类型沿用第一阶段无漂移收据。
+
+新增失败日志均保留在上述 Temp 目录：
+
+- `issue265-stage2-top-capacity-red.log`：1失败，初始测试事件4000字符超过公开API的2000上限，属于测试夹具错误；改为合法800控制字符。`issue265-stage2-top-capacity-red2.log`：1失败，真实顶层容量拒绝后最终回答没有部分完成提示。修复后 `issue265-stage2-top-capacity-green.log` 1通过。
+- `issue265-stage2-invalid-continuation-red.log`：1失败，低容量续页未正常完成；代码定位无效回执缺id。补id仍失败，保留 `issue265-stage2-invalid-continuation-green.log`（文件名为green但实际 **失败**）及 `issue265-stage2-invalid-continuation-id-only.log`，后者明确 `context_budget`。补充错误回执后的回答预算防护后 `issue265-stage2-gaps-green.log` 2通过。
+- `issue265-stage2-cursor-retry-red.log`：1失败，全部3行已读后仍提示 `invalid_result_reference` 未完成。清理引用失败标记后 `issue265-stage2-cursor-retry-green.log` 1通过；最终22项包含此回归。
+
+## 永久基线两轴审查
+
+使用 code-review 技能的独立并行 Standards/Spec 审查，固定命令 `git diff 1cf0e5e0217b7cc762348563cc0c448e3b011d01...HEAD`，覆盖全部18个文件。第一轮检查点 `3de31bd`：
+
+- **Standards**：0硬性规范违规、1判断性发现（possible Duplicated Code）。单行容量probe与真实分页projection重复且比较元数据有差异，现已提取共享 `row_projection`。
+- **Spec**：1项P2（合法续页重试成功后残留引用失败提示），现已公开红绿复现，成功续页按业务id与受验证result_ref清理失败标记；历史失败SSE保留。
+
+整改后的完整固定基线复审结论在最终提交前追加；不将Ruff或实现建议当作两轴审查。
 
 未运行后端/前端全量套件，未调用真实付费供应商，未执行Docker、生产或负载验收。

@@ -283,3 +283,36 @@ async def test_control_after_snapshot_rejects_late_continuation_and_history(tmp_
             assert not model.late_results
             if control == "reset":
                 assert history["generation"] == 1 and history["messages"] == []
+
+
+async def test_valid_retry_clears_invalid_cursor_failure_after_all_rows_read(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOLAVA_AGENT_CONTEXT_CHARS", "64000")
+
+    def bad_cursor(model):
+        model.original = latest_batch(model)["targets"][0]
+        invalid = continuation(model.original)
+        token = invalid["cursor"]
+        invalid["cursor"] = token[:-1] + ("0" if token[-1] != "0" else "1")
+        return "store_query", {"continuations": [invalid]}
+
+    def correct_cursor(model):
+        rejected = latest_batch(model)["targets"][0]
+        assert rejected["error"] == "invalid_result_reference" and not rejected.get("rows")
+        return "store_query", {"continuations": [{**continuation(model.original), "page_size": 200}]}
+
+    model = QueryModel([("store_data_catalog", {}), query([detail("events")]),
+                        bad_cursor, correct_cursor, "全部三行事件已读取。"])
+    async with chat_app(tmp_path, model) as (client, _, _):
+        await seed_events(client)
+        run = await ask(client, "按页查询全部事件，无效游标后重试正确续页")
+        assert run["status"] == "completed", json.dumps(run, ensure_ascii=False)
+        last = latest_batch(model)["targets"][0]
+        assert last["read_range"] == {"start": 1, "end": 3}
+        assert not last["has_more"] and last["next_cursor"] is None
+        assert "全部三行事件已读取。" in run["output"]
+        assert "部分完成" not in run["output"] and "invalid_result_reference" not in run["output"]
+        history = (await client.get("/api/agent/1/conversation")).json()
+        assert history["messages"][-1]["content"] == run["output"]
+        events = (await client.get(f"/api/agent/1/runs/{run['id']}/events")).text
+        assert "query_targets_failed" in events and "event: completed" in events
+        assert events.count('"name": "store_query"') == 3

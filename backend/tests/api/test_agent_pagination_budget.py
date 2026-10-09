@@ -9,6 +9,13 @@ from tests.api.test_agent_tools import ask, save_day
 from app.agents.providers.bailian import ToolCall
 
 
+class ReservedAnswerModel(QueryModel):
+    async def stream_tools(self, messages, schemas):
+        assert len(json.dumps({"messages": messages, "tools": schemas}, ensure_ascii=False)) <= 22000
+        async for chunk in super().stream_tools(messages, schemas):
+            yield chunk
+
+
 async def test_unread_first_page_is_explicit_in_saved_answer_and_sse(tmp_path):
     model = QueryModel([
         ("store_data_catalog", {}),
@@ -248,7 +255,7 @@ async def test_new_batch_capacity_rejection_preserves_complete_prior_evidence(tm
                        "range": {"all_history": True}, "fields": ["date"]}
                       for index in range(6)])(model)
 
-    model = QueryModel([("store_data_catalog", {}), first_query, refused_batch,
+    model = ReservedAnswerModel([("store_data_catalog", {}), first_query, refused_batch,
                         "原查询完整事件已保留。"])
     async with chat_app(tmp_path, model) as (client, _, _):
         saved = await client.put("/api/ledger/1/2026-07-01", json={
@@ -258,6 +265,7 @@ async def test_new_batch_capacity_rejection_preserves_complete_prior_evidence(tm
         run = await ask(client, "查询全部历史完整事件，再查询六组日期")
         events = (await client.get(f"/api/agent/1/runs/{run['id']}/events")).text
         assert "context_capacity" in events, (run, events)
+        assert "结果元数据及完整行空间不足，整批未执行。" in events
         assert run["status"] == "completed", json.dumps(run, ensure_ascii=False)
         assert model.original["rows"] == [{"date": "2026-07-01", "activity": "\u0001" * 800}]
         assert "部分完成" in run["output"] and "context_capacity" in run["output"]
@@ -271,7 +279,7 @@ async def test_new_batch_capacity_rejection_preserves_complete_prior_evidence(tm
 async def test_low_capacity_invalid_continuations_have_stable_failure_ids(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTOLAVA_AGENT_CONTEXT_CHARS", "24000")
     references = [chr(index + 1) * 32 for index in range(6)]
-    model = QueryModel([
+    model = ReservedAnswerModel([
         ("store_data_catalog", {}),
         query([{"id": "original", "domain": "daily_ledger",
                 "range": {"all_history": True}, "fields": ["date", "activity"]}]),
@@ -288,6 +296,7 @@ async def test_low_capacity_invalid_continuations_have_stable_failure_ids(tmp_pa
         run = await ask(client, "查询完整事件，检查六个无效续页")
         assert run["status"] == "completed", json.dumps(run, ensure_ascii=False)
         assert "部分完成" in run["output"] and "invalid_result_reference" in run["output"]
+        assert "6个查询目标未完成" in run["output"]
         events = (await client.get(f"/api/agent/1/runs/{run['id']}/events")).text
         assert "internal_error" not in events and "context_budget" not in events
         assert "event: completed" in events
@@ -299,4 +308,3 @@ async def test_low_capacity_invalid_continuations_have_stable_failure_ids(tmp_pa
             assert [t["id"] for t in failures[-1]["targets"]] == references
             assert all(t["error"] == "invalid_result_reference" and not t.get("rows")
                        for t in failures[-1]["targets"])
-
