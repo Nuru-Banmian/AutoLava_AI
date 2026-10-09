@@ -42,3 +42,8 @@
 - 后台完整并行首轮11 failed/683 passed/6warnings/455.28s；8项charts_daily_migrated仅新覆盖字段完整字典预期未同步，1项agent_integration迁移head预期0028。已同步覆盖字段/0029，既有金额与平均断言保留。另2项agent_vectors/pending_weather为SQLite database is locked，保留Windows风险；隔离文件重验中，不通过隐藏/skip方式处理。
 - 修复后frontend最终全套385 passed/37files/58.31s（maxWorkers4），production build通过；E2E最终复验运行中。此前最终384 passed及E2E96 passed/20条件跳过已有有效结果，本次因审查后实现变化再次验证。
 - 趋势未知提示真实桌面hover已通过“本期2026-10-09：未统计，—”，上期同位置无数据；390px首次tap因原session不支持touch失败，保留，已建立iPhone13（390px）touch专用session进行真实点选。页面HMR重置视图导致第一次定位趋势超时，重选经营分析后桌面验证通过；不是业务失败。
+- 最终两轴复审（固定31c6e00...8c94533，45文件）Standards与Spec均通过，无未解决实现发现；首审P1/P2对应修复与新增回归已覆盖。审查只读、并行，没有改动工作区。全部实现提交ba9e2ab与8c94533。
+- 修复后相关后台隔离33 passed/200.39s（charts_daily_migrated/agent_integration/pending_weather/agent_vectors），包含此前Windows锁失败用例本次单独通过，不代表锁风险已解决。首轮全套coverage88%>=85通过；最终完整后台按CI相同-n4/loadscope/cov重跑中。
+- 审查修复后的最终前端385 passed/37files/58.31s、production build通过；最终E2E96 passed/20条件跳过/2.1m。OpenAPI export --check、全库Ruff及重新generate:api-types零差异通过。保留jsdom scrollTo未实现提示；不是浏览器验收。
+- 真实触屏（iPhone13，390×844）在双方数值未知时tap读到“本期2026-10-09：未统计，—”，截图mobile-unknown-tooltip.png；桌面同位置hover也通过。此前不支持tap的session失败保留，不将resize冒称touch。桌面/窄屏analysis截图及首页截图已形成，独立紫色状态、未知合计、无金额色带，支持记录/详情/日期弹窗/分析联动。
+- 实施/审查完成，最终完整后台与PR/CI/合并/关闭/远端回读仍未完成；不启动#263。总控进度始终只读。
