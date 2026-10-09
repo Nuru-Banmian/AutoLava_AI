@@ -171,7 +171,7 @@ async def test_saved_read_cannot_cross_store_account_or_reset(tmp_path, scope):
             "chart_id": chart}), "无法读取旧图。"])
         generation = (await client.get(f"/api/agent/{store}/conversation")).json()["generation"]
         submitted = await client.post(f"/api/agent/{store}/messages", json={
-            "generation": generation, "request_id": uuid4().hex, "content": "旧图跨范围"})
+            "generation": generation, "request_id": uuid4().hex, "content": f"旧图跨范围 {chart}"})
         assert submitted.status_code == 202
         run = await completed(client, submitted.json()["id"], store=store)
         assert model.results[-1]["error"] == "saved_chart_not_found"
@@ -318,7 +318,7 @@ async def test_saved_extensions_select_series_and_reproject_original_trusted_sha
         assert [p["values"][chosen] for p in new["points"]] == [p["values"][chosen] for p in original["points"][:2]]
 
 
-async def test_browser_controller_follows_a_chart_from_lightweight_history(tmp_path, monkeypatch):
+async def test_out_of_context_old_chart_asks_before_latest_query_and_keeps_original(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTOLAVA_AGENT_CONTEXT_CHARS", "24000")
     from tests.browser.saved_chart_server import BrowserSavedModel
     model = BrowserSavedModel()
@@ -326,6 +326,37 @@ async def test_browser_controller_follows_a_chart_from_lightweight_history(tmp_p
         await save_day(client, "2026-07-01", 19)
         for index in range(12):
             assert (await ask(client, f"画趋势 {index}"))["status"] == "completed"
+        message, chart_id = await saved_chart(client)
+        original = (await client.get(f"/api/agent/1/messages/{message}/charts/{chart_id}")).json()
         run = await ask(client, "追问旧图")
         assert run["status"] == "completed", json.dumps(run, ensure_ascii=False)
-        assert "历史图来源：saved_chart" in run["output"]
+        assert "这张旧图已超出当前上下文，是否重新查询最新数据？" in run["output"]
+        assert "历史图来源：saved_chart" not in run["output"]
+        events = (await client.get(f"/api/agent/1/runs/{run['id']}/events")).text
+        assert '"name": "store_query"' not in events and '"name": "store_chart"' not in events
+        assert (await client.get("/api/agent/1/conversation")).json()["messages"][-1]["charts"] == []
+        await save_event(client, "2026-07-01", 999, "确认前台账已更新")
+        confirmed = await ask(client, "确认重新查询最新数据并生成新图")
+        assert confirmed["status"] == "completed", confirmed
+        new_message, new_chart = await saved_chart(client)
+        new = (await client.get(f"/api/agent/1/messages/{new_message}/charts/{new_chart}")).json()
+        assert new["payload"]["points"][0]["values"]["total_revenue"]["exact"] == "999"
+        assert new["source"].get("source") != "saved_chart"
+        assert (await client.get(f"/api/agent/1/messages/{message}/charts/{chart_id}")).json() == original
+
+
+async def test_advertised_chart_schema_preserves_business_title_and_runtime_accepts_it(tmp_path):
+    class SchemaModel(QueryModel):
+        async def stream_tools(self, messages, tools):
+            parameters = next(t["function"]["parameters"] for t in tools if t["function"]["name"] == "store_chart")
+            assert parameters["type"] == "object" and parameters["additionalProperties"] is False
+            assert parameters["properties"]["title"]["type"] == "string"
+            assert parameters["properties"]["title"]["maxLength"] == 80
+            async for chunk in super().stream_tools(messages, tools):
+                yield chunk
+    model = SchemaModel([("store_data_catalog", {}), trend_query(), trend, "按广告契约创建成功。"])
+    async with chat_app(tmp_path, model) as (client, _, _):
+        await save_day(client, "2026-07-01", 19)
+        assert (await ask(client, "画趋势"))["status"] == "completed"
+        message, chart_id = await saved_chart(client)
+        assert (await client.get(f"/api/agent/1/messages/{message}/charts/{chart_id}")).json()["payload"]["title"] == "逐日营业额"

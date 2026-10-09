@@ -89,6 +89,7 @@ for (const width of [1280, 390]) {
     await expect(shells).toHaveCount(0);
     await page.getByRole("combobox", { name: "门店", exact: true }).selectOption("1");
     await expect(shells).toHaveCount(12);
+    if (width < 768) await page.goto("/more");
     await page.getByRole("button", { name: "退出登录" }).click();
     await page.goto("/login");
     await page.getByLabel("用户名").fill("user-2");
@@ -97,6 +98,7 @@ for (const width of [1280, 390]) {
     await page.goto("/ai");
     await page.getByRole("combobox", { name: "门店", exact: true }).selectOption("1");
     await expect(shells).toHaveCount(0);
+    if (width < 768) await page.goto("/more");
     await page.getByRole("button", { name: "退出登录" }).click();
     await page.goto("/login");
     await page.getByLabel("用户名").fill("user-1");

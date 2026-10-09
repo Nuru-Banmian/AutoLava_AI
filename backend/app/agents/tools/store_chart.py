@@ -62,7 +62,9 @@ class ChartInput(RootModel[CreateChartInput | ReadSavedInput]):
             if isinstance(value, list):
                 return [compact(item) for item in value]
             if isinstance(value, dict):
-                return {key: compact(item) for key, item in value.items() if key not in ("title", "default")}
+                return {key: ({name: compact(schema) for name, schema in item.items()}
+                              if key == "properties" else compact(item))
+                        for key, item in value.items() if key not in ("title", "default")}
             return value
 
         return compact({"type": "object", "additionalProperties": False,

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from importlib.resources import files
 from typing import Protocol
 from collections.abc import AsyncGenerator
@@ -61,23 +62,14 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
                  "store_background为当前快照；经营数据须本轮读技能并查询，不复述历史数字。"
                  "洗车数量关闭仅表示本轮不使用，不表示缺乏数据。"
                  "本轮后台记忆整理尚未执行，不确认保存、合并或索引，不复述历史操作回执。"}]
-        references = []
-        current_question = {"role": "user", "content": conversation.messages[-1].content}
-        for message in reversed(conversation.messages):
-            for chart in reversed(message.charts):
-                proposed = [*references, {"message_id": message.id, **chart.model_dump(mode="json")}]
-                protected = {"role": "user", "content": json.dumps({"store_background": {
-                    **background, "saved_charts": proposed}}, ensure_ascii=False)}
-                if (len(proposed) <= 4 and len(json.dumps(proposed, ensure_ascii=False)) <= 1500
-                        and turn_context_size([*base[:2], protected, base[-1], current_question])
-                        <= settings.agent_context_chars - 3000):
-                    references = proposed
-                    base[2] = protected
-            if len(references) >= 4:
-                break
         messages = []
         for message in reversed(conversation.messages):
             candidate = {"role": message.role, "content": message.content}
+            for chart in message.charts:
+                description = json.dumps({"message_id": message.id, **chart.model_dump(mode="json")}, ensure_ascii=False)
+                extended = {**candidate, "content": candidate["content"] + "\n历史图描述：" + description}
+                if turn_context_size([*base, extended, *reversed(messages)]) <= settings.agent_context_chars - 3000:
+                    candidate = extended
             if turn_context_size([*base, candidate, *reversed(messages)]) > settings.agent_context_chars:
                 if not messages:
                     raise ModelFailure("context_budget")
@@ -379,6 +371,15 @@ def create_graph(model: ChatModel, storage: ChatRepository, settings: Settings,
 
         while attempts < settings.agent_max_steps:
             trim_query_history()
+            # Missing historical references are a conversation clarification,
+            # never permission to silently query current business data.
+            if (plan.kind == "saved_chart" and not saved_sources
+                    and not any("历史图描述：" in (m.get("content") or "") for m in messages)
+                    and not re.search(r"\b[0-9a-f]{32}\b", state["messages"][-1]["content"])):
+                await storage.record(state["scope"], state["run_id"], "delta", {
+                    "text": "这张旧图已超出当前上下文，是否重新查询最新数据？"})
+                await storage.record(state["scope"], state["run_id"], "completed", {"status": "completed"})
+                return {}
             # Error receipts (including invalid continuations) can consume the
             # control reserve. Preserve evidence and the answer reserve rather
             # than issuing another model request with too little space.

@@ -41,7 +41,7 @@ PLAN_PROMPT = (
     "按门店local_date解析相对日期，不猜含糊日期。其他路径queries为空。"
     "用户直接提供数字表达式的临时算数属于general，后续可用calculate；"
     "依赖当前经营数据的指标仍属于query，不能以计算工具替代查询。"
-    "追问已保存旧图选saved_chart，须read_saved取得原查询时间；要求最新选query重新查询并生成新图，不能改写旧图。"
+    "追问旧图选saved_chart，须read_saved取得原时间；旧图超出上下文先问是否重新查询，不能自动查。要求最新或确认重新查询选query并生成新图，不能改旧图。"
 )
 
 

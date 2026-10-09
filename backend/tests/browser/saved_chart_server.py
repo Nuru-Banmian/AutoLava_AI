@@ -13,7 +13,6 @@ from tests.api.test_agent_chat import chat_app
 from tests.api.test_agent_chat_charts import trend, trend_query
 from tests.api.test_agent_saved_charts import SavedModel
 from tests.api.test_agent_tools import save_day
-from tests.api.test_agent_tools import background
 
 
 class BrowserSavedModel(SavedModel):
@@ -28,7 +27,9 @@ class BrowserSavedModel(SavedModel):
             yield "依据旧图首日19，原查询时间见来源说明。"
             return
         if latest.get("skill") and "旧图" in question:
-            chart = background(messages)["saved_charts"][0]
+            description = next(m["content"].split("历史图描述：")[-1] for m in reversed(messages)
+                               if isinstance(m.get("content"), str) and "历史图描述：" in m["content"])
+            chart = json.loads(description)
             action = "store_chart", {"operation": "read_saved", "message_id": chart["message_id"], "chart_id": chart["chart_id"]}
         elif latest.get("skill"):
             action = "store_data_catalog", {}
