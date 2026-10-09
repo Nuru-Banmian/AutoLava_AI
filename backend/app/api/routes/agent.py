@@ -2,6 +2,7 @@ import asyncio
 import json
 from typing import Annotated
 
+import anyio
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
@@ -140,13 +141,20 @@ async def run_events(
         cursor = after
         while not await request.is_disconnected():
             try:
-                events, status = await storage.events(scope, run_id, cursor)
+                # A client can disconnect while this short read closes its session.
+                # Finish that cleanup before the streaming task handles cancellation.
+                with anyio.CancelScope(shield=True):
+                    events, status = await storage.events(scope, run_id, cursor)
             except HTTPException:
                 yield 'event: failed\ndata: {"error_code":"access_revoked"}\n\n'
                 return
             for event_id, kind, payload in events:
                 yield f"id: {event_id}\nevent: {kind}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
                 cursor = event_id
+                # EventSource closes on a terminal event. Do not start another
+                # database read that would be cancelled during connection cleanup.
+                if kind in {"completed", "failed"}:
+                    return
             if status != "running" and not events:
                 return
             if not events:

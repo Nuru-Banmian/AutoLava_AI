@@ -1,6 +1,7 @@
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
+import { fileURLToPath } from "node:url";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -18,12 +19,12 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@": new URL("./src", import.meta.url).pathname,
+      "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
   test: {
     environment: "jsdom",
     setupFiles: "./src/test/setup.ts",
-    exclude: ["tests/**", "node_modules/**", "dist/**"],
+    exclude: ["tests/**", "acceptance/**", "node_modules/**", "dist/**"],
   },
 });

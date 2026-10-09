@@ -113,8 +113,8 @@ cd backend
 uv sync --locked --extra dev
 $env:AUTOLAVA_DATABASE_PATH = Join-Path $env:TEMP "autolava-test.sqlite3"
 uv run --frozen ruff check .
-uv run --frozen pytest --cov=app --cov-report=term-missing
-uv run --frozen python scripts/export_openapi.py --check
+uv run --frozen pytest acceptance -q --durations=10
+uv run --frozen python -m scripts.export_openapi --check
 ```
 
 ### 前端
@@ -122,13 +122,14 @@ uv run --frozen python scripts/export_openapi.py --check
 ```powershell
 cd frontend
 npm ci
-npm test
 npm run build
 npx playwright install chromium
-npm run test:e2e
+npm run test:acceptance
 ```
 
-`npm run build` 包含 TypeScript 检查和生产构建。浏览器测试会自动在 4173 端口启动测试 Web 服务；普通套件主要使用模拟接口，独立真实服务用例按相应验收文档运行。
+`npm run build` 包含应用 TypeScript 检查和生产构建；`test:acceptance` 还检查新验收代码的类型。新浏览器验收自动启动 4173 端口的生产产物预览和 8000 端口的真实 API，使用迁移后的临时 SQLite，拒绝复用已有服务。运行前需在 `backend` 安装锁定依赖并确保 `uv` 在 PATH 中；可用 `ACCEPTANCE_PYTHON` 指定后端 Python 可执行文件。运行范围和限制见 [PR CI 验收说明](docs/validation/ci-acceptance.md)。
+
+旧测试文件保留作为历史回归材料，可手动运行 `uv run --frozen pytest tests`、`npm test` 和 `npm run test:e2e`；默认 PR CI 不再运行旧全量测试或全局覆盖率门槛。
 
 ### API 契约
 
@@ -136,12 +137,12 @@ npm run test:e2e
 
 ```powershell
 cd backend
-uv run --frozen python scripts/export_openapi.py
+uv run --frozen python -m scripts.export_openapi
 cd ..\frontend
 npm run generate:api-types
 ```
 
-[常规 CI](.github/workflows/ci.yml) 检查 API 契约、后端质量与覆盖率、前端单元测试、构建及浏览器测试。
+[常规 CI](.github/workflows/ci.yml) 并行检查 API 契约及生成类型、后端 lint/迁移/HTTP/SSE 业务验收、生产构建与桌面/窄屏浏览器验收。全部必需任务成功后 CI gate 才通过；失败、取消、跳过或缺失结果均被拒绝。新验收套件拒绝跳过和预期失败。
 
 ## 部署
 

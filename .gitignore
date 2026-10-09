@@ -13,5 +13,7 @@ node_modules/
 dist/
 playwright-report/
 test-results/
+acceptance-report/
+acceptance-results/
 .autolava-local/
 .autolava-test/
