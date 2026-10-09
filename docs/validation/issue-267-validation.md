@@ -37,3 +37,11 @@ store_chart create 新增 grouped_bar、stacked_bar、horizontal_bar；series_by
 固定命令 `git diff de731bf2537f181fa46966c84cf8144ab5a779ce...HEAD`。首检查点30f388c（17文件）：Standards 0违规/0实质smell；Spec 1项P2：横向排名分类透视重排来源次序。公开HTTP用例复现后，明确拒绝horizontal_bar+series_by=category，普通单维/日期排名不变。f622bc6代码最终两轴复核均0未闭合。两轴发现本记录编辑误把本地63项pytest证据接到自动CI状态后，已修正文档。PR与自动CI尚未执行，其最终状态通过PR及发布回读报告；本地测试、浏览器与CI分别记录。
 
 未执行真实供应商/付费模型调用、生产部署、生产数据验收或生产负载性能测试。受控模型、浏览器和CI证据分别报告，不将它们当作真实供应商或生产证据。#268功能和#260其他子票不在本票完成范围。
+
+## 首轮 CI 与上下文整改
+
+PR #276，首轮 CI run `37926251243`：后端811通过/2失败/6跳过（482.38秒）；后端质量、OpenAPI、前端单测/构建及两组前端端到端成功。失败是 `test_history_pagination_input_scope_and_context_budget`（8000预算下当前6000字消息失败）和 `test_composition_historical_category_filters_keep_other_data_separate`（三目标结果后项缺metrics）。原始失败日志 `C:/Users/1/AppData/Local/Temp/issue267-ci-first-failure.log`；本地仅这两项复现2失败（9.63秒），日志 `issue267-ci-local-red.log`。
+
+diagnosing-bugs反馈循环使用这两个公开用例。单变量压缩常驻图表提示：原基线1204字符，本票曾增至1523字符；重复图型/容量规则保留在真实工具schema与已读取的store-analysis skill，常驻提示只保留行为原则和明确指针。仅改该提示后两项均通过（9.68秒），日志 `issue267-ci-compact-prompt.log`。不修改8000历史预算、完整当前消息合同、默认生产预算或任何容量护栏，也未提高多目标测试预算。压缩后常驻提示1160字符。定向复验预算护栏、上述失败及默认图表预算 **11项通过（48.16秒）**，日志 `issue267-ci-budget-green.log`。新增两个受影响旧用例与原66项去重后68项均有定向通过证据；未运行本地全量。
+
+Git HTTPS握手连续失败，使用Git对象API后备上传原始blob/tree/commit，各SHA与本地完全一致后发布分支引用；首PR远端HEAD为已审查8f3c053。后续整改仍固定原基线、重新两轴审查精确HEAD，再发布并等待新CI，未在首轮失败时合并。
